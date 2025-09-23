@@ -8,4 +8,10 @@ venv/
 *.env
 .DS_Store
 *.sqlite3
+# Ignore folders
+vectorstore/
+data/
+db/
 
+# Ignore large files
+*.pdf
