@@ -2,26 +2,30 @@ import os
 from datetime import datetime
 from langchain_community.document_loaders import (
     PyPDFLoader,
-    UnstructuredPDFLoader,        # <-- เพิ่มตรงนี้
+    UnstructuredPDFLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredExcelLoader,
     TextLoader,
     UnstructuredPowerPointLoader,
     CSVLoader
 )
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from vectorstore import save_to_vectorstore
+from vectorstore import save_to_vectorstore, vectorstore_exists
 
 DATA_DIR = "data"
 VECTORSTORE_DIR = "vectorstore"
 SUPPORTED_TYPES = [".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv"]
 
+# ---------------------
+# Document loaders
+# ---------------------
 def load_txt(path):
-    try:
-        return TextLoader(path, encoding="utf-8", errors="ignore").load()
-    except UnicodeDecodeError:
-        return TextLoader(path, encoding="latin-1", errors="ignore").load()
+    for enc in ["utf-8", "latin-1", "cp1252"]:
+        try:
+            return TextLoader(path, encoding=enc).load()
+        except UnicodeDecodeError:
+            continue
+    raise ValueError(f"Cannot read text file {path} with utf-8 / latin-1 / cp1252")
 
 def load_pdf(path):
     try:
@@ -67,8 +71,9 @@ FILE_LOADER_MAP = {
     ".csv": load_csv,
 }
 
-# ingest.py
-
+# ---------------------
+# Main functions
+# ---------------------
 def process_document(file_path, file_name=None):
     if not file_name:
         file_name = os.path.basename(file_path)
@@ -88,17 +93,14 @@ def process_document(file_path, file_name=None):
     )
     chunks = splitter.split_documents(docs)
 
-    # ✅ ตัด extension ออกจาก doc_id
     doc_id = os.path.splitext(file_name)[0]
 
-    # Save vectorstore → ส่งเป็น list ของ text
+    # Save vectorstore
     chunk_texts = [c.page_content for c in chunks]
     save_to_vectorstore(doc_id, chunk_texts)
 
     print(f"✅ Document '{file_name}' processed as doc_id '{doc_id}', chunks: {len(chunks)}")
     return doc_id
-
-
 
 def list_documents():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -106,12 +108,14 @@ def list_documents():
     for f in os.listdir(DATA_DIR):
         path = os.path.join(DATA_DIR, f)
         stat = os.stat(path)
+        doc_id = os.path.splitext(f)[0]
+
         files.append({
-            "id": f,
+            "id": doc_id,
             "filename": f,
             "file_type": os.path.splitext(f)[1].lower(),
             "upload_date": datetime.utcfromtimestamp(stat.st_mtime).isoformat(),
-            "status": "processed"
+            "status": "processed" if vectorstore_exists(doc_id) else "pending"
         })
     return files
 

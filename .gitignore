@@ -12,6 +12,8 @@ venv/
 vectorstore/
 data/
 db/
+asessment_data/
+results/
 
 # Ignore large files
 *.pdf
