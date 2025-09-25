@@ -22,11 +22,11 @@ def save_to_vectorstore(doc_id: str, text_chunks: list[str]):
     os.makedirs(doc_dir, exist_ok=True)
     vectordb = Chroma.from_documents(
         documents=docs,
-        embedding_function=embeddings,
+        embedding=embeddings,        # ใช้ embedding แทน embedding_function
         persist_directory=doc_dir
     )
 
-    vectordb.persist()
+    # vectordb.persist()
 
     print(f"📄 Saving {len(docs)} chunks for doc_id={doc_id} into {doc_dir}")
 
