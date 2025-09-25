@@ -41,8 +41,7 @@ def create_rag_chain(doc_id: str):
     """
     สร้าง RetrievalQA chain สำหรับเอกสาร doc_id
     """
-    vs = load_vectorstore(doc_id)
-    retriever = vs.as_retriever(search_kwargs={"k": 3})
+    retriever = load_vectorstore(doc_id)  # VectorStoreRetriever อยู่แล้ว
 
     chain = RetrievalQA.from_chain_type(
         llm=get_llm(),

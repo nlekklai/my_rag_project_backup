@@ -13,6 +13,11 @@ import re
 from assessment_state import process_state
 from rag_chain import run_assessment_workflow
 import shutil
+# --- สร้าง chain พร้อม prompt ภาษาไทย ---
+from rag_chain import QA_PROMPT, get_llm
+from vectorstore import load_vectorstore, load_all_vectorstores, MultiDocRetriever, list_vectorstore_folders
+from langchain.chains import RetrievalQA
+
 
 
 llm = get_llm()
@@ -47,11 +52,33 @@ app.add_middleware(
 )
 
 
-def extract_doc_id_from_question(question: str):
-    match = re.search(r"(?:เอกสาร\s+)?([\d]{4}-[A-Z]+)(?:\.pdf)?", question, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    return None
+def extract_doc_ids_from_question(question: str):
+    matches = re.findall(r"(?:เอกสาร\s+)?([\d]{4}-[A-Z]+)(?:\.pdf)?", question, re.IGNORECASE)
+    return matches if matches else None
+
+import re
+from vectorstore import list_vectorstore_folders
+
+def match_doc_ids_from_question(question: str):
+    """
+    ตรวจสอบว่า question มีเอกสารหรือปีตรงกับ folder ไหนบ้าง
+    คืนค่า list ของ doc_ids ที่ match
+    """
+    all_docs = list_vectorstore_folders()  # คืนค่า folder name ทั้งหมด เช่น ['2567-PEA', '2566-PEA', 'SEAM']
+    matched = []
+
+    # search for year 4 ตัวเลข
+    years = re.findall(r"\b(25\d{2})\b", question)
+    question_lower = question.lower()
+
+    for doc in all_docs:
+        doc_lower = doc.lower()
+        if any(year in doc_lower for year in years) or any(name.lower() in doc_lower for name in ['pea','seam','feedback']):
+            matched.append(doc)
+
+    # ถ้าไม่ match folder ไหนเลย → query ทุกเอกสาร
+    return matched if matched else all_docs
+
 
 # ---- Helper ----
 def get_latest_doc_id():
@@ -91,10 +118,15 @@ async def upload_file(file: UploadFile):
 async def compare(
     doc1: str = Form(...),
     doc2: str = Form(...),
-    question: str = Form("สรุปหัวข้อหลักและเนื้อหาสำคัญของเอกสารทั้งสองฉบับ")
+    question: str = Form("สรุปหัวข้อหลักและเนื้อหาสำคัญของเอกสารทั้งสองฉบับ และหาความแตกต่าง")
 ):
-    result = compare_documents(doc1, doc2, question)  # ไม่ส่ง question เข้าไป
-    return {"result": result}
+    try:
+        result = await run_in_threadpool(lambda: compare_documents(doc1, doc2, question))
+        return {"result": result}
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -115,35 +147,41 @@ async def status():
     }
 
 @app.post("/query")
-async def query_documents(question: str = Form(...), doc_id: str = Form(None)):
+async def query_documents(question: str = Form(...)):
     try:
-        if not doc_id:
-            doc_id = extract_doc_id_from_question(question)
-        if not doc_id:
-            doc_id = get_latest_doc_id()
+        # 1️⃣ ตรวจสอบ doc_id จากคำถาม
+        doc_ids = match_doc_ids_from_question(question)  # คืนค่า list ของ folder ที่ match
+        if not doc_ids:  # ถ้าไม่เจอ doc ใด ๆ ให้โหลดทั้งหมด
+            retriever = load_all_vectorstores()
+            doc_ids = ["all"]
+        elif len(doc_ids) == 1:
+            # โหลด vectorstore เดียว
+            retriever = load_vectorstore(doc_ids[0])
+        else:
+            # โหลดหลาย vectorstore แล้วรวมเป็น MultiDocRetriever
+            retrievers = [load_vectorstore(d) for d in doc_ids]
+            retriever = MultiDocRetriever(retrievers_list=retrievers)
 
-        # --- สร้าง chain พร้อม prompt ภาษาไทย ---
-        from rag_chain import QA_PROMPT, get_llm
-        from vectorstore import load_vectorstore
-        from langchain.chains import RetrievalQA
-
-        vs = load_vectorstore(doc_id)
-        retriever = vs.as_retriever(search_kwargs={"k": 3})
-
+        # 2️⃣ สร้าง RetrievalQA chain
         chain = RetrievalQA.from_chain_type(
             llm=get_llm(),
             retriever=retriever,
             chain_type="stuff",
-            chain_type_kwargs={"prompt": QA_PROMPT, "document_variable_name": "context"}
+            chain_type_kwargs={
+                "prompt": QA_PROMPT,
+                "document_variable_name": "context"
+            }
         )
 
-        # --- เรียก RAG chain ---
-        result = chain.run(question)
-        return {"answer": result, "doc_id": doc_id}
+        # 3️⃣ รัน chain แบบ thread-safe
+        answer = await run_in_threadpool(lambda: chain.invoke({"query": question})["result"])
+
+        return {"answer": answer, "doc_ids": doc_ids}
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ---- Document management endpoints ----
 @app.get("/api/documents")
