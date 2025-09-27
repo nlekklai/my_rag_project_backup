@@ -214,6 +214,10 @@ async def query_documents(
     question: str = Form(...),
     doc_ids: Optional[str] = Form(None)  # comma-separated string จาก UI
 ):
+    # กำหนดค่า k ที่ต้องการ: 
+    # 💡 เพื่อหา '8 Enablers' ที่มีข้อมูลกระจัดกระจาย ลองเพิ่ม k เป็น 8 หรือ 10
+    K_VALUE = 8 
+    
     # 1. แปลง doc_ids เป็น list
     if doc_ids:
         doc_ids_list = [d.strip() for d in doc_ids.split(",") if d.strip()]
@@ -226,10 +230,12 @@ async def query_documents(
         retriever = load_all_vectorstores()
         doc_ids_list = list_vectorstore_folders() # update list
     elif len(doc_ids_list) == 1:
-        retriever = load_vectorstore(doc_ids_list[0])
+        # ✅ FIX: เปลี่ยน k=K_VALUE เป็น top_k=K_VALUE เพื่อให้ตรงกับ vectorstore.py
+        retriever = load_vectorstore(doc_ids_list[0], top_k=K_VALUE) 
     else:
         # Multi-document retrieval
-        retrievers = [load_vectorstore(d) for d in doc_ids_list]
+        # ✅ FIX: เปลี่ยน k=K_VALUE เป็น top_k=K_VALUE เพื่อให้ตรงกับ vectorstore.py
+        retrievers = [load_vectorstore(d, top_k=K_VALUE) for d in doc_ids_list] 
         retriever = MultiDocRetriever(retrievers_list=retrievers)
 
     # 3. เลือก Prompt ตามประเภท Query
