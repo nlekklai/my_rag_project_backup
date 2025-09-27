@@ -1,6 +1,6 @@
 import os
 import shutil
-from ingest import process_document
+from core.ingest import process_document
 
 VECTORSTORE_DIR = "vectorstore"
 DATA_DIR = "data"
