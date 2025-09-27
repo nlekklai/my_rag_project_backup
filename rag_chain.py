@@ -18,13 +18,14 @@ ASSESSMENT_DIR = "assessment_data"
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# ---- Prompt ภาษาไทย ----
+# ---- Prompt ภาษาไทย (QA ทั่วไป) ----
 QA_PROMPT = PromptTemplate(
     input_variables=["context", "question"],
     template="""
 คุณคือผู้ช่วยวิเคราะห์เอกสารและสรุปเนื้อหา
 - อ่าน context อย่างละเอียด
 - ตอบคำถามโดยสรุปหัวข้อหลักและเนื้อหาสำคัญ
+- **ไม่ว่าคำถามจะเป็นภาษาใดก็ตาม (เช่น ภาษาอังกฤษ) ให้ตอบเป็นภาษาไทยเท่านั้น**
 - แยกหัวข้อด้วย bullet points หรือ numbered list
 
 Context:
@@ -37,20 +38,40 @@ Context:
 """
 )
 
+# ---- Prompt ภาษาไทย (สำหรับการเปรียบเทียบหลายเอกสาร) ----
+COMPARE_PROMPT = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+คุณคือผู้ช่วยวิเคราะห์และเปรียบเทียบเอกสารหลายฉบับ
+- Context ได้ถูกรวบรวมมาจากเอกสารหลายฉบับ (เช่น 2566-PEA และ 2567-PEA)
+- **งานของคุณคือการเปรียบเทียบเนื้อหาที่เกี่ยวข้องกับคำถาม**
+- **ให้เน้นสรุปเฉพาะความแตกต่างที่สำคัญ** หรือการเปลี่ยนแปลงระหว่างเอกสารที่ระบุในคำถาม
+- หากไม่พบความแตกต่างที่ชัดเจน ให้ระบุว่าเนื้อหาส่วนใหญ่เหมือนกันและให้ยกตัวอย่างที่เหมือนกันมาประกอบ
+- **ไม่ว่าคำถามจะเป็นภาษาใดก็ตาม (เช่น ภาษาอังกฤษ) ให้ตอบเป็นภาษาไทยเท่านั้น**
+
+Context:
+{context}
+
+คำถาม: {question} (เช่น 'สรุปเทียบ 2566-PEA กับ 2567-PEA')
+
+สรุปผลการเปรียบเทียบ (เน้นความแตกต่าง):
+"""
+)
+
 # ---------------- RAG Chain ----------------
-def create_rag_chain(doc_id: str):
+def create_rag_chain(doc_id: str, prompt_template: PromptTemplate = QA_PROMPT):
     """สร้าง RetrievalQA chain สำหรับ doc_id"""
     retriever = load_vectorstore(doc_id)
     return RetrievalQA.from_chain_type(
         llm=get_llm(),
         retriever=retriever,
         chain_type="stuff",
-        chain_type_kwargs={"prompt": QA_PROMPT, "document_variable_name": "context"}
+        chain_type_kwargs={"prompt": prompt_template, "document_variable_name": "context"}
     )
 
-def answer_question(question: str, doc_id: str):
+def answer_question(question: str, doc_id: str, prompt_template: PromptTemplate = QA_PROMPT):
     """ตอบคำถามจากเอกสาร doc_id"""
-    chain = create_rag_chain(doc_id)
+    chain = create_rag_chain(doc_id, prompt_template)
     return chain.run(question)
 
 # ---------------- Helper ----------------
@@ -60,8 +81,10 @@ def clean_diff_markers(text: str) -> str:
 
 def compare_documents(doc1: str, doc2: str, question: str = None):
     """
-    เปรียบเทียบเอกสาร 2 ฉบับ → คืนค่า JSON schema
-    - delta: สรุปความแตกต่าง qualitative แบบอ่านง่าย
+    ฟังก์ชันนี้ถูกออกแบบมาเพื่อเปรียบเทียบสรุป (Summary) ที่ได้จากเอกสาร 2 ฉบับ
+    
+    คำแนะนำ: Endpoint /query ถูกปรับปรุงให้ใช้ MultiDocRetriever + COMPARE_PROMPT
+    ซึ่งจะให้ผลลัพธ์ที่ดีกว่าสำหรับการเปรียบเทียบโดยตรง
     """
     if question is None:
         question = (
@@ -70,17 +93,17 @@ def compare_documents(doc1: str, doc2: str, question: str = None):
         )
 
     combined_prompt = f"""
-เอกสารที่ 1:
+เอกสารที่ 1 (Summary):
 {doc1}
 
-เอกสารที่ 2:
+เอกสารที่ 2 (Summary):
 {doc2}
 
 {question}
 
 ผลลัพธ์ delta:
 """
-
+    # ... (ส่วนที่เหลือเหมือนเดิม) ...
     llm = get_llm()
     prompt = PromptTemplate(input_variables=["query"], template="{query}")
     llm_chain = LLMChain(llm=llm, prompt=prompt)
@@ -99,7 +122,7 @@ def compare_documents(doc1: str, doc2: str, question: str = None):
             }
         ]
     }
-
+# ... (ส่วนที่เหลือของ rag_chain.py เหมือนเดิม) ...
 
 # ---------------- Assessment Workflow ----------------
 async def run_assessment_workflow():
