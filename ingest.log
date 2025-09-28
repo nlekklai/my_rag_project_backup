@@ -112,3 +112,168 @@
 2025-09-27 21:33:07,465 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
 2025-09-27 21:33:18,460 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
 2025-09-27 21:33:33,555 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 09:26:28,809 | INFO | Data directory './data' ensured.
+2025-09-28 09:26:29,140 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงานของ' for doc(s): 2567-PEA
+2025-09-28 09:26:29,170 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 09:26:30,660 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 09:26:35,531 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 09:26:45,166 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:15:25,527 | INFO | Data directory './data' ensured.
+2025-09-28 10:15:34,691 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงานของ' for doc(s): 2567-PEA
+2025-09-28 10:15:34,716 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:15:36,183 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:15:40,198 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 10:15:49,333 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:17:11,997 | INFO | Data directory './data' ensured.
+2025-09-28 10:17:30,719 | INFO | Data directory './data' ensured.
+2025-09-28 10:17:38,503 | INFO | Data directory './data' ensured.
+2025-09-28 10:17:51,768 | INFO | Data directory './data' ensured.
+2025-09-28 10:18:04,643 | INFO | Data directory './data' ensured.
+2025-09-28 10:18:20,518 | INFO | Data directory './data' ensured.
+2025-09-28 10:23:52,353 | INFO | Data directory './data' ensured.
+2025-09-28 10:24:16,544 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงานของ' for doc(s): 2567-PEA
+2025-09-28 10:24:16,573 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:24:18,031 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:24:22,168 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 10:24:33,025 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:30:51,757 | INFO | Data directory './data' ensured.
+2025-09-28 10:32:49,143 | INFO | Data directory './data' ensured.
+2025-09-28 10:32:57,774 | INFO | Query received: สรุปเอกสาร 2567-PEA, doc_ids: None
+2025-09-28 10:32:57,774 | ERROR | Query error: name 'list_vectorstore_folders' is not defined
+2025-09-28 10:33:34,515 | INFO | Data directory './data' ensured.
+2025-09-28 10:34:19,386 | INFO | Data directory './data' ensured.
+2025-09-28 10:34:26,582 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 10:34:26,582 | ERROR | Error processing query: name 'list_vectorstore_folders' is not defined
+2025-09-28 10:35:29,967 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงานของ' doc_ids: 2567-PEA
+2025-09-28 10:35:29,994 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:35:31,434 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:35:36,137 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 10:35:47,136 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:36:22,599 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 10:36:22,600 | ERROR | Error processing query: name 'list_vectorstore_folders' is not defined
+2025-09-28 10:38:12,618 | INFO | Data directory './data' ensured.
+2025-09-28 10:38:23,221 | INFO | Data directory './data' ensured.
+2025-09-28 10:38:26,538 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 10:38:26,539 | ERROR | Error processing query: name 're' is not defined
+2025-09-28 10:39:01,004 | INFO | Data directory './data' ensured.
+2025-09-28 10:39:03,575 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 10:39:03,600 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:39:05,026 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:39:09,214 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 10:39:18,867 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:39:38,721 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 10:39:38,753 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:39:38,760 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:39:44,662 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:40:38,903 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงานของ' doc_ids: 2567-PEA
+2025-09-28 10:40:38,926 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 10:40:38,927 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:40:50,331 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 10:47:07,275 | INFO | Data directory './data' ensured.
+2025-09-28 10:55:16,782 | INFO | Data directory './data' ensured.
+2025-09-28 10:55:46,804 | INFO | Data directory './data' ensured.
+2025-09-28 10:57:05,381 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:57:09,446 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 10:57:09,502 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 10:57:13,309 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:04:01,912 | INFO | Data directory './data' ensured.
+2025-09-28 11:04:16,980 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:04:21,394 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:04:21,454 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:04:25,699 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:05:26,190 | INFO | Data directory './data' ensured.
+2025-09-28 11:05:28,143 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:05:33,034 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:05:33,063 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:05:37,214 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:07:07,703 | INFO | Data directory './data' ensured.
+2025-09-28 11:07:11,715 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:07:16,342 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:07:16,401 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:07:20,770 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:10:55,914 | INFO | Data directory './data' ensured.
+2025-09-28 11:11:10,533 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:11:15,278 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:12:01,383 | INFO | Data directory './data' ensured.
+2025-09-28 11:12:02,749 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:12:06,944 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:12:55,639 | INFO | Data directory './data' ensured.
+2025-09-28 11:12:56,924 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:13:01,213 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:13:01,244 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:13:05,210 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:14:03,864 | INFO | Data directory './data' ensured.
+2025-09-28 11:14:05,941 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:14:10,280 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:14:10,309 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:14:14,336 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:21:30,362 | INFO | Data directory './data' ensured.
+2025-09-28 11:21:47,821 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:21:52,087 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:21:52,149 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:21:55,841 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:26:26,219 | INFO | Data directory './data' ensured.
+2025-09-28 11:26:31,584 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:26:36,091 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:26:36,153 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:26:40,709 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:26:40,718 | ERROR | Comparison failed: 'RunnableSequence' object has no attribute 'get'
+2025-09-28 11:27:27,418 | INFO | Data directory './data' ensured.
+2025-09-28 11:27:28,731 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:27:32,900 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:27:32,929 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:27:36,707 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:27:36,715 | ERROR | Comparison failed: 'RunnableSequence' object has no attribute 'get'
+2025-09-28 11:28:30,320 | INFO | Data directory './data' ensured.
+2025-09-28 11:28:33,155 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:28:37,674 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:28:37,704 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:28:41,408 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:28:41,414 | ERROR | Comparison failed: unsupported operand type(s) for |: 'operator.itemgetter' and 'MultiDocRetriever'
+2025-09-28 11:29:31,688 | INFO | Data directory './data' ensured.
+2025-09-28 11:29:32,967 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:29:37,122 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:29:37,152 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:29:41,599 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:29:41,605 | ERROR | Comparison failed: unsupported operand type(s) for |: 'operator.itemgetter' and 'MultiDocRetriever'
+2025-09-28 11:32:42,186 | INFO | Data directory './data' ensured.
+2025-09-28 11:32:43,499 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:32:48,216 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:32:48,252 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:32:52,010 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:32:52,017 | ERROR | Comparison failed: unsupported operand type(s) for |: 'operator.itemgetter' and 'MultiDocRetriever'
+2025-09-28 11:34:24,117 | INFO | Data directory './data' ensured.
+2025-09-28 11:34:32,630 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:34:37,541 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:34:37,597 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:34:41,686 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:34:42,021 | ERROR | Comparison failed: 'str' object has no attribute 'page_content'
+2025-09-28 11:39:12,788 | INFO | Data directory './data' ensured.
+2025-09-28 11:39:14,281 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:39:18,366 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:39:18,429 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:39:22,155 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:39:27,044 | INFO | Data directory './data' ensured.
+2025-09-28 11:39:29,315 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:39:33,879 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:39:33,941 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:39:38,070 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:39:38,342 | ERROR | Comparison failed: 'str' object has no attribute 'page_content'
+2025-09-28 11:40:55,834 | INFO | Data directory './data' ensured.
+2025-09-28 11:40:57,166 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:41:01,080 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:41:01,110 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:41:04,969 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:41:28,048 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:41:57,799 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:42:10,503 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:42:41,855 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:42:51,266 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:44:30,592 | INFO | Received query: 'สรุปเอกสาร PEA 2567' doc_ids: None
+2025-09-28 11:44:30,619 | INFO | Using RetrievalQA for doc_id: 2567-PEA,สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35,Feedback report ททท ปี 2567 P58-64
+2025-09-28 11:44:30,621 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:44:34,771 | ERROR | Error loading vectorstore for 2567-PEA,สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35,Feedback report ททท ปี 2567 P58-64: Vectorstore for doc_id '2567-PEA,สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35,Feedback report ททท ปี 2567 P58-64' not found
+2025-09-28 11:44:55,330 | INFO | Received query: 'สรุปเอกสาร 2567-PEA' doc_ids: None
+2025-09-28 11:44:55,355 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 11:44:55,356 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:45:06,200 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"

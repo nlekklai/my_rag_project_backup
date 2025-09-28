@@ -1,3 +1,4 @@
+#core/vectorstore.py
 # -------------------- vectorstore.py (ปรับปรุง full version) --------------------
 import os
 from typing import List, Optional

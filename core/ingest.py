@@ -1,3 +1,4 @@
+#core/ingest.py
 import os
 import re
 import logging
@@ -254,3 +255,17 @@ def delete_document(doc_id):
         logging.info(f"Deleted source file: {doc_id}")
     else:
         logging.warning(f"File not found for deletion: {doc_id}")
+
+def list_vectorstore_folders() -> list[str]:
+    """
+    Returns a list of vectorstore folder names currently existing in VECTORSTORE_DIR.
+    These folder names are used as doc_ids in RAG queries.
+    """
+    if not os.path.exists(VECTORSTORE_DIR):
+        return []
+    
+    folders = [
+        name for name in os.listdir(VECTORSTORE_DIR)
+        if os.path.isdir(os.path.join(VECTORSTORE_DIR, name))
+    ]
+    return folders

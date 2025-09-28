@@ -1,3 +1,4 @@
+#core/rag_prompts.py
 from langchain.prompts import PromptTemplate
 
 # -------------------- QA Prompt for Step 4 --------------------
@@ -25,27 +26,24 @@ QA_PROMPT = PromptTemplate(
 )
 
 
-# -------------------- Compare Prompt for /compare --------------------
-# ใช้สำหรับเปรียบเทียบเอกสาร 2 ชิ้น
+# -------------------- Compare Prompt for /compare (FIXED) --------------------
 COMPARE_TEMPLATE = """
-คุณคือผู้ช่วยวิเคราะห์เชิงลึก ภารกิจของคุณคือการเปรียบเทียบเนื้อหาของเอกสาร 2 ชิ้นที่ได้รับ
+คุณคือผู้ช่วยวิเคราะห์เชิงลึก ภารกิจของคุณคือการเปรียบเทียบเนื้อหาของเอกสาร 2 ชิ้นที่เกี่ยวข้อง ({doc_names}) โดยใช้ข้อมูลบริบทที่ให้มา
 
-[เอกสารที่ 1]:
+[บริบท (Context) ที่รวมข้อมูลจากทั้งสองเอกสาร]:
 ---
-{doc_a}
----
-
-[เอกสารที่ 2]:
----
-{doc_b}
+{context}  <--- แก้ไขให้รับ context รวมทั้งหมด
 ---
 
-คำสั่ง:
-1. ระบุประเด็นหลักที่เหมือนกัน (Similarities)
-2. ระบุประเด็นหลักที่แตกต่างกัน (Differences)
+[คำสั่ง]:
+1. สรุปเนื้อหาสำคัญของเอกสารแต่ละฉบับที่เกี่ยวข้องกับคำถามเปรียบเทียบ
+2. ระบุประเด็นหลักที่แตกต่างกัน (Differences) ในด้านเป้าหมาย ตัวชี้วัด หรือระยะเวลาดำเนินการ
 3. สรุปผลการเปรียบเทียบโดยรวมเป็นภาษาไทยที่กระชับ
+
+**คำถามเปรียบเทียบ:** {query}
 """
 
 COMPARE_PROMPT = PromptTemplate(
-    template=COMPARE_TEMPLATE, input_variables=["doc_a", "doc_b"]
+    # *** FIX: เปลี่ยน input_variables เป็น "context", "query", และ "doc_names" ***
+    template=COMPARE_TEMPLATE, input_variables=["context", "query", "doc_names"]
 )

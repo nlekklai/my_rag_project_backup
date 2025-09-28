@@ -1,5 +1,11 @@
+#core/rag_chain.py
 import logging
 from typing import List, Dict, Any
+# --- จำเป็นต้อง import ---
+from core.vectorstore import load_vectorstore
+from core.rag_analysis_utils import get_llm, QA_PROMPT  # get_llm ต้อง return LLM instance
+from langchain.chains import LLMChain
+from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -100,3 +106,28 @@ def _update_step_status(step_id: int, status: str, progress: int):
             step["status"] = status
             step["progress"] = progress
             break
+
+class MultiDocRetriever:
+    """
+    Combine multiple retrievers into one interface.
+    """
+    def __init__(self, retrievers_list: List):
+        self.retrievers = retrievers_list
+
+    def get_relevant_documents(self, query: str):
+        all_docs = []
+        for retriever in self.retrievers:
+            if hasattr(retriever, "get_relevant_documents"):
+                all_docs.extend(retriever.get_relevant_documents(query))
+        return all_docs
+    
+    # --- LLM instance ---
+llm = get_llm()
+
+def create_rag_chain(doc_id: str, prompt_template=QA_PROMPT) -> LLMChain:
+    """
+    สร้าง LLMChain สำหรับ RAG query กับเอกสารเดียว
+    """
+    retriever = load_vectorstore(doc_id).as_retriever()
+    chain = LLMChain(llm=llm, prompt=prompt_template)
+    return chain

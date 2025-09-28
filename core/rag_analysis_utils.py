@@ -1,6 +1,9 @@
+#core/rag_analysis_utils.py
 import logging
 import json # [ADDED] Import json for parsing structured output
-from typing import Dict, Any
+from typing import List, Dict, Any
+from core.ingest import list_vectorstore_folders
+import re
 
 # LangChain Imports
 # IMPORTANT: These imports must match your environment (LangChain 0.1+)
@@ -66,6 +69,39 @@ except ImportError as e:
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def match_doc_ids_from_question(question: str) -> List[str]:
+    all_docs = list_vectorstore_folders()
+    question_lower = question.lower()
+    matched = []
+
+    is_comparison_query = any(keyword in question_lower for keyword in ["เทียบ", "แตกต่าง", "compare"])
+    
+    potential_doc_names = re.findall(r'(\w+-\w+|\w+_\w+|\d{4})', question_lower)
+    
+    explicit_matches = [
+        doc_id for doc_id in all_docs
+        if any(p_name in doc_id.lower() for p_name in potential_doc_names)
+    ]
+
+    if explicit_matches:
+        matched = explicit_matches
+    elif is_comparison_query:
+        matched = all_docs
+    else:
+        matched = all_docs
+
+    if is_comparison_query and any(y in question_lower for y in ["2566", "2567"]):
+        matched = [d for d in all_docs if any(y in d for y in ["2566", "2567"])]
+
+    if not matched:
+        matched = all_docs
+
+    if is_comparison_query and len(matched) < 2 and len(all_docs) >= 2:
+        return all_docs
+
+    return matched
 
 # -------------------- RAG Answer Generation (Main Workflow Step 4) --------------------
 
