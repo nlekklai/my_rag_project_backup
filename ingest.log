@@ -277,3 +277,531 @@
 2025-09-28 11:44:55,355 | INFO | Using RetrievalQA for doc_id: 2567-PEA
 2025-09-28 11:44:55,356 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
 2025-09-28 11:45:06,200 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:51:00,088 | INFO | Data directory './data' ensured.
+2025-09-28 11:51:13,692 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:51:18,757 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:51:18,820 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:51:22,893 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 11:51:47,614 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:52:23,407 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:52:36,812 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:53:12,184 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:53:21,293 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 11:56:15,616 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA,2566-PEA
+2025-09-28 11:56:15,644 | INFO | Using RetrievalQA for doc_id: 2567-PEA,2566-PEA
+2025-09-28 11:56:15,646 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 11:56:19,904 | ERROR | Error loading vectorstore for 2567-PEA,2566-PEA: Vectorstore for doc_id '2567-PEA,2566-PEA' not found
+2025-09-28 12:01:23,913 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA
+2025-09-28 12:01:23,939 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 12:01:23,940 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:01:41,773 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:02:42,093 | INFO | Data directory './data' ensured.
+2025-09-28 12:02:42,783 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA,2566-PEA
+2025-09-28 12:02:44,206 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:02:48,563 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:02:48,602 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:02:52,332 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:02:52,338 | ERROR | Error processing query: answer_question_rag() got an unexpected keyword argument 'multi_retriever'
+2025-09-28 12:04:14,672 | INFO | Data directory './data' ensured.
+2025-09-28 12:06:03,081 | INFO | Data directory './data' ensured.
+2025-09-28 12:06:03,661 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA,2566-PEA
+2025-09-28 12:06:05,123 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:06:09,593 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:06:09,649 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:06:13,573 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:06:13,578 | ERROR | Error processing query: answer_question_rag() got an unexpected keyword argument 'retriever'
+2025-09-28 12:07:16,119 | INFO | Data directory './data' ensured.
+2025-09-28 12:07:17,256 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA,2566-PEA
+2025-09-28 12:07:18,542 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:07:23,418 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:07:23,449 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:07:27,088 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:07:27,094 | ERROR | Error processing query: answer_question_rag() got an unexpected keyword argument 'retriever'
+2025-09-28 12:07:39,922 | INFO | Received query: 'สรุปเฉพาะข้อมูลและแผนการดำเนินงาน' doc_ids: 2567-PEA,2566-PEA
+2025-09-28 12:07:39,924 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:07:44,219 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:07:48,407 | ERROR | Error processing query: answer_question_rag() got an unexpected keyword argument 'retriever'
+2025-09-28 12:09:04,573 | INFO | Data directory './data' ensured.
+2025-09-28 12:09:05,303 | ERROR | Error during RAG processing: answer_question_rag() got an unexpected keyword argument 'doc_id'
+2025-09-28 12:10:45,248 | INFO | Data directory './data' ensured.
+2025-09-28 12:10:46,819 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 12:10:48,255 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:10:52,829 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:11:02,677 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:11:35,771 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 12:11:35,772 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:11:39,639 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:11:43,328 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:13:04,012 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 12:13:04,015 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:13:11,941 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:14:09,942 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 12:14:09,945 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:14:23,826 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:14:44,100 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 12:14:44,102 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:14:48,686 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:15:00,609 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:15:30,576 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 12:15:30,583 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:15:34,898 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:15:40,814 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:15:46,246 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:16:08,443 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:16:19,660 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:16:25,062 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:17:16,290 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:18:28,481 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:18:28,747 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:19:24,932 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:19:35,767 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:20:03,500 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:20:03,643 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:20:40,741 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:20:46,316 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:21:27,687 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 12:35:06,404 | INFO | Deleted vectorstore: rubrics
+2025-09-28 12:35:06,404 | WARNING | File not found for deletion: rubrics
+2025-09-28 12:35:06,405 | INFO | Deleted vectorstore: qa
+2025-09-28 12:35:06,405 | WARNING | File not found for deletion: qa
+2025-09-28 12:35:06,405 | WARNING | File not found for deletion: feedback
+2025-09-28 12:35:06,406 | INFO | Deleted vectorstore: evidence
+2025-09-28 12:35:06,406 | WARNING | File not found for deletion: evidence
+2025-09-28 12:35:10,323 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:35:14,707 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:35:16,152 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (336 chunks)
+2025-09-28 12:35:18,684 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:35:22,703 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:35:23,713 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (335 chunks)
+2025-09-28 12:35:40,849 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 12:35:45,019 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 12:35:47,888 | INFO | Processed seam.pdf -> doc_id: evidence (1157 chunks)
+2025-09-28 13:19:23,816 | INFO | Starting 5-step assessment workflow...
+2025-09-28 13:19:23,817 | INFO | Step 1: Rubrics and QAs loaded successfully.
+2025-09-28 13:19:23,817 | INFO | Step 2: Evidence ingested and indexed.
+2025-09-28 13:19:23,817 | INFO | Assessment workflow completed successfully.
+2025-09-28 13:52:45,263 | INFO | Data directory './data' ensured.
+2025-09-28 14:06:52,164 | INFO | Data directory './data' ensured.
+2025-09-28 14:08:36,714 | INFO | Data directory './data' ensured.
+2025-09-28 14:12:20,934 | INFO | Data directory './data' ensured.
+2025-09-28 14:13:14,002 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:13:19,265 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:13:19,328 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:13:23,077 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:13:47,750 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:14:17,410 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:14:30,681 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:14:59,124 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:15:08,647 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:15:37,160 | INFO | Data directory './data' ensured.
+2025-09-28 14:17:32,936 | INFO | Data directory './data' ensured.
+2025-09-28 14:25:21,612 | INFO | Data directory './data' ensured.
+2025-09-28 14:25:32,737 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 14:25:33,337 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:25:37,651 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:25:48,518 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:26:15,836 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 14:26:15,838 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:26:20,086 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:26:30,784 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:26:36,647 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:26:40,990 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:26:41,009 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:27:19,982 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 14:27:19,985 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:27:25,042 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:27:39,453 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:28:23,364 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:28:27,695 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:28:32,543 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:28:45,952 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:30:17,363 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:31:15,192 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:31:24,504 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:32:04,191 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:32:04,274 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:32:19,683 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:32:23,840 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:32:49,038 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:32:54,311 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:33:49,726 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:34:00,322 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:34:04,465 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:34:36,694 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:34:46,021 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:35:57,099 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:37:12,475 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:37:21,737 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:38:08,792 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:38:08,882 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:38:48,438 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:38:53,652 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:39:45,452 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:41:10,858 | INFO | Using RetrievalQA for doc_id: evidence
+2025-09-28 14:41:10,861 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:41:15,543 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:41:24,028 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:41:45,086 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 14:41:45,087 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:41:55,740 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:42:24,569 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 14:42:24,571 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:42:30,509 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:42:43,825 | INFO | Backing off send_request(...) for 0.5s (requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='us.i.posthog.com', port=443): Read timed out. (read timeout=15))
+2025-09-28 14:43:03,519 | INFO | Using RetrievalQA for doc_id: qa
+2025-09-28 14:43:03,521 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:43:07,906 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:43:10,683 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:43:45,696 | INFO | Using RetrievalQA for doc_id: seam
+2025-09-28 14:43:45,697 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:43:50,301 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:43:56,671 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:44:32,681 | INFO | Using RetrievalQA for doc_id: rubrics
+2025-09-28 14:44:32,684 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:44:37,232 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 14:44:44,536 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:45:22,285 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 14:45:22,287 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:45:32,624 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 14:46:14,583 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 14:46:14,590 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 14:46:29,558 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 17:10:46,611 | INFO | Data directory './data' ensured.
+2025-09-28 17:28:13,194 | INFO | Data directory './data' ensured.
+2025-09-28 17:33:24,396 | INFO | Data directory './data' ensured.
+2025-09-28 17:34:20,227 | INFO | Data directory './data' ensured.
+2025-09-28 17:36:18,452 | INFO | Data directory './data' ensured.
+2025-09-28 17:42:23,721 | INFO | Data directory './data' ensured.
+2025-09-28 17:47:02,125 | INFO | Data directory './data' ensured.
+2025-09-28 17:48:18,781 | INFO | Data directory './data' ensured.
+2025-09-28 17:48:58,445 | INFO | Data directory './data' ensured.
+2025-09-28 17:50:39,470 | INFO | Data directory './data' ensured.
+2025-09-28 17:52:38,320 | INFO | Data directory './data' ensured.
+2025-09-28 17:53:53,097 | INFO | Data directory './data' ensured.
+2025-09-28 17:54:48,471 | INFO | Data directory './data' ensured.
+2025-09-28 17:59:50,047 | INFO | Data directory './data' ensured.
+2025-09-28 18:00:33,933 | WARNING | File not found for deletion: feedback
+2025-09-28 18:00:37,667 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:00:42,172 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:00:43,393 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (370 chunks)
+2025-09-28 18:00:45,885 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:00:49,893 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:00:50,766 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (371 chunks)
+2025-09-28 18:01:07,652 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:01:11,675 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:01:14,663 | INFO | Processed seam.pdf -> doc_id: evidence (1141 chunks)
+2025-09-28 18:03:36,336 | INFO | Data directory './data' ensured.
+2025-09-28 18:03:54,086 | WARNING | File not found for deletion: feedback
+2025-09-28 18:03:57,760 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:04:02,179 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:04:03,397 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (307 chunks)
+2025-09-28 18:04:05,876 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:04:10,156 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:04:11,050 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (308 chunks)
+2025-09-28 18:04:27,840 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:04:31,831 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:04:34,549 | INFO | Processed seam.pdf -> doc_id: evidence (1159 chunks)
+2025-09-28 18:05:42,862 | INFO | Data directory './data' ensured.
+2025-09-28 18:05:48,081 | WARNING | File not found for deletion: feedback
+2025-09-28 18:05:51,762 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:05:56,026 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:05:57,120 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (307 chunks)
+2025-09-28 18:05:59,603 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:06:03,616 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:06:04,411 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (308 chunks)
+2025-09-28 18:06:21,136 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:06:25,393 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:06:28,093 | INFO | Processed seam.pdf -> doc_id: evidence (1159 chunks)
+2025-09-28 18:11:20,100 | INFO | Data directory './data' ensured.
+2025-09-28 18:11:20,921 | WARNING | File not found for deletion: feedback
+2025-09-28 18:11:24,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:11:29,424 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:11:30,836 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (313 chunks)
+2025-09-28 18:11:33,331 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:11:37,196 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:11:38,240 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (314 chunks)
+2025-09-28 18:11:55,272 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:12:00,092 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:12:03,028 | INFO | Processed seam.pdf -> doc_id: evidence (1003 chunks)
+2025-09-28 18:14:28,591 | INFO | Data directory './data' ensured.
+2025-09-28 18:14:30,641 | WARNING | File not found for deletion: feedback
+2025-09-28 18:14:34,181 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:14:38,518 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:14:39,987 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (313 chunks)
+2025-09-28 18:14:42,438 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:14:46,308 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:14:47,433 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (314 chunks)
+2025-09-28 18:15:04,111 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:15:07,940 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:15:10,691 | INFO | Processed seam.pdf -> doc_id: evidence (1003 chunks)
+2025-09-28 18:17:08,746 | INFO | Data directory './data' ensured.
+2025-09-28 18:17:09,624 | WARNING | File not found for deletion: feedback
+2025-09-28 18:17:13,209 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:17:17,677 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:17:19,168 | INFO | Processed 2566-PEA.pdf -> doc_id: rubrics (313 chunks)
+2025-09-28 18:17:21,670 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:17:25,708 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:17:27,006 | INFO | Processed 2567-PEA.pdf -> doc_id: qa (314 chunks)
+2025-09-28 18:17:43,859 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:17:48,590 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:17:51,835 | INFO | Processed seam.pdf -> doc_id: evidence (1003 chunks)
+2025-09-28 18:24:00,198 | INFO | Data directory './data' ensured.
+2025-09-28 18:25:25,561 | INFO | Data directory './data' ensured.
+2025-09-28 18:25:43,104 | INFO | Data directory './data' ensured.
+2025-09-28 18:28:44,705 | INFO | Data directory './data' ensured.
+2025-09-28 18:29:24,461 | INFO | Data directory './data' ensured.
+2025-09-28 18:30:02,094 | INFO | Data directory './data' ensured.
+2025-09-28 18:37:40,437 | INFO | Data directory './data' ensured.
+2025-09-28 18:37:48,322 | INFO | Deleted vectorstore: seam
+2025-09-28 18:37:48,323 | INFO | Deleted source file: seam
+2025-09-28 18:38:58,305 | INFO | Deleted source file: seam
+2025-09-28 18:40:38,593 | INFO | Deleted source file: seam
+2025-09-28 18:41:16,050 | INFO | Data directory './data' ensured.
+2025-09-28 18:41:33,448 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:41:37,618 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:41:40,399 | INFO | Processed seam.pdf -> doc_id: data (1003 chunks)
+2025-09-28 18:44:46,919 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:44:51,125 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:44:53,863 | INFO | Processed seam.pdf -> doc_id: data (1003 chunks)
+2025-09-28 18:50:46,108 | INFO | Data directory './data' ensured.
+2025-09-28 18:51:54,732 | INFO | Data directory './data' ensured.
+2025-09-28 18:52:13,591 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:52:17,849 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:52:20,587 | INFO | Processed seam.pdf -> doc_id: seam (1003 chunks)
+2025-09-28 18:55:09,001 | INFO | Data directory './data' ensured.
+2025-09-28 18:55:27,562 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:55:31,903 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:55:34,587 | INFO | Processed seam.pdf -> doc_id: seam (1004 chunks)
+2025-09-28 18:56:40,378 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 18:56:41,008 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:56:45,200 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:56:56,531 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 18:57:24,860 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 18:57:24,862 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:57:29,247 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:57:40,216 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 18:58:09,773 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 18:58:09,775 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 18:58:13,762 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 18:58:26,008 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:00:28,245 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:00:32,764 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:00:32,773 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:03:34,563 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:03:38,940 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:03:46,917 | INFO | Processed seam.pdf -> doc_id: seam (1007 chunks)
+2025-09-28 19:04:04,265 | INFO | Skipping excluded directory: evidence
+2025-09-28 19:04:04,265 | INFO | Skipping excluded directory: qa
+2025-09-28 19:04:04,265 | INFO | Skipping excluded directory: rubrics
+2025-09-28 19:04:44,572 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:04:44,573 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:04:44,573 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:04:44,573 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:04:44,573 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:04:49,124 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:04:49,124 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:04:49,124 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:04:49,125 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:04:49,125 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:04:55,769 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-09-28 19:05:04,073 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-09-28 19:05:04,433 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks)
+2025-09-28 19:05:04,875 | INFO | Processed Feedback report ททท ปี 2567 P58-64.pdf -> doc_id: Feedback report ททท ปี 2567 P58-64 (324 chunks)
+2025-09-28 19:05:09,908 | INFO | Processed seam.pdf -> doc_id: seam (1007 chunks)
+2025-09-28 19:06:43,833 | INFO | Skipping excluded directory: evidence
+2025-09-28 19:06:43,833 | INFO | Skipping excluded directory: qa
+2025-09-28 19:06:43,833 | INFO | Skipping excluded directory: rubrics
+2025-09-28 19:07:21,017 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:07:21,017 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:07:21,017 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:07:21,017 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:07:21,017 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:07:25,258 | ERROR | Error processing 2566-PEA.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-09-28 19:07:25,539 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:07:25,539 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:07:25,539 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:07:25,539 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:09:16,190 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:09:20,806 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:09:24,033 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks)
+2025-09-28 19:09:24,595 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:09:28,299 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:09:29,034 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-09-28 19:09:32,563 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:09:36,538 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:09:38,992 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-09-28 19:09:41,485 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:09:45,302 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:09:48,196 | INFO | Processed Feedback report ททท ปี 2567 P58-64.pdf -> doc_id: Feedback report ททท ปี 2567 P58-64 (324 chunks)
+2025-09-28 19:10:13,270 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:10:17,496 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:10:23,699 | INFO | Processed seam.pdf -> doc_id: seam (1007 chunks)
+2025-09-28 19:11:43,994 | INFO | Data directory './data' ensured.
+2025-09-28 19:11:48,150 | INFO | Data directory './data' ensured.
+2025-09-28 19:11:55,317 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:11:59,706 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:11:59,773 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:12:04,113 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:12:04,146 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:12:04,146 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:12:04,147 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:12:04,147 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:12:19,363 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:12:48,578 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:12:57,994 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:13:42,414 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 19:13:42,415 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:13:42,497 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:13:46,482 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:14:17,923 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 19:14:17,924 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:14:26,622 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:15:00,702 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:15:05,372 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:15:10,416 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:15:18,520 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:16:13,175 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 19:16:13,178 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:16:13,246 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:16:17,406 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:17:00,226 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 19:17:00,232 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:17:22,829 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:18:28,135 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:18:28,143 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:18:33,150 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:18:43,416 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:19:36,568 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:20:17,112 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:21:03,089 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:21:18,793 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:21:18,795 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:21:34,240 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 19:21:34,242 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:21:44,086 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:22:59,286 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:23:06,814 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:23:23,034 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:23:23,034 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:23:39,262 | INFO | Using RetrievalQA for doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-09-28 19:23:39,263 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:23:47,410 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:24:28,888 | INFO | Using RetrievalQA for doc_id: Feedback report ททท ปี 2567 P58-64
+2025-09-28 19:24:28,890 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:24:39,001 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:25:25,946 | INFO | Data directory './data' ensured.
+2025-09-28 19:25:27,234 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:25:27,833 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:25:32,355 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:25:36,857 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:27:32,545 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:27:36,630 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:27:36,637 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:27:55,985 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:28:33,019 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:28:46,835 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:30:08,980 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:30:16,237 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:30:59,232 | WARNING | Missing internal module imports (e.g., rag_prompts/models.llm): attempted relative import beyond top-level package. Using mock components.
+2025-09-28 19:31:00,099 | INFO | Data directory './data' ensured.
+2025-09-28 19:31:05,480 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:31:09,646 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:31:09,708 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:31:14,813 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:31:14,819 | ERROR | Comparison failed: Expected a Runnable, callable or dict.Instead got an unsupported type: <class 'core.rag_analysis_utils.MockLLM'>
+2025-09-28 19:31:14,825 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:31:14,825 | WARNING | Mocking cache load for 2566-PEA. (Assuming successfully cached)
+2025-09-28 19:31:14,825 | ERROR | Error loading vectorstore for 2566-PEA: 2 validation errors for LLMChain
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x137563f50>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x137563f50>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+2025-09-28 19:31:25,729 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:31:25,730 | WARNING | Mocking cache load for 2566-PEA. (Assuming successfully cached)
+2025-09-28 19:31:25,731 | ERROR | Error loading vectorstore for 2566-PEA: 2 validation errors for LLMChain
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x134213ef0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x134213ef0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+2025-09-28 19:31:37,830 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:31:37,830 | WARNING | Mocking cache load for 2567-PEA. (Assuming successfully cached)
+2025-09-28 19:31:37,831 | ERROR | Error loading vectorstore for 2567-PEA: 2 validation errors for LLMChain
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x137762b10>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x137762b10>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+2025-09-28 19:32:09,405 | INFO | Data directory './data' ensured.
+2025-09-28 19:32:09,992 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:32:10,672 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:32:15,038 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:32:20,714 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:32:23,853 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:32:28,746 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:32:28,754 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:32:52,201 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:32:52,202 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:33:05,627 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:34:02,898 | WARNING | Missing internal module imports (e.g., rag_prompts/models.llm): attempted relative import beyond top-level package. Using mock components.
+2025-09-28 19:34:03,700 | INFO | Data directory './data' ensured.
+2025-09-28 19:34:03,724 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:34:03,724 | WARNING | Mocking cache load for 2566-PEA. (Assuming successfully cached)
+2025-09-28 19:34:03,724 | INFO | Retriever loaded from cache for 2566-PEA.
+2025-09-28 19:34:03,724 | ERROR | Unexpected error in RetrievalQA chain: 2 validation errors for LLMChain
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x162d464b0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x162d464b0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+2025-09-28 19:34:27,693 | INFO | Data directory './data' ensured.
+2025-09-28 19:34:37,836 | INFO | Data directory './data' ensured.
+2025-09-28 19:34:37,974 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:34:38,811 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:34:43,241 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:34:49,115 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:35:29,717 | WARNING | Missing internal module imports (e.g., rag_prompts/models.llm): attempted relative import beyond top-level package. Using mock components.
+2025-09-28 19:35:30,679 | INFO | Data directory './data' ensured.
+2025-09-28 19:35:40,013 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:35:40,013 | WARNING | Mocking cache load for 2567-PEA. (Assuming successfully cached)
+2025-09-28 19:35:40,013 | INFO | Retriever loaded from cache for 2567-PEA.
+2025-09-28 19:35:40,015 | ERROR | Unexpected error in RetrievalQA chain: 2 validation errors for LLMChain
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x11b1c81a0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+llm.is-instance[Runnable]
+  Input should be an instance of Runnable [type=is_instance_of, input_value=<core.rag_analysis_utils....M object at 0x11b1c81a0>, input_type=MockLLM]
+    For further information visit https://errors.pydantic.dev/2.11/v/is_instance_of
+2025-09-28 19:36:39,483 | INFO | Data directory './data' ensured.
+2025-09-28 19:36:46,225 | WARNING | Missing internal module imports (e.g., rag_prompts/models.llm): attempted relative import beyond top-level package. Using mock components.
+2025-09-28 19:36:47,039 | INFO | Data directory './data' ensured.
+2025-09-28 19:37:42,610 | INFO | Data directory './data' ensured.
+2025-09-28 19:37:43,595 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:37:44,171 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:37:48,123 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:37:50,414 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:39:08,213 | INFO | Data directory './data' ensured.
+2025-09-28 19:39:12,730 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:39:13,302 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:39:17,626 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:39:19,143 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:40:40,368 | INFO | Using RetrievalQA for doc_id: 2567-PEA
+2025-09-28 19:40:40,369 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:40:52,231 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:41:22,585 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:41:22,586 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:41:26,665 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-28 19:41:27,170 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:43:57,893 | INFO | Using RetrievalQA for doc_id: 2566-PEA
+2025-09-28 19:43:57,895 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:44:07,553 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:44:34,412 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:44:38,370 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:44:56,656 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-09-28 19:45:28,777 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-09-28 19:45:42,775 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"

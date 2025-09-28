@@ -1,7 +1,6 @@
-#core/rag_analysis_utils.py
 import logging
 import json # [ADDED] Import json for parsing structured output
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from core.ingest import list_vectorstore_folders
 import re
 
@@ -12,6 +11,8 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import Document 
 
 # External/Local Module Imports (These need to exist in your project structure)
+IS_MOCKING_ACTIVE = False # <--- Initialize flag for Mock Mode detection
+
 # NOTE: Using relative import (.) as specified in the provided code snippet
 try:
     from models.llm import get_llm
@@ -26,6 +27,7 @@ try:
 except ImportError as e:
     # Fallback/Mock for environment where internal modules are not defined
     logging.warning(f"Missing internal module imports (e.g., rag_prompts/vectorstore/models.llm): {e}. Using mock components.")
+    IS_MOCKING_ACTIVE = True # <--- Set flag when mocking is active
     
     # Define Mock objects to allow the file to be runnable/loadable
     class MockLLM:
@@ -104,64 +106,86 @@ def match_doc_ids_from_question(question: str) -> List[str]:
     return matched
 
 # -------------------- RAG Answer Generation (Main Workflow Step 4) --------------------
-
 def answer_question_rag(
-    question: str, 
-    doc_id: str = None, 
-    context: str = None,
+    question: str,
+    doc_id: Optional[str] = None,
+    context: Optional[str] = None,
     prompt_template: PromptTemplate = QA_PROMPT
 ) -> str:
     """
     RAG Answering using a specific document or a pre-retrieved context.
 
-    Note: The main 5-step workflow (in rag_chain.py) uses the 'context' branch 
-    because Step 3 handles the multi-document retrieval and mapping.
+    Args:
+        question (str): คำถามที่ต้องการถาม
+        doc_id (Optional[str]): หากต้องการถามจากเอกสารเฉพาะ
+        context (Optional[str]): หากมี context เตรียมไว้แล้ว (เช่น multi-doc)
+        prompt_template (PromptTemplate): Prompt template สำหรับ LLM
+
+    Returns:
+        str: คำตอบที่สรุปจาก LLM / RetrievalQA
     """
+    
+    # --- FIX 1: MOCKING CHECK to bypass Pydantic/LangChain validation ---
+    if IS_MOCKING_ACTIVE:
+        if doc_id:
+             return (f"คำตอบจำลองสำหรับเอกสาร {doc_id}: ระบบทำงานในโหมดจำลอง (Mock Mode) เนื่องจากขาดไฟล์ภายใน "
+                     f"(เช่น models/llm.py, rag_prompts.py) ไม่สามารถทำการเรียก LLM จริงได้ "
+                     f"คำถามคือ: '{question}'.")
+    # --- END MOCKING CHECK ---
+    
     llm = get_llm()
 
+    # กรณีมี context เตรียมไว้แล้ว
     if context:
-        # Scenario 1: Context is already mapped and provided (used in the 5-step workflow)
         logging.info("Using pre-mapped context for RAG answering.")
-        
-        # Prepare the full prompt text using the context and question
+
+        # เตรียม prompt ด้วย context และ question
         prompt_text = prompt_template.format(context=context, question=question)
-        
-        # Use a simple LLMChain for text generation
-        llm_chain = LLMChain(llm=llm, prompt=PromptTemplate(input_variables=["query"], template="{query}"))
+
+        # ใช้ LLMChain ธรรมดา
+        llm_chain = LLMChain(
+            llm=llm,
+            prompt=PromptTemplate(input_variables=["query"], template="{query}")
+        )
         try:
-            # We pass the fully formatted prompt text to the LLMChain
             result = llm_chain.invoke({"query": prompt_text})
-            # LangChain 0.1 returns a dictionary, and the output text is usually under "text"
-            return result.get("text", "ไม่สามารถสร้างคำตอบจาก LLM ได้").strip()
+            # LangChain บางเวอร์ชันคืน dict, ตรวจสอบ key 'text'
+            if isinstance(result, dict):
+                return result.get("text", "ไม่สามารถสร้างคำตอบจาก LLM ได้").strip()
+            return str(result).strip()
         except Exception as e:
-            logging.error(f"Error during LLM Inference for question '{question}': {e}")
+            logging.error(f"Error during LLM inference: {e}")
             return "เกิดข้อผิดพลาดในการสรุปผลการประเมิน"
-    
+
+    # กรณีใช้ doc_id โหลด vectorstore
     elif doc_id:
-        # Scenario 2: Standard RetrievalQA from a single vectorstore (if needed for API endpoints)
         logging.info(f"Using RetrievalQA for doc_id: {doc_id}")
         try:
-            # load_vectorstore should return a Retriever or a Vectorstore object that can act as a Retriever
             vectorstore = load_vectorstore(doc_id)
-            retriever = vectorstore.as_retriever() if hasattr(vectorstore, 'as_retriever') else vectorstore
-            
-            # Use RetrievalQA chain to handle retrieval and answering
+            retriever = getattr(vectorstore, "as_retriever", lambda: vectorstore)()
+
             rag_chain = RetrievalQA.from_chain_type(
                 llm=llm,
                 retriever=retriever,
                 chain_type="stuff",
                 chain_type_kwargs={"prompt": prompt_template, "document_variable_name": "context"}
             )
-            return rag_chain.run(question)
+            
+            # --- FIX 2: Change deprecated .run() to modern .invoke() ---
+            result = rag_chain.invoke({"query": question})
+            return result.get("result", "")
+            # --- END FIX 2 ---
+            
         except ValueError as e:
             logging.error(f"Error loading vectorstore for {doc_id}: {e}")
             return f"ข้อผิดพลาด: ไม่พบ Vectorstore สำหรับ {doc_id}"
         except Exception as e:
             logging.error(f"Unexpected error in RetrievalQA chain: {e}")
-            return "เกิดข้อผิดพลาดในการเรียกใช้ RetrievalQA Chain"
-    
-    return "ไม่สามารถดำเนินการ RAG ได้: ขาด Context หรือ Doc ID"
+            # [IMPROVEMENT]: Return detailed error for better debugging
+            return f"เกิดข้อผิดพลาดในการเรียกใช้ RetrievalQA Chain: โปรดตรวจสอบ LLM config หรือ API Key. ({e})"
 
+    # ไม่มีข้อมูลให้ประมวลผล
+    return "ไม่สามารถดำเนินการ RAG ได้: ขาด Context หรือ Doc ID"
 
 # -------------------- Document Comparison --------------------
 
@@ -171,6 +195,17 @@ def compare_documents(doc_a_id: str, doc_b_id: str, query: str = None) -> Dict[s
     vectorstores based on the query before passing to LLM for comparison inference.
     (Updated to use RAG retrieval before inference and structured JSON output)
     """
+    # --- MOCKING CHECK for Comparison ---
+    if IS_MOCKING_ACTIVE:
+        return {
+            "error": (f"ระบบทำงานในโหมดจำลอง (Mock Mode) เนื่องจากขาดไฟล์ภายใน (เช่น models/llm.py) "
+                      f"ไม่สามารถทำการเปรียบเทียบ LLM จริงได้: คำถามคือ '{query}'"),
+            "doc_a_id": doc_a_id,
+            "doc_b_id": doc_b_id,
+            "metrics": []
+        }
+    # --- END MOCKING CHECK ---
+    
     llm = get_llm()
     
     # 1. Define the Comparison Query

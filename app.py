@@ -147,30 +147,63 @@ async def startup_event():
     os.makedirs(temp_data_dir, exist_ok=True)
     logging.info(f"Data directory '{temp_data_dir}' ensured.")
 
+@app.get("/api/documents")
+async def get_documents():
+    return list_documents()
+
+@app.delete("/api/documents/{doc_id}")
+async def remove_document(doc_id: str):
+    try:
+        delete_document(doc_id)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 # -----------------------------
 # --- RAG Query Endpoint ---
 # -----------------------------
-@app.post("/query", response_model=QueryResponse)
+@app.post("/query")
 async def query_endpoint(
-    question: str = Form(...), 
-    doc_ids: Optional[str] = Form(None),
-    conversation_id: Optional[str] = Form(None)
+    question: str = Form(...),
+    doc_ids: Optional[str] = Form(None)
 ):
     try:
-        logging.info(f"Received query: '{question}' doc_ids: {doc_ids}")
-        docs_to_use = [d.strip() for d in doc_ids.split(",") if d.strip()] if doc_ids else match_doc_ids_from_question(question)
+        # แปลง CSV string เป็น list
+        docs_to_use: List[str] = []
+        if doc_ids:
+            docs_to_use = [d.strip() for d in doc_ids.split(",") if d.strip()]
+        else:
+            # ถ้าไม่ระบุ doc_ids ให้ match จากคำถาม
+            docs_to_use = match_doc_ids_from_question(question)
 
         if not docs_to_use:
-            raise HTTPException(status_code=404, detail="No matching documents found for this query")
+            raise HTTPException(status_code=404, detail="ไม่พบเอกสารที่ตรงกับคำถามนี้")
 
-        answer = answer_question_rag(question=question, doc_id=",".join(docs_to_use))
-        return QueryResponse(answer=answer, conversation_id=conversation_id)
-    
+        # ฟังก์ชันสรุปหลายเอกสาร
+        def summarize_multi_docs():
+            summaries = []
+            for doc_id in docs_to_use:
+                try:
+                    summary = answer_question_rag(question=question, doc_id=doc_id)
+                except ValueError:
+                    summary = f"ข้อผิดพลาด: ไม่พบ Vectorstore สำหรับ {doc_id}"
+                summaries.append({"doc_id": doc_id, "summary": summary})
+            return summaries
+
+        # เรียก summarize ใน threadpool (ไม่บล็อก)
+        results = await run_in_threadpool(summarize_multi_docs)
+
+        # รวมผลสรุปเป็นข้อความเดียว (optional)
+        combined_answer = "\n\n".join([f"**{r['doc_id']}**:\n{r['summary']}" for r in results])
+
+        return {"answer": combined_answer}
+
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error processing query: {e}")
-        raise HTTPException(status_code=500, detail=f"Error during RAG processing: {e}")
+        logging.error(f"Error during RAG processing: {e}")
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการประมวลผล RAG: {e}")
+
 
 # -----------------------------
 # --- Document Upload Endpoint ---
