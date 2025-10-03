@@ -1,5 +1,4 @@
-#core/vectorstore.py
-# -------------------- vectorstore.py (ปรับปรุง full version) --------------------
+# -------------------- core/vectorstore.py --------------------
 import os
 from typing import List, Optional
 from langchain.schema import Document, BaseRetriever
@@ -16,7 +15,7 @@ def get_hf_embeddings():
     หาก device ไม่สามารถใช้ได้จะ fallback ไป CPU
     """
     device = "mps"
-    print(f"Using device: {device} for embeddings (M3 acceleration)")
+    print(f"⚡ Using device: {device} for embeddings (M3 acceleration)")
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": device}
@@ -24,18 +23,20 @@ def get_hf_embeddings():
 
 # -------------------- Vectorstore management --------------------
 def list_vectorstore_folders() -> List[str]:
-    """List all vectorstore folders under VECTORSTORE_DIR"""
+    """List all vectorstore folders under VECTORSTORE_DIR (ignore files like .DS_Store)"""
     if not os.path.exists(VECTORSTORE_DIR):
         return []
-    return [f for f in os.listdir(VECTORSTORE_DIR)
-            if os.path.isdir(os.path.join(VECTORSTORE_DIR, f))]
+    return [
+        f for f in os.listdir(VECTORSTORE_DIR)
+        if os.path.isdir(os.path.join(VECTORSTORE_DIR, f))
+    ]
 
 def vectorstore_exists(doc_id: str) -> bool:
-    """Check if vectorstore for a given doc_id exists"""
+    """Check if vectorstore for a given doc_id exists (must be directory with content)"""
     path = os.path.join(VECTORSTORE_DIR, doc_id)
-    return os.path.exists(path) and bool(os.listdir(path))
+    return os.path.isdir(path) and bool(os.listdir(path))
 
-def save_to_vectorstore(doc_id: str, text_chunks: list[str], metadata: dict = None):
+def save_to_vectorstore(doc_id: str, text_chunks: List[str], metadata: dict = None):
     """
     Save list of text chunks into a Chroma vectorstore
     """
@@ -56,18 +57,17 @@ def save_to_vectorstore(doc_id: str, text_chunks: list[str], metadata: dict = No
         embedding=embeddings,
         persist_directory=doc_dir
     )
-    # vectordb.persist()  # Chroma auto-persist
     print(f"📄 Saved {len(docs)} chunks for doc_id={doc_id} into {doc_dir}")
     return vectordb
 
-def load_vectorstore(doc_id: str, top_k: int = 5):
+def load_vectorstore(doc_id: str, top_k: int = 15):
     """
     Load a vectorstore retriever for a specific doc_id
     top_k: number of passages to retrieve per query
     """
     embeddings = get_hf_embeddings()
     path = os.path.join(VECTORSTORE_DIR, doc_id)
-    if not os.path.exists(path):
+    if not os.path.isdir(path):
         raise ValueError(f"Vectorstore for doc_id '{doc_id}' not found")
     retriever = Chroma(
         persist_directory=path,
@@ -90,6 +90,7 @@ class MultiDocRetriever(BaseRetriever):
         docs = []
 
         def retrieve(r):
+            # รองรับ retriever แบบ custom (มี _get_relevant_documents) และแบบมาตรฐาน
             if hasattr(r, "_get_relevant_documents"):
                 return r._get_relevant_documents(query, run_manager=run_manager)[:self._k_per_doc]
             return r.get_relevant_documents(query)[:self._k_per_doc]
@@ -114,7 +115,7 @@ class MultiDocRetriever(BaseRetriever):
         return unique_docs
 
 # -------------------- Load multiple vectorstores --------------------
-def load_all_vectorstores(doc_ids: Optional[List[str]] = None, top_k: int = 5) -> MultiDocRetriever:
+def load_all_vectorstores(doc_ids: Optional[List[str]] = None, top_k: int = 10) -> MultiDocRetriever:
     """
     Load retrievers for multiple doc_ids (or all folders if doc_ids=None)
     Returns a MultiDocRetriever combining them

@@ -1,0 +1,101 @@
+2025-09-30 16:49:37,741 - INFO - Workflow logger initialized
+2025-09-30 16:52:05,746 - INFO - Workflow logger initialized
+2025-09-30 16:52:25,824 - INFO - Step 1: Load Rubrics & QA - running (20%)
+2025-09-30 16:52:25,825 - INFO - Mock mode active: using sample questions and data
+2025-09-30 16:52:25,825 - INFO - Step 5: Finalize Results - done (100%)
+2025-09-30 16:52:25,825 - INFO - Mock workflow completed successfully.
+2025-09-30 16:52:56,262 - INFO - Workflow logger initialized
+2025-09-30 16:53:10,663 - INFO - Workflow logger initialized
+2025-09-30 16:53:14,410 - INFO - Workflow logger initialized
+2025-09-30 16:53:17,035 - INFO - Step 1: Load Rubrics & QA - running (20%)
+2025-09-30 16:53:17,035 - INFO - Step 1: Rubrics and QAs loaded successfully.
+2025-09-30 16:53:17,035 - INFO - Step 2: Ingest Evidence - running (40%)
+2025-09-30 16:53:22,580 - ERROR - Assessment workflow failed: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-09-30 16:54:14,361 - INFO - Workflow logger initialized
+2025-10-01 10:29:14,469 - INFO - Workflow logger initialized
+2025-10-01 10:30:55,496 - INFO - Step 1: Load Rubrics & QA - running (20%)
+2025-10-01 10:30:55,497 - INFO - Mock mode active: using sample questions and data
+2025-10-01 10:30:55,497 - INFO - Step 5: Finalize Results - done (100%)
+2025-10-01 10:30:55,497 - INFO - Mock workflow completed successfully.
+2025-10-01 12:27:35,178 - INFO - Step 1: Load Rubrics & QA - running (20%)
+2025-10-01 12:27:35,180 - INFO - Mock mode active: using sample questions and data
+2025-10-01 12:27:35,180 - INFO - Step 5: Finalize Results - done (100%)
+2025-10-01 12:27:35,180 - INFO - Mock workflow completed successfully.
+2025-10-01 13:26:19,732 - INFO - Workflow logger initialized
+2025-10-01 15:04:26,669 - INFO - Workflow logger initialized
+2025-10-01 15:07:07,162 - INFO - Workflow logger initialized
+2025-10-01 15:11:55,449 - INFO - Workflow logger initialized
+2025-10-01 15:12:21,732 - INFO - Workflow logger initialized
+2025-10-01 15:23:48,244 - INFO - Workflow logger initialized
+2025-10-01 15:47:15,294 - INFO - Workflow logger initialized
+2025-10-01 15:48:07,927 - INFO - Workflow logger initialized
+2025-10-01 15:52:07,718 - INFO - Workflow logger initialized
+2025-10-01 15:53:00,672 - INFO - Workflow logger initialized
+2025-10-01 15:53:03,008 - INFO - Workflow logger initialized
+2025-10-01 15:53:53,737 - INFO - Workflow logger initialized
+2025-10-01 16:09:31,753 - INFO - Workflow logger initialized
+2025-10-01 16:38:53,936 - INFO - Workflow logger initialized
+2025-10-01 16:38:59,243 - INFO - Workflow logger initialized
+2025-10-01 16:43:46,143 - INFO - Workflow logger initialized
+2025-10-01 16:43:48,690 - INFO - Workflow logger initialized
+2025-10-01 16:57:54,769 - INFO - Workflow logger initialized
+2025-10-01 16:58:28,205 - INFO - Workflow logger initialized
+2025-10-01 16:58:30,926 - INFO - Workflow logger initialized
+2025-10-01 16:59:29,226 - INFO - Workflow logger initialized
+2025-10-01 16:59:31,429 - INFO - Workflow logger initialized
+2025-10-01 16:59:34,183 - INFO - Workflow logger initialized
+2025-10-01 17:01:16,210 - INFO - Workflow logger initialized
+2025-10-01 17:01:23,499 - INFO - Workflow logger initialized
+2025-10-01 17:03:47,923 - INFO - Workflow logger initialized
+2025-10-01 17:03:48,930 - INFO - Workflow logger initialized
+2025-10-01 17:05:32,815 - INFO - Workflow logger initialized
+2025-10-01 17:05:33,470 - INFO - Workflow logger initialized
+2025-10-01 17:06:45,927 - INFO - Workflow logger initialized
+2025-10-01 17:06:47,271 - INFO - Workflow logger initialized
+2025-10-01 17:10:35,447 - INFO - Workflow logger initialized
+2025-10-01 17:10:37,514 - INFO - Workflow logger initialized
+2025-10-01 17:15:31,262 - INFO - Workflow logger initialized
+2025-10-01 17:15:37,504 - INFO - Workflow logger initialized
+2025-10-01 17:30:10,807 - INFO - Workflow logger initialized
+2025-10-01 17:30:12,099 - INFO - Workflow logger initialized
+2025-10-01 17:31:47,093 - INFO - Workflow logger initialized
+2025-10-01 17:31:48,762 - INFO - Workflow logger initialized
+2025-10-01 17:37:26,446 - INFO - Workflow logger initialized
+2025-10-01 17:37:31,678 - INFO - Workflow logger initialized
+2025-10-01 17:52:36,946 - INFO - Workflow logger initialized
+2025-10-01 19:34:40,230 - INFO - Workflow logger initialized
+2025-10-02 08:08:49,881 - INFO - Workflow logger initialized
+2025-10-02 11:51:17,577 - INFO - Workflow logger initialized
+2025-10-02 12:51:46,658 - INFO - Workflow logger initialized
+2025-10-02 14:54:38,961 - INFO - Workflow logger initialized
+2025-10-02 14:54:55,324 - INFO - Workflow logger initialized
+2025-10-02 15:05:52,230 - INFO - Workflow logger initialized
+2025-10-02 15:08:45,526 - INFO - Workflow logger initialized
+2025-10-02 15:09:43,749 - INFO - Workflow logger initialized
+2025-10-02 15:10:48,280 - INFO - Workflow logger initialized
+2025-10-02 15:11:59,977 - INFO - Workflow logger initialized
+2025-10-02 15:14:26,978 - INFO - Workflow logger initialized
+2025-10-02 15:16:26,417 - INFO - Workflow logger initialized
+2025-10-03 09:50:34,032 - INFO - Workflow logger initialized
+2025-10-03 12:08:41,021 - INFO - Workflow logger initialized
+2025-10-03 12:12:19,062 - INFO - Workflow logger initialized
+2025-10-03 12:14:16,122 - INFO - Workflow logger initialized
+2025-10-03 12:17:42,623 - INFO - Workflow logger initialized
+2025-10-03 12:43:47,087 - INFO - Workflow logger initialized
+2025-10-03 12:45:22,643 - INFO - Workflow logger initialized
+2025-10-03 12:46:26,933 - INFO - Workflow logger initialized
+2025-10-03 12:49:39,752 - INFO - Workflow logger initialized
+2025-10-03 18:10:05,569 - INFO - Workflow logger initialized
+2025-10-03 18:16:58,223 - INFO - Workflow logger initialized
+2025-10-03 18:20:55,943 - INFO - Workflow logger initialized
+2025-10-03 18:57:39,262 - INFO - Workflow logger initialized
+2025-10-03 19:20:44,204 - INFO - Workflow logger initialized
+2025-10-03 19:26:45,789 - INFO - Workflow logger initialized
+2025-10-03 19:27:07,939 - INFO - Workflow logger initialized
+2025-10-03 19:29:16,704 - INFO - Workflow logger initialized
+2025-10-03 19:29:37,635 - INFO - Workflow logger initialized
+2025-10-03 19:32:34,325 - INFO - Workflow logger initialized
+2025-10-03 19:37:23,564 - INFO - Workflow logger initialized
+2025-10-03 19:37:26,123 - INFO - Workflow logger initialized
+2025-10-03 19:38:16,928 - INFO - Workflow logger initialized
+2025-10-03 19:53:00,007 - INFO - Workflow logger initialized
