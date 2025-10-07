@@ -1857,3 +1857,1757 @@ llm.is-instance[Runnable]
 2025-10-03 19:53:22,869 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
 2025-10-03 19:53:26,540 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
 2025-10-03 19:53:58,686 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-03 20:03:20,464 | INFO | Workflow logger initialized
+2025-10-03 20:03:21,105 | INFO | Data directory 'data' ensured.
+2025-10-03 20:30:36,829 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-03 20:30:40,893 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-03 20:30:40,954 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-03 20:30:44,687 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-03 20:31:19,097 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-03 20:40:50,972 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-03 20:40:55,015 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-03 20:41:34,203 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-04 00:13:02,008 | INFO | Workflow logger initialized
+2025-10-04 00:13:02,636 | INFO | Data directory 'data' ensured.
+2025-10-04 00:30:03,938 | INFO | Workflow logger initialized
+2025-10-04 00:30:04,590 | INFO | Data directory 'data' ensured.
+2025-10-04 09:48:04,798 | INFO | Workflow logger initialized
+2025-10-04 09:48:05,429 | INFO | Data directory 'data' ensured.
+2025-10-04 09:50:36,003 | ERROR | No loader function for extension .xlsx
+2025-10-04 10:12:54,814 | INFO | Workflow logger initialized
+2025-10-04 10:20:08,182 | INFO | Workflow logger initialized
+2025-10-04 10:41:12,571 | INFO | Workflow logger initialized
+2025-10-04 10:47:04,311 | INFO | Workflow logger initialized
+2025-10-04 10:52:16,134 | INFO | Workflow logger initialized
+2025-10-04 10:52:16,687 | INFO | Data directory 'data' ensured.
+2025-10-04 10:53:49,441 | INFO | Workflow logger initialized
+2025-10-04 10:53:50,008 | INFO | Data directory 'data' ensured.
+2025-10-04 11:11:32,878 | INFO | Workflow logger initialized
+2025-10-04 11:11:33,443 | INFO | Data directory 'data' ensured.
+2025-10-04 11:11:44,999 | ERROR | Ingest failed for Compliance Copilot Use Case: No content provided for ingestion
+2025-10-04 11:11:45,000 | ERROR | Ingest failed for Hotel Budgeting: No content provided for ingestion
+2025-10-04 11:17:46,757 | INFO | Workflow logger initialized
+2025-10-04 11:17:47,438 | INFO | Data directory 'data' ensured.
+2025-10-04 11:20:45,458 | INFO | Workflow logger initialized
+2025-10-04 11:20:46,020 | INFO | Data directory 'data' ensured.
+2025-10-04 11:24:13,624 | INFO | Workflow logger initialized
+2025-10-04 11:24:14,414 | INFO | Data directory 'data' ensured.
+2025-10-04 11:43:51,080 | INFO | Workflow logger initialized
+2025-10-04 11:43:51,668 | INFO | Data directory 'data' ensured.
+2025-10-04 11:48:22,079 | INFO | Workflow logger initialized
+2025-10-04 11:49:29,520 | INFO | Workflow logger initialized
+2025-10-04 11:49:30,247 | INFO | Data directory 'data' ensured.
+2025-10-04 11:50:56,689 | INFO | Workflow logger initialized
+2025-10-04 11:50:57,228 | INFO | Data directory 'data' ensured.
+2025-10-04 11:54:17,457 | INFO | Workflow logger initialized
+2025-10-04 11:54:18,011 | INFO | Data directory 'data' ensured.
+2025-10-04 11:56:21,325 | INFO | Workflow logger initialized
+2025-10-04 11:56:21,938 | INFO | Data directory 'data' ensured.
+2025-10-04 11:58:31,763 | INFO | Workflow logger initialized
+2025-10-04 11:58:32,327 | INFO | Data directory 'data' ensured.
+2025-10-04 12:11:40,157 | INFO | Workflow logger initialized
+2025-10-04 12:11:40,831 | INFO | Data directory 'data' ensured.
+2025-10-04 12:13:54,133 | INFO | Workflow logger initialized
+2025-10-04 12:13:54,691 | INFO | Data directory 'data' ensured.
+2025-10-04 12:14:02,046 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:14:06,313 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:14:06,533 | INFO | Processed Compliance Copilot Use Case.csv -> doc_id: general_Compliance Copilot Use Case (5 chunks)
+2025-10-04 12:14:06,533 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:14:10,169 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:14:10,788 | ERROR | No loader function for extension .xlsx
+2025-10-04 12:14:10,789 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:14:14,611 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:22:10,953 | INFO | Workflow logger initialized
+2025-10-04 12:22:11,503 | INFO | Data directory 'data' ensured.
+2025-10-04 12:24:06,828 | ERROR | Failed to load .docx data/evidence/Private LLM TOR.docx: No module named 'docx'
+2025-10-04 12:24:06,828 | WARNING | No content loaded from Private LLM TOR.docx
+2025-10-04 12:24:11,187 | ERROR | Failed to load .docx data/evidence/Private LLM TOR.docx: No module named 'docx'
+2025-10-04 12:24:11,188 | WARNING | No content loaded from Private LLM TOR.docx
+2025-10-04 12:24:11,808 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:24:16,229 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:28:23,598 | INFO | Workflow logger initialized
+2025-10-04 12:29:16,155 | INFO | Workflow logger initialized
+2025-10-04 12:29:16,803 | INFO | Data directory 'data' ensured.
+2025-10-04 12:33:03,048 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:33:07,812 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:33:07,987 | INFO | Processed Compliance Copilot Use Case.csv -> doc_id: general_Compliance Copilot Use Case (5 chunks)
+2025-10-04 12:33:15,918 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:33:20,243 | INFO | Processed Compliance Copilot Use Case.csv -> doc_id: general_Compliance Copilot Use Case (5 chunks)
+2025-10-04 12:33:20,244 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-04 12:33:23,889 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-04 12:41:00,423 | INFO | Workflow logger initialized
+2025-10-04 12:41:01,068 | INFO | Data directory 'data' ensured.
+2025-10-04 12:41:16,473 | ERROR | No loader function for extension .xlsx
+2025-10-05 13:03:35,686 | INFO | Workflow logger initialized
+2025-10-05 13:03:36,510 | INFO | Data directory 'data' ensured.
+2025-10-05 13:05:24,928 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:05:29,476 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 13:05:31,951 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: general_PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 13:07:01,832 | INFO | Workflow logger initialized
+2025-10-05 13:07:02,392 | INFO | Data directory 'data' ensured.
+2025-10-05 13:08:25,850 | INFO | Deleted source file: data/PEA คำอธิบาย 2567.pdf
+2025-10-05 13:09:05,965 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:09:10,216 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 13:09:12,801 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: general_PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 13:09:57,539 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:10:03,998 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: general_PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 13:10:24,576 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:10:30,640 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: general_PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 13:10:30,641 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:10:35,100 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 13:43:05,079 | INFO | Workflow logger initialized
+2025-10-05 13:43:05,640 | INFO | Data directory 'data' ensured.
+2025-10-05 13:45:35,164 | INFO | Deleted source file: data/PEA คำอธิบาย 2567.pdf
+2025-10-05 13:46:21,089 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:46:25,130 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 13:46:27,627 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: general_PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 13:59:23,464 | INFO | 🚀 Starting parallel ingestion for all documents in data
+2025-10-05 13:59:31,119 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:31,119 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:31,120 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:31,120 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:34,985 | ERROR | Failed to save vectorstore for general_seam2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:34,985 | ERROR | Failed to save vectorstore for general_PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:34,985 | ERROR | ❌ Error ingesting data/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:34,985 | ERROR | ❌ Error ingesting data/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:34,985 | ERROR | No loader function for extension .xlsx
+2025-10-05 13:59:34,986 | INFO | ✅ Successfully ingested data/qa/Book1.xlsx -> general_Book1
+2025-10-05 13:59:34,987 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:35,503 | ERROR | Failed to save vectorstore for general_สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:35,503 | ERROR | ❌ Error ingesting data/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:35,574 | ERROR | Failed to save vectorstore for general_seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:35,577 | ERROR | ❌ Error ingesting data/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:37,863 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 13:59:39,383 | ERROR | Failed to save vectorstore for general_Compliance Copilot Use Case: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:39,384 | ERROR | ❌ Error ingesting data/qa/Compliance Copilot Use Case.csv: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:41,607 | ERROR | Failed to save vectorstore for general_PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:41,607 | ERROR | ❌ Error ingesting data/evidence/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 13:59:41,607 | INFO | ✅ Parallel ingestion completed for 7 files
+2025-10-05 14:23:03,447 | INFO | Workflow logger initialized
+2025-10-05 14:23:03,995 | INFO | Data directory 'data' ensured.
+2025-10-05 14:23:21,986 | INFO | Workflow logger initialized
+2025-10-05 14:23:22,514 | INFO | Data directory 'data' ensured.
+2025-10-05 14:23:42,306 | INFO | Workflow logger initialized
+2025-10-05 14:23:42,847 | INFO | Data directory 'data' ensured.
+2025-10-05 14:24:00,933 | INFO | Workflow logger initialized
+2025-10-05 14:24:01,478 | INFO | Data directory 'data' ensured.
+2025-10-05 14:24:25,743 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 14:24:29,864 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 14:24:30,026 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: general_หนังสือรับรองการทำงาน Acting GM (4 chunks)
+2025-10-05 14:26:43,682 | INFO | Workflow logger initialized
+2025-10-05 14:26:44,226 | INFO | Data directory 'data' ensured.
+2025-10-05 14:26:56,152 | INFO | Workflow logger initialized
+2025-10-05 14:26:56,609 | INFO | Data directory 'data' ensured.
+2025-10-05 14:27:10,749 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 14:27:15,252 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 14:27:15,409 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: general_หนังสือรับรองการทำงาน Acting GM (4 chunks)
+2025-10-05 14:27:15,412 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 14:27:19,237 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 14:28:44,798 | ERROR | No loader function for extension .xlsx
+2025-10-05 14:28:49,323 | ERROR | No loader function for extension .xlsx
+2025-10-05 14:28:49,324 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 14:28:53,617 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 14:41:04,231 | INFO | Workflow logger initialized
+2025-10-05 14:41:04,828 | INFO | Data directory 'data' ensured.
+2025-10-05 14:45:07,901 | INFO | Workflow logger initialized
+2025-10-05 14:45:08,456 | INFO | Data directory 'data' ensured.
+2025-10-05 14:46:43,263 | INFO | Workflow logger initialized
+2025-10-05 14:46:43,815 | INFO | Data directory 'data' ensured.
+2025-10-05 14:55:00,890 | INFO | Workflow logger initialized
+2025-10-05 14:55:01,445 | INFO | Data directory 'data' ensured.
+2025-10-05 14:56:41,353 | INFO | Workflow logger initialized
+2025-10-05 14:56:41,888 | INFO | Data directory 'data' ensured.
+2025-10-05 15:06:12,919 | INFO | Workflow logger initialized
+2025-10-05 15:06:13,480 | INFO | Data directory 'data' ensured.
+2025-10-05 15:08:11,811 | INFO | Workflow logger initialized
+2025-10-05 15:08:12,378 | INFO | Data directory 'data' ensured.
+2025-10-05 15:11:38,538 | INFO | Workflow logger initialized
+2025-10-05 15:11:39,101 | INFO | Data directory 'data' ensured.
+2025-10-05 15:13:04,556 | INFO | Workflow logger initialized
+2025-10-05 15:13:05,118 | INFO | Data directory 'data' ensured.
+2025-10-05 20:19:38,446 | INFO | Workflow logger initialized
+2025-10-05 20:19:39,070 | INFO | Data directory 'data' ensured.
+2025-10-05 20:24:55,254 | INFO | Workflow logger initialized
+2025-10-05 20:24:55,775 | INFO | Data directory 'data' ensured.
+2025-10-05 20:26:20,013 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 20:26:24,781 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 20:26:24,837 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 20:26:29,409 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 20:27:07,344 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-05 20:27:43,678 | INFO | Workflow logger initialized
+2025-10-05 20:27:44,287 | INFO | Data directory 'data' ensured.
+2025-10-05 20:28:22,848 | INFO | Workflow logger initialized
+2025-10-05 20:28:23,412 | INFO | Data directory 'data' ensured.
+2025-10-05 20:30:25,865 | INFO | Workflow logger initialized
+2025-10-05 20:30:26,435 | INFO | Data directory 'data' ensured.
+2025-10-05 20:50:39,889 | INFO | Workflow logger initialized
+2025-10-05 20:50:40,472 | INFO | Data directory 'data' ensured.
+2025-10-05 20:52:04,174 | INFO | Workflow logger initialized
+2025-10-05 20:52:04,640 | INFO | Data directory 'data' ensured.
+2025-10-05 21:01:16,218 | INFO | Workflow logger initialized
+2025-10-05 21:01:16,798 | INFO | Data directory 'data' ensured.
+2025-10-05 21:05:09,717 | INFO | Workflow logger initialized
+2025-10-05 21:05:10,286 | INFO | Data directory 'data' ensured.
+2025-10-05 21:08:59,904 | INFO | Workflow logger initialized
+2025-10-05 21:09:00,487 | INFO | Data directory 'data' ensured.
+2025-10-05 21:10:50,094 | INFO | Workflow logger initialized
+2025-10-05 21:10:50,645 | INFO | Data directory 'data' ensured.
+2025-10-05 21:25:00,952 | INFO | Workflow logger initialized
+2025-10-05 21:25:01,509 | INFO | Data directory 'data' ensured.
+2025-10-05 21:25:31,370 | INFO | Using RetrievalQA for doc_id: document_seam2
+2025-10-05 21:25:31,941 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:25:37,378 | ERROR | Error loading vectorstore for document_seam2: Vectorstore for doc_id 'document_seam2' not found
+2025-10-05 21:25:37,390 | INFO | Using RetrievalQA for doc_id: document_seam
+2025-10-05 21:25:37,390 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:25:41,142 | ERROR | Error loading vectorstore for document_seam: Vectorstore for doc_id 'document_seam' not found
+2025-10-05 21:25:41,156 | INFO | Using RetrievalQA for doc_id: document_seam2567
+2025-10-05 21:25:41,156 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:25:44,989 | ERROR | Error loading vectorstore for document_seam2567: Vectorstore for doc_id 'document_seam2567' not found
+2025-10-05 21:26:08,806 | INFO | Using RetrievalQA for doc_id: document_หนังสือรับรองการทำงาน Acting GM
+2025-10-05 21:26:08,807 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:26:12,883 | ERROR | Error loading vectorstore for document_หนังสือรับรองการทำงาน Acting GM: Vectorstore for doc_id 'document_หนังสือรับรองการทำงาน Acting GM' not found
+2025-10-05 21:32:01,407 | INFO | Workflow logger initialized
+2025-10-05 21:32:01,986 | INFO | Data directory 'data' ensured.
+2025-10-05 21:32:04,027 | INFO | Using RetrievalQA for doc_id: document_หนังสือรับรองการทำงาน Acting GM
+2025-10-05 21:32:04,591 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:32:08,879 | ERROR | Error loading vectorstore for document_หนังสือรับรองการทำงาน Acting GM: Vectorstore for doc_id 'document_หนังสือรับรองการทำงาน Acting GM' not found
+2025-10-05 21:32:57,203 | INFO | Workflow logger initialized
+2025-10-05 21:32:57,737 | INFO | Data directory 'data' ensured.
+2025-10-05 21:33:15,418 | INFO | Using RetrievalQA for doc_id: document_หนังสือรับรองการทำงาน Acting GM
+2025-10-05 21:33:15,963 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:33:20,426 | ERROR | Error loading vectorstore for document_หนังสือรับรองการทำงาน Acting GM: Vectorstore for doc_id 'document_หนังสือรับรองการทำงาน Acting GM' not found
+2025-10-05 21:33:31,063 | INFO | Using RetrievalQA for doc_id: document_หนังสือรับรองการทำงาน Acting GM
+2025-10-05 21:33:31,065 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:33:35,046 | ERROR | Error loading vectorstore for document_หนังสือรับรองการทำงาน Acting GM: Vectorstore for doc_id 'document_หนังสือรับรองการทำงาน Acting GM' not found
+2025-10-05 21:38:23,440 | INFO | Workflow logger initialized
+2025-10-05 21:38:24,002 | INFO | Data directory 'data' ensured.
+2025-10-05 21:38:24,014 | INFO | Using RetrievalQA for doc_id: หนังสือรับรองการทำงาน Acting GM with type=document
+2025-10-05 21:38:24,014 | ERROR | Unexpected error in RetrievalQA chain: name 'os' is not defined
+2025-10-05 21:40:54,262 | INFO | Workflow logger initialized
+2025-10-05 21:40:54,847 | INFO | Data directory 'data' ensured.
+2025-10-05 21:40:55,286 | INFO | Using RetrievalQA for doc_id: หนังสือรับรองการทำงาน Acting GM with type=document
+2025-10-05 21:40:55,862 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:41:00,897 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 21:41:10,400 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-05 21:44:09,048 | INFO | Using RetrievalQA for doc_id: หนังสือรับรองการทำงาน Acting GM with type=document
+2025-10-05 21:44:09,051 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:44:16,225 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-05 21:54:16,825 | INFO | Using RetrievalQA for doc_id: หนังสือรับรองการทำงาน Acting GM with type=document
+2025-10-05 21:54:16,827 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:54:30,003 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-05 21:56:55,459 | INFO | Workflow logger initialized
+2025-10-05 21:56:56,068 | INFO | Data directory 'data' ensured.
+2025-10-05 21:57:05,516 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 21:57:10,166 | ERROR | Compare failed: Vectorstore for doc_id '2566-PEA' not found
+2025-10-05 21:59:54,347 | INFO | Workflow logger initialized
+2025-10-05 21:59:54,913 | INFO | Data directory 'data' ensured.
+2025-10-05 22:04:32,954 | INFO | 🚀 Starting parallel ingestion for folder data/document
+2025-10-05 22:04:37,713 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:37,713 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:37,713 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:37,713 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:41,736 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:04:41,865 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:41,865 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:41,922 | ERROR | Failed to save vectorstore for seam2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:41,923 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:43,016 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:04:44,770 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:45,238 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:04:45,819 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:47,730 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:04:48,617 | ERROR | Failed to save vectorstore for PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:50,176 | ERROR | Failed to save vectorstore for สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:50,177 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:50,258 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:04:53,875 | ERROR | Failed to save vectorstore for seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:53,876 | ERROR | ❌ Error ingesting data/document/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:53,888 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:04:53,889 | INFO | ✅ Parallel ingestion completed for 5 files
+2025-10-05 22:05:56,822 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:06:01,164 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:06:02,448 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:06:15,247 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:06:19,136 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:06:20,050 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks)
+2025-10-05 22:12:40,013 | INFO | Workflow logger initialized
+2025-10-05 22:12:40,671 | INFO | Data directory 'data' ensured.
+2025-10-05 22:13:17,787 | INFO | 🚀 Starting parallel ingestion for folder data/document
+2025-10-05 22:13:22,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:22,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:22,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:22,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:26,211 | ERROR | Failed to save vectorstore for สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:26,214 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:26,627 | ERROR | Failed to save vectorstore for seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:26,633 | ERROR | ❌ Error ingesting data/document/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:26,859 | ERROR | Failed to save vectorstore for seam2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:26,872 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:27,975 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:13:29,208 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:29,237 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: หนังสือรับรองการทำงาน Acting GM (4 chunks)
+2025-10-05 22:13:29,265 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:13:32,746 | ERROR | Failed to save vectorstore for PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:32,905 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:32,906 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:32,918 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:13:32,920 | INFO | ✅ Parallel ingestion completed for 5 files
+2025-10-05 22:14:28,127 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:14:32,790 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:14:35,319 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:14:35,320 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:14:39,308 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:14:42,574 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:14:46,381 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:14:48,755 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:14:48,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:14:52,514 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:14:53,143 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:14:57,221 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:14:57,585 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:14:57,586 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:15:02,008 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:15:15,088 | INFO | Workflow logger initialized
+2025-10-05 22:15:15,631 | INFO | Data directory 'data' ensured.
+2025-10-05 22:18:50,743 | INFO | Workflow logger initialized
+2025-10-05 22:18:51,207 | INFO | Data directory 'data' ensured.
+2025-10-05 22:19:38,940 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:19:43,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:43,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:43,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:43,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:47,738 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:19:47,795 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:19:47,795 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:19:49,074 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:19:50,052 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:19:50,803 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:51,700 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:19:52,320 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:54,787 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:19:56,162 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:19:56,908 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:19:58,349 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:19:58,350 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:19:58,660 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 22:20:02,365 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:20:02,440 | INFO | ✅ Ingested data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-10-05 22:20:02,492 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:08,846 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:20:08,847 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:13,086 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:20:13,139 | INFO | ✅ Ingested data/document/seam2.txt -> seam2
+2025-10-05 22:20:16,286 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:22,899 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:20:22,900 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:26,758 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:20:26,798 | INFO | ✅ Ingested data/document/seam2567.pdf -> seam2567
+2025-10-05 22:20:29,638 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:36,254 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 22:20:36,254 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:20:40,279 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:20:40,510 | INFO | ✅ Ingested data/document/PEA คำอธิบาย 2567.pdf -> PEA คำอธิบาย 2567
+2025-10-05 22:20:40,511 | INFO | ✅ Ingestion completed for 5 files
+2025-10-05 22:21:28,300 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:21:32,445 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:21:33,633 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:22:49,305 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:22:56,626 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:22:56,626 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:22:56,626 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:22:56,626 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:00,295 | ERROR | Failed to save vectorstore for seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:00,295 | ERROR | ❌ Error ingesting data/document/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:00,332 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:00,684 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:23:00,684 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:23:00,684 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:23:01,789 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:23:02,326 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:05,245 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:05,648 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:23:06,516 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:07,454 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:23:08,047 | ERROR | Failed to save vectorstore for สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:08,048 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:10,532 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:11,558 | ERROR | Failed to save vectorstore for PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:14,071 | ERROR | Failed to save vectorstore for 2566-PEA: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:14,071 | ERROR | ❌ Error ingesting data/document/2566-PEA.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:14,081 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:17,193 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:23:20,769 | ERROR | Failed to save vectorstore for seam2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:20,769 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:20,780 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:23:20,782 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:25:16,368 | INFO | Workflow logger initialized
+2025-10-05 22:25:16,928 | INFO | Data directory 'data' ensured.
+2025-10-05 22:25:20,413 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:25:27,608 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:27,608 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:27,608 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:27,608 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:31,918 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:25:31,918 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:25:31,918 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:25:31,918 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:25:33,598 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:25:33,642 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:34,183 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:35,608 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:25:38,620 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:39,777 | ERROR | Failed to save vectorstore for สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:39,777 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:40,038 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:40,659 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:25:42,750 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:43,293 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:25:44,193 | ERROR | Failed to save vectorstore for PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:46,860 | ERROR | Failed to save vectorstore for 2566-PEA: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:46,860 | ERROR | ❌ Error ingesting data/document/2566-PEA.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:46,872 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:46,941 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:50,864 | ERROR | Failed to save vectorstore for seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:50,864 | ERROR | ❌ Error ingesting data/document/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:53,974 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:25:57,711 | ERROR | Failed to save vectorstore for seam2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:57,711 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:57,719 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:25:57,721 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:27:36,425 | INFO | Workflow logger initialized
+2025-10-05 22:27:36,990 | INFO | Data directory 'data' ensured.
+2025-10-05 22:27:37,219 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:27:44,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:44,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:44,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:44,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:48,427 | ERROR | Failed to save vectorstore for 2566-PEA: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:48,428 | ERROR | ❌ Error ingesting data/document/2566-PEA.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:48,466 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:48,543 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:27:48,818 | ERROR | Failed to save vectorstore for สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:48,818 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:50,107 | ERROR | Failed to save vectorstore for seam2: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:50,107 | ERROR | ❌ Error ingesting data/document/seam2.txt: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:51,745 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:53,022 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:53,022 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:53,592 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:27:53,593 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:27:55,705 | ERROR | Failed to save vectorstore for PEA คำอธิบาย 2567: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:58,154 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:58,161 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:27:58,162 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:29:27,147 | INFO | Workflow logger initialized
+2025-10-05 22:29:27,793 | INFO | Data directory 'data' ensured.
+2025-10-05 22:29:28,810 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:29:36,084 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:36,084 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:36,084 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:36,084 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:40,526 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:40,526 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:40,526 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:40,526 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:42,175 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:29:42,222 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:42,883 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:44,291 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:29:47,233 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:48,376 | ERROR | Failed to save vectorstore for หนังสือรับรองการทำงาน Acting GM: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:29:48,957 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:29:49,467 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 22:29:49,468 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:50,006 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:29:52,087 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:53,494 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:29:53,852 | INFO | ✅ Ingested data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35
+2025-10-05 22:29:56,472 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:29:56,700 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 22:30:01,820 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 22:30:01,821 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:05,786 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:30:05,825 | INFO | ✅ Ingested data/document/2566-PEA.pdf -> 2566-PEA
+2025-10-05 22:30:05,825 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.
+2025-10-05 22:30:05,880 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:12,257 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 22:30:12,258 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:15,964 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:30:16,003 | INFO | ✅ Ingested data/document/seam2.txt -> seam2
+2025-10-05 22:30:19,207 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:25,312 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 22:30:25,313 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:29,295 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:30:29,315 | INFO | ✅ Ingested data/document/seam2567.pdf -> seam2567
+2025-10-05 22:30:32,232 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:38,259 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 22:30:38,260 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 22:30:42,020 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 22:30:42,078 | INFO | ✅ Ingested data/document/PEA คำอธิบาย 2567.pdf -> PEA คำอธิบาย 2567
+2025-10-05 22:30:42,078 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:32:16,233 | INFO | Workflow logger initialized
+2025-10-05 22:32:16,784 | INFO | Data directory 'data' ensured.
+2025-10-05 22:39:03,246 | INFO | Workflow logger initialized
+2025-10-05 22:39:03,716 | INFO | Data directory 'data' ensured.
+2025-10-05 22:39:38,336 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/seam2.txt, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/seam2567.pdf, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/2566-PEA.pdf, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/หนังสือรับรองการทำงาน Acting GM.pdf, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ⏭️ Skipping data/document/PEA คำอธิบาย 2567.pdf, vectorstore already exists
+2025-10-05 22:39:38,336 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:39:45,947 | INFO | Workflow logger initialized
+2025-10-05 22:39:46,494 | INFO | Data directory 'data' ensured.
+2025-10-05 22:39:47,730 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:39:47,730 | INFO | ⏭️ Skipping data/document/seam2.txt, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ⏭️ Skipping data/document/seam2567.pdf, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ⏭️ Skipping data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ⏭️ Skipping data/document/2566-PEA.pdf, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ⏭️ Skipping data/document/หนังสือรับรองการทำงาน Acting GM.pdf, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ⏭️ Skipping data/document/PEA คำอธิบาย 2567.pdf, vectorstore already exists
+2025-10-05 22:39:47,731 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:41:03,003 | INFO | Workflow logger initialized
+2025-10-05 22:41:03,583 | INFO | Data directory 'data' ensured.
+2025-10-05 22:41:04,097 | INFO | 🚀 Starting ingestion from data/document to vectorstore/document
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/2566-PEA.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/seam2.txt: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:41:04,098 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:41:17,992 | INFO | Workflow logger initialized
+2025-10-05 22:41:18,475 | INFO | Data directory 'data' ensured.
+2025-10-05 22:42:58,403 | INFO | Workflow logger initialized
+2025-10-05 22:42:58,966 | INFO | Data directory 'data' ensured.
+2025-10-05 22:42:59,784 | INFO | 🚀 Starting re-ingestion from data/document to vectorstore/document
+2025-10-05 22:42:59,784 | ERROR | ❌ Error re-ingesting data/document/seam2.txt: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,784 | ERROR | ❌ Error re-ingesting data/document/seam2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,785 | ERROR | ❌ Error re-ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,785 | ERROR | ❌ Error re-ingesting data/document/2566-PEA.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,785 | ERROR | ❌ Error re-ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,785 | ERROR | ❌ Error re-ingesting data/document/PEA คำอธิบาย 2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:42:59,785 | INFO | ✅ Re-ingestion completed for 6 files
+2025-10-05 22:43:30,585 | INFO | Workflow logger initialized
+2025-10-05 22:43:31,080 | INFO | Data directory 'data' ensured.
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/seam2.txt: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/seam2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/2566-PEA.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | ERROR | ❌ Error re-ingesting data/document/PEA คำอธิบาย 2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:43:32,015 | INFO | ✅ Re-ingestion completed for 6 files
+2025-10-05 22:45:56,538 | INFO | Workflow logger initialized
+2025-10-05 22:45:57,110 | INFO | Data directory 'data' ensured.
+2025-10-05 22:45:58,690 | INFO | 🚀 Starting ingestion from 'data/document' to 'vectorstore/document'
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/seam2.txt
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/seam2567.pdf
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/2566-PEA.pdf
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/หนังสือรับรองการทำงาน Acting GM.pdf
+2025-10-05 22:45:58,692 | INFO | ⏭ Skipping already ingested file: data/document/PEA คำอธิบาย 2567.pdf
+2025-10-05 22:45:58,692 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 22:49:23,661 | INFO | 🚀 Starting ingestion from 'data/document' to 'vectorstore/document'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/seam2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/seam2.txt: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/2566-PEA.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/หนังสือรับรองการทำงาน Acting GM.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | ERROR | ❌ Error ingesting data/document/PEA คำอธิบาย 2567.pdf: process_document() got an unexpected keyword argument 'base_path'
+2025-10-05 22:49:23,662 | INFO | ✅ Ingestion completed for 6 files
+2025-10-05 23:06:35,971 | INFO | Workflow logger initialized
+2025-10-05 23:06:36,543 | INFO | Data directory 'data' ensured.
+2025-10-05 23:06:59,588 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:02,336 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:04,386 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:06,162 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:08,067 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:09,842 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:12,843 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:15,445 | WARNING | File not found for deletion: undefined
+2025-10-05 23:07:46,468 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:07:51,386 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:07:54,133 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks)
+2025-10-05 23:07:54,133 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:07:58,030 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:01,249 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:05,187 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:07,536 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks)
+2025-10-05 23:08:07,537 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:11,344 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:11,908 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:16,245 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:16,614 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks)
+2025-10-05 23:08:16,614 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:20,316 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:23,024 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:26,795 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:27,827 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 23:08:27,828 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:32,009 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:32,065 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:36,103 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:08:36,173 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: หนังสือรับรองการทำงาน Acting GM (4 chunks)
+2025-10-05 23:08:36,173 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:08:40,500 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:14:41,884 | INFO | Workflow logger initialized
+2025-10-05 23:14:42,449 | INFO | Data directory 'data' ensured.
+2025-10-05 23:15:31,226 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:15:35,739 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:15:37,037 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks)
+2025-10-05 23:25:52,866 | INFO | Workflow logger initialized
+2025-10-05 23:25:53,452 | INFO | Data directory 'data' ensured.
+2025-10-05 23:26:59,370 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:27:04,222 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:27:06,542 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks)
+2025-10-05 23:28:57,949 | ERROR | Failed to load .docx data/document/TOR_Private_LLM_KM_Thai.docx: No module named 'docx'
+2025-10-05 23:28:57,949 | WARNING | No content loaded from TOR_Private_LLM_KM_Thai.docx
+2025-10-05 23:29:07,124 | ERROR | Failed to load .docx data/document/TOR_Private_LLM_KM_Thai.docx: No module named 'docx'
+2025-10-05 23:29:07,124 | WARNING | No content loaded from TOR_Private_LLM_KM_Thai.docx
+2025-10-05 23:29:07,125 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:29:11,093 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:31:34,969 | INFO | Workflow logger initialized
+2025-10-05 23:31:35,540 | INFO | Data directory 'data' ensured.
+2025-10-05 23:37:03,132 | INFO | Workflow logger initialized
+2025-10-05 23:37:03,831 | INFO | Data directory 'data' ensured.
+2025-10-05 23:39:59,228 | INFO | Workflow logger initialized
+2025-10-05 23:39:59,885 | INFO | Data directory 'data' ensured.
+2025-10-05 23:41:21,890 | INFO | Workflow logger initialized
+2025-10-05 23:41:22,454 | INFO | Data directory 'data' ensured.
+2025-10-05 23:41:42,285 | INFO | Workflow logger initialized
+2025-10-05 23:41:42,832 | INFO | Data directory 'data' ensured.
+2025-10-05 23:41:46,462 | INFO | Workflow logger initialized
+2025-10-05 23:41:46,936 | INFO | Data directory 'data' ensured.
+2025-10-05 23:41:54,092 | INFO | Workflow logger initialized
+2025-10-05 23:41:54,566 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:01,129 | INFO | Workflow logger initialized
+2025-10-05 23:42:01,607 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:06,415 | INFO | Workflow logger initialized
+2025-10-05 23:42:06,883 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:11,389 | INFO | Workflow logger initialized
+2025-10-05 23:42:11,863 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:18,362 | INFO | Workflow logger initialized
+2025-10-05 23:42:18,852 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:26,164 | INFO | Workflow logger initialized
+2025-10-05 23:42:26,641 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:36,080 | INFO | Workflow logger initialized
+2025-10-05 23:42:36,544 | INFO | Data directory 'data' ensured.
+2025-10-05 23:42:39,017 | INFO | Workflow logger initialized
+2025-10-05 23:42:39,483 | INFO | Data directory 'data' ensured.
+2025-10-05 23:43:42,020 | INFO | Workflow logger initialized
+2025-10-05 23:43:42,597 | INFO | Data directory 'data' ensured.
+2025-10-05 23:48:28,145 | INFO | Workflow logger initialized
+2025-10-05 23:48:28,710 | INFO | Data directory 'data' ensured.
+2025-10-05 23:49:43,447 | INFO | Workflow logger initialized
+2025-10-05 23:49:44,046 | INFO | Data directory 'data' ensured.
+2025-10-05 23:49:45,695 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:49:50,384 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:49:53,302 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks) in folder_type=None
+2025-10-05 23:49:56,428 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:50:00,474 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:50:03,117 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks) in folder_type=None
+2025-10-05 23:50:03,611 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:50:07,634 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:50:08,041 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks) in folder_type=None
+2025-10-05 23:50:10,605 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:50:14,268 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:50:15,294 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks) in folder_type=None
+2025-10-05 23:50:15,325 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:50:19,848 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:50:19,913 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: หนังสือรับรองการทำงาน Acting GM (4 chunks) in folder_type=None
+2025-10-05 23:50:22,735 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:50:26,582 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:50:29,022 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in folder_type=None
+2025-10-05 23:50:30,556 | ERROR | Failed to load .docx data/document/TOR_Private_LLM_KM_Thai.docx: No module named 'docx'
+2025-10-05 23:50:30,556 | WARNING | No content loaded from TOR_Private_LLM_KM_Thai.docx
+2025-10-05 23:55:39,286 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:55:43,384 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:55:46,124 | INFO | Processed seam2.txt -> doc_id: seam2 (788 chunks) in folder_type=None
+2025-10-05 23:55:46,125 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:55:49,879 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:55:53,070 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:55:57,322 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:55:59,789 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (904 chunks) in folder_type=None
+2025-10-05 23:55:59,790 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:03,489 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:04,067 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:07,599 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:08,052 | INFO | Processed สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35.pdf -> doc_id: สรุปถามตอบ Feedback Day ประจำปี 2567-KM-P29-35 (118 chunks) in folder_type=None
+2025-10-05 23:56:08,053 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:12,439 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:15,001 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:18,833 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:19,945 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks) in folder_type=None
+2025-10-05 23:56:19,946 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:23,572 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:23,737 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:27,577 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:27,726 | INFO | Processed หนังสือรับรองการทำงาน Acting GM.pdf -> doc_id: หนังสือรับรองการทำงาน Acting GM (4 chunks) in folder_type=None
+2025-10-05 23:56:27,726 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:31,405 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:34,762 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:38,568 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:40,946 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in folder_type=None
+2025-10-05 23:56:40,948 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:44,553 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-05 23:56:45,840 | ERROR | Failed to load .docx data/document/TOR_Private_LLM_KM_Thai.docx: No module named 'docx'
+2025-10-05 23:56:45,841 | WARNING | No content loaded from TOR_Private_LLM_KM_Thai.docx
+2025-10-05 23:56:45,841 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-05 23:56:49,674 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 13:42:55,289 | INFO | Workflow logger initialized
+2025-10-06 13:42:55,915 | INFO | Data directory 'data' ensured.
+2025-10-06 13:49:48,135 | INFO | Workflow logger initialized
+2025-10-06 13:49:48,711 | INFO | Data directory 'data' ensured.
+2025-10-06 13:50:52,350 | INFO | Workflow logger initialized
+2025-10-06 13:50:52,922 | INFO | Data directory 'data' ensured.
+2025-10-06 13:58:27,887 | INFO | Workflow logger initialized
+2025-10-06 13:58:28,459 | INFO | Data directory 'data' ensured.
+2025-10-06 14:08:57,918 | INFO | Workflow logger initialized
+2025-10-06 14:08:58,494 | INFO | Data directory 'data' ensured.
+2025-10-06 14:10:08,421 | INFO | Workflow logger initialized
+2025-10-06 14:12:03,989 | INFO | Workflow logger initialized
+2025-10-06 14:21:58,010 | INFO | Workflow logger initialized
+2025-10-06 14:24:47,157 | INFO | Workflow logger initialized
+2025-10-06 14:35:02,797 | INFO | Workflow logger initialized
+2025-10-06 14:35:03,375 | INFO | Data directory 'data' ensured.
+2025-10-06 14:36:23,525 | INFO | Workflow logger initialized
+2025-10-06 14:36:24,075 | INFO | Data directory 'data' ensured.
+2025-10-06 14:40:00,270 | INFO | Workflow logger initialized
+2025-10-06 14:40:00,925 | INFO | Data directory 'data' ensured.
+2025-10-06 14:40:06,931 | INFO | Workflow logger initialized
+2025-10-06 14:40:07,475 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:41:33,528 | INFO | Workflow logger initialized
+2025-10-06 14:41:34,163 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:41:49,586 | INFO | Workflow logger initialized
+2025-10-06 14:41:50,131 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:42:18,134 | INFO | Workflow logger initialized
+2025-10-06 14:42:18,673 | INFO | Data directory 'data' ensured.
+2025-10-06 14:45:27,906 | INFO | Workflow logger initialized
+2025-10-06 14:45:28,560 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:45:35,696 | INFO | Workflow logger initialized
+2025-10-06 14:45:50,320 | INFO | Workflow logger initialized
+2025-10-06 14:45:50,862 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:46:45,032 | INFO | Workflow logger initialized
+2025-10-06 14:46:45,596 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:48:35,495 | INFO | Workflow logger initialized
+2025-10-06 14:48:36,059 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 14:55:19,823 | INFO | Workflow logger initialized
+2025-10-06 14:55:20,390 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:17:14,437 | INFO | Workflow logger initialized
+2025-10-06 15:17:15,014 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:17:26,248 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:17:30,447 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:17:41,294 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:18:21,827 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:18:25,822 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:18:30,021 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:18:33,089 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:19:23,747 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:19:28,023 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:19:28,029 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:19:32,203 | ERROR | Compare failed: Vectorstore for doc_id '2567-PEA' not found at vectorstore/document/2567-PEA
+2025-10-06 15:21:07,584 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:21:11,566 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:21:19,301 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:25:19,199 | INFO | Workflow logger initialized
+2025-10-06 15:25:19,836 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:25:20,654 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:25:24,869 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:25:24,904 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:25:29,482 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:25:29,498 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:25:33,341 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:25:41,946 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:26:12,500 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:31:36,002 | INFO | Workflow logger initialized
+2025-10-06 15:31:36,630 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:31:40,008 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:31:44,380 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:31:44,436 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:31:48,482 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:31:56,208 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:36:09,705 | INFO | Workflow logger initialized
+2025-10-06 15:36:10,362 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:36:10,968 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:36:15,578 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:36:15,635 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:36:20,381 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:36:20,393 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:36:24,178 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:36:34,137 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:36:52,954 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:37:47,652 | INFO | Workflow logger initialized
+2025-10-06 15:37:48,256 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:37:51,910 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:37:56,080 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:37:56,151 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:38:00,095 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:38:04,203 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:42:29,933 | INFO | Workflow logger initialized
+2025-10-06 15:42:30,568 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:42:31,146 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:42:35,174 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:42:35,207 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:42:39,683 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:42:39,693 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:42:43,743 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:42:52,878 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:43:12,407 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:46:25,637 | INFO | Workflow logger initialized
+2025-10-06 15:46:26,239 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:46:26,880 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:46:31,104 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:46:31,158 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:46:35,023 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:46:35,033 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:46:38,771 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:46:47,004 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:47:08,033 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:52:40,858 | INFO | Workflow logger initialized
+2025-10-06 15:52:41,512 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 15:52:44,550 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:52:49,056 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:52:49,113 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:52:53,223 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 15:52:53,237 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:52:57,507 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 15:53:08,771 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 15:53:28,753 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 16:02:48,894 | INFO | Workflow logger initialized
+2025-10-06 16:02:49,502 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:03:45,306 | INFO | Workflow logger initialized
+2025-10-06 16:03:45,888 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:05:13,882 | INFO | Workflow logger initialized
+2025-10-06 16:05:14,470 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:05:15,521 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:06:41,613 | INFO | Workflow logger initialized
+2025-10-06 16:06:42,157 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:06:49,234 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:06:53,071 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:06:53,330 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:06:56,823 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:09:57,804 | INFO | Workflow logger initialized
+2025-10-06 16:09:58,351 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:09:58,902 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:10:01,607 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:10:03,403 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:10:03,493 | ERROR | Compare failed
+Traceback (most recent call last):
+  File "/Users/oddnaphat/my_rag_project/app.py", line 332, in compare
+    doc1_summary = await run_in_threadpool(lambda: summarize_doc(doc1))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2476, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 967, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/app.py", line 332, in <lambda>
+    doc1_summary = await run_in_threadpool(lambda: summarize_doc(doc1))
+                                                   ^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/app.py", line 328, in summarize_doc
+    result = llm.invoke({"query": prompt_text})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/langchain_core/language_models/llms.py", line 391, in invoke
+    [self._convert_input(input)],
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/langchain_core/language_models/llms.py", line 342, in _convert_input
+    raise ValueError(msg)
+ValueError: Invalid input type <class 'dict'>. Must be a PromptValue, str, or list of BaseMessages.
+2025-10-06 16:10:06,552 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:10:06,599 | ERROR | Compare failed
+Traceback (most recent call last):
+  File "/Users/oddnaphat/my_rag_project/app.py", line 332, in compare
+    doc1_summary = await run_in_threadpool(lambda: summarize_doc(doc1))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2476, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 967, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/app.py", line 332, in <lambda>
+    doc1_summary = await run_in_threadpool(lambda: summarize_doc(doc1))
+                                                   ^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/app.py", line 328, in summarize_doc
+    result = llm.invoke({"query": prompt_text})
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/langchain_core/language_models/llms.py", line 391, in invoke
+    [self._convert_input(input)],
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/oddnaphat/my_rag_project/venv/lib/python3.12/site-packages/langchain_core/language_models/llms.py", line 342, in _convert_input
+    raise ValueError(msg)
+ValueError: Invalid input type <class 'dict'>. Must be a PromptValue, str, or list of BaseMessages.
+2025-10-06 16:11:36,967 | INFO | Workflow logger initialized
+2025-10-06 16:11:37,506 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:14:08,502 | INFO | Workflow logger initialized
+2025-10-06 16:14:09,070 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:16:26,434 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:16:30,379 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:17:06,794 | INFO | Workflow logger initialized
+2025-10-06 16:17:07,572 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:17:10,242 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:17:10,242 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:17:14,226 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:17:14,226 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:17:15,478 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:17:15,479 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:05,149 | INFO | Workflow logger initialized
+2025-10-06 16:18:05,759 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:18:06,618 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:06,618 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:10,898 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:18:10,898 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:18:10,931 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:10,931 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:14,628 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:18:14,629 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:20:56,937 | INFO | Workflow logger initialized
+2025-10-06 16:20:57,507 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:21:23,496 | INFO | Workflow logger initialized
+2025-10-06 16:21:24,035 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:21:24,605 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:21:24,605 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:21:28,529 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:21:28,529 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:21:28,593 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:21:28,594 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:22:21,485 | INFO | Workflow logger initialized
+2025-10-06 16:22:22,088 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-06 16:22:23,016 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:22:27,580 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:22:27,616 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:22:31,380 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-06 16:22:31,399 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:22:35,228 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-06 16:22:47,775 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-06 16:23:09,837 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:27:52,444 | INFO | Workflow logger initialized
+2025-10-07 10:27:53,081 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:28:08,447 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:28:12,538 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 10:28:12,601 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:28:16,559 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 10:28:31,084 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:29:15,778 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:29:23,019 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:30:26,720 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:30:34,041 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:31:07,690 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:31:13,054 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:31:28,100 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 10:31:32,488 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 10:31:34,637 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 10:41:33,106 | INFO | Workflow logger initialized
+2025-10-07 10:41:33,728 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:43:51,320 | INFO | Workflow logger initialized
+2025-10-07 10:43:51,893 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:44:55,137 | INFO | Workflow logger initialized
+2025-10-07 10:44:55,668 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:46:20,169 | INFO | Workflow logger initialized
+2025-10-07 10:46:20,731 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:52:27,494 | INFO | Workflow logger initialized
+2025-10-07 10:52:28,041 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:56:03,891 | INFO | Workflow logger initialized
+2025-10-07 10:56:04,517 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:57:16,007 | INFO | Workflow logger initialized
+2025-10-07 10:57:16,631 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:57:37,295 | INFO | Workflow logger initialized
+2025-10-07 10:57:37,753 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:58:25,750 | INFO | Workflow logger initialized
+2025-10-07 10:58:26,220 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 10:59:11,653 | INFO | Workflow logger initialized
+2025-10-07 10:59:12,122 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:00:40,915 | INFO | Workflow logger initialized
+2025-10-07 11:00:41,463 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:01:29,399 | INFO | Workflow logger initialized
+2025-10-07 11:01:29,920 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:07:35,152 | INFO | Workflow logger initialized
+2025-10-07 11:07:35,791 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:07:55,779 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:08:00,376 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:08:09,811 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 11:09:18,337 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:09:22,334 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:09:22,341 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:09:29,869 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 11:11:32,670 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:11:36,570 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:11:40,842 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 11:12:40,656 | INFO | Workflow logger initialized
+2025-10-07 11:12:41,263 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:15:43,873 | INFO | Workflow logger initialized
+2025-10-07 11:15:44,441 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:16:13,804 | INFO | Workflow logger initialized
+2025-10-07 11:16:14,328 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:17:29,813 | INFO | Workflow logger initialized
+2025-10-07 11:17:30,345 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:17:37,611 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:17:41,787 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:17:41,847 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 11:17:50,722 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:17:55,096 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:17:55,101 | WARNING | Could not load vectorstore for seam2567/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 11:31:01,300 | INFO | Workflow logger initialized
+2025-10-07 11:31:01,912 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:31:03,325 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:31:07,554 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:31:15,088 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:31:18,364 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 11:31:18,861 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:31:21,873 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 11:39:23,758 | INFO | Workflow logger initialized
+2025-10-07 11:39:24,404 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:39:35,943 | INFO | Workflow logger initialized
+2025-10-07 11:39:36,483 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 11:39:38,422 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 11:39:43,015 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 11:39:43,071 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:09:07,446 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:09:12,122 | ERROR | Failed to save vectorstore for 2566-PEA: Database error: error returned from database: (code: 1) no such table: tenants
+2025-10-07 12:09:17,951 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:09:22,580 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:09:23,787 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks) in doc_type=document
+2025-10-07 12:10:04,947 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 226: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:04,963 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 278: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:04,977 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 290: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:04,993 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 326: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,008 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 328: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,023 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 330: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,038 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 332: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,052 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 334: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,067 | WARNING | OCR error เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf page 336: Unable to get page count.
+I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81><e0><b8><aa><e0><b8><b2><e0><b8><a3><e0><b9><80><e0><b8><9c><e0><b8><a2><e0><b9><81><e0><b8><9e><e0><b8><a3><e0><b9><88>_<e0><b8><84><e0><b8><b9><e0><b9><88><e0><b8><a1><e0><b8><b7><e0><b8><ad><e0><b8><81><e0><b8><b2><e0><b8><a3><e0><b8><9b><e0><b8><a3><e0><b8><b0><e0><b9><80><e0><b8><a1><e0><b8><b4><e0><b8><99><e0><b8><9c><e0><b8><a5><e0><b8><af>.pdf': No such file or directory.
+
+2025-10-07 12:10:05,140 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:10:09,333 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:10:12,024 | INFO | Processed เอกสารเผยแพร่_คู่มือการประเมินผลฯ.pdf -> doc_id: เอกสารเผยแพร่_คู่มือการประเมินผลฯ (1010 chunks) in doc_type=document
+2025-10-07 12:11:09,168 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:11:13,244 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:11:15,490 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in doc_type=document
+2025-10-07 12:13:26,449 | INFO | Workflow logger initialized
+2025-10-07 12:13:27,059 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:13:32,866 | INFO | Workflow logger initialized
+2025-10-07 12:13:33,520 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:17:55,964 | INFO | Workflow logger initialized
+2025-10-07 12:17:56,571 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:18:27,864 | INFO | Workflow logger initialized
+2025-10-07 12:18:28,450 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:18:28,986 | WARNING | 🗑️ Deleting existing vectorstore folder: vectorstore
+2025-10-07 12:18:28,992 | INFO | 🚀 Starting recursive ingestion for all documents in data
+2025-10-07 12:18:28,992 | INFO | 📄 Ingesting data/evidence/PEA คำอธิบาย 2567.pdf (Type: evidence)
+2025-10-07 12:18:32,896 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:18:37,080 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:18:39,385 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in doc_type=evidence
+2025-10-07 12:18:39,386 | INFO | 📄 Ingesting data/faq/seam_faq.xlsx (Type: faq)
+2025-10-07 12:18:39,485 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 12:18:39,485 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 12:18:39,486 | INFO | 📄 Ingesting data/qa/Book1.xlsx (Type: qa)
+2025-10-07 12:18:39,486 | ERROR | Failed to load .xlsx data/qa/Book1.xlsx: No module named 'msoffcrypto'
+2025-10-07 12:18:39,486 | WARNING | No content loaded from Book1.xlsx
+2025-10-07 12:18:39,486 | INFO | 📄 Ingesting data/qa/Compliance Copilot Use Case.csv (Type: qa)
+2025-10-07 12:18:39,487 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:18:43,460 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:18:43,515 | INFO | Processed Compliance Copilot Use Case.csv -> doc_id: Compliance Copilot Use Case (5 chunks) in doc_type=qa
+2025-10-07 12:18:43,515 | INFO | 📄 Ingesting data/document/2567-PEA.pdf (Type: document)
+2025-10-07 12:18:45,932 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:18:49,902 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:18:51,010 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks) in doc_type=document
+2025-10-07 12:18:51,010 | INFO | 📄 Ingesting data/document/2566-PEA.pdf (Type: document)
+2025-10-07 12:18:53,422 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:18:57,486 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:18:58,390 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks) in doc_type=document
+2025-10-07 12:18:58,391 | INFO | 📄 Ingesting data/document/PEA คำอธิบาย 2567.pdf (Type: document)
+2025-10-07 12:19:01,325 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:19:05,485 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:19:07,599 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in doc_type=document
+2025-10-07 12:19:07,600 | INFO | 📄 Ingesting data/document/seam.pdf (Type: document)
+2025-10-07 12:19:53,395 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:19:57,696 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:20:00,327 | INFO | Processed seam.pdf -> doc_id: seam (1021 chunks) in doc_type=document
+2025-10-07 12:20:00,328 | INFO | ✅ Recursive ingestion completed.
+2025-10-07 12:21:36,534 | INFO | Workflow logger initialized
+2025-10-07 12:21:37,088 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:22:16,877 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:22:20,945 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:22:21,011 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:24:51,033 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:24:55,342 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:24:55,343 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:24:59,689 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:24:59,694 | WARNING | Could not load vectorstore for PEA คำอธิบาย 2567/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:24:59,694 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:25:03,472 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:25:03,476 | WARNING | Could not load vectorstore for 2567-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:25:03,476 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:25:07,567 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:25:07,571 | WARNING | Could not load vectorstore for seam/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:29:30,738 | INFO | Workflow logger initialized
+2025-10-07 12:29:31,288 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:29:37,874 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:29:42,743 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:29:42,800 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:29:50,013 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:29:54,126 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:31:20,038 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:31:24,227 | WARNING | Could not load vectorstore for 2566-PEA/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:37:38,478 | INFO | Workflow logger initialized
+2025-10-07 12:37:38,494 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:38:13,558 | INFO | Workflow logger initialized
+2025-10-07 12:38:13,573 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:40:29,460 | INFO | Workflow logger initialized
+2025-10-07 12:40:29,475 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:40:39,401 | INFO | Workflow logger initialized
+2025-10-07 12:40:39,415 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:40:42,989 | ERROR | ❌ Error loading vectorstores: name 'load_multi_retriever' is not defined
+2025-10-07 12:42:15,933 | INFO | Workflow logger initialized
+2025-10-07 12:42:15,948 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:42:16,685 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:42:20,810 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 12:42:20,871 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:45:13,328 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:45:19,229 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks) in doc_type=document
+2025-10-07 12:46:02,474 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 12:46:06,536 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: 'VectorStoreRetriever' object has no attribute 'as_retriever'
+2025-10-07 12:49:31,002 | INFO | Workflow logger initialized
+2025-10-07 12:49:31,017 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:49:44,131 | WARNING | ⚠️ doc_id '2566-PEA' not found in any of ['document', 'faq', 'rubrics', 'evidence', 'qa', 'feedback']
+2025-10-07 12:51:54,842 | INFO | Workflow logger initialized
+2025-10-07 12:56:13,629 | INFO | Workflow logger initialized
+2025-10-07 12:56:13,644 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:57:49,001 | INFO | Workflow logger initialized
+2025-10-07 12:57:49,016 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 12:58:11,390 | INFO | Workflow logger initialized
+2025-10-07 12:58:11,405 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:03:03,169 | INFO | Workflow logger initialized
+2025-10-07 13:03:03,184 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:03:33,577 | INFO | Workflow logger initialized
+2025-10-07 13:03:33,592 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:03:41,960 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:03:46,647 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:04:44,715 | INFO | Workflow logger initialized
+2025-10-07 13:04:44,730 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:04:45,297 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:04:49,582 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:05:33,849 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:07:11,584 | INFO | Workflow logger initialized
+2025-10-07 13:07:11,600 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:09:28,282 | INFO | Workflow logger initialized
+2025-10-07 13:09:28,298 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:09:29,366 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:09:33,950 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:10:56,904 | INFO | Workflow logger initialized
+2025-10-07 13:10:56,920 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:10:57,469 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:11:01,884 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:12:37,079 | INFO | Workflow logger initialized
+2025-10-07 13:12:37,094 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:12:37,747 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:12:42,071 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:13:32,061 | INFO | Workflow logger initialized
+2025-10-07 13:13:32,078 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:14:03,264 | INFO | Workflow logger initialized
+2025-10-07 13:14:03,279 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:14:03,996 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:14:08,896 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:15:24,501 | INFO | Workflow logger initialized
+2025-10-07 13:15:24,516 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:16:38,226 | INFO | Workflow logger initialized
+2025-10-07 13:16:38,241 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:16:38,805 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:16:43,311 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:18:09,649 | INFO | Workflow logger initialized
+2025-10-07 13:18:09,664 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:21:47,581 | INFO | Workflow logger initialized
+2025-10-07 13:21:47,596 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:21:48,152 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:21:52,578 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 13:25:54,748 | INFO | Workflow logger initialized
+2025-10-07 13:25:54,763 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:25:54,763 | WARNING | Vectorstore does not exist at expected path: vectorstore/document/2566-PEA
+2025-10-07 13:25:54,763 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 13:27:01,079 | INFO | Workflow logger initialized
+2025-10-07 13:27:01,096 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:29:22,920 | INFO | Workflow logger initialized
+2025-10-07 13:29:22,935 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:29:22,935 | WARNING | Vectorstore does not exist at expected path: vectorstore/document/2566-PEA
+2025-10-07 13:29:22,935 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 13:30:04,171 | INFO | Workflow logger initialized
+2025-10-07 13:30:04,187 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:31:07,849 | INFO | Workflow logger initialized
+2025-10-07 13:31:07,863 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:35:12,708 | INFO | Workflow logger initialized
+2025-10-07 13:35:12,723 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:35:13,288 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:35:17,546 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 13:35:17,546 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 13:35:23,914 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 13:35:28,003 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 13:35:28,003 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 13:37:39,538 | INFO | Workflow logger initialized
+2025-10-07 13:37:39,554 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:38:37,685 | INFO | Workflow logger initialized
+2025-10-07 13:38:37,699 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:38:39,879 | INFO | Workflow logger initialized
+2025-10-07 13:38:39,895 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:39:58,197 | INFO | Workflow logger initialized
+2025-10-07 13:39:58,213 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:40:00,397 | INFO | Workflow logger initialized
+2025-10-07 13:40:00,413 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:41:38,768 | INFO | Workflow logger initialized
+2025-10-07 13:41:38,783 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:43:24,353 | INFO | Workflow logger initialized
+2025-10-07 13:43:24,368 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:46:03,384 | INFO | Workflow logger initialized
+2025-10-07 13:46:03,401 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:47:35,984 | INFO | Workflow logger initialized
+2025-10-07 13:47:36,001 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:48:41,185 | INFO | Workflow logger initialized
+2025-10-07 13:48:41,200 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:48:58,035 | INFO | Workflow logger initialized
+2025-10-07 13:48:58,051 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:51:25,071 | INFO | Workflow logger initialized
+2025-10-07 13:51:25,086 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:54:55,145 | INFO | Workflow logger initialized
+2025-10-07 13:54:55,160 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:55:15,770 | INFO | Workflow logger initialized
+2025-10-07 13:55:15,787 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:56:57,773 | INFO | Workflow logger initialized
+2025-10-07 13:56:57,789 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:57:00,347 | INFO | Workflow logger initialized
+2025-10-07 13:57:00,362 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:57:54,817 | INFO | Workflow logger initialized
+2025-10-07 13:57:54,832 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 13:59:12,849 | INFO | Workflow logger initialized
+2025-10-07 13:59:12,865 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:01:59,147 | INFO | Workflow logger initialized
+2025-10-07 14:01:59,162 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:02:15,907 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:02:20,300 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 14:04:38,549 | INFO | Workflow logger initialized
+2025-10-07 14:04:38,565 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:05:01,194 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:05:05,445 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 14:08:57,815 | INFO | Workflow logger initialized
+2025-10-07 14:08:57,831 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:08:58,777 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:09:03,180 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 14:09:03,180 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 14:10:16,715 | INFO | Workflow logger initialized
+2025-10-07 14:10:16,731 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:10:31,597 | INFO | Workflow logger initialized
+2025-10-07 14:10:31,612 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:10:38,629 | INFO | Workflow logger initialized
+2025-10-07 14:10:38,644 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:12:13,169 | INFO | Workflow logger initialized
+2025-10-07 14:12:13,184 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:12:16,563 | INFO | Workflow logger initialized
+2025-10-07 14:12:16,579 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:12:18,222 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:12:22,520 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 14:12:22,521 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 14:14:35,042 | INFO | Workflow logger initialized
+2025-10-07 14:14:35,061 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:14:35,735 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:14:40,397 | ERROR | ❌ Critical Error loading vectorstore for 2566-PEA/document at vectorstore/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 14:14:40,397 | ERROR | Failed to load retriever in answer_question_rag: No valid vectorstores could be loaded for the given IDs.
+2025-10-07 14:16:39,354 | INFO | Workflow logger initialized
+2025-10-07 14:16:39,369 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:17:31,806 | INFO | Workflow logger initialized
+2025-10-07 14:17:31,822 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:17:55,517 | INFO | Workflow logger initialized
+2025-10-07 14:17:55,534 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:17:59,915 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:20:04,636 | INFO | Workflow logger initialized
+2025-10-07 14:20:04,652 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:20:05,221 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:20:09,875 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 14:20:09,935 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:23:47,246 | INFO | Workflow logger initialized
+2025-10-07 14:23:47,262 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:25:11,910 | INFO | Workflow logger initialized
+2025-10-07 14:25:11,926 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:25:40,419 | INFO | Workflow logger initialized
+2025-10-07 14:25:40,434 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:25:41,005 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:25:45,505 | ERROR | Failed to load vectorstore 2566-PEA/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 14:25:55,019 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:25:59,216 | ERROR | Failed to load vectorstore 2566-PEA/document: Vectorstore for doc_id '2566-PEA' not found at vectorstore/document/document/2566-PEA
+2025-10-07 14:27:25,542 | INFO | Workflow logger initialized
+2025-10-07 14:27:25,559 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:30:55,858 | INFO | Workflow logger initialized
+2025-10-07 14:30:55,874 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:30:56,445 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:34:56,376 | INFO | Workflow logger initialized
+2025-10-07 14:34:56,391 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:35:16,232 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:36:55,596 | INFO | Workflow logger initialized
+2025-10-07 14:36:55,612 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:36:56,529 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:38:53,021 | INFO | Workflow logger initialized
+2025-10-07 14:48:03,867 | INFO | Workflow logger initialized
+2025-10-07 14:48:11,132 | INFO | Workflow logger initialized
+2025-10-07 14:48:11,148 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:48:11,732 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:51:01,125 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:52:17,243 | INFO | Workflow logger initialized
+2025-10-07 14:52:17,261 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:52:17,866 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:57:07,815 | INFO | Workflow logger initialized
+2025-10-07 14:57:07,832 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:57:09,182 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 14:58:16,234 | INFO | Workflow logger initialized
+2025-10-07 14:58:16,250 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 14:58:18,648 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:04:31,716 | INFO | Workflow logger initialized
+2025-10-07 15:04:31,732 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:04:43,162 | INFO | Workflow logger initialized
+2025-10-07 15:04:43,177 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:04:57,745 | INFO | Workflow logger initialized
+2025-10-07 15:04:57,760 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:05:57,342 | INFO | Workflow logger initialized
+2025-10-07 15:05:57,357 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:06:41,362 | INFO | Workflow logger initialized
+2025-10-07 15:06:41,378 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:08:00,089 | INFO | Workflow logger initialized
+2025-10-07 15:08:00,104 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:08:35,481 | INFO | Workflow logger initialized
+2025-10-07 15:08:35,497 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:09:51,352 | INFO | Workflow logger initialized
+2025-10-07 15:09:51,369 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:11:48,091 | INFO | Workflow logger initialized
+2025-10-07 15:11:48,107 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:12:11,755 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:13:33,105 | INFO | Workflow logger initialized
+2025-10-07 15:13:33,120 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:13:34,384 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:13:38,886 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:13:38,942 | INFO | ✅ Loaded retriever: 2566-PEA (document)
+2025-10-07 15:13:38,942 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:13:38,945 | ERROR | Error during RAG execution: `run` not supported when there is not exactly one output key. Got ['result', 'source_documents'].
+2025-10-07 15:27:25,576 | INFO | Workflow logger initialized
+2025-10-07 15:27:25,592 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:27:26,922 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:29:17,487 | INFO | Workflow logger initialized
+2025-10-07 15:29:17,503 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:30:32,900 | INFO | Workflow logger initialized
+2025-10-07 15:30:32,916 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:30:33,473 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:32:49,417 | INFO | Workflow logger initialized
+2025-10-07 15:32:49,434 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:32:51,378 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:32:56,208 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:33:50,532 | INFO | Workflow logger initialized
+2025-10-07 15:33:50,550 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:33:51,116 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:33:55,658 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:33:55,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:33:59,830 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:39:05,204 | INFO | Workflow logger initialized
+2025-10-07 15:39:26,400 | INFO | Workflow logger initialized
+2025-10-07 15:40:03,028 | INFO | Workflow logger initialized
+2025-10-07 15:40:03,047 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:43:07,242 | INFO | Workflow logger initialized
+2025-10-07 15:43:34,033 | INFO | Workflow logger initialized
+2025-10-07 15:43:44,165 | INFO | Workflow logger initialized
+2025-10-07 15:43:44,183 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:43:54,271 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:43:59,015 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:43:59,071 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:44:03,298 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:46:08,865 | INFO | Workflow logger initialized
+2025-10-07 15:46:08,883 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:46:10,031 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:46:14,870 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:46:14,898 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:46:19,067 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:47:52,958 | INFO | Workflow logger initialized
+2025-10-07 15:47:52,975 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:47:53,541 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:47:58,302 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:47:58,331 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:48:03,095 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:49:00,389 | INFO | Workflow logger initialized
+2025-10-07 15:49:00,407 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:51:17,044 | INFO | Workflow logger initialized
+2025-10-07 15:51:17,060 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:51:19,087 | INFO | Workflow logger initialized
+2025-10-07 15:51:19,103 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:51:21,269 | INFO | Workflow logger initialized
+2025-10-07 15:51:21,285 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:52:23,550 | INFO | Workflow logger initialized
+2025-10-07 15:52:23,566 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:52:27,535 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:52:31,929 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 15:52:31,985 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:52:35,854 | WARNING | Vectorstore missing: faq/2566-PEA
+2025-10-07 15:54:58,356 | INFO | Workflow logger initialized
+2025-10-07 15:54:58,371 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:56:29,749 | INFO | Workflow logger initialized
+2025-10-07 15:56:29,765 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:56:33,422 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:56:37,529 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:59:13,871 | INFO | Workflow logger initialized
+2025-10-07 15:59:13,888 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 15:59:14,554 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 15:59:19,062 | WARNING | Failed to load vectorstore document/2566-PEA: Vectorstore for doc_id '2566-PEA' not found in any of ['document']
+2025-10-07 16:00:24,924 | INFO | Workflow logger initialized
+2025-10-07 16:00:24,942 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:01:13,043 | INFO | Workflow logger initialized
+2025-10-07 16:01:13,058 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:02:13,900 | INFO | Workflow logger initialized
+2025-10-07 16:02:13,916 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:03:20,382 | INFO | Workflow logger initialized
+2025-10-07 16:03:20,398 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:04:38,911 | INFO | Workflow logger initialized
+2025-10-07 16:04:38,927 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:04:42,339 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:04:46,600 | ERROR | Failed to load vectorstore document/2566-PEA: Vectorstore for doc_id '2566-PEA' not found in any of ['document']
+2025-10-07 16:10:51,698 | INFO | Workflow logger initialized
+2025-10-07 16:10:51,714 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:11:17,498 | INFO | Workflow logger initialized
+2025-10-07 16:11:17,514 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:11:55,013 | INFO | Workflow logger initialized
+2025-10-07 16:11:55,029 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:11:55,591 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:11:59,859 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 16:12:14,325 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 16:12:52,197 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:13:00,725 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 16:16:01,958 | INFO | Workflow logger initialized
+2025-10-07 16:16:01,977 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 16:16:13,764 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:16:18,357 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 16:16:18,421 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:16:22,067 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 16:16:41,512 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 16:18:45,675 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:18:58,963 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 16:20:27,517 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:20:31,945 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 16:20:51,029 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 16:27:54,893 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 16:27:54,893 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 16:28:53,747 | ERROR | Failed to load .docx data/document/SE-AM CMS Requirement.docx: No module named 'docx'
+2025-10-07 16:28:53,747 | WARNING | No content loaded from SE-AM CMS Requirement.docx
+2025-10-07 16:43:38,791 | INFO | Workflow logger initialized
+2025-10-07 16:47:11,704 | INFO | Workflow logger initialized
+2025-10-07 16:50:38,980 | INFO | Workflow logger initialized
+2025-10-07 16:54:56,127 | INFO | Workflow logger initialized
+2025-10-07 16:54:56,142 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:08:48,285 | ERROR | Failed to load .docx data/document/Private LLM TOR.docx: No module named 'docx'
+2025-10-07 17:08:48,285 | WARNING | No content loaded from Private LLM TOR.docx
+2025-10-07 17:12:02,973 | INFO | Workflow logger initialized
+2025-10-07 17:12:02,989 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:12:18,089 | ERROR | Failed to save vectorstore for Private LLM TOR: save_to_vectorstore() got an unexpected keyword argument 'folder_type'
+2025-10-07 17:14:26,449 | INFO | Workflow logger initialized
+2025-10-07 17:14:26,467 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:14:37,971 | ERROR | Failed to save vectorstore for Private LLM TOR: save_to_vectorstore() got an unexpected keyword argument 'doct_type'
+2025-10-07 17:15:03,990 | INFO | Workflow logger initialized
+2025-10-07 17:15:04,008 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:15:11,905 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:15:16,507 | ERROR | Failed to save vectorstore for Private LLM TOR: langchain_community.vectorstores.chroma.Chroma() got multiple values for keyword argument 'embedding_function'
+2025-10-07 17:16:25,827 | INFO | Workflow logger initialized
+2025-10-07 17:16:25,843 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:16:42,840 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:16:47,596 | ERROR | Failed to save vectorstore for Private LLM TOR: langchain_community.vectorstores.chroma.Chroma() got multiple values for keyword argument 'embedding_function'
+2025-10-07 17:19:25,373 | INFO | Workflow logger initialized
+2025-10-07 17:19:25,389 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:19:41,335 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:19:45,775 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:19:45,980 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:25:11,738 | INFO | Workflow logger initialized
+2025-10-07 17:25:11,754 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:25:20,239 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:25:24,704 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:25:24,886 | INFO | Processed SE-AM CMS Requirement.docx -> doc_id: SE-AM CMS Requirement (18 chunks) in doc_type=document
+2025-10-07 17:25:34,313 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:25:38,204 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:25:38,280 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:26:34,131 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:26:38,311 | ERROR | Failed to save vectorstore for Private LLM TOR: Query error: Database error: error returned from database: (code: 1032) attempt to write a readonly database
+2025-10-07 17:29:17,179 | INFO | Workflow logger initialized
+2025-10-07 17:29:17,194 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:29:33,857 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:29:38,709 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:29:38,898 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:31:33,886 | INFO | Workflow logger initialized
+2025-10-07 17:31:33,902 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:31:48,929 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:31:53,277 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:31:53,459 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:33:09,936 | INFO | Workflow logger initialized
+2025-10-07 17:33:09,951 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:33:26,222 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:33:30,674 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:33:30,838 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:35:07,634 | INFO | Workflow logger initialized
+2025-10-07 17:35:07,650 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:35:18,846 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:35:23,454 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:35:23,616 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:36:37,276 | INFO | Workflow logger initialized
+2025-10-07 17:36:37,291 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:37:44,734 | INFO | Workflow logger initialized
+2025-10-07 17:37:44,750 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 17:38:24,807 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:38:29,197 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:38:29,375 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 17:41:56,619 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:42:00,860 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:42:00,869 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:42:04,604 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:42:25,103 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:44:37,374 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:44:41,584 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 17:44:48,999 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:46:53,367 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:47:00,349 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:47:28,526 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:47:34,469 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:47:49,895 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:48:05,051 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:48:13,868 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:48:54,644 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:49:15,909 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:49:21,721 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:50:43,897 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:50:50,457 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:51:13,715 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:51:28,201 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 17:54:07,825 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 17:54:14,821 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:00:06,327 | INFO | Workflow logger initialized
+2025-10-07 18:00:06,344 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 18:01:06,928 | INFO | Workflow logger initialized
+2025-10-07 18:01:06,943 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 18:03:56,881 | INFO | Workflow logger initialized
+2025-10-07 18:03:56,896 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 18:13:36,682 | INFO | Workflow logger initialized
+2025-10-07 18:13:36,698 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 18:18:38,793 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:18:43,294 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 18:18:55,057 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:24:45,969 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:24:49,934 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 18:24:52,692 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (1021 chunks) in doc_type=document
+2025-10-07 18:25:08,724 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:25:21,828 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:26:25,332 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:26:40,655 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:26:48,649 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:27:15,025 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:31:14,454 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:31:22,427 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:32:31,205 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:32:37,598 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:34:31,979 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:34:43,957 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:36:52,048 | INFO | Workflow logger initialized
+2025-10-07 18:36:52,063 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 18:36:54,404 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:36:58,746 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 18:37:01,732 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:37:46,872 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:37:53,500 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:38:42,213 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:38:48,493 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:45:01,748 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:45:06,652 | INFO | Backing off send_request(...) for 1.0s (requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))
+2025-10-07 18:45:15,095 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:48:52,057 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:49:02,460 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:51:50,802 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:51:57,567 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:52:47,174 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:52:54,284 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:53:46,823 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:53:53,886 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:54:14,447 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:54:22,848 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:55:37,694 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:55:42,412 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 18:55:42,430 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:55:49,851 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 18:56:46,331 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:56:50,193 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 18:56:55,902 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:07:06,487 | INFO | Workflow logger initialized
+2025-10-07 19:07:06,505 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:07:17,542 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:07:21,881 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:12:14,262 | INFO | Workflow logger initialized
+2025-10-07 19:12:14,277 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:12:48,761 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:12:53,074 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:13:24,260 | INFO | Workflow logger initialized
+2025-10-07 19:13:24,275 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:13:30,416 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:13:34,539 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:13:43,081 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:14:19,292 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:23,661 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:14:23,696 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:27,364 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:14:27,369 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:31,037 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:14:31,044 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:34,654 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:14:34,660 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:38,390 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:14:38,396 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:42,003 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:14:45,801 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:15:17,642 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:16:22,726 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:26,668 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:30,871 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:34,509 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:38,179 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:41,883 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:16:45,586 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:17:21,141 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:27:18,775 | INFO | Workflow logger initialized
+2025-10-07 19:27:18,790 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:27:48,459 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:27:52,654 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:27:52,718 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:27:57,447 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:27:57,453 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:28:01,158 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:28:01,164 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:28:04,869 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:28:04,875 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:28:08,558 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:28:08,564 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:28:12,741 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:28:12,748 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:28:16,504 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:28:54,451 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:33:29,742 | INFO | Workflow logger initialized
+2025-10-07 19:33:29,758 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:33:37,219 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:33:41,653 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:33:41,717 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:33:45,534 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:33:45,541 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:33:49,405 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:33:49,412 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:33:54,023 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:33:54,030 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:33:58,331 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:33:58,337 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:34:02,621 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:34:02,627 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:34:06,625 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 19:34:39,301 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:35:48,973 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:35:59,416 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:36:54,255 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:37:02,055 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:38:17,433 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:38:21,446 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:38:51,605 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:40:02,009 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:40:06,242 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:40:23,291 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:41:44,491 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:41:49,014 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:41:57,244 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:42:55,703 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:43:07,043 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:44:23,333 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:44:29,878 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:45:54,781 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:46:08,456 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:46:50,562 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:46:54,630 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:46:59,859 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:47:03,619 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:47:07,642 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:47:11,424 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:47:15,310 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:47:51,474 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-07 19:51:55,520 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 19:51:55,521 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 19:52:15,267 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 19:52:15,267 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 19:52:39,863 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 19:52:39,863 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 19:53:38,604 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 19:53:43,395 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 19:59:34,771 | INFO | Workflow logger initialized
+2025-10-07 19:59:34,787 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 19:59:36,542 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 19:59:36,543 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 19:59:59,010 | ERROR | Failed to load .xlsx data/faq/seam_faq.xlsx: No module named 'msoffcrypto'
+2025-10-07 19:59:59,011 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-07 20:00:26,119 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:00:30,815 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:00:31,028 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-07 20:05:14,659 | ERROR | Failed to load .xlsx data/qa/Book1.xlsx: No module named 'msoffcrypto'
+2025-10-07 20:05:14,660 | WARNING | No content loaded from Book1.xlsx
+2025-10-07 20:05:29,590 | ERROR | Failed to load .xlsx data/qa/Book1.xlsx: No module named 'msoffcrypto'
+2025-10-07 20:05:29,591 | WARNING | No content loaded from Book1.xlsx
+2025-10-07 20:06:31,807 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:06:36,375 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:06:36,434 | INFO | Processed Compliance Copilot Use Case.csv -> doc_id: Compliance Copilot Use Case (5 chunks) in doc_type=qa
+2025-10-07 20:06:44,760 | ERROR | Failed to load .xlsx data/qa/Book1.xlsx: No module named 'msoffcrypto'
+2025-10-07 20:06:44,761 | WARNING | No content loaded from Book1.xlsx
+2025-10-07 20:10:41,508 | INFO | Workflow logger initialized
+2025-10-07 20:10:41,524 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 20:11:02,564 | INFO | Workflow logger initialized
+2025-10-07 20:11:02,579 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 20:12:30,537 | INFO | Workflow logger initialized
+2025-10-07 20:12:30,552 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-07 20:13:19,399 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:13:23,895 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:13:24,317 | INFO | Processed Book1.xlsx -> doc_id: Book1 (1 chunks) in doc_type=qa
+2025-10-07 20:13:36,503 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:13:40,451 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:13:40,532 | INFO | Processed seam_faq.xlsx -> doc_id: seam_faq (5 chunks) in doc_type=faq
+2025-10-07 20:14:47,520 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:14:52,005 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:14:52,011 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:14:56,056 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:14:56,061 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:15:00,099 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:15:00,105 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:15:04,412 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:15:04,419 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:15:08,700 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:15:08,704 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:15:12,830 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:15:12,835 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:15:16,656 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-07 20:15:16,663 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-07 20:16:01,544 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"

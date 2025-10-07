@@ -1,20 +1,72 @@
+# app.py
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import List, Dict, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Optional
-from operator import itemgetter
-from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
-from core.vectorstore import load_vectorstore, vectorstore_exists
-import datetime
+from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel
+from core.rag_chain import (
+    load_multi_retriever,
+    MultiDocRetriever,
+    create_rag_chain,
+    llm,
+    COMPARE_PROMPT,
+    QA_PROMPT,
+    run_assessment_workflow,
+    get_workflow_status,
+    get_workflow_results,
+    # *** เพิ่ม answer_question_rag ที่ย้ายมา ***
+    answer_question_rag
+)
+
+# -----------------------------
+# --- Core Imports ---
+# -----------------------------
+from core.ingest import (
+    process_document,
+    list_documents,
+    delete_document,
+    DATA_DIR,
+    SUPPORTED_TYPES
+)
+from core.vectorstore import load_vectorstore, vectorstore_exists, load_all_vectorstores
+
+from langchain.chains import RetrievalQA
+import logging
+
+logger = logging.getLogger("ingest")
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+# -----------------------------
+# --- FastAPI Initialization ---
+# -----------------------------
+app = FastAPI(title="Assessment RAG API", description="API for RAG-based document assessment and analysis.")
+
+# CORS
+origins = ["http://localhost:5173", "http://127.0.0.1:5173", "*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+VECTORSTORE_DIR = "vectorstore"
 
 # -----------------------------
 # --- Pydantic Models ---
 # -----------------------------
-from pydantic import BaseModel
-
 class UploadResponse(BaseModel):
     status: str
     doc_id: str
@@ -53,40 +105,7 @@ class ResultSummary(BaseModel):
     evidenceCount: int
     gapCount: int
 
-# -----------------------------
-# --- Core Imports ---
-# -----------------------------
-from core.ingest import process_document, list_documents, delete_document, DATA_DIR
-from core.rag_analysis_utils import answer_question_rag, match_doc_ids_from_question
-from core.vectorstore import load_vectorstore
-from core.rag_chain import (
-    MultiDocRetriever,
-    create_rag_chain,
-    llm,
-    COMPARE_PROMPT,
-    QA_PROMPT,
-    run_assessment_workflow,
-    get_workflow_status,
-    get_workflow_results
-)
 
-# -----------------------------
-# --- FastAPI Initialization ---
-# -----------------------------
-app = FastAPI(title="Assessment RAG API", description="API for RAG-based document assessment and analysis.")
-
-# CORS
-origins = ["http://localhost:5173", "http://127.0.0.1:5173", "*"]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # -----------------------------
 # --- Startup Event ---
@@ -94,7 +113,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 @app.on_event("startup")
 async def startup_event():
     os.makedirs(DATA_DIR, exist_ok=True)
-    logging.info(f"Data directory '{DATA_DIR}' ensured.")
+    os.makedirs(VECTORSTORE_DIR, exist_ok=True)
+    logging.info(f"Data directory '{DATA_DIR}' and vectorstore '{VECTORSTORE_DIR}' ensured.")
 
 # -----------------------------
 # --- Helper Functions ---
@@ -106,13 +126,19 @@ def format_docs(docs):
         formatted.append(doc.page_content if hasattr(doc, "page_content") else str(doc))
     return "\n\n".join(formatted)
 
+def get_vectorstore_path(doc_type: Optional[str] = None):
+    if doc_type:
+        path = os.path.join(VECTORSTORE_DIR, doc_type)
+        os.makedirs(path, exist_ok=True)
+        return path
+    return VECTORSTORE_DIR
+
 # -----------------------------
 # --- Document Endpoints ---
 # -----------------------------
-@app.get("/api/documents")
+@app.get("/api/documents", response_model=List[UploadResponse])
 async def get_documents():
-    """Return all documents from vectorstore (existing logic)"""
-    return list_documents()
+    return list_documents(doc_type='document')
 
 @app.delete("/api/documents/{doc_id}")
 async def remove_document(doc_id: str):
@@ -137,248 +163,134 @@ async def upload_file(file: UploadFile):
         doc_id=doc_id,
         filename=file.filename,
         file_type=os.path.splitext(file.filename)[1],
-        upload_date=datetime.utcnow().isoformat()
+        upload_date=datetime.now(timezone.utc).isoformat()
     )
 
-@app.post("/upload/faq", response_model=List[UploadResponse])
-async def upload_faq_files(file: List[UploadFile] = File(...)):
-    responses = []
-    faq_folder = os.path.join(DATA_DIR, "faq")
-    os.makedirs(faq_folder, exist_ok=True)
-    for f in file:
-        path = os.path.join(faq_folder, f.filename)
-        content = await f.read()
-        with open(path, "wb") as out:
-            out.write(content)
-        doc_id = process_document(path, f.filename)
-        responses.append(UploadResponse(
-            status="processed",
-            doc_id=doc_id,
-            filename=f.filename,
-            file_type=os.path.splitext(f.filename)[1],
-            upload_date=datetime.utcnow().isoformat()
-        ))
-    return responses
-
-@app.post("/upload/{type}", response_model=UploadResponse)
-async def upload_assessment_file(type: str, file: UploadFile = File(...)):
-    if type not in ['rubrics', 'qa', 'evidence', 'feedback']:
-        raise HTTPException(status_code=400, detail="Invalid upload type")
-    folder = os.path.join(DATA_DIR, type)
+@app.post("/upload/{doc_type}", response_model=UploadResponse)
+async def upload_file_type(doc_type: str, file: UploadFile = File(...)):
+    """
+    Upload a file to a specific doc_type folder (e.g., 'document' or 'faq')
+    and process it immediately into a vectorstore.
+    """
+    folder = os.path.join(DATA_DIR, doc_type)
     os.makedirs(folder, exist_ok=True)
     file_path = os.path.join(folder, file.filename)
+
+    # Save uploaded file
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    doc_id = process_document(file_path, file.filename)
+
+    # Process document with correct doc_type
+    try:
+        doc_id = process_document(
+            file_path=file_path,
+            file_name=file.filename,
+            doc_type=doc_type  # ✅ ensure vectorstore saved in correct folder
+        )
+    except Exception as e:
+        logger.error(f"Failed to process {file.filename} as {doc_type}: {e}")
+        return UploadResponse(
+            status="failed",
+            doc_id=os.path.splitext(file.filename)[0],
+            filename=file.filename,
+            file_type=os.path.splitext(file.filename)[1],
+            upload_date=datetime.now(timezone.utc).isoformat()
+        )
+
+    # Check if vectorstore exists
+    vector_path = os.path.join(VECTORSTORE_DIR, doc_type)
+    status = "Ingested" if vectorstore_exists(doc_id, base_path=vector_path) else "Pending"
+
     return UploadResponse(
-        status="processed",
+        status=status,
         doc_id=doc_id,
         filename=file.filename,
         file_type=os.path.splitext(file.filename)[1],
-        upload_date=datetime.utcnow().isoformat()
+        upload_date=datetime.now(timezone.utc).isoformat()
     )
 
-@app.get("/api/uploads/{type}", response_model=List[UploadResponse])
-async def list_uploads_by_type(type: str):
-    """List uploaded files by type"""
-    if type not in ['rubrics', 'qa', 'evidence', 'feedback']:
-        raise HTTPException(status_code=400, detail="Invalid type")
-    
-    folder = os.path.join(DATA_DIR, type)
+
+@app.get("/api/uploads/{doc_type}", response_model=List[UploadResponse])
+async def list_uploads_by_type(doc_type: str):
+    folder = os.path.join(DATA_DIR, doc_type)
     os.makedirs(folder, exist_ok=True)
     uploads = []
-    
+    vector_path = get_vectorstore_path(doc_type)
     for filename in os.listdir(folder):
-        path = os.path.join(folder, filename)
-        if os.path.isfile(path):
-            doc_id = os.path.splitext(filename)[0]
-            uploads.append(UploadResponse(
-                status="Ingested",
-                doc_id=doc_id,
-                filename=filename,
-                file_type=os.path.splitext(filename)[1],
-                upload_date=datetime.utcfromtimestamp(os.path.getmtime(path)).isoformat()
-            ))
-    return uploads
-
-from fastapi.responses import FileResponse
-
-# -----------------------------
-# --- Upload Management APIs (match frontend)
-# -----------------------------
-@app.get("/upload/{type}/list", response_model=List[UploadResponse])
-async def list_uploads_by_type_for_ui(type: str):
-    """
-    List uploaded files by type for frontend, with dynamic status:
-    - Ingested
-    - Pending
-    - Error
-    """
-    if type not in ['rubrics', 'qa', 'evidence', 'feedback']:
-        raise HTTPException(status_code=400, detail="Invalid type")
-    
-    folder = os.path.join(DATA_DIR, type)
-    os.makedirs(folder, exist_ok=True)
-
-    uploads = []
-    for filename in os.listdir(folder):
-        if not os.path.isfile(os.path.join(folder, filename)):
+        file_path = os.path.join(folder, filename)
+        if not os.path.isfile(file_path):
             continue
         doc_id = os.path.splitext(filename)[0]
-
-        # ตรวจสอบ vectorstore ว่ามี doc_id หรือไม่
-        try:
-            if vectorstore_exists(doc_id):  # ฟังก์ชันเช็คว่ามี vectorstore หรือไม่
-                status = "Ingested"
-            else:
-                status = "Pending"
-        except Exception as e:
-            status = "Error"
-
+        status = "Ingested" if vectorstore_exists(doc_id, base_path=vector_path) else "Pending"
         uploads.append(UploadResponse(
             status=status,
             doc_id=doc_id,
             filename=filename,
             file_type=os.path.splitext(filename)[1],
-            upload_date=datetime.utcfromtimestamp(os.path.getmtime(os.path.join(folder, filename))).isoformat()
+            upload_date=datetime.fromtimestamp(os.path.getmtime(file_path), tz=timezone.utc).isoformat()
         ))
-    
     return uploads
 
-
-@app.delete("/upload/{type}/{file_id}")
-async def delete_upload(type: str, file_id: str):
-    """
-    ลบไฟล์ตาม type และ file_id
-    """
-    folder = os.path.join(DATA_DIR, type)
-    filepath = os.path.join(folder, f"{file_id}")
-    
-    # handle ทั้งกรณีมีนามสกุล/ไม่มีนามสกุล
-    target = None
-    if os.path.exists(filepath):
-        target = filepath
-    else:
-        # หาไฟล์ที่ prefix ตรง file_id
-        for f in os.listdir(folder):
-            if os.path.splitext(f)[0] == file_id:
-                target = os.path.join(folder, f)
-                break
-    
-    if not target or not os.path.exists(target):
-        raise HTTPException(status_code=404, detail="File not found")
-
-    os.remove(target)
-    return {"status": "deleted", "file_id": file_id}
-
-
-@app.get("/upload/{type}/{file_id}")
-async def download_upload(type: str, file_id: str):
-    """
-    ดาวน์โหลดไฟล์ตาม type และ file_id
-    """
-    folder = os.path.join(DATA_DIR, type)
+@app.delete("/upload/{doc_type}/{file_id}")
+async def delete_upload(doc_type: str, file_id: str):
+    folder = os.path.join(DATA_DIR, doc_type)
     filepath = None
     for f in os.listdir(folder):
         if os.path.splitext(f)[0] == file_id:
             filepath = os.path.join(folder, f)
             break
-    
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
+    os.remove(filepath)
+    return {"status": "deleted", "file_id": file_id}
 
+@app.get("/upload/{doc_type}/{file_id}")
+async def download_upload(doc_type: str, file_id: str):
+    folder = os.path.join(DATA_DIR, doc_type)
+    filepath = None
+    for f in os.listdir(folder):
+        if os.path.splitext(f)[0] == file_id:
+            filepath = os.path.join(folder, f)
+            break
+    if not filepath or not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(filepath, filename=os.path.basename(filepath))
 
-
-
 # -----------------------------
-# --- RAG Query Endpoint ---
+# --- /ingest API ---
 # -----------------------------
-@app.post("/query", response_model=QueryResponse)
-async def query_endpoint(question: str = Form(...), doc_ids: Optional[str] = Form(None)):
-    try:
-        docs_to_use = [d.strip() for d in doc_ids.split(",")] if doc_ids else match_doc_ids_from_question(question)
-        if not docs_to_use:
-            raise HTTPException(status_code=404, detail="No matching documents found")
-        def summarize_multi_docs():
-            results = []
-            for doc_id in docs_to_use:
-                try:
-                    summary = answer_question_rag(question, doc_id)
-                except ValueError:
-                    summary = f"Error: Vectorstore not found for {doc_id}"
-                results.append({"doc_id": doc_id, "summary": summary})
-            return results
-        summaries = await run_in_threadpool(summarize_multi_docs)
-        combined_answer = "\n\n".join([f"**{r['doc_id']}**:\n{r['summary']}" for r in summaries])
-        return QueryResponse(answer=combined_answer)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"RAG processing error: {e}")
-        raise HTTPException(status_code=500, detail=f"RAG processing failed: {e}")
+class IngestRequest(BaseModel):
+    doc_ids: List[str]
+    doc_type: Optional[str] = "document"
 
-# -----------------------------
-# --- Compare Endpoint ---
-# -----------------------------
-@app.post("/compare")
-async def compare(
-    doc1: str = Form(...),
-    doc2: str = Form(...),
-    query: str = Form(...),
-):
-    try:
-        # โหลด retrievers
-        retrievers = [load_vectorstore(doc1), load_vectorstore(doc2)]
+@app.post("/ingest")
+async def ingest_documents(request: IngestRequest):
+    results = []
 
-        async def get_docs_text(retrievers, query_text):
-            texts = []
-            for retriever in retrievers:
-                try:
-                    # ใช้ get_relevant_documents
-                    docs = await run_in_threadpool(lambda: retriever.get_relevant_documents(query_text))
-                    # แปลงเป็น text
-                    doc_text = "\n".join([d.page_content if hasattr(d, "page_content") else str(d) for d in docs])
-                    texts.append(doc_text if doc_text else f"[No content for {doc1}]")
-                except Exception as e:
-                    logging.error(f"Error fetching documents: {e}")
-                    texts.append(f"[Error fetching documents: {e}]")
-            return texts
+    for doc_id in request.doc_ids:
+        folder = os.path.join(DATA_DIR, request.doc_type)
+        matched_files = [f for f in os.listdir(folder) if os.path.splitext(f)[0] == doc_id]
 
-        context_texts = await get_docs_text(retrievers, query)
-        context_text = "\n\n".join(context_texts)
-        doc1_text = context_texts[0] if len(context_texts) > 0 else "[No content for doc1]"
-        doc2_text = context_texts[1] if len(context_texts) > 1 else "[No content for doc2]"
+        if not matched_files:
+            results.append({"doc_id": doc_id, "result": "failed", "error": "File not found"})
+            continue
 
-        # สร้าง prompt string
-        prompt_text = COMPARE_PROMPT.format(
-            context=context_text,
-            query=query,
-            doc_names=f"{doc1} และ {doc2}"
-        )
+        file_name = matched_files[0]
+        file_path = os.path.join(folder, file_name)
 
-        # เรียก LLM
         try:
-            delta_answer = await run_in_threadpool(lambda: llm.predict(prompt_text))
+            process_document(file_path=file_path, file_name=file_name, doc_type=request.doc_type)
         except Exception as e:
-            logging.error(f"Error generating comparison: {e}")
-            delta_answer = f"[Error generating comparison: {e}]"
+            logger.warning(f"Warning while processing {doc_id}: {e}")
 
-        return {
-            "metrics": [
-                {
-                    "metric": "Key comparison",
-                    "doc1": doc1_text,
-                    "doc2": doc2_text,
-                    "delta": delta_answer,
-                    "remark": "Comparison generated from MultiDocRetriever"
-                }
-            ]
-        }
+        # ตรวจสอบ vectorstore จริง
+        if vectorstore_exists(doc_id, doc_type=request.doc_type):
+            results.append({"doc_id": doc_id, "result": "success"})
+        else:
+            results.append({"doc_id": doc_id, "result": "failed", "error": "Vectorstore not found after processing"})
 
-    except Exception as e:
-        logging.error(f"Compare failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Compare failed: {e}")
+    return {"status": "completed", "results": results}
+
 
 # -----------------------------
 # --- Assessment Workflow Endpoints ---
@@ -386,89 +298,192 @@ async def compare(
 @app.post("/process/start")
 async def start_assessment_process(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_assessment_workflow)
-    return {"status": "Assessment process started in background"}
+   
 
-@app.get("/process/status", response_model=ProcessStatus)
-async def get_process_status_endpoint():
-    return get_workflow_status()
+# -----------------------------
+# --- RAG Query Endpoint ---
+# -----------------------------
+# --- /query API (QA_PROMPT version, safe LLM) ---
+# -----------------------------
+from fastapi import Form
+from core.rag_chain import load_all_vectorstores, create_rag_chain, QA_PROMPT, llm
+from starlette.concurrency import run_in_threadpool
 
-@app.get("/result/summary", response_model=ResultSummary)
-async def get_result_summary_endpoint():
-    results = get_workflow_results()
-    evidence_count = sum(1 for r in results if "Strong" in r.get("summary", ""))
-    gap_count = sum(1 for r in results if "Gap" in r.get("summary", ""))
-    return ResultSummary(
-        totalQuestions=len(results),
-        averageScore=85.0,
-        evidenceCount=evidence_count,
-        gapCount=gap_count
+@app.post("/query")
+async def query_endpoint(
+    question: str = Form(...),
+    doc_ids: Optional[str] = Form(None),
+    doc_types: Optional[str] = Form(None)
+):
+    """
+    Query multiple vectorstores using QA_PROMPT
+    - doc_ids: comma-separated list of doc_ids
+    - doc_types: comma-separated list of doc types ('document', 'faq')
+    - ถ้าไม่ส่ง doc_ids → โหลด doc_ids ทั้งหมดใน doc_types
+    """
+
+    doc_id_list = doc_ids.split(",") if doc_ids else []
+    doc_type_list = doc_types.split(",") if doc_types else ["document", "faq"]
+
+    # ถ้าไม่ส่ง doc_ids → โหลด doc_ids ทั้งหมดจาก folder
+    if not doc_id_list:
+        doc_id_list = []
+        for dt in doc_type_list:
+            folder_path = os.path.join("vectorstore", dt)
+            if os.path.exists(folder_path):
+                doc_id_list.extend([
+                    d for d in os.listdir(folder_path)
+                    if os.path.isdir(os.path.join(folder_path, d))
+                ])
+
+    skipped = []
+
+    try:
+        multi_retriever = load_all_vectorstores(
+            doc_ids=doc_id_list,
+            doc_type=doc_type_list,
+            top_k=5
+        )
+    except ValueError as e:
+        return {"error": str(e), "skipped": skipped}
+
+    # -----------------------------
+    # --- ดึงทุก chunk ของเอกสาร ---
+    # -----------------------------
+    def get_all_docs_text(query_text):
+        docs = multi_retriever._get_relevant_documents(query_text)
+        text_blocks = [d.page_content for d in docs if hasattr(d, "page_content")]
+        return "\n\n".join(text_blocks)
+
+    context_text = await run_in_threadpool(lambda: get_all_docs_text(question))
+
+    # -----------------------------
+    # --- เตรียม prompt QA_PROMPT ---
+    # -----------------------------
+    prompt_text = QA_PROMPT.format(
+        context=context_text,
+        question=question
     )
 
-# -----------------------------
-# --- FAQ File Endpoints ---
-# -----------------------------
-@app.get("/api/faq/files")
-async def list_faq_files():
-    folder = os.path.join(DATA_DIR, "faq")
-    os.makedirs(folder, exist_ok=True)
-    return [{"filename": f, "upload_date": datetime.utcfromtimestamp(os.stat(os.path.join(folder, f)).st_mtime).isoformat()} for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+    # -----------------------------
+    # --- Safe LLM call ---
+    # -----------------------------
+    def call_llm_safe(prompt_text):
+        res = llm.invoke(prompt_text)
+        if isinstance(res, dict) and "result" in res:
+            return res["result"]
+        elif isinstance(res, str):
+            return res
+        else:
+            return str(res)
 
-@app.get("/api/faq/files/{filename}")
-async def download_faq_file(filename: str):
-    path = os.path.join(DATA_DIR, "faq", filename)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path)
+    answer = await run_in_threadpool(lambda: call_llm_safe(prompt_text))
 
-@app.delete("/api/faq/files/{filename}")
-async def delete_faq_file(filename: str):
-    path = os.path.join(DATA_DIR, "faq", filename)
-    if os.path.exists(path):
-        os.remove(path)
-        delete_document(os.path.splitext(filename)[0])
-        return {"status": "ok", "filename": filename}
-    raise HTTPException(status_code=404, detail="File not found")
-
-# -----------------------------
-# API Status
-# -----------------------------
-@app.get("/api/status")
-async def api_status():
-    """
-    เช็คสถานะ API เบื้องต้น
-    """
     return {
-        "status": "ok",
-        "timestamp": datetime.datetime.now().isoformat(),
-        "message": "API is running"
+        "question": question,
+        "doc_ids": doc_id_list,
+        "doc_types": doc_type_list,
+        "answer": answer,
+        "skipped": skipped
     }
 
-# -----------------------------
-# API Health Check
-# -----------------------------
-@app.get("/api/health")
-async def api_health():
-    """
-    เช็คสุขภาพระบบ: database, retrievers, LLM connection (mock example)
-    """
-    try:
-        # ตัวอย่างตรวจสอบ retriever/LLM connection
-        retriever_status = "ok"  # เปลี่ยนเป็น check จริงถ้ามี
-        llm_status = "ok"        # เปลี่ยนเป็น check จริงถ้ามี
 
-        health = {
-            "status": "healthy" if retriever_status == "ok" and llm_status == "ok" else "degraded",
-            "components": {
-                "retriever": retriever_status,
-                "LLM": llm_status
-            },
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-        return health
-    except Exception as e:
+
+# -----------------------------
+# --- /compare API (ปรับปรุง) ---
+# -----------------------------
+@app.post("/compare")
+async def compare(
+    doc1: str = Form(...),
+    doc2: str = Form(...),
+    query: str = Form(...),
+    doc_types: Optional[str] = Form(None)  # optional
+):
+    """
+    Compare documents using MultiDocRetriever.
+    - รองรับหลาย doc_type (comma-separated)
+    - ถ้าไม่ส่ง doc_types → ใช้ ["document", "faq"]
+    """
+    from core.vectorstore import vectorstore_exists, load_all_vectorstores
+
+    # default doc_types
+    if doc_types:
+        doc_type_list = [dt.strip() for dt in doc_types.split(",") if dt.strip()]
+    else:
+        doc_type_list = ["document", "faq"]
+
+    doc_ids = [doc1, doc2]
+
+    # --- ตรวจสอบ vectorstore ---
+    valid_docs = []
+    skipped = []
+    for dt in doc_type_list:
+        base_path = os.path.join(VECTORSTORE_DIR, dt)
+        for doc_id in doc_ids:
+            if vectorstore_exists(doc_id, base_path=base_path):
+                valid_docs.append((doc_id, dt))
+            else:
+                skipped.append(f"{dt}/{doc_id}")
+
+    if not valid_docs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No valid vectorstores found for docs: {', '.join(doc_ids)} in doc_types: {doc_type_list}"
+        )
+
+    # --- Load retrievers using MultiDocRetriever ---
+    try:
+        multi_retriever = load_all_vectorstores(
+            doc_ids=doc_ids,
+            top_k=5,
+            doc_type=doc_type_list
+        )
+
+        # --- Fetch document texts ---
+        def get_docs_text(query_text):
+            docs = multi_retriever._get_relevant_documents(query_text)
+            doc_text_map = {doc1: "", doc2: ""}
+            for d in docs:
+                source = d.metadata.get("source")
+                if source in doc_text_map:
+                    doc_text_map[source] += (d.page_content + "\n")
+            # ถ้าไม่เจอ content → ใส่ placeholder
+            for key in doc_text_map:
+                if not doc_text_map[key]:
+                    doc_text_map[key] = f"[No content for {key}]"
+            return doc_text_map[doc1], doc_text_map[doc2]
+
+        doc1_text, doc2_text = await run_in_threadpool(lambda: get_docs_text(query))
+        context_text = f"{doc1_text}\n\n{doc2_text}"
+
+        # --- Generate comparison ---
+        prompt_text = COMPARE_PROMPT.format(
+            context=context_text,
+            query=query,
+            doc_names=f"{doc1} และ {doc2}"
+        )
+
+        delta_answer = await run_in_threadpool(lambda: llm.invoke(prompt_text))
+
         return {
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.datetime.now().isoformat()
+            "result": {
+                "metrics": [
+                    {
+                        "metric": "Key comparison",
+                        "doc1": doc1_text,
+                        "doc2": doc2_text,
+                        "delta": delta_answer,
+                        "remark": f"Comparison generated from doc_types: {', '.join(doc_type_list)}"
+                    }
+                ]
+            },
+            "skipped": skipped
         }
+
+    except Exception as e:
+        logging.error(f"Compare failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Compare failed: {e}")
+
+
+
 
