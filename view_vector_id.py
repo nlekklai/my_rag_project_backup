@@ -3,8 +3,8 @@ from langchain_community.vectorstores.chroma import Chroma
 from langchain.schema import Document
 from core.vectorstore import get_hf_embeddings, VECTORSTORE_DIR
 
-doc_id = "seam"
-doc_type = "document"
+doc_id = "KM Scoring Guideline-Concept"
+doc_type = "faq"
 
 # path ของ vectorstore
 vectordb_path = os.path.join(VECTORSTORE_DIR, doc_type, doc_id)

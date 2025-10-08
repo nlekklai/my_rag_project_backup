@@ -67,8 +67,47 @@
 # for d in docs:
 #     print(d.page_content[:200])
 
-from langchain_community.document_loaders import UnstructuredExcelLoader
-loader = UnstructuredExcelLoader("data/faq/seam_faq.xlsx")
-docs = loader.load()
-print(len(docs))
-print(docs[0].page_content[:100])
+# from langchain_community.document_loaders import UnstructuredExcelLoader
+# loader = UnstructuredExcelLoader("data/faq/seam_faq.xlsx")
+# docs = loader.load()
+# print(len(docs))
+# print(docs[0].page_content[:100])
+
+
+import json
+from collections import defaultdict
+import pandas as pd  # Optional: for clean tabular display
+
+def summarize_mapping(json_path: str):
+    """Summarize mapping by organization/section."""
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    summary = defaultdict(lambda: {"questions": 0, "valid_evidence_total": 0})
+
+    for entry in data:
+        org = entry.get("organization", "Unknown")
+        section = entry.get("section", "Unknown")
+        key = (org, section)
+        summary[key]["questions"] += 1
+        summary[key]["valid_evidence_total"] += entry.get("valid_evidence_count", 0)
+
+    # Convert to rows
+    rows = []
+    for (org, section), stats in summary.items():
+        avg = stats["valid_evidence_total"] / stats["questions"] if stats["questions"] > 0 else 0
+        rows.append({
+            "organization": org,
+            "section": section,
+            "number_of_questions": stats["questions"],
+            "average_evidence_per_question": round(avg, 2),
+            "total_valid_evidence": stats["valid_evidence_total"]
+        })
+
+    # Output as table (pandas optional)
+    df = pd.DataFrame(rows)
+    print(df.to_markdown(index=False))
+    return df
+
+if __name__ == "__main__":
+    summarize_mapping("output/mappings_pea_v3_clean.json")

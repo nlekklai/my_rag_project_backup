@@ -138,7 +138,7 @@ def get_vectorstore_path(doc_type: Optional[str] = None):
 # -----------------------------
 @app.get("/api/documents", response_model=List[UploadResponse])
 async def get_documents():
-    return list_documents(doc_type='document')
+    return list_documents(doc_types=['document', 'faq'])
 
 @app.delete("/api/documents/{doc_id}")
 async def remove_document(doc_id: str):
@@ -309,6 +309,9 @@ from fastapi import Form
 from core.rag_chain import load_all_vectorstores, create_rag_chain, QA_PROMPT, llm
 from starlette.concurrency import run_in_threadpool
 
+# -----------------------------
+# --- RAG Query Endpoint (ปรับปรุง) ---
+# -----------------------------
 @app.post("/query")
 async def query_endpoint(
     question: str = Form(...),
@@ -319,37 +322,32 @@ async def query_endpoint(
     Query multiple vectorstores using QA_PROMPT
     - doc_ids: comma-separated list of doc_ids
     - doc_types: comma-separated list of doc types ('document', 'faq')
-    - ถ้าไม่ส่ง doc_ids → โหลด doc_ids ทั้งหมดใน doc_types
+    - ถ้าไม่ส่ง doc_ids หรือ doc_types → จะโหลดทั้งหมดที่พบ
     """
 
-    doc_id_list = doc_ids.split(",") if doc_ids else []
-    doc_type_list = doc_types.split(",") if doc_types else ["document", "faq"]
-
-    # ถ้าไม่ส่ง doc_ids → โหลด doc_ids ทั้งหมดจาก folder
-    if not doc_id_list:
-        doc_id_list = []
-        for dt in doc_type_list:
-            folder_path = os.path.join("vectorstore", dt)
-            if os.path.exists(folder_path):
-                doc_id_list.extend([
-                    d for d in os.listdir(folder_path)
-                    if os.path.isdir(os.path.join(folder_path, d))
-                ])
+    doc_id_list = doc_ids.split(",") if doc_ids else None  # เปลี่ยนเป็น None แทน []
+    doc_type_list = doc_types.split(",") if doc_types else None # เปลี่ยนเป็น None แทน ["document", "faq"]
 
     skipped = []
 
     try:
+        # ** ปรับ top_k เป็น 15 และ final_k เป็น 5 เพื่อเพิ่มความแม่นยำ **
         multi_retriever = load_all_vectorstores(
             doc_ids=doc_id_list,
             doc_type=doc_type_list,
-            top_k=5
+            top_k=15,    # ดึงมา 15 chunks ก่อน rerank
+            final_k=5    # เลือกเหลือ 5 chunks สุดท้าย
         )
     except ValueError as e:
         return {"error": str(e), "skipped": skipped}
 
+    # อัพเดท doc_id_list ที่ถูกโหลดมาจริง
+    loaded_doc_ids = [r.doc_id for r in multi_retriever.retrievers_list]
+
     # -----------------------------
     # --- ดึงทุก chunk ของเอกสาร ---
     # -----------------------------
+    # ... (ส่วน get_all_docs_text และรัน LLM เหมือนเดิม)
     def get_all_docs_text(query_text):
         docs = multi_retriever._get_relevant_documents(query_text)
         text_blocks = [d.page_content for d in docs if hasattr(d, "page_content")]
@@ -381,13 +379,11 @@ async def query_endpoint(
 
     return {
         "question": question,
-        "doc_ids": doc_id_list,
-        "doc_types": doc_type_list,
+        "doc_ids": loaded_doc_ids, # ใช้ loaded_doc_ids ที่โหลดมาจริง
+        "doc_types": doc_type_list if doc_type_list else ["document", "faq"],
         "answer": answer,
         "skipped": skipped
     }
-
-
 
 # -----------------------------
 # --- /compare API (ปรับปรุง) ---
@@ -485,5 +481,20 @@ async def compare(
         raise HTTPException(status_code=500, detail=f"Compare failed: {e}")
 
 
+@app.get("/api/status")
+async def api_status():
+    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
+
+@app.get("/api/health")
+async def health_check():
+    # ตรวจสอบ folder / vectorstore
+    data_ready = os.path.exists(DATA_DIR)
+    vector_ready = os.path.exists(VECTORSTORE_DIR)
+    return {
+        "status": "ok" if data_ready and vector_ready else "error",
+        "data_dir_exists": data_ready,
+        "vectorstore_exists": vector_ready,
+        "time": datetime.now(timezone.utc).isoformat()
+    }
 

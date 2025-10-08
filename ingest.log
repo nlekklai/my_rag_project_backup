@@ -3611,3 +3611,420 @@ I/O Error: Couldn't open file 'data/document/<e0><b9><80><e0><b8><ad><e0><b8><81
 2025-10-07 20:15:16,656 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
 2025-10-07 20:15:16,663 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
 2025-10-07 20:16:01,544 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 09:10:28,349 | INFO | Workflow logger initialized
+2025-10-08 09:10:28,365 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 09:56:19,741 | INFO | Workflow logger initialized
+2025-10-08 09:56:19,756 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 09:57:00,341 | INFO | Workflow logger initialized
+2025-10-08 09:57:00,357 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 09:58:33,145 | INFO | Workflow logger initialized
+2025-10-08 09:58:33,160 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 10:06:57,327 | INFO | Workflow logger initialized
+2025-10-08 10:06:57,341 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 10:16:03,021 | INFO | Workflow logger initialized
+2025-10-08 10:16:03,036 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 10:21:50,275 | INFO | Workflow logger initialized
+2025-10-08 10:21:50,291 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 11:30:21,190 | INFO | Workflow logger initialized
+2025-10-08 11:30:21,206 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 11:30:30,978 | INFO | Workflow logger initialized
+2025-10-08 11:30:30,993 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 11:33:20,113 | INFO | Workflow logger initialized
+2025-10-08 11:33:20,129 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 11:33:54,596 | INFO | Workflow logger initialized
+2025-10-08 11:33:54,612 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:06:14,757 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:06:19,132 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:06:19,461 | INFO | Processed KM Scoring Guideline-Concept.xlsx -> doc_id: KM Scoring Guideline-Concept (58 chunks) in doc_type=faq
+2025-10-08 12:09:22,522 | INFO | Workflow logger initialized
+2025-10-08 12:09:22,537 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:09:24,751 | INFO | Workflow logger initialized
+2025-10-08 12:09:24,766 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:10:22,790 | INFO | Workflow logger initialized
+2025-10-08 12:10:22,805 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:14:40,924 | INFO | Workflow logger initialized
+2025-10-08 12:14:40,939 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:18:49,217 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:18:53,921 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:18:53,984 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:18:57,890 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:18:57,895 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:01,577 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:01,584 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:05,683 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:05,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:09,937 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:09,943 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:13,784 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:13,791 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:18,042 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:18,047 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:21,683 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:19:21,688 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:19:25,764 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:41:41,620 | INFO | Workflow logger initialized
+2025-10-08 12:41:41,636 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:41:48,369 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:41:52,747 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:42:04,947 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 12:43:29,409 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:43:46,519 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 12:46:06,872 | INFO | Workflow logger initialized
+2025-10-08 12:46:06,889 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 12:50:16,149 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:50:20,332 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 12:50:38,416 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 12:53:44,590 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:53:57,004 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 12:59:25,646 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 12:59:46,435 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 13:05:20,488 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:05:38,238 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 13:15:33,532 | INFO | Workflow logger initialized
+2025-10-08 13:15:33,547 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:27:14,505 | INFO | Workflow logger initialized
+2025-10-08 13:27:14,520 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:27:46,299 | INFO | Workflow logger initialized
+2025-10-08 13:27:46,313 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:30:11,657 | INFO | Processing sheet: Summary ข้อใหญ่
+2025-10-08 13:30:11,657 | WARNING | Sheet 'Summary ข้อใหญ่' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:14,158 | INFO | Processing sheet: การแบ่งเกณฑ์การให้คะแนน
+2025-10-08 13:30:14,158 | WARNING | Sheet 'การแบ่งเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:14,209 | INFO | Processing sheet: หลักเกณฑ์การให้คะแนน
+2025-10-08 13:30:14,209 | WARNING | Sheet 'หลักเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:14,258 | INFO | Processing sheet: Consideration point
+2025-10-08 13:30:14,258 | WARNING | Sheet 'Consideration point' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:14,307 | INFO | Processing sheet: Score-Detail
+2025-10-08 13:30:14,307 | WARNING | Sheet 'Score-Detail' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:14,356 | WARNING | No content loaded from KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:30:34,139 | INFO | Processing sheet: Summary ข้อใหญ่
+2025-10-08 13:30:34,140 | WARNING | Sheet 'Summary ข้อใหญ่' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:34,198 | INFO | Processing sheet: การแบ่งเกณฑ์การให้คะแนน
+2025-10-08 13:30:34,198 | WARNING | Sheet 'การแบ่งเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:34,245 | INFO | Processing sheet: หลักเกณฑ์การให้คะแนน
+2025-10-08 13:30:34,245 | WARNING | Sheet 'หลักเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:34,292 | INFO | Processing sheet: Consideration point
+2025-10-08 13:30:34,293 | WARNING | Sheet 'Consideration point' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:34,340 | INFO | Processing sheet: Score-Detail
+2025-10-08 13:30:34,340 | WARNING | Sheet 'Score-Detail' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:30:34,388 | WARNING | No content loaded from KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:34:56,252 | INFO | Workflow logger initialized
+2025-10-08 13:34:56,267 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:35:19,574 | INFO | Processing sheet: Sheet1
+2025-10-08 13:35:19,574 | WARNING | Sheet 'Sheet1' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,362 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-08 13:35:22,376 | INFO | Processing sheet: Summary ข้อใหญ่
+2025-10-08 13:35:22,376 | WARNING | Sheet 'Summary ข้อใหญ่' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,479 | INFO | Processing sheet: การแบ่งเกณฑ์การให้คะแนน
+2025-10-08 13:35:22,479 | WARNING | Sheet 'การแบ่งเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,527 | INFO | Processing sheet: หลักเกณฑ์การให้คะแนน
+2025-10-08 13:35:22,528 | WARNING | Sheet 'หลักเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,575 | INFO | Processing sheet: Consideration point
+2025-10-08 13:35:22,575 | WARNING | Sheet 'Consideration point' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,622 | INFO | Processing sheet: Score-Detail
+2025-10-08 13:35:22,622 | WARNING | Sheet 'Score-Detail' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:35:22,670 | WARNING | No content loaded from KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:40:01,719 | INFO | Workflow logger initialized
+2025-10-08 13:40:01,735 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:40:02,846 | INFO | Processing sheet: Sheet1
+2025-10-08 13:40:02,846 | WARNING | Sheet 'Sheet1' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:05,769 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-08 13:40:05,782 | INFO | Processing sheet: Summary ข้อใหญ่
+2025-10-08 13:40:05,782 | WARNING | Sheet 'Summary ข้อใหญ่' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:05,888 | INFO | Processing sheet: การแบ่งเกณฑ์การให้คะแนน
+2025-10-08 13:40:05,888 | WARNING | Sheet 'การแบ่งเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:05,937 | INFO | Processing sheet: หลักเกณฑ์การให้คะแนน
+2025-10-08 13:40:05,937 | WARNING | Sheet 'หลักเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:05,985 | INFO | Processing sheet: Consideration point
+2025-10-08 13:40:05,985 | WARNING | Sheet 'Consideration point' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:06,033 | INFO | Processing sheet: Score-Detail
+2025-10-08 13:40:06,034 | WARNING | Sheet 'Score-Detail' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:40:06,081 | WARNING | No content loaded from KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:41:51,295 | INFO | Workflow logger initialized
+2025-10-08 13:41:51,310 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:41:51,854 | INFO | Processing sheet: Sheet1
+2025-10-08 13:41:51,854 | WARNING | Sheet 'Sheet1' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,427 | WARNING | No content loaded from seam_faq.xlsx
+2025-10-08 13:41:54,440 | INFO | Processing sheet: Summary ข้อใหญ่
+2025-10-08 13:41:54,440 | WARNING | Sheet 'Summary ข้อใหญ่' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,544 | INFO | Processing sheet: การแบ่งเกณฑ์การให้คะแนน
+2025-10-08 13:41:54,544 | WARNING | Sheet 'การแบ่งเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,593 | INFO | Processing sheet: หลักเกณฑ์การให้คะแนน
+2025-10-08 13:41:54,593 | WARNING | Sheet 'หลักเกณฑ์การให้คะแนน' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,640 | INFO | Processing sheet: Consideration point
+2025-10-08 13:41:54,640 | WARNING | Sheet 'Consideration point' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,689 | INFO | Processing sheet: Score-Detail
+2025-10-08 13:41:54,689 | WARNING | Sheet 'Score-Detail' does not appear to be a structured table. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:41:54,736 | WARNING | No content loaded from KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:47:38,534 | INFO | Workflow logger initialized
+2025-10-08 13:47:38,549 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 13:48:05,935 | WARNING | No clear structured header found in sheet 'Sheet1'. Skipping structured load for this sheet.
+2025-10-08 13:48:05,935 | WARNING | No documents were generated through structured loading for seam_faq.xlsx. Falling back to UnstructuredExcelLoader.
+2025-10-08 13:48:09,105 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:48:13,555 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 13:48:13,776 | INFO | Processed seam_faq.xlsx -> doc_id: seam_faq (5 chunks) in doc_type=faq
+2025-10-08 13:48:13,788 | INFO | Structured header found in sheet 'Summary ข้อใหญ่' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:48:13,789 | WARNING | Skipping structured load for sheet 'Summary ข้อใหญ่' - Missing Detail column.
+2025-10-08 13:48:13,789 | ERROR | Error processing sheet 'Summary ข้อใหญ่' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 13:48:13,792 | INFO | Structured header found in sheet 'การแบ่งเกณฑ์การให้คะแนน' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:48:13,795 | INFO | Successfully processed 0 valid documents from sheet 'การแบ่งเกณฑ์การให้คะแนน'.
+2025-10-08 13:48:13,797 | WARNING | No clear structured header found in sheet 'หลักเกณฑ์การให้คะแนน'. Skipping structured load for this sheet.
+2025-10-08 13:48:13,798 | INFO | Structured header found in sheet 'Consideration point' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:48:13,799 | WARNING | Skipping structured load for sheet 'Consideration point' - Missing Score/Weight column.
+2025-10-08 13:48:13,800 | INFO | Successfully processed 12 valid documents from sheet 'Consideration point'.
+2025-10-08 13:48:13,801 | INFO | Structured header found in sheet 'Score-Detail' at row 0 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 13:48:13,803 | WARNING | Skipping structured load for sheet 'Score-Detail' - Missing Detail column.
+2025-10-08 13:48:13,803 | ERROR | Error processing sheet 'Score-Detail' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 13:48:13,803 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:48:17,615 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 13:48:17,894 | INFO | Processed KM Scoring Guideline-Concept.xlsx -> doc_id: KM Scoring Guideline-Concept (12 chunks) in doc_type=faq
+2025-10-08 13:52:01,782 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:52:06,578 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 13:52:19,262 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 13:55:02,189 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:55:13,444 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 13:58:26,627 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 13:58:36,545 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:00:38,324 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:00:44,953 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:01:53,474 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:02:01,009 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:10:24,726 | WARNING | No clear structured header found in sheet 'ความเชื่อมโยง'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,731 | WARNING | No clear structured header found in sheet 'SWOT'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,732 | WARNING | No clear structured header found in sheet 'SA SC CC'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,734 | WARNING | No clear structured header found in sheet 'Positioning'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,735 | WARNING | No clear structured header found in sheet 'Goal SO'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,737 | WARNING | No clear structured header found in sheet 'Strategy'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,738 | WARNING | No clear structured header found in sheet 'Tatics'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,740 | WARNING | No clear structured header found in sheet 'KPI'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,741 | WARNING | No clear structured header found in sheet 'Initiative'. Skipping structured load for this sheet.
+2025-10-08 14:10:24,741 | WARNING | No documents were generated through structured loading for KM1.1L401 Mapping แผนแม่บท.xlsx. Falling back to UnstructuredExcelLoader.
+2025-10-08 14:10:27,301 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:10:31,183 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:10:31,409 | INFO | Processed KM1.1L401 Mapping แผนแม่บท.xlsx -> doc_id: KM1.1L401 Mapping แผนแม่บท (49 chunks) in doc_type=faq
+2025-10-08 14:10:56,314 | INFO | Structured header found in sheet 'Summary ข้อใหญ่' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:10:56,317 | WARNING | Skipping structured load for sheet 'Summary ข้อใหญ่' - Missing Detail column.
+2025-10-08 14:10:56,317 | ERROR | Error processing sheet 'Summary ข้อใหญ่' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:10:56,322 | INFO | Structured header found in sheet 'การแบ่งเกณฑ์การให้คะแนน' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:10:56,327 | INFO | Successfully processed 0 valid documents from sheet 'การแบ่งเกณฑ์การให้คะแนน'.
+2025-10-08 14:10:56,329 | WARNING | No clear structured header found in sheet 'หลักเกณฑ์การให้คะแนน'. Skipping structured load for this sheet.
+2025-10-08 14:10:56,332 | INFO | Structured header found in sheet 'Consideration point' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:10:56,333 | WARNING | Skipping structured load for sheet 'Consideration point' - Missing Score/Weight column.
+2025-10-08 14:10:56,334 | INFO | Successfully processed 12 valid documents from sheet 'Consideration point'.
+2025-10-08 14:10:56,337 | INFO | Structured header found in sheet 'Score-Detail' at row 0 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:10:56,338 | WARNING | Skipping structured load for sheet 'Score-Detail' - Missing Detail column.
+2025-10-08 14:10:56,338 | ERROR | Error processing sheet 'Score-Detail' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:10:56,339 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:11:00,125 | ERROR | Failed to save vectorstore for KM Scoring Guideline-Concept: Query error: Database error: error returned from database: (code: 1032) attempt to write a readonly database
+2025-10-08 14:11:00,125 | ERROR | Failed to process KM Scoring Guideline-Concept.xlsx as faq: Query error: Database error: error returned from database: (code: 1032) attempt to write a readonly database
+2025-10-08 14:13:53,528 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:14:08,294 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:18:44,756 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:18:53,456 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:24:05,589 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:24:17,197 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:26:31,640 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:26:39,207 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:32:02,031 | INFO | Workflow logger initialized
+2025-10-08 14:32:02,046 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 14:32:04,074 | INFO | Workflow logger initialized
+2025-10-08 14:32:04,090 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 14:32:37,424 | WARNING | No clear structured header found in sheet 'ความเชื่อมโยง'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,427 | WARNING | No clear structured header found in sheet 'SWOT'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,428 | WARNING | No clear structured header found in sheet 'SA SC CC'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,430 | WARNING | No clear structured header found in sheet 'Positioning'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,431 | WARNING | No clear structured header found in sheet 'Goal SO'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,432 | WARNING | No clear structured header found in sheet 'Strategy'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,434 | WARNING | No clear structured header found in sheet 'Tatics'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,435 | WARNING | No clear structured header found in sheet 'KPI'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,437 | WARNING | No clear structured header found in sheet 'Initiative'. Skipping structured load for this sheet.
+2025-10-08 14:32:37,437 | WARNING | No documents were generated through structured loading for KM1.1L401 Mapping แผนแม่บท.xlsx. Falling back to UnstructuredExcelLoader.
+2025-10-08 14:32:40,719 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:32:45,637 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:32:45,922 | INFO | Processed KM1.1L401 Mapping แผนแม่บท.xlsx -> doc_id: KM1.1L401 Mapping แผนแม่บท (49 chunks) in doc_type=faq
+2025-10-08 14:32:45,935 | INFO | Structured header found in sheet 'Summary ข้อใหญ่' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:32:45,936 | WARNING | Skipping structured load for sheet 'Summary ข้อใหญ่' - Missing Detail column.
+2025-10-08 14:32:45,936 | ERROR | Error processing sheet 'Summary ข้อใหญ่' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:32:45,939 | INFO | Structured header found in sheet 'การแบ่งเกณฑ์การให้คะแนน' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:32:45,942 | INFO | Successfully processed 0 valid documents from sheet 'การแบ่งเกณฑ์การให้คะแนน'.
+2025-10-08 14:32:45,943 | WARNING | No clear structured header found in sheet 'หลักเกณฑ์การให้คะแนน'. Skipping structured load for this sheet.
+2025-10-08 14:32:45,945 | INFO | Structured header found in sheet 'Consideration point' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:32:45,946 | WARNING | Skipping structured load for sheet 'Consideration point' - Missing Score/Weight column. Proceeding without score metadata.
+2025-10-08 14:32:45,946 | INFO | Successfully processed 12 valid documents from sheet 'Consideration point'.
+2025-10-08 14:32:45,948 | INFO | Structured header found in sheet 'Score-Detail' at row 0 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:32:45,949 | WARNING | Skipping structured load for sheet 'Score-Detail' - Missing Detail column.
+2025-10-08 14:32:45,949 | ERROR | Error processing sheet 'Score-Detail' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:32:45,950 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:32:49,889 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:32:49,951 | INFO | Processed KM Scoring Guideline-Concept.xlsx -> doc_id: KM Scoring Guideline-Concept (12 chunks) in doc_type=faq
+2025-10-08 14:33:01,008 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:33:05,595 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:33:18,422 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:36:37,377 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:36:45,030 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:37:07,060 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:37:17,134 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 14:43:01,156 | INFO | Workflow logger initialized
+2025-10-08 14:43:01,171 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 14:43:14,855 | WARNING | No clear structured header found in sheet 'ความเชื่อมโยง'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,857 | WARNING | No clear structured header found in sheet 'SWOT'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,859 | WARNING | No clear structured header found in sheet 'SA SC CC'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,860 | WARNING | No clear structured header found in sheet 'Positioning'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,861 | WARNING | No clear structured header found in sheet 'Goal SO'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,863 | WARNING | No clear structured header found in sheet 'Strategy'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,864 | WARNING | No clear structured header found in sheet 'Tatics'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,866 | WARNING | No clear structured header found in sheet 'KPI'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,867 | WARNING | No clear structured header found in sheet 'Initiative'. Skipping structured load for this sheet.
+2025-10-08 14:43:14,867 | WARNING | No documents were generated through structured loading for KM1.1L401 Mapping แผนแม่บท.xlsx. Falling back to UnstructuredExcelLoader.
+2025-10-08 14:43:18,551 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:43:22,885 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:43:23,075 | INFO | Processed KM1.1L401 Mapping แผนแม่บท.xlsx -> doc_id: KM1.1L401 Mapping แผนแม่บท (1 chunks) in doc_type=faq
+2025-10-08 14:43:23,087 | INFO | Structured header found in sheet 'Summary ข้อใหญ่' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:43:23,089 | WARNING | Skipping structured load for sheet 'Summary ข้อใหญ่' - Missing Detail column.
+2025-10-08 14:43:23,089 | ERROR | Error processing sheet 'Summary ข้อใหญ่' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:43:23,092 | INFO | Structured header found in sheet 'การแบ่งเกณฑ์การให้คะแนน' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:43:23,095 | INFO | Successfully processed 0 valid documents from sheet 'การแบ่งเกณฑ์การให้คะแนน'.
+2025-10-08 14:43:23,097 | WARNING | No clear structured header found in sheet 'หลักเกณฑ์การให้คะแนน'. Skipping structured load for this sheet.
+2025-10-08 14:43:23,098 | INFO | Structured header found in sheet 'Consideration point' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:43:23,099 | WARNING | Skipping structured load for sheet 'Consideration point' - Missing Score/Weight column. Proceeding without score metadata.
+2025-10-08 14:43:23,100 | INFO | Successfully processed 12 valid documents from sheet 'Consideration point'.
+2025-10-08 14:43:23,101 | INFO | Structured header found in sheet 'Score-Detail' at row 0 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 14:43:23,103 | WARNING | Skipping structured load for sheet 'Score-Detail' - Missing Detail column.
+2025-10-08 14:43:23,103 | ERROR | Error processing sheet 'Score-Detail' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 14:43:23,103 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:43:27,344 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:43:27,417 | INFO | Processed KM Scoring Guideline-Concept.xlsx -> doc_id: KM Scoring Guideline-Concept (12 chunks) in doc_type=faq
+2025-10-08 14:43:36,675 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 14:43:40,706 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 14:43:51,781 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:16:04,040 | INFO | Workflow logger initialized
+2025-10-08 15:16:04,056 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:16:04,658 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:16:09,415 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:16:12,689 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:16:59,708 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:18:11,677 | WARNING | No clear structured header found in sheet 'ความเชื่อมโยง'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,681 | WARNING | No clear structured header found in sheet 'SWOT'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,683 | WARNING | No clear structured header found in sheet 'SA SC CC'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,684 | WARNING | No clear structured header found in sheet 'Positioning'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,686 | WARNING | No clear structured header found in sheet 'Goal SO'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,687 | WARNING | No clear structured header found in sheet 'Strategy'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,688 | WARNING | No clear structured header found in sheet 'Tatics'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,690 | WARNING | No clear structured header found in sheet 'KPI'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,692 | WARNING | No clear structured header found in sheet 'Initiative'. Skipping structured load for this sheet.
+2025-10-08 15:18:11,692 | WARNING | No documents were generated through structured loading for KM1.1L401 Mapping แผนแม่บท.xlsx. Falling back to UnstructuredExcelLoader.
+2025-10-08 15:18:15,280 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:18:19,533 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:18:20,030 | INFO | Processed KM1.1L401 Mapping แผนแม่บท.xlsx -> doc_id: KM1.1L401 Mapping แผนแม่บท (1 chunks) in doc_type=faq
+2025-10-08 15:18:20,043 | INFO | Structured header found in sheet 'Summary ข้อใหญ่' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 15:18:20,045 | WARNING | Skipping structured load for sheet 'Summary ข้อใหญ่' - Missing Detail column.
+2025-10-08 15:18:20,045 | ERROR | Error processing sheet 'Summary ข้อใหญ่' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 15:18:20,047 | INFO | Structured header found in sheet 'การแบ่งเกณฑ์การให้คะแนน' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 15:18:20,051 | INFO | Successfully processed 0 valid documents from sheet 'การแบ่งเกณฑ์การให้คะแนน'.
+2025-10-08 15:18:20,052 | WARNING | No clear structured header found in sheet 'หลักเกณฑ์การให้คะแนน'. Skipping structured load for this sheet.
+2025-10-08 15:18:20,054 | INFO | Structured header found in sheet 'Consideration point' at row 1 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 15:18:20,055 | WARNING | Skipping structured load for sheet 'Consideration point' - Missing Score/Weight column. Proceeding without score metadata.
+2025-10-08 15:18:20,055 | INFO | Successfully processed 12 valid documents from sheet 'Consideration point'.
+2025-10-08 15:18:20,057 | INFO | Structured header found in sheet 'Score-Detail' at row 0 in KM Scoring Guideline-Concept.xlsx
+2025-10-08 15:18:20,058 | WARNING | Skipping structured load for sheet 'Score-Detail' - Missing Detail column.
+2025-10-08 15:18:20,058 | ERROR | Error processing sheet 'Score-Detail' of KM Scoring Guideline-Concept.xlsx: Missing essential Detail column.. Skipping structured load for this sheet.
+2025-10-08 15:18:20,059 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:18:24,272 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:18:24,346 | INFO | Processed KM Scoring Guideline-Concept.xlsx -> doc_id: KM Scoring Guideline-Concept (12 chunks) in doc_type=faq
+2025-10-08 15:18:36,934 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:20:05,729 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:23:15,899 | INFO | Workflow logger initialized
+2025-10-08 15:23:15,915 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:23:16,494 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:23:20,894 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:23:20,950 | INFO | Downloading ms-marco-MiniLM-L-12-v2...
+2025-10-08 15:23:32,294 | INFO | Workflow logger initialized
+2025-10-08 15:23:32,309 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:23:32,840 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:23:37,012 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:25:19,807 | INFO | Workflow logger initialized
+2025-10-08 15:25:19,822 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:25:21,789 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:25:25,972 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:28:01,808 | INFO | Workflow logger initialized
+2025-10-08 15:28:01,823 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:28:04,110 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:28:08,388 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:28:59,391 | INFO | Workflow logger initialized
+2025-10-08 15:28:59,407 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:28:59,957 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:29:04,296 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:31:27,321 | INFO | Workflow logger initialized
+2025-10-08 15:31:27,336 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:31:27,895 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:31:32,359 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:31:44,777 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:37:07,848 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:37:11,917 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:37:23,797 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:38:37,943 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:38:42,556 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:38:46,568 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:38:50,897 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:39:32,813 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:39:40,241 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:40:08,999 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:40:26,536 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:42:03,665 | INFO | Workflow logger initialized
+2025-10-08 15:42:03,680 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:42:39,685 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:42:43,947 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:42:45,309 | INFO | Processed 2567-PEA.pdf -> doc_id: 2567-PEA (332 chunks) in doc_type=document
+2025-10-08 15:43:30,360 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:43:34,377 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:43:37,236 | INFO | Processed seam2567.pdf -> doc_id: seam2567 (1021 chunks) in doc_type=document
+2025-10-08 15:43:39,871 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:43:43,605 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:43:44,626 | INFO | Processed 2566-PEA.pdf -> doc_id: 2566-PEA (332 chunks) in doc_type=document
+2025-10-08 15:43:47,456 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:43:51,724 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:43:54,172 | INFO | Processed PEA คำอธิบาย 2567.pdf -> doc_id: PEA คำอธิบาย 2567 (557 chunks) in doc_type=document
+2025-10-08 15:43:56,656 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:44:00,846 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:44:00,947 | INFO | Processed SE-AM CMS Requirement.docx -> doc_id: SE-AM CMS Requirement (18 chunks) in doc_type=document
+2025-10-08 15:44:47,102 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:44:51,094 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:44:53,668 | INFO | Processed seam.pdf -> doc_id: seam (1021 chunks) in doc_type=document
+2025-10-08 15:44:53,732 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:44:57,515 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:44:57,602 | INFO | Processed Private LLM TOR.docx -> doc_id: Private LLM TOR (10 chunks) in doc_type=document
+2025-10-08 15:48:20,087 | INFO | Workflow logger initialized
+2025-10-08 15:48:20,102 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:48:32,986 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:48:37,505 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:48:56,043 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:49:31,766 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:49:45,374 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:51:18,878 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:51:23,001 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:51:30,245 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:51:37,221 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:52:25,440 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:55:57,596 | INFO | Workflow logger initialized
+2025-10-08 15:55:57,612 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
+2025-10-08 15:55:58,737 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:56:03,428 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:56:12,733 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 15:56:17,640 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 15:56:21,569 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 15:57:09,215 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 16:04:01,978 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:04:21,865 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 16:06:01,846 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:06:05,872 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 16:06:05,984 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:06:22,853 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 16:08:06,670 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:08:10,657 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:08:14,315 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-08 16:08:14,428 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:08:33,451 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 16:11:26,736 | INFO | Load pretrained SentenceTransformer: sentence-transformers/all-MiniLM-L6-v2
+2025-10-08 16:11:41,941 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-08 16:17:13,151 | INFO | Workflow logger initialized
+2025-10-08 16:17:13,166 | INFO | Data directory 'data' and vectorstore 'vectorstore' ensured.
