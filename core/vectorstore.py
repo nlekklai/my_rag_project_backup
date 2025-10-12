@@ -2,20 +2,64 @@
 import os
 from typing import List, Optional, Union
 from langchain.schema import Document, BaseRetriever
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
 from concurrent.futures import ThreadPoolExecutor
 from pydantic import PrivateAttr
-
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
 # CRITICAL FIX: เปลี่ยนพาธ Import ให้ถูกต้องตาม LangChain v0.2/0.3+
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import FlashrankRerank
 from flashrank import Ranker # FIX 1: Import Ranker class
 
+
 # === CRITICAL FIX 2: Rebuild model (แก้ไข Pydantic V2) ===
 FlashrankRerank.model_rebuild()
 
 VECTORSTORE_DIR = "vectorstore"
+
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
+class VectorStoreManager:
+    """
+    Manager สำหรับสร้างและโหลด Chroma vectorstore
+    """
+    _instance: Optional["VectorStoreManager"] = None
+    _vectorstore: Optional[Chroma] = PrivateAttr(default=None)
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, persist_dir: str = "vectorstore/document"):
+        self.persist_dir = persist_dir
+        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", 
+                                                model_kwargs={"device": "mps"})
+
+    def load_vectorstore(self):
+        if not os.path.exists(self.persist_dir):
+            logger.warning(f"Vectorstore path not found: {self.persist_dir}")
+            return None
+        try:
+            self._vectorstore = Chroma(persist_directory=self.persist_dir,
+                                       embedding_function=self.embeddings)
+            logger.info(f"✅ Loaded vectorstore from {self.persist_dir}")
+        except Exception as e:
+            logger.error(f"Failed to load vectorstore: {e}")
+            self._vectorstore = None
+        return self._vectorstore
+
+    def get_retriever(self, k: int = 5):
+        if self._vectorstore is None:
+            self.load_vectorstore()
+        if self._vectorstore is None:
+            logger.error("Vectorstore not available for retrieval.")
+            return None
+        return self._vectorstore.as_retriever(search_kwargs={"k": k})
+
 
 # =================================================================
 # --- MultiDoc Retriever ---
@@ -90,6 +134,13 @@ def get_hf_embeddings():
         model_kwargs={"device": device}
     )
 
+def get_vectorstore_path(doc_type: Optional[str] = None):
+    if doc_type:
+        path = os.path.join(VECTORSTORE_DIR, doc_type)
+        os.makedirs(path, exist_ok=True)
+        return path
+    return VECTORSTORE_DIR
+
 # -------------------- Vectorstore management --------------------
 def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None) -> List[str]:
     target_path = os.path.join(base_path, doc_type) if doc_type else base_path
@@ -119,9 +170,6 @@ def vectorstore_exists(doc_id: str, base_path: str = VECTORSTORE_DIR, doc_type: 
     if os.path.isfile(os.path.join(path, "chroma.sqlite3")):
         return True
     return False # Assume Chroma uses chroma.sqlite3 for persistence
-
-from langchain.docstore.document import Document
-from langchain_community.vectorstores import Chroma
 
 def save_to_vectorstore(
     doc_id: str,

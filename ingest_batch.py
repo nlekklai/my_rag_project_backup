@@ -1,34 +1,108 @@
+# ingest_batch.py
 import os
 import logging
-from core.ingest import process_document, DATA_DIR, SUPPORTED_TYPES  # ใช้ SUPPORTED_TYPES แทน
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Dict, Any
+from core.ingest import process_document
 
-logging.basicConfig(level=logging.INFO)
+# -------------------- Config --------------------
+DATA_DIR = "data"
+VECTORSTORE_DIR = "vectorstore"
+SEQUENTIAL = True  # True = process one by one, False = multi-thread
+SUPPORTED_DOC_TYPES = ["evidence"]  # ตัวอย่าง folder/doc_type
+
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-def ingest_all_documents():
+# -------------------- Helper --------------------
+def get_all_files(data_dir: str = DATA_DIR) -> List[Dict[str, str]]:
     """
-    Sequential ingestion ของไฟล์ทั้งหมดใน DATA_DIR
-    - รองรับ pdf, docx, txt, csv (ตาม SUPPORTED_TYPES)
-    - ใช้ process_document จาก core/ingest.py
+    Walk through all subfolders and return files with their doc_type (folder name)
     """
-    logger.info("🚀 Starting ingestion for all documents in %s", DATA_DIR)
+    files = []
+    for root, _, filenames in os.walk(data_dir):
+        for f in filenames:
+            if f.startswith('.'):  # skip hidden files
+                continue
+            full_path = os.path.join(root, f)
+            folder_name = os.path.relpath(root, data_dir)
+            doc_type = folder_name if folder_name in SUPPORTED_DOC_TYPES else "default"
+            files.append({
+                "file_path": full_path,
+                "file_name": f,
+                "doc_type": doc_type
+            })
+    return files
 
-    if not os.path.exists(DATA_DIR):
-        logger.warning("⚠️ DATA_DIR %s does not exist", DATA_DIR)
-        return
+# -------------------- Ingestion --------------------
+def ingest_all_files(
+    sequential: bool = SEQUENTIAL,
+    data_dir: str = DATA_DIR,
+    base_path: str = VECTORSTORE_DIR,
+) -> List[Dict[str, Any]]:
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(base_path, exist_ok=True)
+    files_to_process = get_all_files(data_dir)
+    results = []
 
-    for root, _, files in os.walk(DATA_DIR):
-        for f in files:
-            ext = os.path.splitext(f)[1].lower()
-            if ext in SUPPORTED_TYPES:  # แก้ตรงนี้
-                filepath = os.path.join(root, f)
-                logger.info("📄 Ingesting %s", filepath)
+    def _process_file(file_info):
+        return process_document(
+            file_path=file_info["file_path"],
+            file_name=file_info["file_name"],
+            doc_type=file_info["doc_type"],
+            base_path=base_path
+        )
+
+    if sequential:
+        for f in files_to_process:
+            try:
+                doc_id = _process_file(f)
+                results.append({
+                    "file": f["file_name"],
+                    "doc_id": doc_id,
+                    "doc_type": f["doc_type"],
+                    "status": "processed"
+                })
+            except Exception as e:
+                logger.error(f"Error processing {f['file_name']}: {e}")
+                results.append({
+                    "file": f["file_name"],
+                    "doc_id": None,
+                    "doc_type": f["doc_type"],
+                    "status": "failed",
+                    "error": str(e)
+                })
+    else:
+        with ThreadPoolExecutor() as executor:
+            future_to_file = {executor.submit(_process_file, f): f for f in files_to_process}
+            for future in as_completed(future_to_file):
+                f = future_to_file[future]
                 try:
-                    process_document(filepath, f)  # เรียกด้วยชื่อไฟล์ด้วย
+                    doc_id = future.result()
+                    results.append({
+                        "file": f["file_name"],
+                        "doc_id": doc_id,
+                        "doc_type": f["doc_type"],
+                        "status": "processed"
+                    })
                 except Exception as e:
-                    logger.error("❌ Error ingesting %s: %s", filepath, str(e))
+                    logger.error(f"Error processing {f['file_name']}: {e}")
+                    results.append({
+                        "file": f["file_name"],
+                        "doc_id": None,
+                        "doc_type": f["doc_type"],
+                        "status": "failed",
+                        "error": str(e)
+                    })
+    return results
 
-    logger.info("✅ Ingestion completed.")
-
+# -------------------- Manual run --------------------
 if __name__ == "__main__":
-    ingest_all_documents()
+    res = ingest_all_files(sequential=True)
+    print("Ingestion results:")
+    for r in res:
+        print(r)
