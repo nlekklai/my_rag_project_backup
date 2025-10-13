@@ -1,21 +1,20 @@
-# -------------------- core/retrieval_utils.py (FINAL FIXED VERSION) --------------------
 import logging
 import random 
 import json   
 from typing import List, Dict, Any, Optional, Union
-# from langchain.schema import Document # NOTE: ถูกยกไปรวมในด้านบนของไฟล์แล้ว
 
-# NOTE: สมมติว่าไฟล์นี้สามารถเข้าถึง VectorStoreManager, load_all_vectorstores และ RAG Prompts ได้
+# ต้องมั่นใจว่า vectorstore และ rag_prompts ถูก import ได้
 from core.vectorstore import VectorStoreManager, load_all_vectorstores 
 from core.rag_prompts import SYSTEM_ASSESSMENT_PROMPT 
 
 # Import LLM Instance Explicitly to avoid module name conflict
 from models.llm import llm as llm_instance 
-from langchain.schema import SystemMessage, HumanMessage # สำหรับ LLM Call
-from langchain.schema import Document # เพิ่มการ Import Document เพื่อให้โค้ดส่วน Retrieval ทำงานได้
+from langchain.schema import SystemMessage, HumanMessage 
+from langchain.schema import Document 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+# 🚨 เปลี่ยนเป็น DEBUG เพื่อดู Log การกรองเอกสาร
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 # =================================================================
@@ -30,7 +29,6 @@ def set_mock_control_mode(enable: bool):
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
     _MOCK_CONTROL_FLAG = enable
     if enable:
-        # รีเซ็ตตัวนับเสมอเมื่อเปิดโหมดควบคุม
         _MOCK_COUNTER = 0
         logger.info("🔑 CONTROLLED MOCK Mode ENABLED. Score will be 1 for first 5 statements, then 0.")
     else:
@@ -38,16 +36,16 @@ def set_mock_control_mode(enable: bool):
 
 
 # =================================================================
-# === RETRIEVAL FUNCTIONS ===
-# NOTE: โค้ดส่วนนี้ไม่ได้ถูกแก้ไขหลักๆ แต่ถูกรวมเพื่อให้สมบูรณ์
+# === RETRIEVAL FUNCTIONS (INCLUDING THE NEW FILTER FUNCTION) ===
 # =================================================================
 
 def retrieve_statements(statements: List[str], doc_id: Optional[str] = None) -> Dict[str, List[Document]]:
     """
     Retrieve documents จาก vectorstore สำหรับ list ของ statements
+    NOTE: ฟังก์ชันนี้อาจไม่ได้ถูกเรียกใช้โดยตรงใน Assessment Process
     """
     vs_manager = VectorStoreManager()
-    retriever = vs_manager.get_retriever(k=5)
+    retriever = vs_manager.get_retriever(k=5) 
     if retriever is None:
         logger.error("Retriever not initialized.")
         return {stmt: [] for stmt in statements}
@@ -56,7 +54,8 @@ def retrieve_statements(statements: List[str], doc_id: Optional[str] = None) -> 
     for stmt in statements:
         try:
             # NOTE: ใช้ retriever.get_relevant_documents
-            docs = retriever.get_relevant_documents(stmt)
+            # (ในโค้ดใหม่ เราควรใช้ .invoke() เพื่อหลีกเลี่ยง DeprecationWarning)
+            docs = retriever.invoke(stmt) 
             if not docs:
                 logger.warning(f"⚠️ No results found for statement: {stmt[:50]}...")
             results[stmt] = docs
@@ -66,72 +65,64 @@ def retrieve_statements(statements: List[str], doc_id: Optional[str] = None) -> 
     return results
 
 
-def retrieve_context(statement: str,
-                     doc_ids: Optional[List[str]] = None,
-                     doc_type: str = "document",
-                     top_k: int = 10,
-                     final_k: int = 3) -> Dict[str, Any]:
+# 🚨 NEW FUNCTION: retrieve_context_with_filter (ใช้ในการประเมินหลัก)
+def retrieve_context_with_filter(query: str, retriever: Any, filter_document_ids: List[str]) -> Dict[str, Any]:
     """
-    🔍 Retrieve top evidences for a given KM statement.
+    Retrieval function ที่เพิ่มความสามารถในการกรองเอกสาร (Document ID Filter)
+    โดยใช้ retriever ที่โหลดมาแล้ว
     """
-    try:
-        retriever = load_all_vectorstores(
-            doc_ids=doc_ids,
-            top_k=top_k,
-            final_k=final_k,
-            doc_type=doc_type
-        )
-        # NOTE: ตรวจสอบการเรียก get_relevant_documents
-        docs: List[Document] = retriever.get_relevant_documents(statement) if retriever else []
+    if retriever is None:
+        return {"top_evidences": []}
 
-        results = []
+    # 1. สร้าง Filter Metadata (ส่วนนี้ใช้สำหรับ Log เท่านั้น ในการ Implement ปัจจุบัน)
+    metadata_filter = None
+    if filter_document_ids:
+        metadata_filter = {
+            "doc_id": {"$in": filter_document_ids}
+        }
+        logger.debug(f"RAG Filter Applied: {len(filter_document_ids)} documents for query: '{query[:30]}...'")
+
+    try:
+        # 2. เรียกใช้ Search (เปลี่ยนเป็น .invoke() ตามคำแนะนำของ LangChain)
+        # LangChainDeprecationWarning เกิดขึ้นที่นี่
+        docs: List[Document] = retriever.invoke(query) 
+        
+        # 3. กรองเอกสารด้วยมือ หาก VectorStore ไม่รองรับ Filter ใน .get_relevant_documents()
+        filtered_docs = []
+        if filter_document_ids:
+            # 💡 [DEBUG FIX] เพิ่ม Log เพื่อตรวจสอบรายการ Filter
+            logger.debug(f"Filter List: {filter_document_ids}") 
+
+            for doc in docs:
+                doc_id_in_metadata = doc.metadata.get("doc_id") # ดึงค่า doc_id
+                
+                # 💡 [DEBUG FIX] Log ค่าที่ไม่ตรง/หายไป
+                if doc_id_in_metadata is None:
+                    logger.debug(f"Document missing 'doc_id' key. Source: {doc.metadata.get('source')}")
+                elif doc_id_in_metadata not in filter_document_ids:
+                    logger.debug(f"Doc ID mismatch: Metadata='{doc_id_in_metadata}' not in Filter.")
+
+                # โค้ดกรองหลัก
+                if doc_id_in_metadata in filter_document_ids:
+                    filtered_docs.append(doc)
+            
+            docs = filtered_docs
+            logger.debug(f"Found {len(docs)} documents after manual filtering.")
+        
+        top_evidences = []
         for d in docs:
             meta = d.metadata
-            # NOTE: ควรตรวจสอบว่า metadata มีค่าหรือไม่ก่อนเรียก .get()
-            results.append({
+            top_evidences.append({
                 "doc_id": meta.get("doc_id"),
-                "doc_type": meta.get("doc_type"),
-                "chunk_index": meta.get("chunk_index"),
-                "score": meta.get("relevance_score", None),
                 "source": meta.get("source"),
                 "content": d.page_content.strip()
             })
-
-        logger.debug(f"✅ Found {len(results)} context items for statement: '{statement[:60]}...'")
-        return {"statement": statement, "context_count": len(results), "top_evidences": results}
-
-    except Exception as e:
-        logger.error(f"⚠️ Retrieval failed for statement='{statement[:60]}...': {e}")
-        return {"statement": statement, "context_count": 0, "top_evidences": [], "error": str(e)}
-
-
-def batch_retrieve_from_checklist(checklist_json_path: str, doc_type: str = "km_document") -> List[Dict[str, Any]]:
-    """
-    Loop ผ่าน checklist JSON แล้ว retrieve context ให้ครบทุก statement
-    """
-    # NOTE: จำเป็นต้อง Import json ภายในฟังก์ชันนี้หากรันแยก แต่เนื่องจาก import ไว้ module level แล้ว จึงไม่เป็นปัญหา
-    try:
-        with open(checklist_json_path, "r", encoding="utf-8") as f:
-            checklist = json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load checklist JSON: {e}")
-        return []
-
-    results = []
-    for enabler in checklist:
-        for level in range(1, 6):
-            level_key = f"Level_{level}_Statements"
-            statements: List[str] = enabler.get(level_key, [])
             
-            for stmt in statements:
-                result = retrieve_context(stmt, doc_type=doc_type)
-                results.append({
-                    "enabler_id": enabler.get("Enabler_ID"),
-                    "sub_criteria_id": enabler.get("Sub_Criteria_ID"),
-                    "level": level,
-                    **result
-                })
-    return results
+        return {"top_evidences": top_evidences}
+        
+    except Exception as e:
+        logger.error(f"Error during RAG retrieval with filter: {e}")
+        return {"top_evidences": []}
 
 
 # =================================================================
@@ -140,7 +131,7 @@ def batch_retrieve_from_checklist(checklist_json_path: str, doc_type: str = "km_
 
 def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, Any]:
     """
-    ฟังก์ชันสำหรับเรียกใช้ LLM เพื่อประเมินความสอดคล้อง
+    ฟังก์ชันสำหรับเรียกใช้ LLM เพื่อประเมินความสอดคล้อง (โค้ดเดิม)
     """
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
     
@@ -148,16 +139,15 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
     if _MOCK_CONTROL_FLAG:
         _MOCK_COUNTER += 1
         
-        # Logic: Pass L1, Partially Pass L2 (3 Pass, 2 Pass, 1 Fail)
-        if _MOCK_COUNTER <= 3: # L1 Statements
+        if _MOCK_COUNTER <= 3: 
             score = 1
-            reason_text = f"MOCK: FORCED PASS (L1)"
-        elif _MOCK_COUNTER in [4, 5]: # L2 Statements (2/3 Pass)
+            reason_text = f"MOCK: FORCED PASS (L1, Statement {_MOCK_COUNTER})"
+        elif _MOCK_COUNTER in [4, 5]:
             score = 1
-            reason_text = f"MOCK: FORCED PASS (L2)"
-        else: # L2 S3 and all L3-L5 (Counter > 5)
+            reason_text = f"MOCK: FORCED PASS (L2, Statement {_MOCK_COUNTER})"
+        else:
             score = 0
-            reason_text = f"MOCK: FORCED FAIL (L2+)"
+            reason_text = f"MOCK: FORCED FAIL (L2+, Statement {_MOCK_COUNTER})"
 
         logger.debug(f"MOCK COUNT: {_MOCK_COUNTER} | SCORE: {score} | STMT: '{statement[:20]}...'")
         return {"score": score, "reason": reason_text}
