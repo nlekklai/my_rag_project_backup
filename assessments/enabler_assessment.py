@@ -1,8 +1,8 @@
-# -------------------- assessments/enabler_assessment.py (FINAL FULL CODE) --------------------
 import os
 import json
 import logging
 import sys
+import re 
 from typing import List, Dict, Any, Optional, Union
 
 # NOTE: ต้องมั่นใจว่า core utilities ถูก import ได้
@@ -58,7 +58,10 @@ class EnablerAssessment:
                  rubric_data: Optional[Dict] = None,
                  level_fractions: Optional[Dict] = None,
                  evidence_mapping_data: Optional[Dict] = None, # สำหรับ Mapping File
-                 vectorstore_retriever=None):
+                 vectorstore_retriever=None,
+                 # 🟢 Argument สำหรับควบคุม Filter
+                 use_retrieval_filter: bool = False,
+                 target_sub_id: Optional[str] = None): # e.g., '1.1'
         
         self.enabler_abbr = enabler_abbr.lower()
         self.enabler_rubric_key = f"{self.enabler_abbr.upper()}_Maturity_Rubric"
@@ -77,6 +80,10 @@ class EnablerAssessment:
         self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
         self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={})
         
+        # 🟢 เก็บสถานะ Filter
+        self.use_retrieval_filter = use_retrieval_filter
+        self.target_sub_id = target_sub_id
+
         self.raw_llm_results: List[Dict] = []
         self.final_subcriteria_results: List[Dict] = []
         
@@ -165,13 +172,19 @@ class EnablerAssessment:
         }
 
 
-    # 🚨 EDITED: เพิ่ม mapping_data: Optional[Dict] = None ใน Signature
+    def _get_metadata_filter(self) -> Optional[Dict]:
+        """
+        [DEPRECATED/REMOVED]
+        ฟังก์ชันนี้ถูกลบออกแล้ว เพื่อให้ใช้ filter_ids (รายชื่อไฟล์) ที่มาจาก mapping file
+        เป็นตัวกรองหลักใน RAG retrieval แทนการใช้ Regex
+        """
+        return None 
+
+
     def _retrieve_context(self, statement: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None) -> str:
         """
-        ดึง Context โดยใช้ Filter จาก evidence mapping
+        ดึง Context โดยใช้ Filter จาก evidence mapping และ Metadata Filter ตาม Sub ID ที่ส่งมา
         """
-        # 🚨 NEW: ถ้าเป็น Mock Mode (มีการส่ง mapping_data มา) ให้ใช้ mapping_data ที่ส่งมา
-        # มิฉะนั้น ใช้ self.evidence_mapping_data 
         effective_mapping_data = mapping_data if mapping_data is not None else self.evidence_mapping_data
         
         if not self.vectorstore_retriever and mapping_data is None:
@@ -181,27 +194,30 @@ class EnablerAssessment:
         # 1. สร้างคีย์สำหรับ Mapping: "1.1_L1", "1.1_L2", ...
         mapping_key = f"{sub_criteria_id}_L{level}"
         
-        # 2. ดึง Filter IDs (รายชื่อไฟล์) จาก effective_mapping_data
+        # 2. ดึง Filter IDs (รายชื่อไฟล์ที่ถูก Clean แล้ว) จาก effective_mapping_data
         filter_ids: List[str] = effective_mapping_data.get(mapping_key, {}).get("filter_ids", [])
+        
         
         # --- LOGIC สำหรับ REAL MODE ---
         if mapping_data is None: 
             if not filter_ids:
-                logger.warning(f"No filter_ids found for mapping key: {mapping_key}. Retrieving context without filter.")
+                logger.warning(f"No filter IDs found for {mapping_key}. Retrieving context without doc_id restriction.")
 
-            # 3. เรียกใช้ RAG Retrieval (ใช้ retrieve_context_with_filter)
+            # 4. เรียกใช้ RAG Retrieval
+            # 🚨 CRITICAL FIX: ส่ง 'filter_ids' (รายชื่อ Collection) เข้าไปใน Argument ที่ชื่อว่า 'metadata_filter' 
+            # เพื่อให้ตรงกับ Signature ของฟังก์ชัน retrieve_context_with_filter ใน core/retrieval_utils.py
             result = retrieve_context_with_filter(
                 query=statement, 
                 retriever=self.vectorstore_retriever, 
-                filter_document_ids=filter_ids # ส่ง filter_ids ไป
+                metadata_filter=filter_ids # <--- นี่คือการแก้ไขที่ทำให้ Type Error หายไป
             )
             
-            # 4. รวม Contexts
+            # 5. รวม Contexts
             contexts = [e["content"] for e in result.get("top_evidences", [])]
             return "\n".join(contexts)
 
-        # --- LOGIC สำหรับ MOCK MODE (จะถูกข้ามหากมีการ Patch ฟังก์ชันนี้ใน process_assessment.py) ---
-        return ""
+        # --- LOGIC สำหรับ MOCK MODE ---
+        return "" # ถูก Patch โดย process_assessment.py
 
 
     def _process_subcriteria_results(self):

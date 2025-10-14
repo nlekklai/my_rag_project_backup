@@ -14,13 +14,20 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from flashrank import Ranker 
 
-# === CRITICAL FIX: Rebuild model (Pydantic V2 compatibility) ===
-# FlashrankRerank.model_rebuild() # ถ้าไม่ได้ใช้ FlashrankRerank ตรงๆ ลบได้
+import chromadb
+from chromadb.config import Settings 
+
+# 🟢 FIX: ใช้ configure() โดยส่งพารามิเตอร์ของ Settings เข้าไปตรงๆ
+# เพื่อเลี่ยง Pydantic validation error ของ Field 'settings'
+try:
+    chromadb.configure(anonymized_telemetry=False)
+except AttributeError:
+    # ถ้า configure ไม่มี ให้ใช้การตั้งค่า Settings
+    chromadb.settings = Settings(anonymized_telemetry=False)
 
 VECTORSTORE_DIR = "vectorstore"
 
 logger = logging.getLogger(__name__)
-# 🚨 ตั้งค่า Level ให้เหมาะสม
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 🚨 GLOBAL CACHE & PATHS:
@@ -64,7 +71,7 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
             top_n=self.top_n
         )
 
-        # Flashrank Ranker ถูกโหลดด้วย device="cpu" ใน preload_flashrank_model
+        # Flashrank Ranker ถูกโหลดจาก preload_flashrank_model
         ranked_results = self.ranker.rerank(run_input) 
 
         reranked_docs = []
@@ -79,7 +86,7 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
         return reranked_docs
 
 
-# -------------------- Preload/Cache Logic (บังคับใช้ CPU) --------------------
+# -------------------- Preload/Cache Logic (แก้ไข Flashrank Argument) --------------------
 def preload_flashrank_model(model_name: str = "ms-marco-MiniLM-L-12-v2"):
     """
     พยายามบังคับดาวน์โหลด/โหลด Ranker instance จาก Cache Path ถาวร
@@ -91,8 +98,8 @@ def preload_flashrank_model(model_name: str = "ms-marco-MiniLM-L-12-v2"):
     try:
         print(f"📦 Attempting to preload/cache Flashrank model to: {CUSTOM_CACHE_DIR}")
         
-        # 🟢 FIX: ระบุ device="cpu" ชัดเจนสำหรับ Flashrank Ranker
-        CACHED_RANKER = Ranker(model_name=model_name, cache_dir=CUSTOM_CACHE_DIR, device="cpu") 
+        # 🔴 CRITICAL FIX: ลบ device="cpu" ออกเพื่อเลี่ยง Argument Error
+        CACHED_RANKER = Ranker(model_name=model_name, cache_dir=CUSTOM_CACHE_DIR) 
         
         print(f"✅ Flashrank model '{model_name}' is loaded from cache at {CUSTOM_CACHE_DIR} on CPU.")
         return CACHED_RANKER
@@ -102,10 +109,10 @@ def preload_flashrank_model(model_name: str = "ms-marco-MiniLM-L-12-v2"):
 
 
 # =================================================================
-# --- Utility Functions (แก้ไขการใช้ MPS) ---
+# --- Utility Functions ---
 # =================================================================
 def get_hf_embeddings():
-    # 🟢 FIX: เปลี่ยนจาก "mps" เป็น "cpu" เพื่อแก้ปัญหาหน่วยความจำ
+    # 🟢 FIX: ยืนยันการใช้ "cpu" เพื่อแก้ปัญหาหน่วยความจำ (Bypassing MPS)
     device = "cpu"
     print(f"⚡ Using device: {device} for embeddings (Bypassing MPS to avoid memory error)")
     return HuggingFaceEmbeddings(
@@ -150,7 +157,7 @@ def save_to_vectorstore(
     base_path: str = VECTORSTORE_DIR
 ):
     docs = [
-        LcDocument( # เปลี่ยนเป็น LcDocument เพื่อความสอดคล้อง
+        LcDocument( 
             page_content=t,
             metadata={**(metadata or {}), "source": doc_id, "chunk_index": i + 1}
         )
@@ -230,6 +237,103 @@ def load_vectorstore(
 
 
 # =================================================================
+# --- MultiDoc Retriever (แก้ไข NameError: ย้ายขึ้นมาก่อน load_all_vectorstores) ---
+# =================================================================
+class NamedRetriever:
+    """Wrapper around a retriever to store doc_id and doc_type"""
+    def __init__(self, retriever: BaseRetriever, doc_id: str, doc_type: str):
+        self.retriever = retriever
+        self.doc_id = doc_id
+        self.doc_type = doc_type
+
+    def get_relevant_documents(self, query: str, **kwargs):
+        # ใช้ invoke() ที่ถูกกำหนดใน NamedRetriever
+        return self.retriever.invoke(query, **kwargs)
+
+class MultiDocRetriever(BaseRetriever):
+    """Combine multiple NamedRetrievers into one, deduplicating results"""
+    _retrievers_list: list  = PrivateAttr()
+    _k_per_doc: int = PrivateAttr()
+
+    def __init__(self, retrievers_list: list, k_per_doc: int = 5):
+        super().__init__()
+        self._retrievers_list = retrievers_list
+        self._k_per_doc = k_per_doc
+
+    @property
+    def retrievers_list(self):
+        return self._retrievers_list
+
+    def _get_relevant_documents(self, query: str, *, run_manager=None):
+        docs = []    
+        
+        def retrieve(named_r):
+            return named_r.retriever.invoke(query) 
+
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(retrieve, self._retrievers_list))
+
+        seen = set()
+        unique_docs = []
+        for dlist, named_r in zip(results, self._retrievers_list):
+            if dlist is None:
+                continue
+            for d in dlist:
+                key = f"{d.metadata.get('source')}_{d.metadata.get('chunk_index')}_{named_r.doc_type}_{d.page_content[:50]}"
+                if key not in seen:
+                    seen.add(key)
+                    # 🚨 สำคัญ: ตั้งค่า metadata keys ที่จำเป็นสำหรับ filter
+                    d.metadata["doc_type"] = named_r.doc_type
+                    d.metadata["doc_id"] = named_r.doc_id 
+                    d.metadata["doc_source"] = d.metadata.get("source")
+                    unique_docs.append(d)
+
+        print(f"📝 Query='{query}' found {len(unique_docs)} unique docs across all retrieved lists.")
+        for d in unique_docs:
+            print(f" - source={d.metadata.get('doc_source')}, chunk={d.metadata.get('chunk_index')}, doc_type={d.metadata.get('doc_type')}, score={d.metadata.get('relevance_score', 'N/A')}")
+            
+        return unique_docs
+
+# -------------------- Load multiple vectorstores (แก้ไข NameError) --------------------
+def load_all_vectorstores(doc_ids: Optional[Union[List[str], str]] = None,
+                          top_k: int = 15,
+                          final_k: int = 5,
+                          doc_type: Optional[Union[str, List[str]]] = None,
+                          base_path: str = VECTORSTORE_DIR) -> MultiDocRetriever:
+    
+    if isinstance(doc_ids, str):
+        doc_ids = [doc_ids]
+    # 🟢 FIX: ตั้งค่า default เป็น "evidence" (ตามที่ต้องการ)
+    if doc_type is None:
+        doc_types = ["evidence"]
+    elif isinstance(doc_type, str):
+        doc_types = [doc_type]
+    else:
+        doc_types = doc_type
+
+    all_retrievers = []
+
+    for dt in doc_types:
+        folders = list_vectorstore_folders(base_path=base_path, doc_type=dt)
+        for folder in folders:
+            if doc_ids and folder not in doc_ids:
+                continue
+            try:
+                # load_vectorstore จะใช้ doc_types เป็น list[dt] เสมอ
+                retriever = load_vectorstore(folder, top_k=top_k, final_k=final_k, doc_types=[dt], base_path=base_path) 
+                all_retrievers.append(NamedRetriever(retriever, doc_id=folder, doc_type=dt))
+            except ValueError:
+                 continue
+            except Exception as e:
+                print(f"⚠️ Skipping folder '{folder}' ({dt}): {e}")
+
+    if not all_retrievers:
+        raise ValueError(f"No vectorstores found for doc_ids={doc_ids} in doc_types={doc_types}")
+
+    return MultiDocRetriever(retrievers_list=all_retrievers, k_per_doc=top_k)
+
+
+# =================================================================
 # --- VectorStoreManager (แก้ไขการใช้ MPS) ---
 # =================================================================
 class VectorStoreManager:
@@ -244,7 +348,7 @@ class VectorStoreManager:
 
     def __init__(self, persist_dir: str = "vectorstore/document"):
         self.persist_dir = persist_dir
-        # 🟢 FIX: เปลี่ยนจาก "mps" เป็น "cpu" เพื่อแก้ปัญหาหน่วยความจำ
+        # 🟢 FIX: ยืนยันการใช้ "cpu" เพื่อแก้ปัญหาหน่วยความจำ
         self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", 
                                                 model_kwargs={"device": "cpu"})
 
@@ -268,99 +372,3 @@ class VectorStoreManager:
             logger.error("Vectorstore not available for retrieval.")
             return None
         return self._vectorstore.as_retriever(search_kwargs={"k": k})
-
-
-# =================================================================
-# --- MultiDoc Retriever (Unchanged) ---
-# =================================================================
-class NamedRetriever:
-    """Wrapper around a retriever to store doc_id and doc_type"""
-    def __init__(self, retriever: BaseRetriever, doc_id: str, doc_type: str):
-        self.retriever = retriever
-        self.doc_id = doc_id
-        self.doc_type = doc_type
-
-    def get_relevant_documents(self, query: str, **kwargs):
-        return self.retriever.invoke(query, **kwargs)
-
-class MultiDocRetriever(BaseRetriever):
-    """Combine multiple NamedRetrievers into one, deduplicating results"""
-    _retrievers_list: list  = PrivateAttr()
-    _k_per_doc: int = PrivateAttr()
-
-    def __init__(self, retrievers_list: list, k_per_doc: int = 5):
-        super().__init__()
-        self._retrievers_list = retrievers_list
-        self._k_per_doc = k_per_doc
-
-    @property
-    def retrievers_list(self):
-        return self._retrievers_list
-
-    def _get_relevant_documents(self, query: str, *, run_manager=None):
-        docs = []    
-        
-        def retrieve(named_r):
-            # ใช้ invoke() ที่ถูกกำหนดใน NamedRetriever
-            return named_r.retriever.invoke(query) 
-
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(retrieve, self._retrievers_list))
-
-        seen = set()
-        unique_docs = []
-        for dlist, named_r in zip(results, self._retrievers_list):
-            if dlist is None:
-                continue
-            for d in dlist:
-                key = f"{d.metadata.get('source')}_{d.metadata.get('chunk_index')}_{named_r.doc_type}_{d.page_content[:50]}"
-                if key not in seen:
-                    seen.add(key)
-                    # 🚨 สำคัญ: ตั้งค่า metadata keys ที่จำเป็นสำหรับ filter
-                    d.metadata["doc_type"] = named_r.doc_type
-                    d.metadata["doc_id"] = named_r.doc_id # <--- คีย์นี้ต้องตรงกับที่ใช้กรอง
-                    d.metadata["doc_source"] = d.metadata.get("source")
-                    unique_docs.append(d)
-
-        print(f"📝 Query='{query}' found {len(unique_docs)} unique docs across all retrieved lists.")
-        for d in unique_docs:
-            print(f" - source={d.metadata.get('doc_source')}, chunk={d.metadata.get('chunk_index')}, doc_type={d.metadata.get('doc_type')}, score={d.metadata.get('relevance_score', 'N/A')}")
-            
-        return unique_docs
-
-
-# -------------------- Load multiple vectorstores (Unchanged) --------------------
-def load_all_vectorstores(doc_ids: Optional[Union[List[str], str]] = None,
-                          top_k: int = 15,
-                          final_k: int = 5,
-                          doc_type: Optional[Union[str, List[str]]] = None,
-                          base_path: str = VECTORSTORE_DIR) -> MultiDocRetriever:
-    
-    if isinstance(doc_ids, str):
-        doc_ids = [doc_ids]
-    if doc_type is None:
-        doc_types = ["document"]
-    elif isinstance(doc_type, str):
-        doc_types = [doc_type]
-    else:
-        doc_types = doc_type
-
-    all_retrievers = []
-
-    for dt in doc_types:
-        folders = list_vectorstore_folders(base_path=base_path, doc_type=dt)
-        for folder in folders:
-            if doc_ids and folder not in doc_ids:
-                continue
-            try:
-                retriever = load_vectorstore(folder, top_k=top_k, final_k=final_k, doc_types=[dt], base_path=base_path) 
-                all_retrievers.append(NamedRetriever(retriever, doc_id=folder, doc_type=dt))
-            except ValueError:
-                 continue
-            except Exception as e:
-                print(f"⚠️ Skipping folder '{folder}' ({dt}): {e}")
-
-    if not all_retrievers:
-        raise ValueError(f"No vectorstores found for doc_ids={doc_ids} in doc_types={doc_types}")
-
-    return MultiDocRetriever(retrievers_list=all_retrievers, k_per_doc=top_k)
