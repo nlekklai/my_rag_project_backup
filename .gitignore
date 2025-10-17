@@ -12,9 +12,12 @@ venv/
 vectorstore/
 data/
 db/
+results/
+reports/
 asessment_data/
 results/
 output/
+ref_data
 
 # Ignore large files
 *.pdf

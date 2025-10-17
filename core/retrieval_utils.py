@@ -1,21 +1,29 @@
 import logging
-import random 
-import json   
-import time # <--- เพิ่ม import time ที่นี่
+import random
+import json
+import time 
 from typing import List, Dict, Any, Optional, Union
-
-# ต้องมั่นใจว่า vectorstore และ rag_prompts ถูก import ได้
-from core.vectorstore import VectorStoreManager, load_all_vectorstores 
-from core.rag_prompts import SYSTEM_ASSESSMENT_PROMPT 
-
-# Import LLM Instance Explicitly to avoid module name conflict
-from models.llm import llm as llm_instance 
 from langchain.schema import SystemMessage, HumanMessage 
 from langchain.schema import Document 
 
+# 🚨 IMPORT: นำเข้า Regex (จำเป็นสำหรับการแก้ไขนี้)
+import re 
+# 🚨 IMPORT: นำเข้า Pydantic Model จากไฟล์ action_plan_schema.py
+from core.action_plan_schema import ActionPlanActions 
+# 🚨 IMPORT: นำเข้า Prompts
+
+from core.rag_prompts import (
+    SYSTEM_ASSESSMENT_PROMPT, 
+    USER_ASSESSMENT_PROMPT, # ⬅️ IMPORT ตัวใหม่นี้
+    ACTION_PLAN_PROMPT,
+    SYSTEM_ACTION_PLAN_PROMPT
+) 
+from core.vectorstore import VectorStoreManager, load_all_vectorstores 
+from models.llm import llm as llm_instance 
+
 logger = logging.getLogger(__name__)
-# ปรับ level เป็น DEBUG ตามที่คุณต้องการ
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# เนื่องจากคุณรันในโหมด real และต้องการ debug/info จึงใช้ level INFO
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 # =================================================================
@@ -31,86 +39,38 @@ def set_mock_control_mode(enable: bool):
     _MOCK_CONTROL_FLAG = enable
     if enable:
         _MOCK_COUNTER = 0
-        logger.info("🔑 CONTROLLED MOCK Mode ENABLED. Score will be 1 for first 5 statements, then 0.")
+        logger.info("🔑 CONTROLLED MOCK Mode ENABLED.")
     else:
         logger.info("❌ CONTROLLED MOCK Mode DISABLED.")
 
-
-# =================================================================
-# === RETRIEVAL FUNCTIONS (INCLUDING THE NEW FILTER FUNCTION) ===
-# =================================================================
-
-def retrieve_statements(statements: List[str], doc_id: Optional[str] = None) -> Dict[str, List[Document]]:
-    """
-    Retrieve documents จาก vectorstore สำหรับ list ของ statements
-    """
-    vs_manager = VectorStoreManager()
-    retriever = vs_manager.get_retriever(k=5) 
-    if retriever is None:
-        logger.error("Retriever not initialized.")
-        return {stmt: [] for stmt in statements}
-
-    results: Dict[str, List[Document]] = {}
-    for stmt in statements:
-        try:
-            # NOTE: ใช้ retriever.get_relevant_documents
-            docs = retriever.invoke(stmt) 
-            if not docs:
-                logger.warning(f"⚠️ No results found for statement: {stmt[:50]}...")
-            results[stmt] = docs
-        except Exception as e:
-            logger.error(f"Retrieval failed for statement: {stmt[:50]}... Error: {e}")
-            results[stmt] = []
-    return results
-
-
-# 🚨 FIXED FUNCTION: retrieve_context_with_filter
 def retrieve_context_with_filter(
     query: str, 
     retriever: Any, 
-    # 🚨 CRITICAL FIX: ต้องเพิ่มชื่อ Argument นี้เพื่อให้ตรงกับการเรียกใน enabler_assessment.py
     metadata_filter: Optional[List[str]] = None, 
 ) -> Dict[str, Any]:
-    """
-    Retrieval function ที่เพิ่มความสามารถในการกรองเอกสาร (Document ID Filter)
-    โดยใช้ retriever ที่โหลดมาแล้ว
-    """
+    # ... (Logic เหมือนเดิม) ...
     if retriever is None:
         return {"top_evidences": []}
     
-    # 1. กำหนดชื่อตัวแปรที่ใช้งานภายในฟังก์ชัน (เพื่อความชัดเจน)
     filter_document_ids = metadata_filter 
 
-    # 2. Log การกรอง
-    if filter_document_ids:
-        logger.debug(f"RAG Filter Applied: {len(filter_document_ids)} documents for query: '{query[:30]}...'")
-
     try:
-        # 3. เรียกใช้ Search (ใช้ .invoke() เพื่อความเข้ากันได้)
         docs: List[Document] = retriever.invoke(query) 
         
-        # 4. กรองเอกสารด้วยมือ (Manual Filtering)
-        # เนื่องจาก filter_document_ids (ชื่อไฟล์) ถูกส่งมาแล้ว จึงกรองตาม doc_id ใน metadata
+        # Manual Filtering
         if filter_document_ids:
-            logger.debug(f"Filter List Length: {len(filter_document_ids)}") 
-
+            filter_set = set(filter_document_ids)
+            
             filtered_docs = []
             for doc in docs:
-                doc_id_in_metadata = doc.metadata.get("doc_id") # ดึงค่า doc_id
+                doc_id_in_metadata = doc.metadata.get("doc_id") 
 
-                # โค้ดกรองหลัก: ถ้า doc_id อยู่ในรายการที่อนุญาต ให้นำไปใช้
-                if doc_id_in_metadata in filter_document_ids:
+                if doc_id_in_metadata in filter_set:
                     filtered_docs.append(doc)
-                # 💡 Debug Logs:
-                # elif doc_id_in_metadata is None:
-                #     logger.debug(f"Document missing 'doc_id' key. Source: {doc.metadata.get('source')}")
-                # else:
-                #     logger.debug(f"Doc ID mismatch: Metadata='{doc_id_in_metadata}' not in Filter.")
             
             docs = filtered_docs
-            logger.debug(f"Found {len(docs)} documents after manual filtering.")
         
-        # 5. จัดรูปแบบผลลัพธ์
+        # จัดรูปแบบผลลัพธ์
         top_evidences = []
         for d in docs:
             meta = d.metadata
@@ -128,51 +88,39 @@ def retrieve_context_with_filter(
 
 
 # =================================================================
-# === EVALUATION FUNCTION (MOCK & REAL LLM) ===
+# === EVALUATION FUNCTION (MOCK & REAL LLM) (แก้ไข JSON Robustness) ===
 # =================================================================
 
 MAX_LLM_RETRIES = 3 
 
 def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, Any]:
-    """
-    ฟังก์ชันสำหรับเรียกใช้ LLM เพื่อประเมินความสอดคล้อง (เพิ่ม Logic Retry)
-    """
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
     
-    # 1. MOCK CONTROL LOGIC (เดิม)
+    # 1. MOCK CONTROL LOGIC (เหมือนเดิม)
     if _MOCK_CONTROL_FLAG:
-        # ... (โค้ด MOCK เดิม) ...
-        # ...
+        _MOCK_COUNTER += 1
+        
+        score = 1 if _MOCK_COUNTER <= 5 else 0
+        reason_text = f"MOCK: FORCED {'PASS' if score == 1 else 'FAIL'} (Statement {_MOCK_COUNTER})"
+        
         logger.debug(f"MOCK COUNT: {_MOCK_COUNTER} | SCORE: {score} | STMT: '{statement[:20]}...'")
         return {"score": score, "reason": reason_text}
 
     
     # 2. REAL LLM CALL LOGIC
     if llm_instance is None:
-        logger.error("❌ LLM Instance is not initialized (likely failed to connect to Ollama).")
+        logger.error("❌ LLM Instance is not initialized.")
         score = random.choice([0, 1])
         reason = f"LLM Initialization Failed (Fallback to Random Score {score})"
         return {"score": score, "reason": reason}
 
-    # 1. จัดรูปแบบ User Prompt (เดิม)
-    # ... (user_prompt remains the same) ...
-    user_prompt = f"""
-    --- Statement ที่ต้องการประเมิน (หลักฐานที่ควรมี) ---
-    {statement}
-    
-    --- เกณฑ์ (Standard/Rubric) ---
-    {standard}
-    
-    --- หลักฐานที่พบในเอกสารจริง (Context จาก Semantic Search) ---
-    {context if context else "ไม่พบหลักฐานในเอกสารที่เกี่ยวข้อง"}
-    
-    --- คำสั่ง ---
-    โปรดประเมินโดยใช้บทบาท Se-AM Consultant ว่าหลักฐานที่พบ (Context) สอดคล้อง 
-    กับ Statement และเกณฑ์ที่กำหนดหรือไม่
-    
-    โปรดตอบในรูปแบบ JSON ที่มี key: 'score' (0 หรือ 1) และ 'reason' เท่านั้น!
-    ตัวอย่าง: {{"score": 1, "reason": "หลักฐาน X ใน Context ยืนยัน Statement Y..."}}
-    """
+    # 🟢 NEW: ใช้ PromptTemplate เพื่อสร้าง HumanMessage Content
+    user_prompt_content = USER_ASSESSMENT_PROMPT.format(
+        statement=statement,
+        standard=standard,
+        # จัดการเงื่อนไข "ไม่พบหลักฐาน" ที่นี่ ก่อนส่งให้ PromptTemplate
+        context=context if context else "ไม่พบหลักฐานในเอกสารที่เกี่ยวข้อง" 
+    )
     
     # === NEW RETRY LOOP ===
     for attempt in range(MAX_LLM_RETRIES):
@@ -180,41 +128,260 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
             # A. เรียกใช้ LLM
             response = llm_instance.invoke([
                 SystemMessage(content=SYSTEM_ASSESSMENT_PROMPT),
-                HumanMessage(content=user_prompt)
+                HumanMessage(content=user_prompt_content)
             ])
             
             llm_response_content = response.content if hasattr(response, 'content') else str(response)
-
-            # B. Parse JSON string ที่ได้จาก LLM
-            if llm_response_content.strip().startswith("```json"):
-                llm_response_content = llm_response_content.strip().replace("```json", "").replace("```", "")
+            
+            # 🛑 B. FIX: ใช้ Regex เพื่อ Clean และค้นหา JSON Block
+            
+            # 1. Clean up markdown fences (```json...```) 
+            cleaned_content = llm_response_content.strip()
+            if cleaned_content.startswith("```json"):
+                cleaned_content = cleaned_content.replace("```json", "", 1).rstrip('`')
+            elif cleaned_content.startswith("```"):
+                cleaned_content = cleaned_content.replace("```", "", 1).rstrip('`')
+            
+            # 2. ใช้ Regex เพื่อกรองหา JSON block ที่สมบูรณ์
+            json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
+            
+            final_json_string = None
+            if json_match:
+                final_json_string = json_match.group(0)
+            
+            if not final_json_string:
+                raise ValueError("LLM response did not contain a recognizable JSON block.")
                 
-            llm_output = json.loads(llm_response_content.strip()) # 🚨 จุดที่เกิด Error
+            # 3. Parse JSON string
+            llm_output = json.loads(final_json_string) # ⬅️ Parse string ที่ถูกกรองแล้ว
             
-            score = int(llm_output.get("score", 0)) 
-            reason = llm_output.get("reason", "No reason provided by LLM.")
+            # C. ตรวจสอบว่ามี Key 'llm_score' และ 'reason' ครบถ้วน
+            if "llm_score" in llm_output and "reason" in llm_output:
+                raw_score = llm_output.get("llm_score", 0)
+                score = int(raw_score) if str(raw_score).isdigit() else 0 
+                reason = llm_output.get("reason", "No reason provided by LLM.")
+                
+                return {
+                    "llm_score": score,  # เก็บค่าที่ LLM สร้าง
+                    "reason": reason,
+                    "score": score       # Key มาตรฐานที่ระบบใช้ (ต้องมี)
+                } 
             
-            # ถ้าสำเร็จ: RETURN ทันที (ไม่จำเป็นต้องลองซ้ำ)
-            return {"score": score, "reason": reason}
+            else:
+                raise ValueError("LLM response JSON is missing 'llm_score' or 'reason' keys.")
 
-        except json.JSONDecodeError as e:
-            # C. จัดการ JSON Error
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"❌ Format/JSON Parse Failed (Attempt {attempt + 1}/{MAX_LLM_RETRIES}). Retrying in 1s... Error: {e}")
             if attempt < MAX_LLM_RETRIES - 1:
-                logger.warning(f"❌ JSON Parse Failed (Attempt {attempt + 1}/{MAX_LLM_RETRIES}). Retrying in 1s... Error: {e}")
-                time.sleep(1) # หน่วงเวลาเล็กน้อยก่อนลองใหม่
+                time.sleep(1) 
                 continue
             else:
-                # ถ้าถึงรอบสุดท้ายแล้ว ให้ข้ามไปใช้ Fallback
-                logger.error(f"❌ LLM Evaluation failed after {MAX_LLM_RETRIES} attempts. JSON format failure.")
-                break # ออกจาก Loop
+                logger.error(f"❌ LLM Evaluation failed after {MAX_LLM_RETRIES} attempts. JSON/Format failure.")
+                break 
         
         except Exception as e:
-            # D. จัดการ Error อื่นๆ (เช่น Connection Error)
-            logger.error(f"❌ LLM Evaluation failed due to unexpected error. Error: {e}")
-            break # ออกจาก Loop และใช้ Fallback ทันที
+            logger.error(f"❌ LLM Evaluation failed due to unexpected error (Connection/Runtime). Error: {e}")
+            break 
 
-    # === FALLBACK LOGIC (ทำงานเมื่อ Loop จบด้วย Break) ===
+    # === FALLBACK LOGIC ===
     logger.error("❌ Using RANDOM SCORE as final fallback.")
     score = random.choice([0, 1])
     reason = f"LLM Call Failed (Fallback to Random Score {score}) after {MAX_LLM_RETRIES} attempts."
     return {"score": score, "reason": reason}
+
+
+# =================================================================
+# === ACTION PLAN GENERATION UTILITY (ปรับปรุง Logic) ===
+# =================================================================
+
+def _call_llm_for_json_output(prompt: str, system_prompt: str) -> str:
+    """Basic LLM call for JSON output, relies on the System Prompt to enforce JSON."""
+    if llm_instance is None:
+        raise ConnectionError("LLM Instance is not available for Action Plan Generation.")
+
+    response = llm_instance.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=prompt)
+    ])
+    
+    llm_response_content = response.content if hasattr(response, 'content') else str(response)
+    
+    # Clean up markdown fences (```json...```)
+    cleaned_content = llm_response_content.strip()
+    if cleaned_content.startswith("```json"):
+        cleaned_content = cleaned_content.replace("```json", "", 1).rstrip('`')
+    elif cleaned_content.startswith("```"):
+        cleaned_content = cleaned_content.replace("```", "", 1).rstrip('`')
+        
+    return cleaned_content.strip()
+
+def generate_action_plan_via_llm(
+    failed_statements_data: List[Dict[str, Any]], 
+    sub_id: str, 
+    target_level: int, 
+) -> Dict[str, Any]:
+    
+    # 1. MOCK LOGIC (เหมือนเดิม)
+    global _MOCK_CONTROL_FLAG
+    if _MOCK_CONTROL_FLAG:
+        logger.warning("MOCK: Generating dummy Action Plan via MOCK Logic.")
+        actions = []
+        for i, data in enumerate(failed_statements_data):
+            statement_id = f"L{data.get('level', target_level)} S{data.get('statement_number', i+1)}"
+            failed_level = data.get('level', target_level)
+            
+            actions.append(ActionPlanActions.Actions.item_type( 
+                Statement_ID=statement_id,
+                Failed_Level=failed_level,
+                Recommendation=f"MOCK: [Specific Action] จัดทำ Policy '{data.get('statement_text', 'N/A')[:20]}...' เพื่อแก้ไข GAP จากเหตุผล: {data.get('llm_reasoning', 'No reason')[:20]}...",
+                Target_Evidence_Type="MOCK: Policy Document (Type: Guideline)",
+                Key_Metric="Policy Approved and Published"
+            ).model_dump())
+        
+        return ActionPlanActions(
+            Phase=f"1. Strategic Gap Closure (Target L{target_level})",
+            Goal=f"บรรลุหลักฐานที่จำเป็นทั้งหมดใน Level {target_level} ของ {sub_id}",
+            Actions=actions
+        ).model_dump()
+
+
+    # --- REAL IMPLEMENTATION (LLM Call for Action Plan) ---
+    try:
+        # 2. Prepare Prompt Input Variables (เหมือนเดิม)
+        failed_statements_text = []
+        for data in failed_statements_data:
+            stmt_num = data.get('statement_number', 'N/A')
+            failed_statements_text.append(f"""
+            --- STATEMENT FAILED (L{data.get('level', 'N/A')} S{stmt_num}) ---
+            Statement Text: {data.get('statement_text', 'N/A')}
+            Reason for Failure: {data.get('llm_reasoning', 'N/A')}
+            RAG Context Found: {data.get('retrieved_context', 'No context found or saved')}
+            """)
+            
+        statements_list_str = "\n".join(failed_statements_text)
+
+        # 3. Format the Prompt (เหมือนเดิม)
+        llm_prompt_content = ACTION_PLAN_PROMPT.format(
+            sub_id=sub_id,
+            target_level=target_level,
+            failed_statements_list=statements_list_str 
+        )
+        
+
+        # 4. Define System Prompt with JSON Schema (ปรับปรุง)
+        schema_dict = ActionPlanActions.model_json_schema()
+        
+        # 🟢 ปรับปรุง: ใช้ SYSTEM_ACTION_PLAN_PROMPT และผนวก JSON Schema เข้าไป
+        system_prompt_content = (
+            SYSTEM_ACTION_PLAN_PROMPT + # ⬅️ ใช้ System Prompt ภาษาไทยที่ชัดเจน
+            "\n\n--- REQUIRED JSON SCHEMA (STRICTLY FOLLOW) ---\n" +
+            json.dumps(schema_dict, indent=2)
+        )
+
+        # 5. CALL LLM (ต้องปรับ _call_llm_for_json_output ให้รองรับ System Prompt ใหม่)
+        # หาก _call_llm_for_json_output รับ System Prompt เป็น string ได้อยู่แล้วก็ใช้ต่อได้เลย
+        llm_response_json_str = _call_llm_for_json_output(
+            prompt=llm_prompt_content,
+            system_prompt=system_prompt_content # ⬅️ ใช้ system prompt ที่ปรับปรุงแล้ว
+        )
+        
+        
+        # 🛑 6. FIX: ใช้ Regex เพื่อค้นหา JSON Block ก่อน Parse
+        
+        # ตรวจสอบว่ามี String อยู่จริงหรือไม่
+        if not llm_response_json_str or not llm_response_json_str.strip():
+             raise ValueError("LLM returned an empty response for Action Plan.")
+             
+        # ใช้ Regex เพื่อค้นหา JSON Block
+        json_match = re.search(r'\{.*\}', llm_response_json_str.strip(), re.DOTALL)
+
+        cleaned_content = None
+        if json_match:
+            cleaned_content = json_match.group(0)
+
+        if not cleaned_content:
+            logger.error("❌ Failed to find a valid JSON block for Action Plan using Regex.")
+            raise ValueError("LLM response did not contain a recognizable JSON block for Action Plan.")
+
+        # 7. Process and Parse
+        llm_result_dict = json.loads(cleaned_content) # ⬅️ ใช้ string ที่ถูกกรองแล้ว
+        
+        # 8. Validate and Dump (เหมือนเดิม)
+        validated_plan_model = ActionPlanActions.model_validate(llm_result_dict)
+
+        final_action_plan_result = validated_plan_model.model_dump()
+        
+        return final_action_plan_result
+
+    except Exception as e:
+        logger.error(f"❌ Action Plan Generation Failed: {e}", exc_info=True)
+        return {
+             "Phase": "Error",
+             "Goal": f"Failed to generate Action Plan for {sub_id} (Target L{target_level})",
+             "Actions": [{
+                "Statement_ID": "N/A", 
+                "Failed_Level": target_level, 
+                "Recommendation": f"System Error: {str(e)}", 
+                "Target_Evidence_Type": "Check Logs", 
+                "Key_Metric": "Error"
+             }]
+        }
+    
+
+# ----------------------------------------------------------------------
+# NOTE: ฟังก์ชันอื่น ๆ ใน retrieval_utils.py เช่น get_relevant_documents
+# และ generate_assessment_via_llm_real จะถูกละไว้ในตัวอย่างนี้
+# แต่ฟังก์ชัน generate_narrative_report_via_llm_real คือตัวที่ถูกแก้ไข
+# ----------------------------------------------------------------------
+
+def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction: str) -> str:
+    """
+    ฟังก์ชันเรียก LLM API จริงเพื่อสังเคราะห์รายงานเชิงบรรยายสำหรับ CEO
+    
+    :param prompt_text: Prompt ที่มีข้อมูล JSON ผลการประเมินอยู่ภายใน (Human Message)
+    :param system_instruction: System Instruction ที่กำหนดบทบาทและรูปแบบการตอบ (มาจาก rag_prompts.py)
+    :return: ข้อความรายงานเชิงบรรยายที่สร้างโดย LLM
+    """
+    # 🚨 ตรวจสอบการเข้าถึง LLM instance (ต้องมีใน environment จริง)
+    try:
+        from langchain.schema import SystemMessage, HumanMessage 
+        # สมมติว่า llm ถูก import จาก models.llm
+        from models.llm import llm as llm_instance 
+    except ImportError:
+        logger.error("❌ Cannot import LLM dependencies (SystemMessage, HumanMessage, llm_instance).")
+        return "[ERROR: LLM Dependencies missing for real API call.]"
+        
+    if llm_instance is None:
+        logger.error("❌ LLM Instance is not initialized for real API call.")
+        return "[ERROR: LLM Client is not initialized for real API call.]"
+        
+    logger.info("Executing REAL LLM call for narrative report synthesis...")
+    
+    try:
+        # System Message ถูกส่งเข้ามาเป็น Argument
+        
+        response = llm_instance.invoke([
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=prompt_text)
+        ])
+        
+        # 🟢 FIX: ตรวจสอบประเภท Response ก่อนเข้าถึง .content
+        # เพื่อรองรับการตอบกลับที่เป็น String โดยตรง (เช่น จาก Ollama บางรุ่น) หรือ LangChain Response Object
+        if hasattr(response, 'content'):
+            # ถ้าเป็น LangChain/SDK Response Object
+            generated_text = response.content
+        elif isinstance(response, str):
+            # ถ้า Wrapper คืนค่าเป็น String ตรงๆ
+            generated_text = response
+        else:
+            # กรณีที่ไม่รู้จัก
+            raise TypeError(f"LLM response type {type(response)} is not supported for content extraction.")
+            
+        # คืนค่าข้อความที่ได้จาก LLM
+        return generated_text.strip()
+        
+    except Exception as e:
+        logger.error(f"Real LLM API call failed during narrative report generation: {e}")
+        # Fallback message
+        return f"[API ERROR] Failed to generate narrative report via real LLM API: {e}"
+

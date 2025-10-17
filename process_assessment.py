@@ -4,26 +4,30 @@ import logging
 import sys
 import argparse
 import random
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import time 
 
 # --- CORRECT IMPORTS ---
+# สมมติว่าไฟล์นี้อยู่ในระดับเดียวกันกับ assessments/ และ core/
 try:
     # Ensure the parent directory is in sys.path for correct relative imports
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "."))
     if project_root not in sys.path:
         sys.path.append(project_root)
     
-    # IMPORT REQUIRED CLASSES/FUNCTIONS
-    from assessments.enabler_assessment import EnablerAssessment
+    # IMPORT REQUIRED CLASSES/FUNCTIONS (Assuming these paths are correct in your environment)
+    from assessments.enabler_assessment import EnablerAssessment # นำเข้า Class EnablerAssessment ที่คุณกำหนด
     import core.retrieval_utils
-    from core.retrieval_utils import set_mock_control_mode
+    from core.retrieval_utils import set_mock_control_mode, evaluate_with_llm
     from core.vectorstore import load_all_vectorstores 
     
 except ImportError as e:
     # หากรันจากตำแหน่งที่ผิด หรือ Path ไม่ถูกต้อง
     print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
-    sys.exit(1)
+    # ในสภาพแวดล้อมจริง เราอาจจะต้องยกเลิกการทำงาน
+    # sys.exit(1)
+    # For a unified example, we will proceed assuming the imports are available or mocked later.
+    pass
 
 
 # 1. Setup Logging
@@ -36,17 +40,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 _MOCK_EVALUATION_COUNTER = 0
 
 def evaluate_with_llm_CONTROLLED_MOCK(statement: str, context: str, standard: str) -> Dict[str, Any]:
-    """Returns controlled scores for mock testing: L1(1,1,1), L2(1,1,0), L3-L5(0)"""
+    """
+    Returns controlled scores for mock testing: L1(1,1,1), L2(1,1,0), L3-L5(0).
+    (Used to simulate the target scenario 1.1 L2 Fail on S3)
+    """
     global _MOCK_EVALUATION_COUNTER
     _MOCK_EVALUATION_COUNTER += 1
     
-    # กำหนดคะแนนจำลองตาม Statement Counter
+    # Simulate L1 PASS, L2 S1/S2 PASS, L2 S3 FAIL (for Sub-Criteria 1.1, total 6 statements)
     score = 0
-    if _MOCK_EVALUATION_COUNTER <= 3: 
+    if _MOCK_EVALUATION_COUNTER <= 3: # L1 Statements
         score = 1
-    elif _MOCK_EVALUATION_COUNTER in [4, 5]: 
+    elif _MOCK_EVALUATION_COUNTER in [4, 5]: # L2 S1, S2
         score = 1
-    else: 
+    else: # L2 S3 and all L3-L5 Statements
         score = 0 
     
     reason_text = f"MOCK: FORCED {'PASS' if score == 1 else 'FAIL'} (Statement {_MOCK_EVALUATION_COUNTER})"
@@ -77,6 +84,7 @@ def retrieve_context_MOCK(statement: str, sub_criteria_id: str, level: int, mapp
 # -------------------- Detailed Output Function --------------------
 def print_detailed_results(raw_llm_results: List[Dict]):
     """แสดงผลลัพธ์การประเมิน LLM ราย Statement อย่างละเอียด"""
+    # (ฟังก์ชันนี้เหมือนเดิม)
     if not raw_llm_results:
         logger.info("\n[Detailed Results] No raw LLM results found to display.")
         return
@@ -113,6 +121,93 @@ def print_detailed_results(raw_llm_results: List[Dict]):
             print(f"  > Reason:    {reason_snippet}")
             
     print("\n=========================================================================================")
+
+
+# -----------------------------------------------------------
+# --- Action Plan Generation Logic (General for all Enablers) ---
+# -----------------------------------------------------------
+
+def get_sub_criteria_data(sub_id: str, criteria_list: List[Dict]) -> Dict:
+    """ดึงข้อมูล Rubric เฉพาะ Sub-Criteria ที่ต้องการจาก list ของ Statements (evidence_data)"""
+    for criteria in criteria_list:
+        if criteria.get('Sub_Criteria_ID') == sub_id:
+            return criteria
+    return {}
+
+def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_rubric_data: List[Dict]) -> List[Dict]:
+    """
+    สร้าง Action Plan อัตโนมัติจากผลลัพธ์ Summary Assessment โดยใช้ Rubric Data
+    [GENERALIZED FOR ALL ENABLERS, with specific BEST PRACTICE for 1.1 L2]
+    """
+    
+    # ------------------ 1. ตรวจสอบ Gap และหา Target Level ------------------
+    if not summary_data.get('development_gap'):
+        return [{"Phase": "No Action Needed", "Goal": f"Sub-Criteria {sub_id} มีระดับวุฒิภาวะสูงสุดแล้ว (L5) หรือไม่มี Gap ที่ชัดเจน"}]
+        
+    highest_full_level = summary_data['highest_full_level']
+    target_level = highest_full_level + 1
+    
+    if target_level > 5:
+        return [{"Phase": "L5 Maturity Maintenance", "Goal": "มุ่งเน้นการรักษาความสม่ำเสมอ การสร้างนวัตกรรม และการปรับปรุงอย่างยั่งยืน"}]
+
+    criteria_data = get_sub_criteria_data(sub_id, full_rubric_data)
+    if not criteria_data:
+        return [{"Phase": "Error", "Goal": f"ไม่พบข้อมูล Rubric/Statements สำหรับ {sub_id}"}]
+        
+    target_statements_key = f"Level_{target_level}_Statements"
+    target_statements = criteria_data.get(target_statements_key, [])
+    
+    action_plan = []
+    
+    # ------------------ 2. PHASE 1: GAP CLOSURE (สร้าง Action หลัก) ------------------
+    action_plan.append({
+        "Phase": f"1. Strategic Gap Closure (Level {target_level})",
+        "Goal": f"บรรลุหลักฐานที่จำเป็นทั้งหมดใน Level {target_level} ของ {sub_id}",
+        "Target_Pass_Ratio": f"1.0 (ปัจจุบัน: {summary_data['pass_ratios'].get(str(target_level), 0.0)})",
+        "Actions": []
+    })
+    
+    # Logic การสร้าง Action Item แบบ General
+    for i, statement in enumerate(target_statements):
+         if not statement.strip(): 
+             continue
+             
+         recommendation = f"จัดหาหรือสร้าง Evidence ที่สอดคล้องกับ Statement นี้ เพื่อให้บรรลุ Level {target_level}"
+         target_evidence_type = "Required Documentation/Process Improvement"
+         
+         # *** Specific BEST PRACTICE OVERRIDE for L2/1.1 Governance Gap ***
+         if sub_id == "1.1" and target_level == 2:
+             if "แต่งตั้งคณะทำงาน" in statement or "มอบหมาย" in statement:
+                 recommendation = "จัดทำ/รวบรวม **'คำสั่ง/ประกาศแต่งตั้งคณะทำงาน'** อย่างเป็นทางการ ที่ระบุอำนาจหน้าที่ชัดเจน และนำเข้าสู่ Evidence Store"
+                 target_evidence_type = "Governance Document (Official Appointment)"
+             elif "บทบาทหน้าที่ชัดเจน" in statement or "ขอบเขต" in statement:
+                 recommendation = "ทบทวน/จัดทำ **'ขอบเขตอำนาจหน้าที่ (ToR)'** ของคณะทำงานให้ชัดเจนและเป็นทางการ"
+                 target_evidence_type = "Formal ToR Document"
+             elif "ประชุมต่อเนื่อง" in statement or "ขับเคลื่อน" in statement:
+                 recommendation = "จัดให้มีการประชุมคณะทำงานอย่างสม่ำเสมอ และจัดเก็บ **'รายงานการประชุม (MoM)'** ที่แสดงความต่อเนื่องในการขับเคลื่อน"
+                 target_evidence_type = "Meeting Minutes/MoM Logs"
+         
+         # --------------------------------------------------------------------------
+         
+         action_plan[-1]['Actions'].append({
+             "Statement": f"L{target_level} S{i+1}: {statement}",
+             "Recommendation": recommendation,
+             "Target_Evidence_Type": target_evidence_type
+         })
+
+    # ------------------ 3. PHASE 2: AI Verification & Consolidation ------------------
+    action_plan.append({
+        "Phase": "2. AI Validation & Maintenance",
+        "Goal": "ยืนยันการ Level-Up และรักษาความต่อเนื่องของหลักฐาน",
+        "Actions": [
+            {
+                "Recommendation": "หลังรวบรวมหลักฐานใหม่ทั้งหมดแล้ว ให้นำเข้า Vector Store และรัน AI Assessment ในโหมด **FULLSCOPE** อีกครั้งเพื่อยืนยันว่า Level ที่ต้องการผ่านเกณฑ์",
+                "Key_Metric": f"Overall Score ของ {sub_id} ต้องเพิ่มขึ้นและ Highest Full Level ต้องเป็น L{target_level}"
+            }
+        ]
+    })
+    
+    return action_plan
 
 
 # -------------------- Main CLI Entry Point --------------------
@@ -169,13 +264,13 @@ if __name__ == "__main__":
     elif args.mode == "real":
         try:
             # 🚨 FIX 1: โหลด EnablerAssessment ชั่วคราวเพื่อเข้าถึง mapping data
+            # NOTE: ต้องมั่นใจว่า Class EnablerAssessment ถูก import มาจาก assessments.enabler_assessment
             temp_loader = EnablerAssessment(enabler_abbr=args.enabler, vectorstore_retriever=None)
             evidence_mapping = temp_loader.evidence_mapping_data
             
             target_collection_names = None
             
-            # 1. รวบรวมชื่อไฟล์ทั้งหมดที่อยู่ใน Evidence Mapping ของ Enabler นี้ (KM)
-            #    ใช้เป็นฐานสำหรับการโหลดเสมอ (KM-Only Scope)
+            # 1. รวบรวมชื่อไฟล์ทั้งหมดที่อยู่ใน Evidence Mapping ของ Enabler นี้ 
             all_enabler_file_ids = []
             for key, data in evidence_mapping.items():
                 all_enabler_file_ids.extend(data.get('filter_ids', []))
@@ -198,11 +293,10 @@ if __name__ == "__main__":
             
             else:
                 # --- Scenario 2: Full Scope Search WITHIN Enabler (No Filter) ---
-                # ใช้ไฟล์ทั้งหมดของ Enabler (KM)
                 target_collection_names = base_enabler_files
                 
                 logger.info(f"⚡ Loading ALL Vectorstore Collections for {args.enabler} ({len(target_collection_names)} documents).")
-                logger.info(f"   RAG Search Mode: FULL SCOPE SEARCH (KM ONLY)")
+                logger.info(f"   RAG Search Mode: FULL SCOPE SEARCH ({args.enabler.upper()} ONLY)")
                 
             # -------------------------------------------------------------
 
@@ -267,7 +361,6 @@ if __name__ == "__main__":
         vectorstore_retriever=retriever,
         
         # 🟢 CRITICAL FIX: ส่งสถานะ Filter และ Sub ID ไปยัง Class 
-        # เพื่อควบคุม Metadata Filter ใน RAG Query ภายใน Class Assessment
         use_retrieval_filter=args.filter,
         target_sub_id=args.sub if args.sub != "all" else None
     )
@@ -281,6 +374,7 @@ if __name__ == "__main__":
     try:
         if args.mode == "mock":
             # 🟢 ต้องแทนที่ฟังก์ชัน retrieve_context ด้วย MOCK ด้วย
+            # Note: _retrieve_context เป็น internal method ของ Class EnablerAssessment
             enabler._retrieve_context = retrieve_context_MOCK 
         
         results = enabler.run_assessment()
@@ -298,7 +392,7 @@ if __name__ == "__main__":
     summary = enabler.summarize_results()
 
     
-    # 6. Output Summary 
+    # 6. Output Summary (Print to terminal)
     print("\n=====================================================")
     print(f"      SUMMARY OF SCORING RESULTS ({args.mode.upper()} MODE) ")
     print(f"      ENABLER: {args.enabler.upper()} ")
@@ -314,8 +408,39 @@ if __name__ == "__main__":
         if data['development_gap']:
             print(f"| - Action: {data['action_item']}")
         print("-----------------------------------------------------")
+
+
+    # 7. NEW: GENERATE ACTION PLAN AND MERGE INTO SUMMARY
+    print("\n\n=====================================================")
+    print("        GENERATING ACTION PLAN...")
+    print("=====================================================")
+
+    try:
+        all_action_plans: Dict[str, List] = {}
+        # ใช้ enabler_loader.evidence_data ซึ่งเป็น list ของ Dictionaries ที่มี Rubric Statements
+        full_rubric_data = enabler_loader.evidence_data 
         
-    # 7. Export JSON 
+        # Loop ผ่าน Sub-Criteria ที่ถูกประเมินในรอบนี้
+        for sub_id, summary_data in summary['SubCriteria_Breakdown'].items():
+            
+            # สร้าง Action Plan สำหรับ Sub-Criteria นี้
+            action_plan_data = generate_action_plan_for_sub(sub_id, summary_data, full_rubric_data)
+            all_action_plans[sub_id] = action_plan_data
+
+            # 🚨 NEW: Print Action Plan to Terminal for immediate viewing
+            print(f"\n--- ACTION PLAN FOR {args.enabler.upper()} - {sub_id} ---")
+            print(json.dumps(action_plan_data, indent=4, ensure_ascii=False))
+        
+        # 🚨 CRITICAL STEP: MERGE Action Plan data into the main summary dictionary
+        summary['Action_Plans'] = all_action_plans
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to generate or merge Action Plan: {e}")
+        # หากเกิด Error ในการสร้าง Action Plan ให้สร้าง Key เปล่าไว้เพื่อไม่ให้ export ล้มเหลว
+        summary['Action_Plans'] = {"Error": str(e)}
+
+
+    # 8. EXPORT FINAL JSON (รวม Summary และ Action Plan)
     if args.export:
         EXPORT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "results"))
         try:
@@ -323,24 +448,24 @@ if __name__ == "__main__":
             logger.info(f"Using export directory: {EXPORT_DIR}")
         except OSError as e:
             logger.error(f"❌ Failed to create results directory {EXPORT_DIR}: {e}")
-            sys.exit(1)
+            # ไม่ต้อง exit แต่ควร log error
         
         mode_suffix = "REAL" if args.mode == "real" else args.mode.upper()
-        # ใช้ FULLSCOPE หรือ STRICTFILTER เพื่อระบุโหมด
         filter_suffix = "STRICTFILTER" if args.filter else "FULLSCOPE" 
-        # ใช้ os.urandom(4).hex() เพื่อสร้าง unique id สำหรับชื่อไฟล์
-        EXPORT_FILENAME = f"assessment_summary_{args.enabler}_{args.sub}_{mode_suffix}_{filter_suffix}_{os.urandom(4).hex()}.json"
+        EXPORT_FILENAME = f"assessment_report_{args.enabler}_{args.sub}_{mode_suffix}_{filter_suffix}_{os.urandom(4).hex()}.json"
         FULL_EXPORT_PATH = os.path.join(EXPORT_DIR, EXPORT_FILENAME)
 
         try:
+            # ใช้ summary ที่ถูกอัปเดตด้วย Action_Plans แล้ว
             with open(FULL_EXPORT_PATH, 'w', encoding='utf-8') as f:
                 json.dump(summary, f, ensure_ascii=False, indent=4)
-            print(f"\n✅ Successfully exported summary to {FULL_EXPORT_PATH}")
+            print(f"\n✅ Successfully exported Summary and Action Plan to {FULL_EXPORT_PATH}")
         except Exception as e:
-            logger.error(f"❌ Failed to export JSON summary to {FULL_EXPORT_PATH}: {e}")
+            logger.error(f"❌ Failed to export JSON report to {FULL_EXPORT_PATH}: {e}")
             
-    # 7.5. เรียกใช้ฟังก์ชันแสดงผลลัพธ์ละเอียด
+    # 9. เรียกใช้ฟังก์ชันแสดงผลลัพธ์ละเอียด
     print_detailed_results(enabler.raw_llm_results)
+
 
     # Stop global timer and print total
     end_time_global = time.perf_counter()

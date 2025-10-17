@@ -177,8 +177,8 @@ def save_to_vectorstore(
 # -------------------- Load Vectorstore with CACHED Ranker Logic --------------------
 def load_vectorstore(
     doc_id: str,
-    top_k: int = 15, 
-    final_k: int = 5, 
+    top_k: int = 30, 
+    final_k: int = 7, 
     doc_types: list[str] | str = "document",
     base_path: str = VECTORSTORE_DIR,
 ):
@@ -296,8 +296,8 @@ class MultiDocRetriever(BaseRetriever):
 
 # -------------------- Load multiple vectorstores (แก้ไข NameError) --------------------
 def load_all_vectorstores(doc_ids: Optional[Union[List[str], str]] = None,
-                          top_k: int = 15,
-                          final_k: int = 5,
+                          top_k: int =  30,
+                          final_k: int = 7,
                           doc_type: Optional[Union[str, List[str]]] = None,
                           base_path: str = VECTORSTORE_DIR) -> MultiDocRetriever:
     

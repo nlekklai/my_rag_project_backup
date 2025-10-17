@@ -1,17 +1,30 @@
+# assessments/enabler_assessment.py
 import os
 import json
 import logging
 import sys
 import re 
 from typing import List, Dict, Any, Optional, Union
+import time 
 
-# NOTE: ต้องมั่นใจว่า core utilities ถูก import ได้
-from core.vectorstore import load_all_vectorstores
-# 🚨 IMPORTANT: ต้อง import retrieve_context_with_filter
-from core.retrieval_utils import evaluate_with_llm, retrieve_context_with_filter, set_mock_control_mode 
+# --- PATH SETUP (Must be executed first for imports to work) ---
+try:
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if project_root not in sys.path:
+        sys.path.append(project_root)
+    
+    # NOTE: ต้องมั่นใจว่า core utilities ถูก import ได้
+    from core.vectorstore import load_all_vectorstores
+    # 🚨 IMPORTANT: ต้อง import retrieve_context_with_filter และ evaluate_with_llm
+    from core.retrieval_utils import evaluate_with_llm, retrieve_context_with_filter, set_mock_control_mode 
+
+except ImportError as e:
+    print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
+    sys.exit(1)
+
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 # Level Fractions สำหรับ Linear Interpolation
@@ -61,7 +74,9 @@ class EnablerAssessment:
                  vectorstore_retriever=None,
                  # 🟢 Argument สำหรับควบคุม Filter
                  use_retrieval_filter: bool = False,
-                 target_sub_id: Optional[str] = None): # e.g., '1.1'
+                 target_sub_id: Optional[str] = None, # e.g., '1.1'
+                 # 🚨 NEW: Mock/Control LLM Function Override
+                 mock_llm_eval_func=None): # Default: core.retrieval_utils.evaluate_with_llm
         
         self.enabler_abbr = enabler_abbr.lower()
         self.enabler_rubric_key = f"{self.enabler_abbr.upper()}_Maturity_Rubric"
@@ -83,6 +98,9 @@ class EnablerAssessment:
         # 🟢 เก็บสถานะ Filter
         self.use_retrieval_filter = use_retrieval_filter
         self.target_sub_id = target_sub_id
+        
+        # 🚨 NEW: เก็บ Mock Function
+        self.mock_llm_eval_func = mock_llm_eval_func 
 
         self.raw_llm_results: List[Dict] = []
         self.final_subcriteria_results: List[Dict] = []
@@ -130,7 +148,7 @@ class EnablerAssessment:
         # 1. หา Highest Fully Passed Level (1.0 ratio)
         for level in range(1, 6):
             level_str = str(level)
-            if level_pass_ratios.get(level_str, 0.0) < 1.0:
+            if level_pass_ratios.get(level_str, 0.0) < 1.0: 
                 highest_full_level = level - 1 
                 if highest_full_level < 0:
                     highest_full_level = 0
@@ -174,22 +192,23 @@ class EnablerAssessment:
 
     def _get_metadata_filter(self) -> Optional[Dict]:
         """
-        [DEPRECATED/REMOVED]
-        ฟังก์ชันนี้ถูกลบออกแล้ว เพื่อให้ใช้ filter_ids (รายชื่อไฟล์) ที่มาจาก mapping file
-        เป็นตัวกรองหลักใน RAG retrieval แทนการใช้ Regex
+        ฟังก์ชันนี้ถูกลบออกแล้วตามการออกแบบใหม่ 
         """
         return None 
 
 
-    def _retrieve_context(self, statement: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None) -> str:
+    def _retrieve_context(self, statement: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None, statement_number: int = 0) -> Dict[str, Any]:
         """
         ดึง Context โดยใช้ Filter จาก evidence mapping และ Metadata Filter ตาม Sub ID ที่ส่งมา
+        
+        🚨 NOTE: ฟังก์ชันนี้อาจถูก Patch ด้วย retrieve_context_MOCK ใน run_assessment.py
         """
         effective_mapping_data = mapping_data if mapping_data is not None else self.evidence_mapping_data
         
         if not self.vectorstore_retriever and mapping_data is None:
             logger.warning("Vectorstore retriever is None and not in Mock Mode. Skipping RAG retrieval.")
-            return ""
+            # Return empty structure if RAG is skipped
+            return {"top_evidences": []} 
 
         # 1. สร้างคีย์สำหรับ Mapping: "1.1_L1", "1.1_L2", ...
         mapping_key = f"{sub_criteria_id}_L{level}"
@@ -198,26 +217,24 @@ class EnablerAssessment:
         filter_ids: List[str] = effective_mapping_data.get(mapping_key, {}).get("filter_ids", [])
         
         
-        # --- LOGIC สำหรับ REAL MODE ---
+        # --- LOGIC สำหรับ REAL MODE (mapping_data is None) ---
         if mapping_data is None: 
             if not filter_ids:
                 logger.warning(f"No filter IDs found for {mapping_key}. Retrieving context without doc_id restriction.")
 
             # 4. เรียกใช้ RAG Retrieval
-            # 🚨 CRITICAL FIX: ส่ง 'filter_ids' (รายชื่อ Collection) เข้าไปใน Argument ที่ชื่อว่า 'metadata_filter' 
-            # เพื่อให้ตรงกับ Signature ของฟังก์ชัน retrieve_context_with_filter ใน core/retrieval_utils.py
             result = retrieve_context_with_filter(
                 query=statement, 
                 retriever=self.vectorstore_retriever, 
-                metadata_filter=filter_ids # <--- นี่คือการแก้ไขที่ทำให้ Type Error หายไป
+                metadata_filter=filter_ids 
             )
             
-            # 5. รวม Contexts
-            contexts = [e["content"] for e in result.get("top_evidences", [])]
-            return "\n".join(contexts)
+            # 5. ส่งผลลัพธ์ที่เป็น Dictionary กลับไป
+            return result
 
         # --- LOGIC สำหรับ MOCK MODE ---
-        return "" # ถูก Patch โดย process_assessment.py
+        # ถ้าอยู่ใน Mock Mode แต่ฟังก์ชันนี้ไม่ได้ถูก Patch จะ return ค่าว่าง
+        return {"top_evidences": []} 
 
 
     def _process_subcriteria_results(self):
@@ -283,6 +300,10 @@ class EnablerAssessment:
         is_mock_mode = getattr(self._retrieve_context, '__name__', 'N/A') == 'retrieve_context_MOCK'
         mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None
         
+        # 🚨 FIX: เลือกใช้ LLM Evaluation Function (Mock หรือ Real)
+        llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
+
+        
         for enabler in self.evidence_data:
             enabler_id = enabler.get("Enabler_ID")
             sub_criteria_id = enabler.get("Sub_Criteria_ID")
@@ -301,17 +322,28 @@ class EnablerAssessment:
                     subtopic_key = f"subtopic_{i+1}"
                     standard = rubric_criteria.get(subtopic_key, f"Default standard L{level} S{i+1}")
                     
-                    # 🚨 EDITED: ส่ง mapping_data_for_mock เข้าไปใน _retrieve_context
-                    context = self._retrieve_context(
+                    # 1. เรียก retrieval_result
+                    retrieval_result = self._retrieve_context(
                         statement=statement, 
                         sub_criteria_id=sub_criteria_id, 
                         level=level,
-                        mapping_data=mapping_data_for_mock # ส่งไปให้ Mock Function ใช้
+                        mapping_data=mapping_data_for_mock, 
+                        statement_number=i + 1
                     )
                     
-                    result = evaluate_with_llm(
+                    # 2. Extract the actual context string
+                    context = ""
+                    if isinstance(retrieval_result, dict):
+                        top_evidence = retrieval_result.get("top_evidences", [])
+                        if top_evidence and isinstance(top_evidence[0], dict):
+                            context = top_evidence[0].get("content", "")
+                    elif isinstance(retrieval_result, str):
+                        context = retrieval_result 
+                    
+                    # 3. 🚨 FIX: Call the selected evaluation function
+                    result = llm_eval_func(
                         statement=statement,
-                        context=context,
+                        context=context, # ส่ง String Context เข้าไป
                         standard=standard
                     )
                     
@@ -320,12 +352,13 @@ class EnablerAssessment:
                         "sub_criteria_id": sub_criteria_id,
                         "sub_criteria_name": sub_criteria_name, 
                         "level": level,
+                        "statement_number": i + 1, 
                         "statement": statement,
                         "subtopic": subtopic_key,
                         "standard": standard,
                         "llm_score": result.get("score", 0), 
                         "reason": result.get("reason", ""),
-                        "context_retrieved_snippet": context[:120] + "..." # เพิ่มความยาวเพื่อให้เห็น snippet ได้มากขึ้น
+                        "context_retrieved_snippet": context[:120] + "..." 
                     })
         
         self._process_subcriteria_results()
@@ -336,6 +369,19 @@ class EnablerAssessment:
         """
         สรุปคะแนนรวมจาก final_subcriteria_results
         """
+        
+        if not self.final_subcriteria_results:
+             return {
+                 "Overall": {
+                    "enabler": self.enabler_abbr.upper(),
+                    "total_weighted_score": 0.0,
+                    "total_possible_weight": 0.0,
+                    "overall_progress_percent": 0.0,
+                    "overall_maturity_score": 0.0
+                 },
+                 "SubCriteria_Breakdown": {}
+             }
+        
         total_weight = sum(r["weight"] for r in self.final_subcriteria_results)
         total_score = sum(r["progress_score"] for r in self.final_subcriteria_results)
         num_subcriteria = len(self.final_subcriteria_results)

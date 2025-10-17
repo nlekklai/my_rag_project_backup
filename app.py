@@ -1,8 +1,9 @@
 import logging
 import os
-from langchain.schema import Document
+import json
+from langchain.schema import Document, SystemMessage, HumanMessage 
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -11,13 +12,17 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 # --- Core Imports ---
-from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT
+from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT, SYSTEM_QA_INSTRUCTION 
 from core.ingest import process_document, list_documents, delete_document, DATA_DIR, SUPPORTED_TYPES
 from core.vectorstore import load_vectorstore, vectorstore_exists, load_all_vectorstores, get_vectorstore_path
 from langchain.chains import RetrievalQA
 
 # ❗❗ FIXED: Import LLM Instance Explicitly to resolve AttributeError
 from models.llm import llm as llm_instance 
+
+# --- NEW: Import the assessment function ---
+from core.run_assessment import run_assessment_process 
+# -------------------------------------------
 
 
 # -----------------------------
@@ -37,6 +42,58 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- Global Constants ---
 # -----------------------------
 VECTORSTORE_DIR = "vectorstore"
+REF_DATA_DIR = "ref_data"  # 🟢 NEW: Global Constant สำหรับ Reference Data Directory
+
+# -----------------------------
+# --- Helper Functions (สำหรับจัดการ JSON Files) ---
+# -----------------------------
+
+def get_ref_data_path(enabler: str, data_type: str) -> str:
+    """สร้าง path เต็มของไฟล์ JSON สำหรับ Enabler และ Data Type ที่ระบุ"""
+    enabler = enabler.lower()
+    
+    # กำหนดชื่อไฟล์ตาม Data Type ที่เรารู้จัก
+    if data_type == 'statements':
+        filename = f"{enabler}_evidence_statements_checklist.json"
+    elif data_type == 'rubrics':
+        filename = f"{enabler}_rating_criteria_rubric.json"
+    elif data_type == 'mapping':
+        filename = f"{enabler}_evidence_mapping.json"
+    elif data_type == 'weighting':
+        filename = f"{enabler}_scoring_level_fractions.json"
+    else:
+        # NOTE: ถ้าเป็น Path Parameter ใน FastAPI จะถูกดักจับก่อน
+        raise ValueError(f"Invalid data_type: {data_type}")
+        
+    # สมมติว่าไฟล์ JSON อยู่ในโฟลเดอร์หลักของ REF_DATA_DIR
+    return os.path.join(REF_DATA_DIR, filename) 
+
+def load_ref_data_file(filepath: str) -> Any:
+    """อ่านและโหลดข้อมูล JSON จากไฟล์ที่กำหนด"""
+    if not os.path.exists(filepath):
+        # คืนค่า default ถ้าไฟล์ยังไม่มี
+        if any(keyword in filepath for keyword in ['statements', 'mapping', 'rubric']):
+            return []
+        return {}
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to decode JSON from {filepath}")
+        # NOTE: ใช้ HTTPException ใน Helper Function เพราะมันถูกเรียกใน endpoint
+        raise HTTPException(status_code=500, detail=f"Invalid JSON format in {filepath}")
+    except Exception as e:
+        logger.error(f"Error loading file {filepath}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error loading file: {filepath}")
+
+def save_ref_data_file(filepath: str, data: Any):
+    """บันทึกข้อมูล JSON กลับลงในไฟล์"""
+    # ตรวจสอบ/สร้าง โฟลเดอร์หลัก (REF_DATA_DIR) อีกครั้งเพื่อความปลอดภัย
+    os.makedirs(os.path.dirname(filepath), exist_ok=True) 
+    with open(filepath, 'w', encoding='utf-8') as f:
+        # ใช้ indent 2 เพื่อให้อ่านง่าย
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 
 # -----------------------------
 # --- Lifespan (แทน on_event) ---
@@ -47,7 +104,8 @@ async def lifespan(app: FastAPI):
     # --- Startup ---
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(VECTORSTORE_DIR, exist_ok=True)
-    logging.info(f"✅ Data directory '{DATA_DIR}' and vectorstore '{VECTORSTORE_DIR}' ensured.")
+    os.makedirs(REF_DATA_DIR, exist_ok=True) # 🟢 NEW: สร้างโฟลเดอร์ Reference Data
+    logging.info(f"✅ Data directory '{DATA_DIR}', vectorstore '{VECTORSTORE_DIR}', and ref_data '{REF_DATA_DIR}' ensured.")
 
     yield  # <-- Application runs here
 
@@ -84,10 +142,242 @@ class UploadResponse(BaseModel):
     filename: str
     file_type: str
     upload_date: str
+    
+class AssessmentRequest(BaseModel):
+    enabler: str = "KM"
+    sub_criteria_id: str = "all"
+    mode: str = "real"
+    filter_mode: bool = False
+    export_results: bool = False
+    
+class AssessmentRecord(BaseModel):
+    record_id: str
+    enabler: str
+    sub_criteria_id: str
+    mode: str
+    timestamp: str
+    
+    # 🟢 UPDATE: เพิ่มสถานะ
+    status: str = "RUNNING" # PENDING, RUNNING, COMPLETED, FAILED
+
+    # 🟢 UPDATE: ทำให้คะแนนเป็น Optional
+    overall_score: Optional[float] = None
+    highest_full_level: Optional[int] = None
+    export_path: Optional[str] = None
+
+# 🟢 NEW: Pydantic Model สำหรับ Reference Data Payload
+class RefDataPayload(BaseModel):
+    data: Dict | List 
+    
+# Global List of Assessment Records (in-memory for demo/simple environment)
+ASSESSMENT_HISTORY: List[AssessmentRecord] = []
+
+# -----------------------------
+# --- Assessment Endpoints ---
+# -----------------------------
+@app.post("/api/assess")
+async def run_assessment_task(request: AssessmentRequest, background_tasks: BackgroundTasks):
+    record_id = os.urandom(8).hex()
+    
+    # 1. สร้างและบันทึก Record สถานะ RUNNING เข้า History ทันที
+    initial_record = AssessmentRecord(
+        record_id=record_id,
+        enabler=request.enabler.upper(),
+        sub_criteria_id=request.sub_criteria_id,
+        mode=request.mode,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        status="RUNNING" 
+    )
+    ASSESSMENT_HISTORY.append(initial_record)
+    
+    # 2. ส่ง Task ไปรัน Background
+    background_tasks.add_task(_background_assessment_runner, record_id, request)
+    
+    # 3. ตอบกลับ client
+    return {"status": "accepted", "record_id": record_id, "message": "Assessment started in background. Check /api/assess/history for status."}
+
+# -----------------------------
+# --- Assessment History Endpoint (UPDATED: A1) ---
+# -----------------------------
+@app.get("/api/assess/history", response_model=List[AssessmentRecord])
+async def get_assessment_history(enabler: Optional[str] = None): # ⬅️ รับ Query Parameter 'enabler'
+    
+    filtered_history = ASSESSMENT_HISTORY
+    
+    # 🟢 LOGIC: ทำการ Filter ถ้ามี Enabler ถูกส่งมา
+    if enabler:
+        enabler_upper = enabler.upper()
+        
+        filtered_history = [
+            record for record in ASSESSMENT_HISTORY 
+            if record.enabler.upper() == enabler_upper
+        ]
+        
+    # 3. เรียงลำดับตามเวลาและส่งกลับ
+    return sorted(filtered_history, key=lambda r: r.timestamp, reverse=True)
+
+
+@app.get("/api/assess/results/{record_id}")
+async def get_assessment_results(record_id: str):
+    record = next((r for r in ASSESSMENT_HISTORY if r.record_id == record_id), None)
+    if not record:
+        raise HTTPException(status_code=404, detail="Assessment record not found.")
+
+    if record.export_path and os.path.exists(record.export_path):
+        return FileResponse(record.export_path, media_type="application/json", filename=os.path.basename(record.export_path))
+    
+    raise HTTPException(status_code=404, detail="Full assessment data not available for this record.")
 
 
 # -----------------------------
-# --- Document Endpoints ---
+# --- Reference Data Endpoints (NEW: R1, R2, R3) ---
+# -----------------------------
+
+# R1: GET /api/ref_data/{enabler}
+@app.get("/api/ref_data/{enabler}")
+async def get_all_reference_data(enabler: str):
+    """
+    R1: ดึงข้อมูล Reference Data ทั้ง 4 ชนิด (Statements, Rubrics, Mapping, Weighting) 
+    ของ Enabler ที่ระบุในครั้งเดียว
+    """
+    enabler = enabler.lower()
+    data = {}
+    
+    def load_data_safe(data_type: str):
+        filepath = get_ref_data_path(enabler, data_type)
+        return load_ref_data_file(filepath)
+
+    try:
+        # โหลดข้อมูลทั้งหมด
+        data['statements'] = await run_in_threadpool(lambda: load_data_safe('statements'))
+        data['rubrics'] = await run_in_threadpool(lambda: load_data_safe('rubrics'))
+        data['mapping'] = await run_in_threadpool(lambda: load_data_safe('mapping'))
+        data['weighting'] = await run_in_threadpool(lambda: load_data_safe('weighting'))
+        
+        data['enabler'] = enabler.upper()
+
+        return data
+    except HTTPException:
+        raise # ส่ง HTTPException 500 ที่มาจาก load_ref_data_file ต่อ
+    except Exception as e:
+        logger.error(f"Error loading all ref data for {enabler}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load all reference data for {enabler}")
+
+
+# R2: POST /api/ref_data/{enabler}/{data_type}
+@app.post("/api/ref_data/{enabler}/{data_type}")
+async def save_reference_data(enabler: str, data_type: str, payload: RefDataPayload):
+    """
+    R2: บันทึกข้อมูล Reference Data (Statements, Rubrics, Mapping, หรือ Weighting) 
+    """
+    enabler = enabler.lower()
+    
+    # 1. ตรวจสอบ data_type ที่ถูกต้อง
+    if data_type not in ['statements', 'rubrics', 'mapping', 'weighting']:
+        raise HTTPException(status_code=400, detail="Invalid data_type. Must be one of: statements, rubrics, mapping, weighting.")
+        
+    # 2. สร้าง Path และบันทึก
+    filepath = get_ref_data_path(enabler, data_type)
+    
+    try:
+        await run_in_threadpool(lambda: save_ref_data_file(filepath, payload.data))
+        logger.info(f"Saved {data_type} for {enabler} to {filepath}")
+        return {"status": "success", "enabler": enabler.upper(), "data_type": data_type}
+    except Exception as e:
+        logger.error(f"Error saving {data_type} for {enabler}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save {data_type} data.")
+
+
+# R3: POST /api/ref_data/auto_map/{enabler}
+@app.post("/api/ref_data/auto_map/{enabler}")
+async def trigger_auto_mapping(enabler: str, background_tasks: BackgroundTasks):
+    """
+    R3: Trigger Background Task สำหรับการทำ Auto Mapping/LLM Generation 
+    """
+    enabler = enabler.lower()
+    
+    # 🟢 ส่ง Task ไปรัน Background
+    background_tasks.add_task(_background_auto_mapper, enabler)
+    
+    return {"status": "accepted", "enabler": enabler.upper(), "message": "Auto Mapping process started in background."}
+
+
+# -----------------------------
+# --- Background Runner Logic ---
+# -----------------------------
+
+def _background_assessment_runner(record_id: str, request: AssessmentRequest):
+    logger.info(f"Processing background assessment for {record_id}...")
+    
+    record = next((r for r in ASSESSMENT_HISTORY if r.record_id == record_id), None)
+    if not record:
+        logger.error(f"FATAL: Initial record {record_id} not found in history list. Exiting runner.")
+        return 
+        
+    try:
+        # 2. CALL THE NEW FUNCTION (ใช้เวลา)
+        final_summary = run_assessment_process(
+            enabler=request.enabler,
+            sub_criteria_id=request.sub_criteria_id,
+            mode=request.mode,
+            filter_mode=request.filter_mode,
+            export=True # Force export in background task to get a stable file for /results
+        )
+        
+        # 3. 🟢 อัปเดตผลลัพธ์และสถานะ (Completed)
+        record.overall_score = final_summary['Overall']['overall_maturity_score']
+        
+        # Logic สำหรับดึง highest_full_level (ตามโค้ดเดิม)
+        sub_id_for_level = request.sub_criteria_id if request.sub_criteria_id != 'all' else list(final_summary['SubCriteria_Breakdown'].keys())[0] if final_summary['SubCriteria_Breakdown'] else None
+        record.highest_full_level = final_summary['SubCriteria_Breakdown'].get(sub_id_for_level, {}).get('highest_full_level', 0) if sub_id_for_level else 0
+        
+        record.export_path = final_summary.get("export_path_used")
+        record.status = "COMPLETED" # 🟢 สถานะเสร็จสมบูรณ์
+        
+        record.timestamp = datetime.now(timezone.utc).isoformat()
+        
+        logger.info(f"Assessment {record_id} completed successfully. Score: {record.overall_score:.2f}")
+
+    except Exception as e:
+        logger.error(f"Assessment task {record_id} failed: {e}")
+        # 5. 🟢 อัปเดต Record สถานะล้มเหลว
+        record.overall_score = -1.0
+        record.highest_full_level = -1
+        record.status = "FAILED"
+        record.timestamp = datetime.now(timezone.utc).isoformat()
+
+# -----------------------------
+# --- Auto Mapping Background Runner (R3 Logic) ---
+# -----------------------------
+def _background_auto_mapper(enabler: str):
+    logger.info(f"Starting Auto Mapping for {enabler}...")
+    
+    # **********************************************
+    # *** Backend Team ต้องเพิ่ม Logic LLM/Generation ที่นี่ ***
+    # **********************************************
+    
+    try:
+        # NOTE: นี่คือการจำลองการทำงานที่กินเวลานาน
+        import time
+        time.sleep(10) 
+        
+        # 🟢 เมื่อเสร็จแล้ว ควรเรียกใช้ Logic การสร้างไฟล์และการบันทึก:
+        #
+        # 1. GENERATE DATA (LLM/Custom Logic)
+        # new_mapping_data = generate_mapping_data(enabler) 
+        
+        # 2. SAVE TO FILE 
+        # filepath = get_ref_data_path(enabler, 'mapping')
+        # save_ref_data_file(filepath, new_mapping_data) 
+        
+        logger.info(f"Auto Mapping for {enabler} completed and saved successfully (Simulated).")
+
+    except Exception as e:
+        logger.error(f"Auto Mapping task for {enabler} failed: {e}")
+        
+        
+# -----------------------------
+# --- Document Endpoints (โค้ดเดิม) ---
 # -----------------------------
 @app.get("/api/documents", response_model=List[UploadResponse])
 async def get_documents():
@@ -101,9 +391,8 @@ async def remove_document(doc_id: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 # -----------------------------
-# --- Upload Endpoints ---
+# --- Upload Endpoints (โค้ดเดิม) ---
 # -----------------------------
 @app.post("/upload", response_model=UploadResponse)
 async def upload_file(file: UploadFile):
@@ -209,7 +498,7 @@ async def download_upload(doc_type: str, file_id: str):
 
 
 # -----------------------------
-# --- Ingest Endpoint ---
+# --- Ingest Endpoint (โค้ดเดิม) ---
 # -----------------------------
 class IngestRequest(BaseModel):
     doc_ids: List[str]
@@ -243,7 +532,7 @@ async def ingest_documents(request: IngestRequest):
 
 
 # -----------------------------
-# --- Query Endpoint (Fixed) ---
+# --- Query Endpoint (ปรับปรุงแล้ว) ---
 # -----------------------------
 @app.post("/query")
 async def query_endpoint(
@@ -273,18 +562,30 @@ async def query_endpoint(
 
     context_text = await run_in_threadpool(lambda: get_all_docs_text(question))
 
-    prompt_text = QA_PROMPT.format(context=context_text, question=question)
+    # 🟢 NEW RAG PROMPT STRUCTURE IMPLEMENTATION
+    # 1. Format the Human Message content (Context + Question)
+    human_message_content = QA_PROMPT.format(context=context_text, question=question)
 
-    def call_llm_safe(prompt_text):
-        # 🟢 FIXED: ใช้ llm_instance แทน llm
-        res = llm_instance.invoke(prompt_text)
+    # 2. Create the message list (System Instruction + Human Message)
+    messages = [
+        SystemMessage(content=SYSTEM_QA_INSTRUCTION),
+        HumanMessage(content=human_message_content)
+    ]
+    
+    def call_llm_safe(messages_list: List[Any]) -> str: # Function signature updated
+        # 3. Invoke with the list of messages
+        res = llm_instance.invoke(messages_list) 
         if isinstance(res, dict) and "result" in res:
             return res["result"]
+        elif hasattr(res, 'content'): # Handle LangChain/SDK response object
+            return res.content.strip()
         elif isinstance(res, str):
-            return res
-        return str(res)
+            return res.strip()
+        return str(res).strip()
 
-    answer = await run_in_threadpool(lambda: call_llm_safe(prompt_text))
+    # 4. Call LLM with the new messages list
+    answer = await run_in_threadpool(lambda: call_llm_safe(messages))
+    # 🟢 END NEW RAG PROMPT STRUCTURE IMPLEMENTATION
 
     return {
         "question": question,
@@ -296,7 +597,7 @@ async def query_endpoint(
 
 
 # -----------------------------
-# --- Compare Endpoint (Fixed) ---
+# --- Compare Endpoint (ปรับปรุงใหม่) ---
 # -----------------------------
 @app.post("/compare")
 async def compare(
@@ -305,10 +606,9 @@ async def compare(
     query: str = Form(...),
     doc_types: Optional[str] = Form(None)
 ):
-    # NOTE: ลบ Import ซ้ำซ้อนของ vectorstore_exists และ load_all_vectorstores ออก
-    from core.vectorstore import vectorstore_exists # นำกลับมาเผื่อโค้ดส่วนล่างจำเป็นต้องใช้ local import
+    from core.vectorstore import vectorstore_exists 
     
-    doc_type_list = [dt.strip() for dt in doc_types.split(",")] if doc_types else ["document", "faq"]
+    doc_type_list = [dt.strip() for dt in doc_types.split(",")] if doc_types else ["document"]
 
     doc_ids = [doc1, doc2]
     valid_docs, skipped = [], []
@@ -333,9 +633,7 @@ async def compare(
         docs = multi_retriever._get_relevant_documents(query_text)
         doc_text_map = {doc1: "", doc2: ""}
         
-        # ปรับปรุง Logic การดึง source เพื่อให้ตรงกับ doc_id ที่รับมาจาก Form
         for d in docs:
-            # สมมติว่า d.metadata.get("doc_id") หรือ d.metadata.get("source") ใช้ได้
             doc_key = d.metadata.get("doc_id") or os.path.splitext(os.path.basename(d.metadata.get("source", "")))[0]
 
             if doc_key == doc1:
@@ -351,10 +649,35 @@ async def compare(
     doc1_text, doc2_text = await run_in_threadpool(lambda: get_docs_text(query))
     context_text = f"Document 1 Content:\n{doc1_text}\n\nDocument 2 Content:\n{doc2_text}"
 
+    # 🟢 NEW RAG PROMPT STRUCTURE IMPLEMENTATION for Compare
+    
+    # 1. Format the Human Message content (Context + Question)
+    human_message_content = COMPARE_PROMPT.format(
+        context=context_text, 
+        query=query, 
+        doc_names=f"{doc1} และ {doc2}"
+    )
 
-    prompt_text = COMPARE_PROMPT.format(context=context_text, query=query, doc_names=f"{doc1} และ {doc2}")
-    # 🟢 FIXED: ใช้ llm_instance แทน llm
-    delta_answer = await run_in_threadpool(lambda: llm_instance.invoke(prompt_text))
+    # 2. Create the message list (System Instruction + Human Message)
+    messages = [
+        SystemMessage(content=SYSTEM_QA_INSTRUCTION),
+        HumanMessage(content=human_message_content)
+    ]
+    
+    def call_llm_safe(messages_list: List[Any]) -> str:
+        """Helper to invoke LLM with message list and extract content (reused from /query)."""
+        res = llm_instance.invoke(messages_list) 
+        if isinstance(res, dict) and "result" in res:
+            return res["result"]
+        elif hasattr(res, 'content'): 
+            return res.content.strip()
+        elif isinstance(res, str):
+            return res.strip()
+        return str(res).strip()
+
+    # 3. Call LLM with the new messages list
+    delta_answer = await run_in_threadpool(lambda: call_llm_safe(messages))
+    # 🟢 END NEW RAG PROMPT STRUCTURE IMPLEMENTATION
 
     return {
         "result": {
@@ -373,7 +696,7 @@ async def compare(
 
 
 # -----------------------------
-# --- Health & Status ---
+# --- Health & Status (โค้ดเดิม) ---
 # -----------------------------
 @app.get("/api/status")
 async def api_status():
