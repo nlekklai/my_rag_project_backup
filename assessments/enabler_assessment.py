@@ -18,6 +18,7 @@ try:
     from core.retrieval_utils import evaluate_with_llm, retrieve_context_with_filter, set_mock_control_mode, summarize_context_with_llm
 
 except ImportError as e:
+    # หากรันจากที่ที่ไม่ใช่ root project directory อาจจะต้องปรับ path เพิ่ม
     print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
     sys.exit(1)
 
@@ -63,7 +64,7 @@ class EnablerAssessment:
 
     BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
     
-    # Context length limit
+    # Context length limit สำหรับการประเมินแต่ละ Statement
     MAX_CONTEXT_LENGTH = 2500 
 
 
@@ -74,8 +75,8 @@ class EnablerAssessment:
                  level_fractions: Optional[Dict] = None,
                  evidence_mapping_data: Optional[Dict] = None, # สำหรับ Mapping File
                  vectorstore_retriever=None,
-                 # Argument สำหรับควบคุม Filter
-                 use_retrieval_filter: bool = False,
+                 # Argument สำหรับควบคุม Filter (ปัจจุบันไม่ถูกใช้งานใน _get_metadata_filter แต่คงไว้เพื่อความยืดหยุ่น)
+                 use_retrieval_filter: bool = False, 
                  target_sub_id: Optional[str] = None, # e.g., '1.1'
                  # Mock/Control LLM Function Override
                  mock_llm_eval_func=None): # Default: core.retrieval_utils.evaluate_with_llm
@@ -150,13 +151,14 @@ class EnablerAssessment:
         # 1. หา Highest Fully Passed Level (1.0 ratio) - Logic Maturity Model
         for level in range(1, 6):
             level_str = str(level)
+            # ถ้า Level ปัจจุบันไม่ผ่านครบ 100%
             if level_pass_ratios.get(level_str, 0.0) < 1.0: 
                 highest_full_level = level - 1 
                 if highest_full_level < 0:
                     highest_full_level = 0
                 break # หยุดทันทีเมื่อเจอ Level แรกที่ไม่ผ่าน
             else:
-                highest_full_level = level
+                highest_full_level = level # ถ้า Level ผ่านครบ ให้ตั้งเป็น Level นี้แล้ววนลูปต่อ
         
         # 2. คำนวณ Progress Score (Linear Interpolation)
         if highest_full_level == 5:
@@ -184,7 +186,7 @@ class EnablerAssessment:
              development_gap = True
              ratio = level_pass_ratios.get(str(target_gap_level), 0.0)
              
-             # Action Item จะโฟกัสไปที่ Gap แรกสุด (L1 ในเคสของคุณ)
+             # Action Item จะโฟกัสไปที่ Gap แรกสุด
              action_item = f"ดำเนินการเพื่อบรรลุหลักฐานทั้งหมดใน Level {target_gap_level} โดยเฉพาะรายการที่ยังไม่สอดคล้อง (Pass Ratio: {ratio})"
         
         # 4. Return Results
@@ -199,7 +201,8 @@ class EnablerAssessment:
 
     def _get_metadata_filter(self) -> Optional[Dict]:
         """
-        ฟังก์ชันนี้ถูกลบออกแล้วตามการออกแบบใหม่ 
+        ฟังก์ชันนี้ถูกทิ้งไว้แต่จะ return None เสมอ เพราะ Filter Logic ถูกย้ายไปใช้กับ document ID
+        ที่ได้จาก Mapping File ใน _retrieve_context แทน
         """
         return None 
 
@@ -227,11 +230,11 @@ class EnablerAssessment:
             if not filter_ids:
                 logger.warning(f"No filter IDs found for {mapping_key}. Retrieving context without doc_id restriction.")
 
-            # 4. เรียกใช้ RAG Retrieval
+            # 4. เรียกใช้ RAG Retrieval (ส่ง filter_ids ที่ได้จาก mapping ไปที่ retrieve_context_with_filter)
             result = retrieve_context_with_filter(
                 query=query, 
                 retriever=self.vectorstore_retriever, 
-                metadata_filter=filter_ids 
+                metadata_filter=filter_ids # ส่ง filter_ids (doc_id) ไปที่ RAG
             )
             
             # 5. ส่งผลลัพธ์ที่เป็น Dictionary กลับไป
@@ -255,7 +258,7 @@ class EnablerAssessment:
                                      if e.get("Sub_Criteria_ID") == r['sub_criteria_id']), {}) 
                 
                 grouped_results[key] = {
-                    "enabler_id": r.get('enabler_id', 'N/A'),
+                    "enabler_id": self.enabler_abbr.upper(),
                     "sub_criteria_id": r['sub_criteria_id'],
                     "sub_criteria_name": enabler_data.get("Sub_Criteria_Name_TH", "N/A"),
                     "weight": enabler_data.get("Weight", 1.0),
@@ -332,18 +335,19 @@ class EnablerAssessment:
                     
                     # 1. เรียก retrieval_result
                     retrieval_result = self._retrieve_context(
-                        query=query_string, # 🚨 FIX: ส่ง Query String ใหม่
+                        query=query_string, # ส่ง Query String ใหม่
                         sub_criteria_id=sub_criteria_id, 
                         level=level,
                         mapping_data=mapping_data_for_mock, 
                         statement_number=i + 1
                     )
                     
-                    # 2. 🚨 FIX 2: ขยาย Context String โดยการรวม Content จาก Top N Reranked Documents
+                    # 2. ขยาย Context String โดยการรวม Content จาก Top N Reranked Documents
                     context_list = []
                     context_length = 0
                     # 💡 NEW: Initialize list to store source/location data
                     retrieved_sources_list = [] 
+                    context = "" # Initialize context string
                     
                     if isinstance(retrieval_result, dict):
                         top_evidence = retrieval_result.get("top_evidences", [])
@@ -360,8 +364,11 @@ class EnablerAssessment:
                             location_str = f"Page {location}" if isinstance(location, int) else location
                             
                             # 💡 NEW: Store Source Data for traceability
+                            # ใช้ Doc ID และ Page Number เพื่อระบุแหล่งที่มาอย่างชัดเจน
+                            doc_id = doc.get("doc_id", "N/A")
                             retrieved_sources_list.append({
                                 "source_name": source_name,
+                                "doc_id": doc_id,
                                 "location": location_str
                             })
                             
@@ -377,6 +384,7 @@ class EnablerAssessment:
                                 context_length = self.MAX_CONTEXT_LENGTH
                                 break # หยุดการรวมเมื่อ Context เต็ม
                                 
+                        # รวมบริบทที่ถูกตัดให้ได้ความยาวตามต้องการ
                         context = "\n---\n".join(context_list)
                     
                     # 3. Call the selected evaluation function
@@ -390,14 +398,15 @@ class EnablerAssessment:
                     unique_sources = []
                     seen = set()
                     for src in retrieved_sources_list:
-                        key = (src['source_name'], src['location'])
+                        # ใช้ doc_id และ location เป็นคีย์ในการตรวจสอบความซ้ำ
+                        key = (src['doc_id'], src['location']) 
                         if key not in seen:
                             seen.add(key)
                             unique_sources.append(src)
                     
                     # 5. บันทึกผลลัพธ์
                     self.raw_llm_results.append({
-                        "enabler_id": enabler_id,
+                        "enabler_id": self.enabler_abbr.upper(),
                         "sub_criteria_id": sub_criteria_id,
                         "sub_criteria_name": sub_criteria_name, 
                         "level": level,
@@ -409,7 +418,7 @@ class EnablerAssessment:
                         "reason": result.get("reason", ""),
                         # 💡 NEW: เพิ่มข้อมูล Source Files
                         "retrieved_sources_list": unique_sources,
-                        "context_retrieved_snippet": context[:120] + "..." 
+                        "context_retrieved_snippet": context[:120] + "..." if context else ""
                     })
         
         self._process_subcriteria_results()
@@ -475,13 +484,11 @@ class EnablerAssessment:
         if not aggregated_context_list:
             return f"ไม่พบหลักฐานที่เกี่ยวข้องใน Vector Store สำหรับเกณฑ์ {sub_criteria_id} Level {level}"
         
-        # เชื่อม Context ที่รวบรวมได้ทั้งหมด (ใช้ set เพื่อลบรายการที่ซ้ำกันก่อน join)
-        # ใช้ list(dict.fromkeys(aggregated_context_list)) เพื่อรักษาลำดับที่ไม่ซ้ำกัน
+        # เชื่อม Context ที่รวบรวมได้ทั้งหมด (ใช้ dict.fromkeys เพื่อลบรายการที่ซ้ำกันก่อน join)
         final_context = "\n---\n".join(list(dict.fromkeys(aggregated_context_list)))
         
         # 3. เรียก LLM เพื่อสร้างคำอธิบายสรุป
         try:
-            # 🚨 NOTE: summarize_context_with_llm ต้องถูกสร้างใน core/retrieval_utils.py
             summary_result = summarize_context_with_llm(
                 context=final_context,
                 sub_criteria_name=sub_criteria_name,
@@ -496,7 +503,7 @@ class EnablerAssessment:
     
     def summarize_results(self) -> Dict[str, Dict]:
         """
-        สรุปคะแนนรวมจาก final_subcriteria_results (เหมือนเดิม)
+        สรุปคะแนนรวมจาก final_subcriteria_results
         """
         
         if not self.final_subcriteria_results:
@@ -513,7 +520,6 @@ class EnablerAssessment:
         
         total_weight = sum(r["weight"] for r in self.final_subcriteria_results)
         total_score = sum(r["progress_score"] for r in self.final_subcriteria_results)
-        num_subcriteria = len(self.final_subcriteria_results)
         
         return {
             "Overall": {

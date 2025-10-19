@@ -10,6 +10,8 @@ from langchain.schema import Document
 import re 
 # 🚨 IMPORT: นำเข้า Pydantic Model จากไฟล์ action_plan_schema.py
 from core.action_plan_schema import ActionPlanActions 
+# 🟢 NEW: นำเข้า Pydantic Model จากไฟล์ assessment_schema.py
+from core.assessment_schema import StatementAssessment, EvidenceSummary
 # 🚨 IMPORT: นำเข้า Prompts
 from core.rag_prompts import (
     SYSTEM_ASSESSMENT_PROMPT, 
@@ -148,6 +150,7 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
                 cleaned_content = cleaned_content.replace("```", "", 1).rstrip('`')
             
             # 2. ใช้ Regex เพื่อกรองหา JSON block ที่สมบูรณ์
+            # NOTE: โค้ดที่ได้มามีการใช้ key 'llm_score'
             json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
             
             final_json_string = None
@@ -160,21 +163,28 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
             # 3. Parse JSON string
             llm_output = json.loads(final_json_string) # ⬅️ Parse string ที่ถูกกรองแล้ว
             
-            # C. ตรวจสอบว่ามี Key 'llm_score' และ 'reason' ครบถ้วน
-            if "llm_score" in llm_output and "reason" in llm_output:
-                raw_score = llm_output.get("llm_score", 0)
-                # Ensure score is an integer (handling cases where LLM might return '1' as a string)
-                score = int(str(raw_score)) if str(raw_score).isdigit() else 0 
-                reason = llm_output.get("reason", "No reason provided by LLM.")
+            # 4. 🟢 NEW: Validate against StatementAssessment Pydantic Schema
+            # เนื่องจากใน retrieval_utils.py เดิมใช้ key 'llm_score'
+            # แต่ StatementAssessment ใช้ key 'score' เราจึงต้องปรับการตรวจสอบเล็กน้อย
+            
+            # ตรวจสอบว่ามี Key 'score' หรือ 'llm_score' และ 'reason' ครบถ้วน
+            raw_score = llm_output.get("llm_score") or llm_output.get("score")
+            reason = llm_output.get("reason")
+            
+            if raw_score is not None and reason is not None:
+                # สร้าง Dict ที่ใช้ Pydantic Key
+                validated_data = {
+                    "score": int(str(raw_score)) if str(raw_score).isdigit() else 0,
+                    "reason": reason
+                }
                 
-                return {
-                    "llm_score": score,  # เก็บค่าที่ LLM สร้าง
-                    "reason": reason,
-                    "score": score       # Key มาตรฐานที่ระบบใช้ (ต้องมี)
-                } 
+                # 5. ใช้ Pydantic Model Validate
+                validated_assessment = StatementAssessment.model_validate(validated_data)
+                
+                return validated_assessment.model_dump()
             
             else:
-                raise ValueError("LLM response JSON is missing 'llm_score' or 'reason' keys.")
+                raise ValueError("LLM response JSON is missing 'score' or 'reason' keys.")
 
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"❌ Format/JSON Parse Failed (Attempt {attempt + 1}/{MAX_LLM_RETRIES}). Retrying in 1s... Error: {e}")
@@ -193,6 +203,7 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
     logger.error("❌ Using RANDOM SCORE as final fallback.")
     score = random.choice([0, 1])
     reason = f"LLM Call Failed (Fallback to Random Score {score}) after {MAX_LLM_RETRIES} attempts."
+    # 🟢 Fallback ควรคืนค่าที่ตรงกับ StatementAssessment.model_dump()
     return {"score": score, "reason": reason}
 
 
@@ -236,6 +247,7 @@ def generate_action_plan_via_llm(
             statement_id = f"L{data.get('level', target_level)} S{data.get('statement_number', i+1)}"
             failed_level = data.get('level', target_level)
             
+            # NOTE: ใช้ model_dump() เพื่อสร้าง dict ที่ตรงกับ ActionPlanActions.Actions.item_type
             actions.append(ActionPlanActions.Actions.item_type( 
                 Statement_ID=statement_id,
                 Failed_Level=failed_level,
@@ -392,96 +404,75 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
 # === EVIDENCE DESCRIPTION GENERATION (NEW FUNCTION) ===
 # =================================================================
 
-def generate_evidence_description_via_llm(
-    sub_id: str, 
-    level: int, 
-    standard: str, 
-    context: str
-) -> str:
-    """
-    Generates a narrative description for a sub-criteria level based on the aggregated context 
-    using the dedicated Evidence Description Prompt.
-    
-    Args:
-        sub_id: The ID of the sub-criteria (e.g., '6.1.1').
-        level: The maturity level (e.g., 1).
-        standard: The standard description for that level.
-        context: The aggregated context from all successful statements in that level.
-        
-    Returns:
-        A concise narrative description string.
-    """
-    if llm_instance is None:
-        logger.error("❌ LLM Instance is not initialized for Evidence Description.")
-        return "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งานสำหรับการสร้างคำบรรยายหลักฐาน"
-        
-    if not context.strip() or "ไม่พบหลักฐาน" in context.lower():
-        # Fallback message that encourages user to find more evidence
-        return "ไม่พบหลักฐานการปฏิบัติการที่สอดคล้องกับเกณฑ์ในระดับนี้ จึงยังไม่สามารถระบุสถานะความพร้อมได้อย่างชัดเจน"
-        
-    try:
-        # 1. Prepare Human Message Content using the imported PromptTemplate
-        user_prompt_content = EVIDENCE_DESCRIPTION_PROMPT.format(
-            sub_id=sub_id,
-            level=level,
-            standard=standard,
-            context=context
-        )
-
-        # 2. Invoke LLM (Pure Text Generation)
-        response = llm_instance.invoke([
-            SystemMessage(content=SYSTEM_EVIDENCE_DESCRIPTION_PROMPT), # System prompt for role/rules
-            HumanMessage(content=user_prompt_content) # Context and question
-        ])
-        
-        # 3. Extract Content
-        generated_text = response.content if hasattr(response, 'content') else str(response)
-        
-        logger.info(f"✅ Generated Evidence Description for {sub_id} L{level}")
-        return generated_text.strip()
-        
-    except Exception as e:
-        logger.error(f"❌ Error during Evidence Description generation for {sub_id} L{level}: {e}")
-        return "เกิดข้อผิดพลาดในการสังเคราะห์คำบรรยายหลักฐาน (LLM Failure)"
-
 def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int) -> Dict[str, str]:
     """
-    ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด
+    ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด 
+    และ Validate ผลลัพธ์ด้วย EvidenceSummary Schema.
     """
-    # 🚨 FIX 1: จำกัดความยาว Context ก่อนส่งเข้า LLM (ใช้ MAX_CONTEXT_LENGTH)
-    # สมมติว่า MAX_CONTEXT_LENGTH ถูกนำเข้าหรือกำหนดเป็นค่า Global ในไฟล์นี้
     
-    # ถ้า MAX_CONTEXT_LENGTH ถูกกำหนดไว้ที่อื่น เช่น 2500 (จาก EnablerAssessment)
-    # ให้ส่งค่านี้มาเป็น parameter หรือใช้ค่าคงที่ที่นี่
-    MAX_LLM_SUMMARY_CONTEXT = 3000 # ปรับตัวเลขตามขีดจำกัดของโมเดลสรุป
+    # 🚨 FIX 1: จำกัดความยาว Context ก่อนส่งเข้า LLM
+    MAX_LLM_SUMMARY_CONTEXT = 3000 
     
-    # ตัด Context ถ้ามันยาวเกินไป
+    if llm_instance is None:
+        return {"summary": "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งาน", "suggestion_for_next_level": "N/A"}
+        
+    context_to_use = context
     if len(context) > MAX_LLM_SUMMARY_CONTEXT:
         logger.warning(f"Context for summary L{level} is too long ({len(context)}), truncating to {MAX_LLM_SUMMARY_CONTEXT}.")
         context_to_use = context[:MAX_LLM_SUMMARY_CONTEXT]
-    else:
-        context_to_use = context
         
+    # 🚨 FIX 2: ปรับ System Prompt เพื่อบังคับ JSON Output ตาม EvidenceSummary
+    schema_dict = EvidenceSummary.model_json_schema()
+    system_prompt_content = (
+        SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + 
+        "\n\n--- REQUIRED JSON SCHEMA (STRICTLY FOLLOW) ---\n" +
+        json.dumps(schema_dict, indent=2)
+    )
+
     try:
-        # 1. จัดเตรียม System และ Human Prompt
-        system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
+        # 1. จัดเตรียม Human Prompt
         human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
             sub_criteria_name=sub_criteria_name,
             level=level,
-            context=context_to_use # 🚨 ใช้ Context ที่ถูกตัดแล้ว
+            context=context_to_use
         )
         
         # 2. เรียกใช้ LLM 
-        response = llm_instance.invoke([
-            SystemMessage(content=system_prompt), 
-            HumanMessage(content=human_prompt)
-        ])
+        llm_response_json_str = _call_llm_for_json_output(
+            prompt=human_prompt,
+            system_prompt=system_prompt_content
+        )
         
-        # ดึง content ออกมา (เหมือนในฟังก์ชันอื่น ๆ ที่คุณแก้ไขแล้ว)
-        response_text = response.content if hasattr(response, 'content') else str(response)
+        # 3. ใช้ Regex ค้นหา JSON Block
+        json_match = re.search(r'\{.*\}', llm_response_json_str.strip(), re.DOTALL)
         
-        return {"summary": response_text.strip()}
+        cleaned_content = None
+        if json_match:
+            cleaned_content = json_match.group(0)
+
+        if not cleaned_content:
+            logger.error("❌ Failed to find a valid JSON block for Evidence Summary using Regex.")
+            raise ValueError("LLM response did not contain a recognizable JSON block for Evidence Summary.")
+
+        # 4. Process and Parse
+        llm_result_dict = json.loads(cleaned_content) 
+        
+        # 5. Validate against EvidenceSummary Schema
+        validated_summary_model = EvidenceSummary.model_validate(llm_result_dict)
+        
+        logger.info(f"✅ Generated Evidence Summary for {sub_criteria_name} L{level}")
+        
+        # 6. Return the validated Dict
+        return validated_summary_model.model_dump()
         
     except Exception as e:
-        logger.error(f"LLM Summary generation failed: {e}")
-        return {"summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM"}
+        logger.error(f"LLM Summary generation failed: {e}", exc_info=True)
+        return {"summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM", "suggestion_for_next_level": f"เกิดข้อผิดพลาดในการเรียก LLM: {str(e)}"}
+    
+def generate_evidence_description_via_llm(*args, **kwargs) -> str:
+    """
+    Deprecated: ฟังก์ชันนี้ถูกแทนที่ด้วย summarize_context_with_llm เพื่อให้รองรับ Pydantic Schema
+    """
+    logger.warning("generate_evidence_description_via_llm is deprecated. Using summarize_context_with_llm instead.")
+    # Fallback/Error message based on the old usage pattern (if accidentally called)
+    return "เกิดข้อผิดพลาด: ฟังก์ชันนี้ถูกยกเลิกการใช้งาน โปรดใช้ summarize_context_with_llm แทน"
