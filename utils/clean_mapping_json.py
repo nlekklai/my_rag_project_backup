@@ -35,4 +35,4 @@ def clean_json(input_path: str, output_path: str):
     print(f"✅ Cleaned JSON saved → {output_path}")
 
 if __name__ == "__main__":
-    clean_json("output/mappings_pea_v2.json", "output/mappings_pea_v3_clean.json")
+    clean_json("output/mappings_pea_by_category.json", "output/mappings_pea_v3_clean.json")

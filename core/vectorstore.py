@@ -22,8 +22,12 @@ from chromadb.config import Settings
 try:
     chromadb.configure(anonymized_telemetry=False)
 except AttributeError:
-    # ถ้า configure ไม่มี ให้ใช้การตั้งค่า Settings
+    # Fallback if chromadb.configure is not available
     chromadb.settings = Settings(anonymized_telemetry=False)
+
+# --- CONFIGURATION CONSTANTS (Optimized for Speed and Precision) ---
+INITIAL_TOP_K = 15  # จำนวนเอกสารที่ดึงมาค้นหาเบื้องต้น (Recall: ลดจาก 30 เพื่อเพิ่มความเร็ว)
+FINAL_K_RERANKED = 7  # จำนวนเอกสารสุดท้ายหลังผ่านการ Rerank (Precision: คมชัด)
 
 VECTORSTORE_DIR = "vectorstore"
 
@@ -43,12 +47,12 @@ class FlashrankRequest(BaseModel):
     top_n: int
 
 
-# -------------------- Custom Compressor (ใช้ CPU โดยอ้อม) --------------------
+# -------------------- Custom Compressor (ใช้ Flashrank) --------------------
 class CustomFlashrankCompressor(BaseDocumentCompressor):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     ranker: Ranker
-    top_n: int = 5
+    top_n: int = FINAL_K_RERANKED # ใช้ค่าคงที่
 
     def compress_documents(
         self, 
@@ -60,6 +64,7 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
         if not documents:
             return []
 
+        # 1. จัดรูปแบบเอกสารให้ Flashrank
         doc_list_for_rerank = [
             {"id": i, "text": doc.page_content, "meta": doc.metadata}
             for i, doc in enumerate(documents)
@@ -71,9 +76,10 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
             top_n=self.top_n
         )
 
-        # Flashrank Ranker ถูกโหลดจาก preload_flashrank_model
+        # 2. ทำการ Rerank
         ranked_results = self.ranker.rerank(run_input) 
 
+        # 3. จัดรูปแบบผลลัพธ์กลับเป็น LangChain Document
         reranked_docs = []
         for result in ranked_results:
             original_doc = documents[result['id']]
@@ -114,7 +120,7 @@ def preload_flashrank_model(model_name: str = "ms-marco-MiniLM-L-12-v2"):
 def get_hf_embeddings():
     # 🟢 FIX: ยืนยันการใช้ "cpu" เพื่อแก้ปัญหาหน่วยความจำ (Bypassing MPS)
     device = "cpu"
-    print(f"⚡ Using device: {device} for embeddings (Bypassing MPS to avoid memory error)")
+    print(f"⚡ Using device: {device} for embeddings (Bypassing memory error)")
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": device}
@@ -177,8 +183,8 @@ def save_to_vectorstore(
 # -------------------- Load Vectorstore with CACHED Ranker Logic --------------------
 def load_vectorstore(
     doc_id: str,
-    top_k: int = 30, 
-    final_k: int = 7, 
+    top_k: int = INITIAL_TOP_K, 
+    final_k: int = FINAL_K_RERANKED, 
     doc_types: list[str] | str = "document",
     base_path: str = VECTORSTORE_DIR,
 ):
@@ -237,7 +243,7 @@ def load_vectorstore(
 
 
 # =================================================================
-# --- MultiDoc Retriever (แก้ไข NameError: ย้ายขึ้นมาก่อน load_all_vectorstores) ---
+# --- MultiDoc Retriever ---
 # =================================================================
 class NamedRetriever:
     """Wrapper around a retriever to store doc_id and doc_type"""
@@ -255,7 +261,7 @@ class MultiDocRetriever(BaseRetriever):
     _retrievers_list: list  = PrivateAttr()
     _k_per_doc: int = PrivateAttr()
 
-    def __init__(self, retrievers_list: list, k_per_doc: int = 5):
+    def __init__(self, retrievers_list: list, k_per_doc: int = INITIAL_TOP_K):
         super().__init__()
         self._retrievers_list = retrievers_list
         self._k_per_doc = k_per_doc
@@ -268,36 +274,44 @@ class MultiDocRetriever(BaseRetriever):
         docs = []    
         
         def retrieve(named_r):
+            # แต่ละ retriever (ซึ่งเป็น ContextualCompressionRetriever) จะทำการ Rerank ภายในตัวมันเองแล้ว
             return named_r.retriever.invoke(query) 
 
+        # ใช้ Threading เพื่อดึงเอกสารจากทุกแหล่งพร้อมกัน
         with ThreadPoolExecutor() as executor:
             results = list(executor.map(retrieve, self._retrievers_list))
 
         seen = set()
         unique_docs = []
+        
+        # รวมและล้างข้อมูลซ้ำซ้อน
         for dlist, named_r in zip(results, self._retrievers_list):
             if dlist is None:
                 continue
             for d in dlist:
+                # สร้าง key สำหรับ deduplication
                 key = f"{d.metadata.get('source')}_{d.metadata.get('chunk_index')}_{named_r.doc_type}_{d.page_content[:50]}"
                 if key not in seen:
                     seen.add(key)
-                    # 🚨 สำคัญ: ตั้งค่า metadata keys ที่จำเป็นสำหรับ filter
+                    # 🚨 สำคัญ: ตั้งค่า metadata keys ที่จำเป็นสำหรับ filter/audit
                     d.metadata["doc_type"] = named_r.doc_type
                     d.metadata["doc_id"] = named_r.doc_id 
                     d.metadata["doc_source"] = d.metadata.get("source")
                     unique_docs.append(d)
 
-        print(f"📝 Query='{query}' found {len(unique_docs)} unique docs across all retrieved lists.")
+        print(f"📝 Query='{query[:50]}...' found {len(unique_docs)} unique docs across all retrieved lists.")
+        # สำหรับ Debug: แสดงเฉพาะเอกสารที่มี score (Reranked)
         for d in unique_docs:
-            print(f" - source={d.metadata.get('doc_source')}, chunk={d.metadata.get('chunk_index')}, doc_type={d.metadata.get('doc_type')}, score={d.metadata.get('relevance_score', 'N/A')}")
-            
+            if 'relevance_score' in d.metadata:
+                 print(f" - [Reranked] Source={d.metadata.get('doc_source')}, Score={d.metadata.get('relevance_score'):.4f}, Type={d.metadata.get('doc_type')}, Content='{d.page_content[:80]}...'")
+        
+        # คืนเอกสารที่ไม่ซ้ำกันทั้งหมด (ซึ่งถูก Rerank มาจากแหล่งกำเนิดแต่ละอันแล้ว)
         return unique_docs
 
-# -------------------- Load multiple vectorstores (แก้ไข NameError) --------------------
+# -------------------- Load multiple vectorstores (ใช้ค่าคงที่ใหม่) --------------------
 def load_all_vectorstores(doc_ids: Optional[Union[List[str], str]] = None,
-                          top_k: int =  30,
-                          final_k: int = 7,
+                          top_k: int =  INITIAL_TOP_K,
+                          final_k: int = FINAL_K_RERANKED,
                           doc_type: Optional[Union[str, List[str]]] = None,
                           base_path: str = VECTORSTORE_DIR) -> MultiDocRetriever:
     
@@ -334,7 +348,7 @@ def load_all_vectorstores(doc_ids: Optional[Union[List[str], str]] = None,
 
 
 # =================================================================
-# --- VectorStoreManager (แก้ไขการใช้ MPS) ---
+# --- VectorStoreManager (สำหรับงานสร้าง/จัดการ) ---
 # =================================================================
 class VectorStoreManager:
     """Manager สำหรับสร้างและโหลด Chroma vectorstore"""

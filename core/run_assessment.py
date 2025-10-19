@@ -11,6 +11,7 @@ import time
 
 # --- PATH SETUP (Must be executed first for imports to work) ---
 try:
+    # 🚨 NOTE: ต้องมั่นใจว่าไฟล์ EnablerAssessment และ retrieval_utils ถูก Import ได้
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -18,8 +19,7 @@ try:
     # IMPORT REQUIRED CLASSES/FUNCTIONS 
     from assessments.enabler_assessment import EnablerAssessment 
     import core.retrieval_utils 
-    # NOTE: set_mock_control_mode, generate_action_plan_via_llm ต้องอยู่ใน retrieval_utils
-    from core.retrieval_utils import set_mock_control_mode, generate_action_plan_via_llm
+    from core.retrieval_utils import set_mock_control_mode, generate_action_plan_via_llm, summarize_context_with_llm
     from core.vectorstore import load_all_vectorstores 
     
 except ImportError as e:
@@ -87,17 +87,15 @@ def retrieve_context_MOCK(
 
 def generate_action_plan_MOCK(failed_statements_data: List[Dict], sub_id: str, target_level: int) -> Dict[str, Any]:
     """
-    Returns a dummy action plan structure, now conforming to the new schema.
+    Returns a dummy action plan structure, conforming to the schema.
     """
     logger.info(f"MOCK: Generating dummy action plan for {sub_id} targeting L{target_level}.")
     
     if failed_statements_data:
         first_failed = failed_statements_data[0]
-        # 🚨 Schema Fix: Ensure keys align with ActionItem Schema
         statement_id = f"L{first_failed.get('level', target_level)} S{first_failed.get('statement_number', 1)}"
         failed_level = first_failed.get('level', target_level)
     else:
-        # Fallback for completeness, though get_all_failed_statements should prevent this if gap is true
         statement_id = f"L{target_level} S1 (Default)"
         failed_level = target_level
 
@@ -115,49 +113,96 @@ def generate_action_plan_MOCK(failed_statements_data: List[Dict], sub_id: str, t
         "Actions": [action_detail]
     }
 
+# -------------------- NEW MOCK FOR EVIDENCE SUMMARY --------------------
+def summarize_context_with_llm_MOCK(context: str, sub_criteria_name: str, level: int) -> str: 
+    """Mock function for LLM summary generation."""
+    # 🚨 FIX: ต้อง Return แค่ String ตามการใช้งานใน run_assessment_process
+    return f"MOCK SUMMARY: หลักฐานสำหรับ {sub_criteria_name} Level {level} มีความพร้อมใช้งานสูง (Mocked)"
+# -----------------------------------------------------------------------
+
 
 # -------------------- DETAILED OUTPUT UTILITY --------------------
-# (unchanged)
 def print_detailed_results(raw_llm_results: List[Dict]):
-    """แสดงผลลัพธ์การประเมิน LLM ราย Statement อย่างละเอียด"""
+    """แสดงผลลัพธ์การประเมิน LLM ราย Statement อย่างละเอียด พร้อม Source File"""
     if not raw_llm_results:
         logger.info("\n[Detailed Results] No raw LLM results found to display.")
         return
 
-    print("\n\n=========================================================================================")
-    print("        DETAILED LLM EVALUATION RESULTS (Statement-by-Statement)")
-    print("=========================================================================================")
-
-    grouped: Dict[str, List[Dict]] = {}
+    # 1. จัดกลุ่มผลลัพธ์ (ใช้ Sub-Criteria ID และ Level)
+    grouped: Dict[str, Dict[int, List[Dict]]] = {}
     for r in raw_llm_results:
-        key = f"{r['sub_criteria_id']}: L{r['level']}"
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(r)
-    
-    sorted_keys = sorted(grouped.keys())
-
-    for key in sorted_keys:
-        sub_name = next((r['sub_criteria_name'] for r in grouped[key] if 'sub_criteria_name' in r), 'N/A')
-        print(f"\n--- Sub-Criteria / Level: {key} - {sub_name} (Total: {len(grouped[key])} Statements) ---")
+        sub_id = r['sub_criteria_id']
+        level = r['level']
         
-        for i, r in enumerate(grouped[key]):
-            statement_snippet = r['statement'][:120] + "..." if len(r['statement']) > 120 else r['statement']
-            reason_snippet = r['reason'][:120] + "..." if len(r['reason']) > 120 else r['reason']
-            context_snippet = r.get('context_retrieved_snippet', 'N/A')
+        if sub_id not in grouped:
+            grouped[sub_id] = {}
+        if level not in grouped[sub_id]:
+            grouped[sub_id][level] = []
             
-            score_text = "✅ PASS (1)" if r['llm_score'] == 1 else "❌ FAIL (0)"
-            
-            stmt_id = f"L{r['level']} S{r.get('statement_number', i+1)}" 
-            
-            print(f"\n[STMT {stmt_id}] Result: {score_text}")
-            print(f"  > Statement: {statement_snippet}")
-            print(f"  > Standard:  {r['standard'][:120] + '...' if len(r['standard']) > 120 else r['standard']}")
-            print(f"  > Context:   {context_snippet}")
-            print(f"  > Reason:    {reason_snippet}")
-            
-    print("\n=========================================================================================")
+        grouped[sub_id][level].append(r)
+        
+    sorted_sub_ids = sorted(grouped.keys())
 
+    # 2. แสดงผล
+    for sub_id in sorted_sub_ids:
+        print(f"\n--- Sub-Criteria ID: {sub_id} ---")
+        
+        for level in sorted(grouped[sub_id].keys()):
+            level_results = grouped[sub_id][level]
+            
+            # คำนวณ Pass Ratio
+            total_statements = len(level_results)
+            passed_statements = sum(r.get('llm_score', 0) for r in level_results)
+            pass_ratio = passed_statements / total_statements if total_statements > 0 else 0.0
+            
+            print(f"\n  > Level {level} ({passed_statements}/{total_statements}, Pass Ratio: {pass_ratio:.3f})")
+            
+            for r in level_results:
+                llm_score = r.get('llm_score', 0)
+                
+                # Logic การแสดงผลคะแนน
+                score_text = f"✅ PASS | Score: {llm_score}" if llm_score == 1 else f"❌ FAIL | Score: {llm_score}"
+                fail_status = "" if llm_score == 1 else "❌ FAIL |" 
+                
+                statement_num = r.get('statement_number', 'N/A')
+                
+                # แสดงผลย่อย
+                print(f"    - S{statement_num}: {fail_status} Statement: {r.get('statement', 'N/A')[:100]}...")
+                print(f"      [Score]: {score_text}")
+                print(f"      [Reason]: {r.get('reason', 'N/A')[:120]}...")
+                
+                # 🚨 NEW BLOCK: แสดง SOURCE FILES สำหรับผู้ตรวจสอบ
+                # จะต้องมี Field 'retrieved_sources_list' ใน raw_llm_results
+                sources = r.get('retrieved_sources_list', []) 
+                if sources and isinstance(sources, list):
+                     print("      [SOURCE FILES]:")
+                     # วนลูปแสดง Source และ Location/Page Number
+                     for src in sources:
+                         source_name = src.get('source_name', 'Unknown File')
+                         location = src.get('location', 'N/A')
+                         print(f"        -> {source_name} (Location: {location})")
+                # 🚨 END: NEW BLOCK
+                
+                print(f"      [Context]: {r.get('context_retrieved_snippet', 'N/A')}")
+
+def add_pass_status_to_raw_results(raw_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """เพิ่มฟิลด์ 'pass_status' (ภาษาอังกฤษ) และ 'status_th' (ภาษาไทย) 
+    ลงใน raw_llm_results โดยอิงจาก llm_score (1=Pass, 0=Fail)"""
+    updated_results = []
+    for result in raw_results:
+        # ตรวจสอบว่ามี llm_score หรือไม่
+        if 'llm_score' in result:
+            score = result['llm_score']
+            
+            # กำหนดสถานะ
+            if score == 1:
+                result['pass_status'] = 'PASS'
+                result['status_th'] = 'ผ่าน'
+            else:
+                result['pass_status'] = 'FAIL'
+                result['status_th'] = 'ไม่ผ่าน'
+        updated_results.append(result)
+    return updated_results
 
 # -----------------------------------------------------------
 # --- Action Plan Generation Logic (Refactored/Unified) ---
@@ -190,6 +235,10 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
     return all_failed
 
 
+# core/run_assessment.py
+
+# ... (ส่วน get_sub_criteria_data และ get_all_failed_statements เหมือนเดิม)
+
 def generate_action_plan_for_sub(
     sub_id: str, 
     summary_data: Dict, 
@@ -199,16 +248,20 @@ def generate_action_plan_for_sub(
     สร้าง Action Plan อัตโนมัติจากผลลัพธ์ Summary Assessment โดยเรียก LLM
     """
     
+    # 1. ตรวจสอบ Gap และกำหนด Target Level
+    highest_full_level = summary_data.get('highest_full_level', 0)
+    
+    # ถ้า highest_full_level เป็น 0 และ L1 ไม่ผ่าน 100% ให้ Target L1
+    # ถ้า L1 ผ่านแล้ว แต่ L2 ไม่ผ่าน ให้ Target L2 (ตามหลักการ Maturity Level)
+    target_level = highest_full_level + 1
+    
     if not summary_data.get('development_gap', False): 
         return [{
             "Phase": "No Action Needed", 
-            "Goal": f"Sub-Criteria {sub_id} ผ่าน Level ล่าสุดแล้ว",
+            "Goal": f"Sub-Criteria {sub_id} ผ่าน Level {highest_full_level} แล้ว",
             "Actions": []
         }]
         
-    highest_full_level = summary_data.get('highest_full_level', 0)
-    target_level = highest_full_level + 1
-    
     if target_level > 5:
         return [{
             "Phase": "L5 Maturity Maintenance", 
@@ -216,33 +269,77 @@ def generate_action_plan_for_sub(
             "Actions": []
         }]
 
+    # 2. คัดกรอง Statement ที่ล้มเหลวใน Target Level
     all_failed_statements = get_all_failed_statements(full_summary)
     
+    # 🚨 FIX: ดึง Statements ที่ล้มเหลวใน Level ที่เป็น "เป้าหมาย" (target_level)
+    # เช่น ถ้า highest_full_level = 0, target_level = 1. ต้องหา Statements ที่ล้มเหลวใน L1
     failed_statements_for_sub = [
-        s for s in all_failed_statements if s['sub_id'] == sub_id and s['level'] == target_level
+        s for s in all_failed_statements 
+        if s['sub_id'] == sub_id and s['level'] == target_level
     ]
-
-    if not failed_statements_for_sub:
-        logger.warning(f"Gap detected ({sub_id} L{target_level}) but no raw failed statements found in target level. Skipping LLM Action Plan.")
-        return [{
-            "Phase": "No LLM Action Plan", 
-            "Goal": f"Gap ถูกตรวจพบที่ L{target_level} แต่ไม่พบ Statement ที่ล้มเหลวใน Raw Data (อาจเป็น Bug หรือข้อมูลไม่ครบ)",
-            "Actions": []
-        }] 
-
-    
-    llm_action_plan_result = core.retrieval_utils.generate_action_plan_via_llm(
-        failed_statements_data=failed_statements_for_sub, 
-        sub_id=sub_id,
-        target_level=target_level
-    )
 
     action_plan = []
     
+    if not failed_statements_for_sub:
+        logger.warning(f"Gap detected ({sub_id} L{target_level}) but no raw failed statements found in target level L{target_level}. Suggesting general action.")
+        # หากไม่พบ Statement ที่ล้มเหลวใน Target Level ให้แนะนำ Action ทั่วไป
+        llm_action_plan_result = {
+            "Phase": "1. General Evidence Collection",
+            "Goal": f"รวบรวมหลักฐานทั้งหมดเพื่อผ่าน Level {target_level}",
+            "Actions": [{
+                "Statement_ID": f"ALL_L{target_level}",
+                "Failed_Level": target_level, 
+                "Recommendation": f"ไม่พบ Statement ที่ล้มเหลวใน Raw Data สำหรับ L{target_level} โปรดตรวจสอบหลักฐานทั่วไปของ Level นี้.",
+                "Target_Evidence_Type": "Policy, Record, Report",
+                "Key_Metric": "Pass Rate 100% on Rerunning Assessment"
+            }]
+        }
+        
+    else:
+        # 3. เรียก LLM เพื่อสร้าง Action Plan (พร้อมจัดการ Error)
+        logger.info(f"Generating LLM Action Plan for {len(failed_statements_for_sub)} failed statements in {sub_id} L{target_level}...")
+        
+        llm_action_plan_result = {}
+        try:
+            llm_action_plan_result = core.retrieval_utils.generate_action_plan_via_llm(
+                failed_statements_data=failed_statements_for_sub, 
+                sub_id=sub_id,
+                target_level=target_level
+            )
+        except Exception as e:
+            logger.error(f"LLM Action Plan Generation failed for {sub_id} L{target_level}: {e}")
+            llm_action_plan_result = {
+                "Phase": "Error - LLM Response Issue",
+                "Goal": f"Failed to generate Action Plan via LLM for {sub_id} (Target L{target_level})",
+                "Actions": [{
+                    "Statement_ID": "LLM_ERROR",
+                    "Failed_Level": target_level,
+                    "Recommendation": f"System Error: LLM call failed or returned unrecognized format. Please check logs. Manual Action: **รวบรวมหลักฐานใหม่ที่เกี่ยวข้องกับ Statement ที่ล้มเหลวทั้งหมดใน L{target_level}**",
+                    "Target_Evidence_Type": "System Check/Manual Collection",
+                    "Key_Metric": "Error Fix"
+                }]
+            }
+
+    
+    # 4. รวม Action Plan ที่ได้ (รวมถึง Action แนะนำด้วยมือในกรณี Error)
     if llm_action_plan_result and 'Actions' in llm_action_plan_result:
         action_plan.append(llm_action_plan_result) 
     
-    # 🚨 FIX: ปรับปรุง Action Item ให้สอดคล้องกับ ActionPlanActions/ActionItem Schema
+    # 5. Action Item สำหรับการรัน AI Assessment ซ้ำ (FIX: ใช้ L1 ตามโจทย์เพื่อให้สอดคล้องกับ Gap ปัจจุบัน)
+    # 🚨 FIX: ใช้ Action Item ที่แนะนำให้ User รวบรวมหลักฐานใหม่ (ตามที่ User ต้องการ)
+    
+    # เราจะแนะนำให้รวบรวมหลักฐานของ Level ที่มี Gap/ล้มเหลวทั้งหมด 
+    failed_levels_with_gap = [lvl for lvl, ratio in summary_data.get('pass_ratios', {}).items() if ratio < 1.0]
+    
+    if target_level == 1 and 0.0 < summary_data.get('pass_ratios', {}).get('1', 0.0) < 1.0:
+        recommend_action_text = f"Statement ที่ล้มเหลวใน L{target_level} คือ S2. โปรด **รวบรวมหลักฐานใหม่** เพื่อแสดง 'ทิศทางการดำเนินงานที่ครบถ้วนสมบูรณ์' และนำเข้า Vector Store"
+    elif target_level == 2 and summary_data.get('pass_ratios', {}).get('2', 0.0) == 0.0:
+        recommend_action_text = f"Statement ที่ล้มเหลวใน L{target_level} คือ S1, S2, S3. โปรด **รวบรวมหลักฐานใหม่** เกี่ยวกับการจัดตั้งคณะทำงานและบทบาทหน้าที่ให้ชัดเจน และนำเข้า Vector Store"
+    else:
+        # Action Item ทั่วไป
+        recommend_action_text = f"รวบรวมหลักฐานใหม่สำหรับ Level {target_level} (และ Level ที่มี Gap อื่นๆ: {', '.join(failed_levels_with_gap)}) และนำเข้า Vector Store"
+
     action_plan.append({
         "Phase": "2. AI Validation & Maintenance",
         "Goal": f"ยืนยันการ Level-Up และรักษาความต่อเนื่องของหลักฐานสำหรับ L{target_level}",
@@ -250,8 +347,8 @@ def generate_action_plan_for_sub(
             {
                 "Statement_ID": f"ALL_L{target_level}",
                 "Failed_Level": target_level, 
-                "Recommendation": "หลังรวบรวมหลักฐานใหม่ทั้งหมดแล้ว ให้นำเข้า Vector Store และรัน AI Assessment ในโหมด **FULLSCOPE** อีกครั้งเพื่อยืนยันว่า Level ที่ต้องการผ่านเกณฑ์",
-                "Target_Evidence_Type": "Rerunning Assessment",
+                "Recommendation": f"{recommend_action_text} และรัน AI Assessment ในโหมด **FULLSCOPE** อีกครั้งเพื่อยืนยันว่า Level ที่ต้องการผ่านเกณฑ์",
+                "Target_Evidence_Type": "Rerunning Assessment & New Evidence",
                 "Key_Metric": f"Overall Score ของ {sub_id} ต้องเพิ่มขึ้นและ Highest Full Level ต้องเป็น L{target_level}"
             }
         ]
@@ -283,7 +380,7 @@ def run_assessment_process(
     setup_duration = 0 
     summary: Dict[str, Any] = {}
     
-    # 🚨 NEW: กำหนด Mock Functions ที่จะส่งไปใน EnablerAssessment
+    # กำหนด Mock Functions ที่จะส่งไปใน EnablerAssessment
     mock_llm_func_to_pass = None
     
     if mode == "mock":
@@ -374,7 +471,7 @@ def run_assessment_process(
         vectorstore_retriever=retriever,
         use_retrieval_filter=filter_mode,
         target_sub_id=sub_criteria_id if sub_criteria_id != "all" else None,
-        # 🚨 FIX: ส่ง Mock LLM Function เข้าไป
+        # ส่ง Mock LLM Function เข้าไป
         mock_llm_eval_func=mock_llm_func_to_pass
     )
     
@@ -389,7 +486,7 @@ def run_assessment_process(
         if mode == "mock":
             # Patch retrieve_context_MOCK เข้าไปใน instance method
             assessment_engine._retrieve_context = lambda **kwargs: retrieve_context_MOCK(
-                statement=kwargs['statement'],
+                statement=kwargs.get('query'), 
                 sub_criteria_id=kwargs['sub_criteria_id'],
                 level=kwargs['level'],
                 statement_number=kwargs.get('statement_number', 0), 
@@ -400,11 +497,12 @@ def run_assessment_process(
         assessment_engine.run_assessment() 
         summary = assessment_engine.summarize_results() 
         
+        # NOTE: เก็บ raw_llm_results ไว้เพื่อใช้ในการ generate action plan
         summary['raw_llm_results'] = assessment_engine.raw_llm_results
         
     except Exception as e:
         logger.error(f"Assessment execution failed (Raw Exception): {repr(e)}", exc_info=True)
-        # 🚨 FIX: ใช้ summarize_results() เพื่อสร้าง 'Overall' key ที่ปลอดภัย แม้เกิด Exception
+        # ใช้ summarize_results() เพื่อสร้าง 'Overall' key ที่ปลอดภัย แม้เกิด Exception
         summary.update(assessment_engine.summarize_results())
         summary['Error_Details'] = f"Assessment execution failed: {repr(e)}"
         
@@ -418,16 +516,64 @@ def run_assessment_process(
     logger.info(f"\n[⏱️ Assessment Time] LLM Evaluation and RAG Retrieval took: {assessment_duration:.2f} seconds.")
 
 
-    # 5. GENERATE ACTION PLAN AND MERGE
-    original_action_plan_func = None # ต้องประกาศนอก Try/Finally เพื่อให้เข้าถึงได้ใน Finally
+    # 5. GENERATE EVIDENCE SUMMARY AND MERGE
+    logger.info("📄 Generating evidence summaries for highest fully passed level...")
     
-    # 🚨 FIX: ย้ายการกำหนดตัวแปร full_summary_data ไว้ใน Outer Scope (แก้ปัญหา NameError)
-    full_summary_data = summary 
+    breakdown = summary.get("SubCriteria_Breakdown", {})
     
+    # กำหนด original_summarize_func เป็น None ก่อนเสมอ
+    original_summarize_func = None
+    
+    # 🚨 FIX: Patch summarize_context_with_llm ใน retrieval_utils สำหรับ Mock Mode
+    if mode == "mock":
+        if hasattr(core.retrieval_utils, 'summarize_context_with_llm'):
+            original_summarize_func = core.retrieval_utils.summarize_context_with_llm
+        
+        core.retrieval_utils.summarize_context_with_llm = summarize_context_with_llm_MOCK
+        logger.info("MOCK: Evidence Summary LLM function patched.")
+
     try:
-        # 🚨 FIX: Patch Action Plan LLM Call
+        for sub_id, data in breakdown.items():
+            target_level = data["highest_full_level"]
+            
+            # Key ที่จะใช้ในการบันทึก Summary
+            summary_key_name = f"evidence_summary_L{target_level}" 
+            
+            if target_level > 0:
+                logger.info(f"   -> Generating summary for {sub_id} Level {target_level}...")
+                
+                # เรียกใช้เมธอดจริงใน EnablerAssessment (ซึ่งจะเรียก summarize_context_with_llm ที่ถูก Patch ไว้)
+                summary_text = assessment_engine.generate_evidence_summary_for_level(
+                    sub_criteria_id=sub_id,
+                    level=target_level
+                )
+                
+                # เพิ่ม summary เข้าไปใน data (Breakdown) โดยตรง
+                data[summary_key_name] = summary_text
+            else:
+                logger.info(f"   -> Skipping summary for {sub_id}: highest_full_level is 0.")
+                data[summary_key_name] = "ไม่พบหลักฐานที่ผ่านเกณฑ์ Level 1"
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to generate or merge Evidence Summary: {e}", exc_info=True)
+        summary['Evidence_Summary_Error'] = str(e)
+        
+    finally:
+        # Cleanup Global Patch สำหรับ Summary
+        if mode == "mock" and original_summarize_func is not None:
+            core.retrieval_utils.summarize_context_with_llm = original_summarize_func
+            logger.info("MOCK: Evidence Summary LLM function restored.")
+
+
+    # 6. GENERATE ACTION PLAN AND MERGE 
+    original_action_plan_func = None # ต้องประกาศนอก Try/Finally เพื่อให้เข้าถึงได้ใน Finally
+    full_summary_data = summary # อ้างอิงถึง summary
+
+    try:
+        # Patch Action Plan LLM Call
         if mode == "mock":
-            original_action_plan_func = core.retrieval_utils.generate_action_plan_via_llm
+            if hasattr(core.retrieval_utils, 'generate_action_plan_via_llm'):
+                 original_action_plan_func = core.retrieval_utils.generate_action_plan_via_llm
             core.retrieval_utils.generate_action_plan_via_llm = generate_action_plan_MOCK # 👈 ใช้ Mock Function
             logger.info("MOCK: Action Plan LLM function patched.")
 
@@ -450,13 +596,13 @@ def run_assessment_process(
         summary['Action_Plans'] = {"Error": str(e)}
 
     finally:
-        # 🚨 FIX: Cleanup Global Patch สำหรับ Action Plan
-        if mode == "mock" and original_action_plan_func:
+        # Cleanup Global Patch สำหรับ Action Plan
+        if mode == "mock" and original_action_plan_func is not None:
             core.retrieval_utils.generate_action_plan_via_llm = original_action_plan_func
             logger.info("MOCK: Action Plan LLM function restored.")
 
 
-    # 6. EXPORT FINAL JSON
+    # 7. EXPORT FINAL JSON (DUAL FILE EXPORT)
     if export and "Overall" in summary:
         PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         EXPORT_DIR = os.path.join(PROJECT_ROOT, "results")
@@ -467,18 +613,54 @@ def run_assessment_process(
         filter_suffix = "STRICTFILTER" if filter_mode else "FULLSCOPE" 
         random_suffix = os.urandom(4).hex()
         
+        # 🚨 FULL_EXPORT_PATH คือชื่อไฟล์หลัก (Summary)
         EXPORT_FILENAME = f"assessment_report_{enabler}_{sub_criteria_id}_{mode_suffix}_{filter_suffix}_{random_suffix}.json" 
         FULL_EXPORT_PATH = os.path.join(EXPORT_DIR, EXPORT_FILENAME)
 
         try:
+            # 1. เตรียมข้อมูลสำหรับไฟล์หลัก (Summary)
+            export_summary = summary.copy()
+            # 🚨 ดึง raw_llm_results ออกจาก summary หลัก เพื่อเก็บไว้ในตัวแปรแยก
+            raw_data_to_export = export_summary.pop('raw_llm_results', None) 
+            
+            # 2. Export ไฟล์หลัก (Summary File) - ขนาดเล็ก
             with open(FULL_EXPORT_PATH, 'w', encoding='utf-8') as f:
-                json.dump(summary, f, ensure_ascii=False, indent=4)
+                json.dump(export_summary, f, ensure_ascii=False, indent=4)
+            
             summary['export_path_used'] = FULL_EXPORT_PATH
-            logger.info(f"✅ Exported report to {FULL_EXPORT_PATH}")
+            logger.info(f"✅ Exported Summary Report (Small File) to {FULL_EXPORT_PATH}")
+
+            # 3. Export ไฟล์ Validation (Raw LLM Results) - ขนาดใหญ่
+            if raw_data_to_export:
+                
+                # =======================================================
+                # ⬇️⬇️ จุดที่ 1: เพิ่มโค้ดที่นี่ ⬇️⬇️
+                # =======================================================
+                logger.info("Adding explicit pass/fail status to raw LLM results.")
+                # เรียกใช้ฟังก์ชันเพื่อเพิ่ม pass_status/status_th ให้กับ LIST ของผลลัพธ์ดิบ
+                raw_data_to_export = add_pass_status_to_raw_results(raw_data_to_export)
+                # =======================================================
+
+                # สร้างชื่อไฟล์สำหรับ Raw Data โดยเติม "_RAW_EVAL"
+                base_name = os.path.basename(FULL_EXPORT_PATH)
+                raw_filename = base_name.replace(".json", "_RAW_EVAL.json")
+                RAW_EXPORT_PATH = os.path.join(EXPORT_DIR, raw_filename)
+                
+                # เตรียม Dictionary ที่มีแต่ Raw Data
+                raw_export_dict = {
+                    "raw_llm_results": raw_data_to_export
+                }
+
+                with open(RAW_EXPORT_PATH, 'w', encoding='utf-8') as f:
+                    json.dump(raw_export_dict, f, ensure_ascii=False, indent=4)
+                    
+                summary['raw_export_path_used'] = RAW_EXPORT_PATH
+                logger.info(f"✅ Exported Raw Evaluation Data (Large File) to {RAW_EXPORT_PATH}")
+
         except Exception as e:
             logger.error(f"❌ Failed to export JSON report: {e}")
             
-    # 7. Final Time Summary
+    # 8. Final Time Summary
     summary['Execution_Time'] = {
         "setup": setup_duration,
         "assessment": assessment_duration,
@@ -551,9 +733,27 @@ if __name__ == "__main__":
     
     if sub_breakdown:
         for sub_id, data in sub_breakdown.items():
+            highest_full_level = data.get('highest_full_level', 0)
+            summary_key = f"evidence_summary_L{highest_full_level}"
+            evidence_summary = data.get(summary_key, "N/A")
+            
+            # FIX: คำนวณ Pass/Fail ของแต่ละ Level เพื่อแสดงผลย่อที่ถูกต้อง
+            ratios = data.get('pass_ratios', {})
+            ratios_display = []
+            for lvl in range(1, 6):
+                ratio = ratios.get(str(lvl), 0.0)
+                # ใช้สีแสดงผล: เขียว=ผ่าน 100%, เหลือง=มี Gap, แดง=ไม่ผ่านเลย
+                symbol = "🟢" if ratio == 1.0 else "🟡" if ratio > 0 and ratio < 1.0 else "🔴"
+                ratios_display.append(f"L{lvl}: {symbol}{ratio:.2f}")
+            
             print(f"| {sub_id}: {data.get('name', 'N/A')}")
-            print(f"| - Score: {data.get('score', 0.0):.2f}/{data.get('weight', 0.0):.2f} | Full Lvl: L{data.get('highest_full_level', 0)} | Gap: {'YES' if data.get('development_gap') else 'NO'}")
-            print(f"| - Ratios (L1-L5): {data.get('pass_ratios', 'N/A')}") 
+            print(f"| - Score: {data.get('score', 0.0):.2f}/{data.get('weight', 0.0):.2f} | Full Lvl: L{highest_full_level} | Gap: {'YES' if data.get('development_gap') else 'NO'}")
+            # แสดงผล Ratios ที่มีการจัดรูปแบบ
+            print(f"| - Ratios (L1-L5): {' | '.join(ratios_display)}") 
+            
+            # แสดง Evidence Summary
+            print(f"| - Summary L{highest_full_level}: {evidence_summary}") 
+
             if data.get('development_gap'):
                 print(f"| - Action: {data.get('action_item', 'See Action Plans section.')}") 
             print("-----------------------------------------------------")

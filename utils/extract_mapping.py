@@ -101,7 +101,7 @@ def extract_semantic_mapping_by_category(pdf_path, organization="PEA", section="
     return final
 
 if __name__ == "__main__":
-    pdf_path = os.path.join("data", "evidence", "PEA คำอธิบาย 2567.pdf")
+    pdf_path = os.path.join("evidence_checklist", "km_evidence_description.pdf")
     data = extract_semantic_mapping_by_category(pdf_path)
     os.makedirs("output", exist_ok=True)
     with open("output/mappings_pea_by_category.json", "w", encoding="utf-8") as f:

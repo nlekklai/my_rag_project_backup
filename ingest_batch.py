@@ -10,6 +10,7 @@ DATA_DIR = "data"
 VECTORSTORE_DIR = "vectorstore"
 SEQUENTIAL = True  # True = process one by one, False = multi-thread
 SUPPORTED_DOC_TYPES = ["evidence"]  # ตัวอย่าง folder/doc_type
+# ["evidence", "faq", "document", "reports"]
 
 # Logging
 logging.basicConfig(

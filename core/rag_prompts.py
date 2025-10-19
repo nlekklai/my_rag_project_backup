@@ -1,3 +1,4 @@
+#core/rag_prompts.py
 from langchain.prompts import PromptTemplate
 
 # -------------------- SYSTEM QA INSTRUCTION (ส่งเป็น SystemMessage) --------------------
@@ -162,15 +163,14 @@ ACTION_PLAN_PROMPT = PromptTemplate(
 )
 
 # -------------------- SYSTEM ACTION PLAN PROMPT (NEW: Fixed Syntax Warnings) --------------------
-
 SYSTEM_ACTION_PLAN_PROMPT = (
     r"คุณคือผู้เชี่ยวชาญด้านการวางแผนกลยุทธ์และการปฏิบัติตามมาตรฐาน (Compliance Expert) "
     r"หน้าที่ของคุณคือการแปลงข้อมูล $Root\ Cause$ จากการประเมิน $Maturity\ Assessment$ "
-    r"ให้เป็นแผนปฏิบัติการ (Action Plan) ที่มีโครงสร้างและนำไปใช้ได้จริง"
-    r"\n\nคำแนะนำที่สำคัญที่สุด:"
-    r"\n1. ต้องยึดถือหลักการปิด $Gap$ ตามลำดับวุฒิภาวะ ($Maturity\ Level$) ที่ระบุในบริบท"
-    r"\n2. **ตอบกลับเป็น $JSON$ ที่ $VALID$ $100\%$ เท่านั้น!** ห้ามมีข้อความใด ๆ นอกเหนือจาก $JSON$"
-    r"\n3. $JSON\ Key$ และโครงสร้างจะต้องตรงตาม $Pydantic\ Schema$ ที่กำหนดอย่างเคร่งครัด"
+    r"ให้เป็นแผนปฏิบัติการ (Action Plan) ที่มีโครงสร้างและนำไปใช้ได้จริง\n\n"
+    r"คำแนะนำที่สำคัญที่สุดสำหรับการตอบกลับ:\n"
+    r"1. **$OUTPUT\ FORMAT\ REQUIREMENT$:** ต้องตอบกลับเป็น $JSON$ ที่ $VALID$ $100\%$ ตาม $Pydantic\ Schema$ ที่กำหนดอย่างเคร่งครัด **ห้ามมีข้อความอื่นใดก่อนหรือหลัง $JSON$ $block$**"
+    r"\n2. ยึดถือหลักการปิด $Gap$ ตามลำดับวุฒิภาวะ ($Maturity\ Level$) ที่ระบุในบริบท"
+    r"\n3. คำแนะนำ ($Recommendation$) ต้อง $Specific$ และ $Actionable$"
 )
 
 # --------------------------------------------------------------------------------------
@@ -250,3 +250,45 @@ NARRATIVE_REPORT_PROMPT = PromptTemplate(
     ],
     template=NARRATIVE_REPORT_TEMPLATE
 )
+
+# -------------------- SYSTEM EVIDENCE DESCRIPTION PROMPT (Narrative for Level/Sub-Criteria) --------------------
+SYSTEM_EVIDENCE_DESCRIPTION_PROMPT = """
+คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์หลักฐานและผู้ให้คำปรึกษาด้านการจัดการความรู้ (KM Consultant) หน้าที่ของคุณคือการสังเคราะห์และสรุปภาพรวมของหลักฐาน (Context) ที่ให้มาทั้งหมด เพื่อสร้างคำบรรยาย (Evidence Description) ที่กระชับและเป็นทางการ
+เป้าหมายคือการอธิบายว่า "หลักฐานที่รวบรวมได้ทั้งหมดสำหรับเกณฑ์นี้บ่งชี้ถึงการดำเนินการในปัจจุบันอย่างไร"
+
+---
+
+## กฎการทำงาน:
+
+1.  **ขอบเขตข้อมูล:** ใช้ข้อมูลจาก [CONTEXTUAL DATA] ที่ให้มาเท่านั้น
+2.  **ความเฉพาะเจาะจง:** การสรุปต้องสอดคล้องกับหัวข้อเกณฑ์ ({sub_id} Level {level}) และมุ่งเน้นที่กิจกรรม/ผลลัพธ์ที่ชัดเจนในหลักฐาน
+3.  **รูปแบบ:**
+    * ตอบเป็นภาษาไทยระดับทางการและอ่านง่าย
+    * คำตอบต้องเป็นข้อความเชิงบรรยาย (Narrative) โดยรวมหลักฐานทั้งหมดเข้าด้วยกัน
+    * **ห้ามใช้หัวข้อย่อย (Bullet Points)**
+    * **ความยาว:** สรุปให้กระชับและชัดเจน **ไม่เกิน 5 ประโยค**
+4.  **ห้ามกล่าวถึง:** ห้ามกล่าวถึง 'คะแนน', 'Statement', 'Context', 'RAG', หรือ 'LLM' ในคำตอบโดยเด็ดขาด
+5.  **เน้นสถานะปัจจุบัน:** หากหลักฐานที่ให้มามีลักษณะเป็นแผน/เป้าหมาย **คุณต้องระบุให้ชัดเจนว่าเป็น 'แผนงาน' หรือ 'เป้าหมาย' ไม่ใช่ 'สิ่งที่ดำเนินการสำเร็จแล้ว'**
+
+---
+โปรดสรุปตามกฎทั้งหมดด้านบน
+"""
+
+# -------------------- USER EVIDENCE DESCRIPTION TEMPLATE (Input) --------------------
+USER_EVIDENCE_DESCRIPTION_TEMPLATE = """
+--- เกณฑ์ที่ต้องการสรุปหลักฐาน (Focus) ---
+{sub_id} Level {level}: {standard}
+
+--- หลักฐานทั้งหมดที่รวบรวมได้ (Aggregated Context) ---
+{context}
+
+--- คำสั่ง ---
+โปรดสร้างคำบรรยายหลักฐาน (Evidence Description) สำหรับ "{sub_id} Level {level}" โดยวิเคราะห์จากหลักฐานทั้งหมดที่รวบรวมได้
+"""
+
+EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
+    template=USER_EVIDENCE_DESCRIPTION_TEMPLATE, 
+    input_variables=["sub_id", "level", "standard", "context"]
+)
+
+

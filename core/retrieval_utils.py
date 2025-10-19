@@ -11,12 +11,13 @@ import re
 # 🚨 IMPORT: นำเข้า Pydantic Model จากไฟล์ action_plan_schema.py
 from core.action_plan_schema import ActionPlanActions 
 # 🚨 IMPORT: นำเข้า Prompts
-
 from core.rag_prompts import (
     SYSTEM_ASSESSMENT_PROMPT, 
-    USER_ASSESSMENT_PROMPT, # ⬅️ IMPORT ตัวใหม่นี้
+    USER_ASSESSMENT_PROMPT, 
     ACTION_PLAN_PROMPT,
-    SYSTEM_ACTION_PLAN_PROMPT
+    SYSTEM_ACTION_PLAN_PROMPT,
+    SYSTEM_EVIDENCE_DESCRIPTION_PROMPT, 
+    EVIDENCE_DESCRIPTION_PROMPT         
 ) 
 from core.vectorstore import VectorStoreManager, load_all_vectorstores 
 from models.llm import llm as llm_instance 
@@ -48,7 +49,7 @@ def retrieve_context_with_filter(
     retriever: Any, 
     metadata_filter: Optional[List[str]] = None, 
 ) -> Dict[str, Any]:
-    # ... (Logic เหมือนเดิม) ...
+    """Retrieves documents from the vector store, optionally filtering by document ID."""
     if retriever is None:
         return {"top_evidences": []}
     
@@ -94,9 +95,13 @@ def retrieve_context_with_filter(
 MAX_LLM_RETRIES = 3 
 
 def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, Any]:
+    """
+    Performs the LLM evaluation, extracting a score and reason, 
+    with robust JSON parsing and retry logic.
+    """
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
     
-    # 1. MOCK CONTROL LOGIC (เหมือนเดิม)
+    # 1. MOCK CONTROL LOGIC
     if _MOCK_CONTROL_FLAG:
         _MOCK_COUNTER += 1
         
@@ -158,7 +163,8 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
             # C. ตรวจสอบว่ามี Key 'llm_score' และ 'reason' ครบถ้วน
             if "llm_score" in llm_output and "reason" in llm_output:
                 raw_score = llm_output.get("llm_score", 0)
-                score = int(raw_score) if str(raw_score).isdigit() else 0 
+                # Ensure score is an integer (handling cases where LLM might return '1' as a string)
+                score = int(str(raw_score)) if str(raw_score).isdigit() else 0 
                 reason = llm_output.get("reason", "No reason provided by LLM.")
                 
                 return {
@@ -221,7 +227,7 @@ def generate_action_plan_via_llm(
     target_level: int, 
 ) -> Dict[str, Any]:
     
-    # 1. MOCK LOGIC (เหมือนเดิม)
+    # 1. MOCK LOGIC
     global _MOCK_CONTROL_FLAG
     if _MOCK_CONTROL_FLAG:
         logger.warning("MOCK: Generating dummy Action Plan via MOCK Logic.")
@@ -247,7 +253,7 @@ def generate_action_plan_via_llm(
 
     # --- REAL IMPLEMENTATION (LLM Call for Action Plan) ---
     try:
-        # 2. Prepare Prompt Input Variables (เหมือนเดิม)
+        # 2. Prepare Prompt Input Variables
         failed_statements_text = []
         for data in failed_statements_data:
             stmt_num = data.get('statement_number', 'N/A')
@@ -260,7 +266,7 @@ def generate_action_plan_via_llm(
             
         statements_list_str = "\n".join(failed_statements_text)
 
-        # 3. Format the Prompt (เหมือนเดิม)
+        # 3. Format the Prompt
         llm_prompt_content = ACTION_PLAN_PROMPT.format(
             sub_id=sub_id,
             target_level=target_level,
@@ -268,7 +274,7 @@ def generate_action_plan_via_llm(
         )
         
 
-        # 4. Define System Prompt with JSON Schema (ปรับปรุง)
+        # 4. Define System Prompt with JSON Schema
         schema_dict = ActionPlanActions.model_json_schema()
         
         # 🟢 ปรับปรุง: ใช้ SYSTEM_ACTION_PLAN_PROMPT และผนวก JSON Schema เข้าไป
@@ -278,8 +284,7 @@ def generate_action_plan_via_llm(
             json.dumps(schema_dict, indent=2)
         )
 
-        # 5. CALL LLM (ต้องปรับ _call_llm_for_json_output ให้รองรับ System Prompt ใหม่)
-        # หาก _call_llm_for_json_output รับ System Prompt เป็น string ได้อยู่แล้วก็ใช้ต่อได้เลย
+        # 5. CALL LLM
         llm_response_json_str = _call_llm_for_json_output(
             prompt=llm_prompt_content,
             system_prompt=system_prompt_content # ⬅️ ใช้ system prompt ที่ปรับปรุงแล้ว
@@ -306,7 +311,7 @@ def generate_action_plan_via_llm(
         # 7. Process and Parse
         llm_result_dict = json.loads(cleaned_content) # ⬅️ ใช้ string ที่ถูกกรองแล้ว
         
-        # 8. Validate and Dump (เหมือนเดิม)
+        # 8. Validate and Dump
         validated_plan_model = ActionPlanActions.model_validate(llm_result_dict)
 
         final_action_plan_result = validated_plan_model.model_dump()
@@ -329,9 +334,7 @@ def generate_action_plan_via_llm(
     
 
 # ----------------------------------------------------------------------
-# NOTE: ฟังก์ชันอื่น ๆ ใน retrieval_utils.py เช่น get_relevant_documents
-# และ generate_assessment_via_llm_real จะถูกละไว้ในตัวอย่างนี้
-# แต่ฟังก์ชัน generate_narrative_report_via_llm_real คือตัวที่ถูกแก้ไข
+# === NARRATIVE REPORT GENERATION ===
 # ----------------------------------------------------------------------
 
 def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction: str) -> str:
@@ -366,7 +369,7 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
         ])
         
         # 🟢 FIX: ตรวจสอบประเภท Response ก่อนเข้าถึง .content
-        # เพื่อรองรับการตอบกลับที่เป็น String โดยตรง (เช่น จาก Ollama บางรุ่น) หรือ LangChain Response Object
+        # เพื่อรองรับการตอบกลับที่เป็น String โดยตรง หรือ LangChain Response Object
         if hasattr(response, 'content'):
             # ถ้าเป็น LangChain/SDK Response Object
             generated_text = response.content
@@ -385,3 +388,100 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
         # Fallback message
         return f"[API ERROR] Failed to generate narrative report via real LLM API: {e}"
 
+# =================================================================
+# === EVIDENCE DESCRIPTION GENERATION (NEW FUNCTION) ===
+# =================================================================
+
+def generate_evidence_description_via_llm(
+    sub_id: str, 
+    level: int, 
+    standard: str, 
+    context: str
+) -> str:
+    """
+    Generates a narrative description for a sub-criteria level based on the aggregated context 
+    using the dedicated Evidence Description Prompt.
+    
+    Args:
+        sub_id: The ID of the sub-criteria (e.g., '6.1.1').
+        level: The maturity level (e.g., 1).
+        standard: The standard description for that level.
+        context: The aggregated context from all successful statements in that level.
+        
+    Returns:
+        A concise narrative description string.
+    """
+    if llm_instance is None:
+        logger.error("❌ LLM Instance is not initialized for Evidence Description.")
+        return "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งานสำหรับการสร้างคำบรรยายหลักฐาน"
+        
+    if not context.strip() or "ไม่พบหลักฐาน" in context.lower():
+        # Fallback message that encourages user to find more evidence
+        return "ไม่พบหลักฐานการปฏิบัติการที่สอดคล้องกับเกณฑ์ในระดับนี้ จึงยังไม่สามารถระบุสถานะความพร้อมได้อย่างชัดเจน"
+        
+    try:
+        # 1. Prepare Human Message Content using the imported PromptTemplate
+        user_prompt_content = EVIDENCE_DESCRIPTION_PROMPT.format(
+            sub_id=sub_id,
+            level=level,
+            standard=standard,
+            context=context
+        )
+
+        # 2. Invoke LLM (Pure Text Generation)
+        response = llm_instance.invoke([
+            SystemMessage(content=SYSTEM_EVIDENCE_DESCRIPTION_PROMPT), # System prompt for role/rules
+            HumanMessage(content=user_prompt_content) # Context and question
+        ])
+        
+        # 3. Extract Content
+        generated_text = response.content if hasattr(response, 'content') else str(response)
+        
+        logger.info(f"✅ Generated Evidence Description for {sub_id} L{level}")
+        return generated_text.strip()
+        
+    except Exception as e:
+        logger.error(f"❌ Error during Evidence Description generation for {sub_id} L{level}: {e}")
+        return "เกิดข้อผิดพลาดในการสังเคราะห์คำบรรยายหลักฐาน (LLM Failure)"
+
+def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int) -> Dict[str, str]:
+    """
+    ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด
+    """
+    # 🚨 FIX 1: จำกัดความยาว Context ก่อนส่งเข้า LLM (ใช้ MAX_CONTEXT_LENGTH)
+    # สมมติว่า MAX_CONTEXT_LENGTH ถูกนำเข้าหรือกำหนดเป็นค่า Global ในไฟล์นี้
+    
+    # ถ้า MAX_CONTEXT_LENGTH ถูกกำหนดไว้ที่อื่น เช่น 2500 (จาก EnablerAssessment)
+    # ให้ส่งค่านี้มาเป็น parameter หรือใช้ค่าคงที่ที่นี่
+    MAX_LLM_SUMMARY_CONTEXT = 3000 # ปรับตัวเลขตามขีดจำกัดของโมเดลสรุป
+    
+    # ตัด Context ถ้ามันยาวเกินไป
+    if len(context) > MAX_LLM_SUMMARY_CONTEXT:
+        logger.warning(f"Context for summary L{level} is too long ({len(context)}), truncating to {MAX_LLM_SUMMARY_CONTEXT}.")
+        context_to_use = context[:MAX_LLM_SUMMARY_CONTEXT]
+    else:
+        context_to_use = context
+        
+    try:
+        # 1. จัดเตรียม System และ Human Prompt
+        system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
+        human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
+            sub_criteria_name=sub_criteria_name,
+            level=level,
+            context=context_to_use # 🚨 ใช้ Context ที่ถูกตัดแล้ว
+        )
+        
+        # 2. เรียกใช้ LLM 
+        response = llm_instance.invoke([
+            SystemMessage(content=system_prompt), 
+            HumanMessage(content=human_prompt)
+        ])
+        
+        # ดึง content ออกมา (เหมือนในฟังก์ชันอื่น ๆ ที่คุณแก้ไขแล้ว)
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        return {"summary": response_text.strip()}
+        
+    except Exception as e:
+        logger.error(f"LLM Summary generation failed: {e}")
+        return {"summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM"}
