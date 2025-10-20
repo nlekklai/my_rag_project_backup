@@ -422,9 +422,9 @@ class EnablerAssessment:
                         context=context, # ส่ง String Context ที่ถูกขยาย
                         standard=standard,
                         #  🚨 FIX 3: ส่ง level, sub_criteria_id และ statement_number เข้าไปใน kwargs
-                        level=level, 
-                        sub_criteria_id=sub_criteria_id,
-                        statement_number=i + 1
+                        # level=level, 
+                        # sub_criteria_id=sub_criteria_id,
+                        # statement_number=i + 1
                     )
                     
                     # 4. Deduplicate sources before saving (เพื่อไม่ให้แสดงซ้ำในรายงาน)
