@@ -25,6 +25,8 @@ from core.rag_prompts import (
 from core.vectorstore import VectorStoreManager, load_all_vectorstores 
 from models.llm import llm as llm_instance 
 
+import time # ต้องมั่นใจว่ามีการ import time ด้วย
+
 logger = logging.getLogger(__name__)
 # เนื่องจากคุณรันในโหมด real และต้องการ debug/info จึงใช้ level INFO
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -444,25 +446,20 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
 # =================================================================
 # === EVIDENCE DESCRIPTION GENERATION (NEW FUNCTION) ===
 # =================================================================
-
 def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str, schema: Any) -> Dict[str, str]:
     """
-    ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด 
-    และ Validate ผลลัพธ์ด้วย EvidenceSummary Schema.
+    ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด (พร้อม Retry Logic).
     """
-    
-    # 🚨 FIX 1: จำกัดความยาว Context ก่อนส่งเข้า LLM
     MAX_LLM_SUMMARY_CONTEXT = 3000 
-    
+    MAX_RETRIES = 3 # กำหนดให้พยายามเรียก LLM ใหม่สูงสุด 3 ครั้ง
+
     if llm_instance is None:
         return {"summary": "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งาน", "suggestion_for_next_level": "N/A"}
         
-    context_to_use = context
+    context_to_use = context[:MAX_LLM_SUMMARY_CONTEXT] if len(context) > MAX_LLM_SUMMARY_CONTEXT else context
     if len(context) > MAX_LLM_SUMMARY_CONTEXT:
         logger.warning(f"Context for summary L{level} is too long ({len(context)}), truncating to {MAX_LLM_SUMMARY_CONTEXT}.")
-        context_to_use = context[:MAX_LLM_SUMMARY_CONTEXT]
         
-    # 🚨 FIX 2: ปรับ System Prompt เพื่อบังคับ JSON Output ตาม EvidenceSummary
     schema_dict = EvidenceSummary.model_json_schema()
     system_prompt_content = (
         SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + 
@@ -470,51 +467,67 @@ def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int,
         json.dumps(schema_dict, indent=2)
     )
 
-    try:
-        # 1. จัดเตรียม Human Prompt
-        human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
-            standard=sub_criteria_name,
-            level=level,
-            context=context_to_use,
-            sub_id=sub_id # 🚨 FIX 2: เพิ่ม sub_id ในการ format
-        )
-        
-        # 2. เรียกใช้ LLM 
-        llm_response_json_str = _call_llm_for_json_output(
-            prompt=human_prompt,
-            system_prompt=system_prompt_content
-        )
-        
-        # 3. ใช้ Regex ค้นหา JSON Block
-        json_match = re.search(r'\{.*\}', llm_response_json_str.strip(), re.DOTALL)
-        
-        cleaned_content = None
-        if json_match:
-            cleaned_content = json_match.group(0)
+    for attempt in range(MAX_RETRIES):
+        try:
+            # 1. จัดเตรียม Human Prompt
+            human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
+                standard=sub_criteria_name,
+                level=level,
+                context=context_to_use,
+                sub_id=sub_id
+            )
+            
+            # 2. เรียกใช้ LLM (ใช้ฟังก์ชันที่คุณส่งมา)
+            llm_response_json_str = _call_llm_for_json_output(
+                prompt=human_prompt,
+                system_prompt=system_prompt_content
+            )
+            
+            # 3. ใช้ Regex ค้นหา JSON Block
+            json_match = re.search(r'\{.*\}', llm_response_json_str.strip(), re.DOTALL)
+            
+            cleaned_content = json_match.group(0) if json_match else None
 
-        if not cleaned_content:
-            logger.error("❌ Failed to find a valid JSON block for Evidence Summary using Regex.")
-            raise ValueError("LLM response did not contain a recognizable JSON block for Evidence Summary.")
+            if not cleaned_content:
+                # ถ้าหา JSON ไม่เจอ ให้พยายามใหม่ (ถ้ายังไม่ถึงรอบสุดท้าย)
+                raise ValueError("LLM response did not contain a recognizable JSON block for Evidence Summary.")
 
-        # 4. Process and Parse
-        llm_result_dict = json.loads(cleaned_content) 
-        
-        # 5. Validate against EvidenceSummary Schema
-        validated_summary_model = EvidenceSummary.model_validate(llm_result_dict)
-        
-        logger.info(f"✅ Generated Evidence Summary for {sub_criteria_name} L{level}")
-        
-        # 6. Return the validated Dict
-        return validated_summary_model.model_dump()
-        
-    except Exception as e:
-        logger.error(f"LLM Summary generation failed: {e}", exc_info=True)
-        return {"summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM", "suggestion_for_next_level": f"เกิดข้อผิดพลาดในการเรียก LLM: {str(e)}"}
+            # 4. Process and Parse
+            llm_result_dict = json.loads(cleaned_content) 
+            
+            # 5. Validate against EvidenceSummary Schema
+            validated_summary_model = EvidenceSummary.model_validate(llm_result_dict)
+            
+            logger.info(f"✅ Generated Evidence Summary for {sub_criteria_name} L{level} on attempt {attempt + 1}")
+            
+            # 6. Return the validated Dict (ออกจาก loop)
+            return validated_summary_model.model_dump()
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            # ดักจับข้อผิดพลาดในการ Parse JSON หรือหา JSON ไม่เจอ
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(f"LLM Summary generation failed on attempt {attempt + 1} ({e}). Retrying...")
+                time.sleep(1) # รอ 1 วินาทีก่อนลองใหม่
+                continue
+            else:
+                logger.error(f"❌ Failed to generate Evidence Summary after {MAX_RETRIES} attempts. Last error: {e}")
+                # ถ้าพยายามครบแล้ว ให้ส่งค่า Error กลับไปตาม Format ที่กำหนด
+                return {
+                    "summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM",
+                    "suggestion_for_next_level": f"เกิดข้อผิดพลาดในการเรียก LLM: {e}"
+                }
+                
+        except Exception as e:
+            logger.error(f"LLM Summary generation failed: {e}", exc_info=True)
+            # ถ้าเป็นข้อผิดพลาดอื่นที่ไม่ใช่การ Parse JSON ให้ส่งค่า Error ที่ระบุ
+            return {
+                "summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM",
+                "suggestion_for_next_level": f"เกิดข้อผิดพลาดในการเรียก LLM: Unhandled Exception: {e}"
+            }
     
-def generate_evidence_description_via_llm(*args, **kwargs) -> str:
-    """
-    Deprecated: ฟังก์ชันนี้ถูกแทนที่ด้วย summarize_context_with_llm เพื่อให้รองรับ Pydantic Schema
-    """
-    logger.warning("generate_evidence_description_via_llm is deprecated. Using summarize_context_with_llm instead.")
-    # Fallback/Error message based on the old usage pattern (if accidentally called)
-    return "เกิดข้อผิดพลาด: ฟังก์ชันนี้ถูกยกเลิกการใช้งาน โปรดใช้ summarize_context_with_llm แทน"
+    # ถ้าหลุดจาก loop โดยไม่ return แสดงว่าล้มเหลวในการ Retry ทั้งหมด
+    return {
+        "summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM",
+        "suggestion_for_next_level": f"เกิดข้อผิดพลาดในการเรียก LLM: {MAX_RETRIES} attempts failed unexpectedly."
+    }
+ 
