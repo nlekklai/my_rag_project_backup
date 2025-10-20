@@ -1,3 +1,4 @@
+# process_assessment.py
 import argparse
 import os
 import sys
@@ -23,47 +24,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("process_assessment")
 logger.setLevel(logging.INFO)
 
-# -----------------------------
-# --- Helper Functions (สำหรับ CLI Output) ---
-# -----------------------------
-
-def print_detailed_results(raw_llm_results: List[Dict[str, Any]]):
-    """
-    ฟังก์ชันสำหรับแสดงผลลัพธ์การประเมิน LLM แบบละเอียด
-    (คัดลอก Logic เดิมของคุณที่ใช้แสดงผลใน CLI)
-    """
-    print("\n\n===== DETAILED LLM EVALUATION RESULTS =====")
-    
-    if not raw_llm_results:
-        print("No raw LLM results recorded (maybe run in REAL/MOCK mode without export, or an error occurred).")
-        return
-
-    # จัดกลุ่มตาม Sub-Criteria และ Level
-    grouped_results: Dict[str, Dict[str, List[Dict]]] = {}
-    for result in raw_llm_results:
-        sub_id = result.get('sub_criteria_id', 'N/A')
-        level = f"Level {result.get('level', 'N/A')}"
-        
-        if sub_id not in grouped_results:
-            grouped_results[sub_id] = {}
-        if level not in grouped_results[sub_id]:
-            grouped_results[sub_id][level] = []
-            
-        grouped_results[sub_id][level].append(result)
-
-    for sub_id, levels in sorted(grouped_results.items()):
-        print(f"\n--- Sub-Criteria ID: {sub_id} ---")
-        for level, results in sorted(levels.items()):
-            passed = sum(r.get('score', 0) for r in results)
-            total = len(results)
-            pass_ratio = passed / total if total > 0 else 0
-            
-            print(f"  > {level} ({passed}/{total}, Pass Ratio: {pass_ratio:.2f})")
-            for i, r in enumerate(results):
-                status = "✅ PASS" if r.get('score') == 1 else "❌ FAIL"
-                print(f"    - S{i+1}: {status} | Statement: {r.get('statement', '')[:80]}...")
-                print(f"      [Reason]: {r.get('reason', 'No reason provided')}")
-                
 # -----------------------------
 # --- Main CLI Entry Point ---
 # -----------------------------
@@ -102,9 +62,8 @@ if __name__ == "__main__":
         # แสดงผลลัพธ์ในรูปแบบ JSON ที่อ่านง่าย
         print(json.dumps(final_summary, indent=4, ensure_ascii=False))
 
-        # 3. Output Detailed Results (ถ้ามี raw data)
-        if 'raw_llm_results' in final_summary and args.mode != "random":
-            print_detailed_results(final_summary['raw_llm_results'])
+        # 3. Output Detailed Results (ลบการเรียกใช้ print_detailed_results ออก)
+        # ผลลัพธ์โดยละเอียดถูกจัดการโดย run_assessment_process/print_detailed_results ภายในแล้ว
         
         # 4. Output Export Path (ถ้ามีการ Export)
         if args.export and 'export_path_used' in final_summary:

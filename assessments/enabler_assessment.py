@@ -6,6 +6,7 @@ import re
 from typing import List, Dict, Any, Optional, Union
 import time 
 
+
 # --- PATH SETUP (Must be executed first for imports to work) ---
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -16,6 +17,9 @@ try:
     from core.vectorstore import load_all_vectorstores, FINAL_K_RERANKED 
     # 🚨 FIX: ต้อง Import summarize_context_with_llm สำหรับฟังก์ชันใหม่
     from core.retrieval_utils import evaluate_with_llm, retrieve_context_with_filter, set_mock_control_mode, summarize_context_with_llm
+
+    from core.assessment_schema import EvidenceSummary
+    from core.action_plan_schema import ActionPlanActions
 
 except ImportError as e:
     # หากรันจากที่ที่ไม่ใช่ root project directory อาจจะต้องปรับ path เพิ่ม
@@ -93,6 +97,7 @@ class EnablerAssessment:
 
         # LOAD DATA
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
+        # ตรวจสอบว่า rubric_data มีคีย์ Enabler ปัจจุบันหรือไม่ หากไม่มีจะใช้ Default Fallback
         default_rubric = {self.enabler_rubric_key: DEFAULT_RUBRIC_STRUCTURE["Default_Maturity_Rubric"]}
         self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
         self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
@@ -137,7 +142,19 @@ class EnablerAssessment:
                 if level_num:
                     rubric_map[level_num] = level_entry.get("criteria", {})
         else:
-             logger.error(f"❌ Rubric key '{self.enabler_rubric_key}' not found in loaded rubric data.")
+             # การแจ้งเตือนนี้อาจเกิดขึ้นได้หากไฟล์ rubric_data ไม่มีคีย์ Enabler ที่ถูกต้อง แต่ใช้ Default Rubric แทน
+             logger.warning(f"⚠️ Rubric key '{self.enabler_rubric_key}' not found in loaded rubric data. Using default/fallback structure.")
+             
+             # สร้าง Rubric Map จาก DEFAULT_RUBRIC_STRUCTURE หากไม่มีข้อมูลที่ถูกต้อง
+             if self.enabler_rubric_key not in self.rubric_data:
+                # ลองใช้ default key หากไม่มีคีย์เฉพาะของ Enabler
+                default_data = DEFAULT_RUBRIC_STRUCTURE["Default_Maturity_Rubric"]
+                for level_entry in default_data.get("levels", []):
+                     level_num = level_entry.get("level")
+                     if level_num:
+                         rubric_map[level_num] = level_entry.get("criteria", {})
+
+
         return rubric_map
 
 
@@ -151,6 +168,7 @@ class EnablerAssessment:
         # 1. หา Highest Fully Passed Level (1.0 ratio) - Logic Maturity Model
         for level in range(1, 6):
             level_str = str(level)
+            # 🚨 FIX 1: ตรวจสอบ Ratio โดยใช้ Key String
             # ถ้า Level ปัจจุบันไม่ผ่านครบ 100%
             if level_pass_ratios.get(level_str, 0.0) < 1.0: 
                 highest_full_level = level - 1 
@@ -170,6 +188,8 @@ class EnablerAssessment:
             # Level ที่กำลังมี Gap คือ Level ต่อไป
             gap_level = highest_full_level + 1 
             gap_fraction = self.level_fractions.get(str(gap_level), 0.0)
+            
+            # 🚨 FIX 2: ดึง progress_ratio จาก Level ที่มี Gap
             progress_ratio = level_pass_ratios.get(str(gap_level), 0.0)
             
             # เพิ่มคะแนนจากความคืบหน้าของ Level ที่มี Gap
@@ -270,16 +290,19 @@ class EnablerAssessment:
 
         # คำนวณ Pass Ratio
         for key, data in grouped_results.items():
-            level_scores: Dict[int, List[int]] = {}
+            level_statements: Dict[int, List[Dict]] = {} # 🚨 FIX 3: เก็บทั้ง Dict เพื่อเข้าถึง pass_status
             for r in data["raw_llm_scores"]:
                 level = r["level"]
-                if level not in level_scores:
-                    level_scores[level] = []
-                level_scores[level].append(r["llm_score"])
+                if level not in level_statements:
+                    level_statements[level] = []
+                level_statements[level].append(r) # 🚨 FIX 4: เก็บผลลัพธ์ LLM ทั้งก้อน
             
-            for level, scores in level_scores.items():
-                total_statements = len(scores)
-                passed_statements = sum(scores)
+            for level, results in level_statements.items():
+                total_statements = len(results)
+                
+                # 🚨 FIX 5: นับ 'ผ่าน' จาก 'llm_score' ที่ตอนนี้ถูกกำหนดให้เป็น 1 เมื่อ 'pass_status' เป็น True
+                # (ตาม logic ที่แก้ไขใน retrieval_utils.py)
+                passed_statements = sum(r.get("llm_score", 0) for r in results) 
                 
                 level_str = str(level)
                 
@@ -317,6 +340,10 @@ class EnablerAssessment:
             sub_criteria_id = enabler.get("Sub_Criteria_ID")
             sub_criteria_name = enabler.get("Sub_Criteria_Name_TH", "N/A")
 
+            # ตรวจสอบว่ามีการกรองเฉพาะ Sub ID หรือไม่
+            if self.target_sub_id and self.target_sub_id != sub_criteria_id:
+                continue
+
             for level in range(1, 6):
                 level_key = f"Level_{level}_Statements"
                 statements: List[str] = enabler.get(level_key, [])
@@ -327,10 +354,12 @@ class EnablerAssessment:
                 rubric_criteria = self.global_rubric_map.get(level, {})
                 
                 for i, statement in enumerate(statements):
+                    # 💡 NOTE: subtopic key ใช้สำหรับดึงมาตรฐานจาก rubric_criteria
                     subtopic_key = f"subtopic_{i+1}"
+                    # ดึงมาตรฐาน: ใช้ criteria ที่ i+1 หรือใช้ default fallback
                     standard = rubric_criteria.get(subtopic_key, f"Default standard L{level} S{i+1}")
                     
-                    # 🚨 FIX 1: สร้าง Query String ที่รวม Statement และ Sub Criteria Name
+                    # 🚨 FIX 1: สร้าง Query String ที่รวม Statement และ Sub Criteria Name เพื่อให้ RAG ทำงานได้ดีขึ้น
                     query_string = f"{statement} ({sub_criteria_name})"
                     
                     # 1. เรียก retrieval_result
@@ -391,7 +420,11 @@ class EnablerAssessment:
                     result = llm_eval_func(
                         statement=statement,
                         context=context, # ส่ง String Context ที่ถูกขยาย
-                        standard=standard
+                        standard=standard,
+                        #  🚨 FIX 3: ส่ง level, sub_criteria_id และ statement_number เข้าไปใน kwargs
+                        level=level, 
+                        sub_criteria_id=sub_criteria_id,
+                        statement_number=i + 1
                     )
                     
                     # 4. Deduplicate sources before saving (เพื่อไม่ให้แสดงซ้ำในรายงาน)
@@ -399,12 +432,33 @@ class EnablerAssessment:
                     seen = set()
                     for src in retrieved_sources_list:
                         # ใช้ doc_id และ location เป็นคีย์ในการตรวจสอบความซ้ำ
+                        # ในทางปฏิบัติ: Location ควรเป็น Page Number/Section
                         key = (src['doc_id'], src['location']) 
                         if key not in seen:
                             seen.add(key)
                             unique_sources.append(src)
                     
-                    # 5. บันทึกผลลัพธ์
+            # 5. บันทึกผลลัพธ์
+                    
+                    # 🚨 FIX LOGIC: กำหนดค่า Context/Sources/Status ตาม Mode
+                    if is_mock_mode:
+                        # ใน Mock Mode: ใช้ค่า Context/Sources/Status/Score ที่มาจาก Mock Function โดยตรง
+                        final_score = result.get("llm_score", 0) # ใช้ llm_score ที่เป็น 0/1
+                        final_reason = result.get("reason", "")
+                        final_sources = result.get("retrieved_sources_list", []) # 👈 ใช้ Mock Sources
+                        final_context_snippet = result.get("context_retrieved_snippet", "") # 👈 ใช้ Mock Context
+                        final_pass_status = result.get("pass_status", False)
+                        final_status_th = result.get("status_th", "ไม่ผ่าน")
+                    else:
+                        # ใน Real Mode: ใช้ Context/Sources ที่ได้จาก RAG (Step 2)
+                        final_score = result.get("score", 0) # ใช้ score จาก LLM จริง
+                        final_reason = result.get("reason", "")
+                        final_sources = unique_sources # จาก Step 4 (RAG)
+                        final_context_snippet = context[:120] + "..." if context else ""
+                        final_pass_status = final_score == 1
+                        final_status_th = "ผ่าน" if final_pass_status else "ไม่ผ่าน"
+
+
                     self.raw_llm_results.append({
                         "enabler_id": self.enabler_abbr.upper(),
                         "sub_criteria_id": sub_criteria_id,
@@ -414,11 +468,14 @@ class EnablerAssessment:
                         "statement": statement,
                         "subtopic": subtopic_key,
                         "standard": standard,
-                        "llm_score": result.get("score", 0), 
-                        "reason": result.get("reason", ""),
-                        # 💡 NEW: เพิ่มข้อมูล Source Files
-                        "retrieved_sources_list": unique_sources,
-                        "context_retrieved_snippet": context[:120] + "..." if context else ""
+                        # ใช้ค่าที่ถูกกำหนดตาม Mode
+                        "llm_score": final_score, 
+                        "reason": final_reason,
+                        "retrieved_sources_list": final_sources, # 👈 ใช้ final_sources
+                        "context_retrieved_snippet": final_context_snippet, # 👈 ใช้ final_context_snippet
+                        "pass_status": final_pass_status,
+                        "status_th": final_status_th,
+                        "statement_id": "N/A" # เพิ่ม placeholder สำหรับ ID ที่ขาดไป
                     })
         
         self._process_subcriteria_results()
@@ -492,9 +549,17 @@ class EnablerAssessment:
             summary_result = summarize_context_with_llm(
                 context=final_context,
                 sub_criteria_name=sub_criteria_name,
-                level=level
+                level=level,
+                sub_id=sub_criteria_id,
+                schema=EvidenceSummary
             )
-            return summary_result.get("summary", "LLM ไม่สามารถสร้างคำอธิบายได้")
+            # ตรวจสอบ return type
+            if isinstance(summary_result, dict):
+                return summary_result.get("summary", "LLM ไม่สามารถสร้างคำอธิบายได้")
+            elif isinstance(summary_result, str):
+                return summary_result
+            else:
+                return "LLM return type ไม่ถูกต้อง"
             
         except Exception as e:
             logger.error(f"Failed to generate summary with LLM: {e}")

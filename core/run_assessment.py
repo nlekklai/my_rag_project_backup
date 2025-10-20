@@ -19,8 +19,21 @@ try:
     # IMPORT REQUIRED CLASSES/FUNCTIONS 
     from assessments.enabler_assessment import EnablerAssessment 
     import core.retrieval_utils 
-    from core.retrieval_utils import set_mock_control_mode, generate_action_plan_via_llm, summarize_context_with_llm
+    # 🎯 FIX 1: ลบ summarize_context_with_llm, generate_action_plan_via_llm ออกจาก import alias
+    from core.retrieval_utils import set_mock_control_mode
     from core.vectorstore import load_all_vectorstores 
+
+    # -------------------- IMPORT MOCK FUNCTIONS --------------------
+    from assessments.mocking_assessment import (
+        summarize_context_with_llm_MOCK,
+        generate_action_plan_MOCK,
+        retrieve_context_MOCK,
+        evaluate_with_llm_CONTROLLED_MOCK,
+    )
+    from core.assessment_schema import EvidenceSummary
+    
+    # 🎯 FIX 2: Import patcher จาก unittest.mock (ลบ patch_multiple เพื่อแก้ ImportError)
+    from unittest.mock import patch # Import patch_multiple ถูกนำออก
     
 except ImportError as e:
     print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
@@ -30,95 +43,8 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 # -------------------- MOCKING FUNCTIONS --------------------
-
 _MOCK_EVALUATION_COUNTER = 0
-
-def evaluate_with_llm_CONTROLLED_MOCK(statement: str, context: str, standard: str) -> Dict[str, Any]:
-    """
-    Returns controlled scores for mock testing.
-    🚨 NOTE: This function is passed directly to the EnablerAssessment instance (Instance Mocking).
-    """
-    global _MOCK_EVALUATION_COUNTER
-    
-    _MOCK_EVALUATION_COUNTER += 1
-    
-    score = 0
-    # Simulate a controlled failure pattern (e.g., first 5 statements pass, then fail)
-    # Since sub-criteria 6.1 (KM) usually has few statements, this ensures a mix of pass/fail.
-    if _MOCK_EVALUATION_COUNTER % 2 == 1: # Pass for odd statements, Fail for even
-        score = 1
-    else: 
-        score = 0 
-    
-    reason_text = f"MOCK: FORCED {'PASS' if score == 1 else 'FAIL'} (Statement {_MOCK_EVALUATION_COUNTER})"
-    logger.debug(f"MOCK COUNT: {_MOCK_EVALUATION_COUNTER} | SCORE: {score} | STMT: '{statement[:20]}...'")
-    return {"score": score, "reason": reason_text}
-
-def retrieve_context_MOCK(
-    statement: str, 
-    sub_criteria_id: str, 
-    level: int, 
-    statement_number: int, 
-    mapping_data: Optional[Dict] = None
-) -> Dict[str, Any]:
-    """Mock retrieval function returns a Dict (required by EnablerAssessment) with mock context."""
-    
-    mapping_key = f"{sub_criteria_id}_L{level}"
-    filter_ids: List[str] = []
-    
-    if mapping_data:
-        filter_ids = mapping_data.get(mapping_key, {}).get("filter_ids", [])
-    
-    if not filter_ids:
-         filter_info = "NO FILTER IDS FOUND IN MAPPING."
-    else:
-         top_ids_snippet = ', '.join([f"'{id}'" for id in filter_ids[:2]])
-         filter_info = f"Total {len(filter_ids)} IDs. Top 2: [{top_ids_snippet}, ...]"
-    
-    mock_context_content = (
-        f"MOCK CONTEXT SNIPPET. [Key: {mapping_key} S{statement_number}] "
-        f"[Filter Info: {filter_info}]"
-    )
-    
-    return {"top_evidences": [{"doc_id": "MOCK_DOC", "source": "MockFile", "content": mock_context_content}]}
-
-
-def generate_action_plan_MOCK(failed_statements_data: List[Dict], sub_id: str, target_level: int) -> Dict[str, Any]:
-    """
-    Returns a dummy action plan structure, conforming to the schema.
-    """
-    logger.info(f"MOCK: Generating dummy action plan for {sub_id} targeting L{target_level}.")
-    
-    if failed_statements_data:
-        first_failed = failed_statements_data[0]
-        statement_id = f"L{first_failed.get('level', target_level)} S{first_failed.get('statement_number', 1)}"
-        failed_level = first_failed.get('level', target_level)
-    else:
-        statement_id = f"L{target_level} S1 (Default)"
-        failed_level = target_level
-
-    action_detail = {
-        "Statement_ID": statement_id,
-        "Failed_Level": failed_level, 
-        "Recommendation": "MOCK: Review the failed statement and retrieve evidence for this level.",
-        "Target_Evidence_Type": "Mock Evidence (Policy/Record)",
-        "Key_Metric": "Pass Rate 100% on Rerunning Assessment"
-    }
-    
-    return {
-        "Phase": "1. MOCK Action Plan Generation",
-        "Goal": f"MOCK: Collect evidence for L{target_level} where statements failed.",
-        "Actions": [action_detail]
-    }
-
-# -------------------- NEW MOCK FOR EVIDENCE SUMMARY --------------------
-def summarize_context_with_llm_MOCK(context: str, sub_criteria_name: str, level: int) -> str: 
-    """Mock function for LLM summary generation."""
-    # 🚨 FIX: ต้อง Return แค่ String ตามการใช้งานใน run_assessment_process
-    return f"MOCK SUMMARY: หลักฐานสำหรับ {sub_criteria_name} Level {level} มีความพร้อมใช้งานสูง (Mocked)"
-# -----------------------------------------------------------------------
 
 
 # -------------------- DETAILED OUTPUT UTILITY --------------------
@@ -155,7 +81,7 @@ def print_detailed_results(raw_llm_results: List[Dict]):
             passed_statements = sum(r.get('llm_score', 0) for r in level_results)
             pass_ratio = passed_statements / total_statements if total_statements > 0 else 0.0
             
-            print(f"\n  > Level {level} ({passed_statements}/{total_statements}, Pass Ratio: {pass_ratio:.3f})")
+            print(f"  > Level {level} ({passed_statements}/{total_statements}, Pass Ratio: {pass_ratio:.3f})")
             
             for r in level_results:
                 llm_score = r.get('llm_score', 0)
@@ -186,22 +112,41 @@ def print_detailed_results(raw_llm_results: List[Dict]):
                 print(f"      [Context]: {r.get('context_retrieved_snippet', 'N/A')}")
 
 def add_pass_status_to_raw_results(raw_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """เพิ่มฟิลด์ 'pass_status' (ภาษาอังกฤษ) และ 'status_th' (ภาษาไทย) 
-    ลงใน raw_llm_results โดยอิงจาก llm_score (1=Pass, 0=Fail)"""
+    """
+    เพิ่มสถานะการผ่าน/ไม่ผ่าน โดยใช้ llm_score (1=ผ่าน, 0=ไม่ผ่าน) เป็นเกณฑ์หลักในการตัดสินใจ
+    """
     updated_results = []
-    for result in raw_results:
-        # ตรวจสอบว่ามี llm_score หรือไม่
-        if 'llm_score' in result:
-            score = result['llm_score']
-            
-            # กำหนดสถานะ
-            if score == 1:
-                result['pass_status'] = 'PASS'
-                result['status_th'] = 'ผ่าน'
-            else:
-                result['pass_status'] = 'FAIL'
-                result['status_th'] = 'ไม่ผ่าน'
-        updated_results.append(result)
+    for item in raw_results:
+        llm_res = item.get('llm_result', {})
+        
+        # 1. ดึงคะแนน LLM ที่คาดหวัง (1 หรือ 0) จาก top-level key
+        score = item.get('llm_score') or item.get('score')
+        
+        passed = False # ตั้งค่าเริ่มต้นเป็น 'ไม่ผ่าน'
+
+        # 2. ตรวจสอบสถานะการผ่าน
+        # Priority 1: ใช้สถานะ 'is_passed' (boolean) จาก llm_result
+        is_passed_from_sub = llm_res.get('is_passed')
+        
+        if isinstance(is_passed_from_sub, bool):
+            passed = is_passed_from_sub
+        
+        # Priority 2: ตรรกะสำรอง (Fallback)
+        # หาก Priority 1 ใช้ไม่ได้ ให้ใช้ llm_score/score เป็นเกณฑ์หลัก
+        elif score is not None and int(score) == 1:
+            passed = True
+        
+        # 3. กำหนดสถานะ
+        item['pass_status'] = passed
+        item['status_th'] = "ผ่าน" if passed else "ไม่ผ่าน"
+        
+        # 4. เพิ่มข้อมูล Level, Sub-Criteria, Statement (ส่วนที่เหลือไม่มีการเปลี่ยนแปลง)
+        item['sub_criteria_id'] = item.get('sub_criteria_id', 'N/A')
+        item['level'] = item.get('level', 0)
+        item['statement_id'] = item.get('statement_id', 'N/A')
+        
+        updated_results.append(item)
+        
     return updated_results
 
 # -----------------------------------------------------------
@@ -234,10 +179,6 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
             })
     return all_failed
 
-
-# core/run_assessment.py
-
-# ... (ส่วน get_sub_criteria_data และ get_all_failed_statements เหมือนเดิม)
 
 def generate_action_plan_for_sub(
     sub_id: str, 
@@ -302,6 +243,7 @@ def generate_action_plan_for_sub(
         
         llm_action_plan_result = {}
         try:
+            # ใช้ Module Reference ในการเรียกฟังก์ชัน
             llm_action_plan_result = core.retrieval_utils.generate_action_plan_via_llm(
                 failed_statements_data=failed_statements_for_sub, 
                 sub_id=sub_id,
@@ -334,11 +276,15 @@ def generate_action_plan_for_sub(
     
     if target_level == 1 and 0.0 < summary_data.get('pass_ratios', {}).get('1', 0.0) < 1.0:
         recommend_action_text = f"Statement ที่ล้มเหลวใน L{target_level} คือ S2. โปรด **รวบรวมหลักฐานใหม่** เพื่อแสดง 'ทิศทางการดำเนินงานที่ครบถ้วนสมบูรณ์' และนำเข้า Vector Store"
-    elif target_level == 2 and summary_data.get('pass_ratios', {}).get('2', 0.0) == 0.0:
-        recommend_action_text = f"Statement ที่ล้มเหลวใน L{target_level} คือ S1, S2, S3. โปรด **รวบรวมหลักฐานใหม่** เกี่ยวกับการจัดตั้งคณะทำงานและบทบาทหน้าที่ให้ชัดเจน และนำเข้า Vector Store"
+    elif target_level == 2 and summary_data.get('pass_ratios', {}).get('2', 0.0) == 0.667:
+        # FIX: แก้ไขคำแนะนำให้สอดคล้องกับ L2 S2 ที่ล้มเหลว
+        failed_stmt = [s for s in failed_statements_for_sub if s['statement_number'] == 2]
+        recommend_action_text = f"Statement ที่ล้มเหลวใน L{target_level} คือ S2. โปรด **รวบรวมหลักฐานใหม่** เกี่ยวกับ 'กระบวนการติดตามให้ผู้มีส่วนเกี่ยวข้องได้ปฏิบัติตาม' และนำเข้า Vector Store"
     else:
         # Action Item ทั่วไป
-        recommend_action_text = f"รวบรวมหลักฐานใหม่สำหรับ Level {target_level} (และ Level ที่มี Gap อื่นๆ: {', '.join(failed_levels_with_gap)}) และนำเข้า Vector Store"
+        gap_levels = [str(lvl) for lvl in failed_levels_with_gap if str(lvl) in summary_data.get('pass_ratios', {}) and summary_data['pass_ratios'][str(lvl)] < 1.0]
+        gap_display = ', '.join(gap_levels) if gap_levels else "N/A"
+        recommend_action_text = f"รวบรวมหลักฐานใหม่สำหรับ Level {target_level} (และ Level ที่มี Gap อื่นๆ: {gap_display}) และนำเข้า Vector Store"
 
     action_plan.append({
         "Phase": "2. AI Validation & Maintenance",
@@ -355,6 +301,86 @@ def generate_action_plan_for_sub(
     })
     
     return action_plan
+
+
+def generate_and_integrate_l5_summary(assessor, results):
+    """
+    Generate L5 evidence summary safely and integrate into SubCriteria_Breakdown
+    """
+    updated_breakdown = {}
+    sub_criteria_breakdown = results.get("SubCriteria_Breakdown", {})
+
+    for sub_id, sub_data in sub_criteria_breakdown.items():
+        try:
+            logger.info(f"✨ Generating L5 Evidence Summary for {sub_id}...")
+
+            # Ensure sub_data is a dict
+            if isinstance(sub_data, str):
+                logger.warning(f"⚠️ sub_data for {sub_id} is str, converting to dict")
+                sub_data = {"name": sub_data}
+
+            sub_name = sub_data.get("name", sub_id)
+
+            # Fetch context from assessor
+            try:
+                l5_context_info = assessor.generate_evidence_summary_for_level(sub_id, 5)
+            except Exception as e:
+                logger.error(f"Failed to get L5 context for {sub_id}: {e}", exc_info=True)
+                l5_context_info = None
+
+            # Safe extraction
+            if isinstance(l5_context_info, dict):
+                l5_context = l5_context_info.get("combined_context", "")
+            elif isinstance(l5_context_info, str):
+                l5_context = l5_context_info
+            else:
+                l5_context = ""
+
+            # Skip empty context
+            if not l5_context.strip():
+                l5_summary_result = {
+                    "summary": "ไม่พบหลักฐานที่เกี่ยวข้องสำหรับ Level 5 ในฐานข้อมูล RAG.",
+                    "suggestion_for_next_level": "N/A"
+                }
+            else:
+                try:
+                    # 🎯 FIX 3: ใช้ core.retrieval_utils.summarize_context_with_llm (Module Reference)
+                    l5_summary_result = core.retrieval_utils.summarize_context_with_llm( 
+                        context=l5_context,
+                        sub_criteria_name=sub_name,
+                        level=5,
+                        sub_id=sub_id,           
+                        schema=EvidenceSummary   
+                    )
+                    if not isinstance(l5_summary_result, dict):
+                        l5_summary_result = {
+                            "summary": str(l5_summary_result),
+                            "suggestion_for_next_level": "N/A"
+                        }
+                except Exception as e:
+                    logger.error(f"LLM summarize failed for {sub_id}: {e}", exc_info=True)
+                    l5_summary_result = {
+                        "summary": f"Error generating L5 summary: {e}",
+                        "suggestion_for_next_level": "N/A"
+                    }
+
+            sub_data["evidence_summary_L5"] = l5_summary_result
+            updated_breakdown[sub_id] = sub_data
+
+        except Exception as e_outer:
+            logger.error(f"Unexpected error processing {sub_id}: {e_outer}", exc_info=True)
+            updated_breakdown[sub_id] = {
+                "name": str(sub_data),
+                "evidence_summary_L5": {
+                    "summary": f"Error processing sub_criteria: {e_outer}",
+                    "suggestion_for_next_level": "N/A"
+                }
+            }
+
+    results["SubCriteria_Breakdown"] = updated_breakdown
+    logger.info("✅ Completed L5 Evidence Summary Generation for all sub-criteria.")
+    return results
+
 
 
 # -------------------- MAIN ENTRY POINT FUNCTION FOR FASTAPI/CLI --------------------
@@ -515,24 +541,38 @@ def run_assessment_process(
     assessment_duration = end_time_assessment - start_time_assessment
     logger.info(f"\n[⏱️ Assessment Time] LLM Evaluation and RAG Retrieval took: {assessment_duration:.2f} seconds.")
 
-
+    
     # 5. GENERATE EVIDENCE SUMMARY AND MERGE
     logger.info("📄 Generating evidence summaries for highest fully passed level...")
     
     breakdown = summary.get("SubCriteria_Breakdown", {})
     
-    # กำหนด original_summarize_func เป็น None ก่อนเสมอ
-    original_summarize_func = None
+    # ตัวแปรสำหรับ patcher
+    summary_patcher_enabler = None
+    summary_patcher_utils = None
     
-    # 🚨 FIX: Patch summarize_context_with_llm ใน retrieval_utils สำหรับ Mock Mode
+    # 🎯 FIX 4 & 5: ใช้ unittest.mock.patch จัดการ Summary LLM Call
+    # (แก้ปัญหา L5 Summary ที่ยัง call LLM จริง เพราะ patch ผิด target)
     if mode == "mock":
-        if hasattr(core.retrieval_utils, 'summarize_context_with_llm'):
-            original_summarize_func = core.retrieval_utils.summarize_context_with_llm
+        # Target 1: Patch ใน assessments.enabler_assessment (สำหรับ L-N Summary call)
+        summary_patcher_enabler = patch(
+            'assessments.enabler_assessment.summarize_context_with_llm', 
+            new=summarize_context_with_llm_MOCK
+        )
+        # Target 2: Patch ใน core.retrieval_utils (สำหรับ L5 Summary call ที่มาจาก run_assessment.py)
+        summary_patcher_utils = patch(
+            'core.retrieval_utils.summarize_context_with_llm', 
+            new=summarize_context_with_llm_MOCK
+        )
         
-        core.retrieval_utils.summarize_context_with_llm = summarize_context_with_llm_MOCK
-        logger.info("MOCK: Evidence Summary LLM function patched.")
+        # Start both patches
+        summary_patcher_enabler.start()
+        summary_patcher_utils.start()
+        logger.info("MOCK: Evidence Summary LLM function patched (Enabler & Utils).")
+
 
     try:
+        # 5.0 GENERATE L-N EVIDENCE SUMMARY (Highest Fully Passed Level)
         for sub_id, data in breakdown.items():
             target_level = data["highest_full_level"]
             
@@ -554,29 +594,47 @@ def run_assessment_process(
                 logger.info(f"   -> Skipping summary for {sub_id}: highest_full_level is 0.")
                 data[summary_key_name] = "ไม่พบหลักฐานที่ผ่านเกณฑ์ Level 1"
     
-    except Exception as e:
-        logger.error(f"❌ Failed to generate or merge Evidence Summary: {e}", exc_info=True)
-        summary['Evidence_Summary_Error'] = str(e)
-        
-    finally:
-        # Cleanup Global Patch สำหรับ Summary
-        if mode == "mock" and original_summarize_func is not None:
-            core.retrieval_utils.summarize_context_with_llm = original_summarize_func
-            logger.info("MOCK: Evidence Summary LLM function restored.")
+        # 5.1 GENERATE L5 EVIDENCE SUMMARY (เฉพาะ L5)
+        logger.info("📄 Generating dedicated L5 evidence summary...")
+        # 🟢 CALL: generate_and_integrate_l5_summary
+        summary = generate_and_integrate_l5_summary(
+            assessor=assessment_engine,
+            results=summary
+        )
+        logger.info("✅ L5 Summary integrated.")
 
+    except Exception as e:
+        # จับ Error ที่เกิดขึ้นใน Block 5.0 และ 5.1
+        logger.error(f"❌ Failed to generate or merge Summary: {e}", exc_info=True)
+        summary['Summary_Error'] = str(e)
+
+    # 🚨 FINALLY BLOCK: คืนค่า (Restore) หลังจากที่ L5 Summary เสร็จสิ้นแล้ว
+    finally:
+        if mode == "mock":
+            if summary_patcher_enabler:
+                summary_patcher_enabler.stop()
+            if summary_patcher_utils:
+                summary_patcher_utils.stop()
+            logger.info("MOCK: Evidence Summary LLM function restored (Enabler & Utils).")
+                
 
     # 6. GENERATE ACTION PLAN AND MERGE 
-    original_action_plan_func = None # ต้องประกาศนอก Try/Finally เพื่อให้เข้าถึงได้ใน Finally
+    action_patcher = None # ตัวแปรสำหรับ patcher
     full_summary_data = summary # อ้างอิงถึง summary
+    
+    # 🎯 FIX 5: ใช้ unittest.mock.patch จัดการ Action Plan LLM Call
+    # Note: Patch ใน module ต้นทางนี้ใช้ได้ เพราะ generate_action_plan_for_sub
+    # ถูกแก้ไขให้เรียกผ่าน core.retrieval_utils.generate_action_plan_via_llm
+    if mode == "mock":
+        action_patcher = patch(
+            'core.retrieval_utils.generate_action_plan_via_llm', 
+            new=generate_action_plan_MOCK
+        )
+        action_patcher.start()
+        logger.info("MOCK: Action Plan LLM function patched (using unittest.mock).")
+
 
     try:
-        # Patch Action Plan LLM Call
-        if mode == "mock":
-            if hasattr(core.retrieval_utils, 'generate_action_plan_via_llm'):
-                 original_action_plan_func = core.retrieval_utils.generate_action_plan_via_llm
-            core.retrieval_utils.generate_action_plan_via_llm = generate_action_plan_MOCK # 👈 ใช้ Mock Function
-            logger.info("MOCK: Action Plan LLM function patched.")
-
         all_action_plans: Dict[str, List] = {}
         if "SubCriteria_Breakdown" in summary:
 
@@ -597,8 +655,8 @@ def run_assessment_process(
 
     finally:
         # Cleanup Global Patch สำหรับ Action Plan
-        if mode == "mock" and original_action_plan_func is not None:
-            core.retrieval_utils.generate_action_plan_via_llm = original_action_plan_func
+        if mode == "mock" and action_patcher:
+            action_patcher.stop()
             logger.info("MOCK: Action Plan LLM function restored.")
 
 

@@ -1,3 +1,4 @@
+#core/retrieval_utils.py
 import logging
 import random
 import json
@@ -107,11 +108,23 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
     if _MOCK_CONTROL_FLAG:
         _MOCK_COUNTER += 1
         
-        score = 1 if _MOCK_COUNTER <= 5 else 0
+        # MOCK LOGIC: ให้ Level 1-3 (9 statements) ผ่าน เพื่อให้สอดคล้องกับ highest_full_level=3
+        score = 1 if _MOCK_COUNTER <= 9 else 0
         reason_text = f"MOCK: FORCED {'PASS' if score == 1 else 'FAIL'} (Statement {_MOCK_COUNTER})"
         
+        # 🟢 FIX: Calculate Pass Status for MOCK
+        is_pass = score >= 1
+        status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
+
         logger.debug(f"MOCK COUNT: {_MOCK_COUNTER} | SCORE: {score} | STMT: '{statement[:20]}...'")
-        return {"score": score, "reason": reason_text}
+        
+        # 🟢 FIX: Return the full data structure
+        return {
+            "score": score, 
+            "reason": reason_text,
+            "pass_status": is_pass, # ⬅️ เพิ่ม pass status
+            "status_th": status_th  # ⬅️ เพิ่ม status ภาษาไทย
+        }
 
     
     # 2. REAL LLM CALL LOGIC
@@ -119,7 +132,17 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
         logger.error("❌ LLM Instance is not initialized.")
         score = random.choice([0, 1])
         reason = f"LLM Initialization Failed (Fallback to Random Score {score})"
-        return {"score": score, "reason": reason}
+        
+        # Fallback Logic
+        is_pass = score >= 1
+        status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
+        
+        return {
+            "score": score, 
+            "reason": reason,
+            "pass_status": is_pass,
+            "status_th": status_th
+        }
 
     # 🟢 NEW: ใช้ PromptTemplate เพื่อสร้าง HumanMessage Content
     user_prompt_content = USER_ASSESSMENT_PROMPT.format(
@@ -164,9 +187,6 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
             llm_output = json.loads(final_json_string) # ⬅️ Parse string ที่ถูกกรองแล้ว
             
             # 4. 🟢 NEW: Validate against StatementAssessment Pydantic Schema
-            # เนื่องจากใน retrieval_utils.py เดิมใช้ key 'llm_score'
-            # แต่ StatementAssessment ใช้ key 'score' เราจึงต้องปรับการตรวจสอบเล็กน้อย
-            
             # ตรวจสอบว่ามี Key 'score' หรือ 'llm_score' และ 'reason' ครบถ้วน
             raw_score = llm_output.get("llm_score") or llm_output.get("score")
             reason = llm_output.get("reason")
@@ -178,10 +198,21 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
                     "reason": reason
                 }
                 
-                # 5. ใช้ Pydantic Model Validate
+                # 5. ใช้ Pydantic Model Validate (ได้ score และ reason)
                 validated_assessment = StatementAssessment.model_validate(validated_data)
                 
-                return validated_assessment.model_dump()
+                # 🟢 FIX: Calculate Pass Status based on score
+                final_score = validated_assessment.score
+                # Assumption: score >= 1 is a Pass
+                is_pass = final_score >= 1 
+                status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
+                
+                # 🟢 FIX: Return the complete assessment data, including calculated pass status
+                result_data = validated_assessment.model_dump()
+                result_data["pass_status"] = is_pass # ⬅️ เพิ่ม pass status
+                result_data["status_th"] = status_th  # ⬅️ เพิ่ม status ภาษาไทย
+                
+                return result_data
             
             else:
                 raise ValueError("LLM response JSON is missing 'score' or 'reason' keys.")
@@ -203,8 +234,18 @@ def evaluate_with_llm(statement: str, context: str, standard: str) -> Dict[str, 
     logger.error("❌ Using RANDOM SCORE as final fallback.")
     score = random.choice([0, 1])
     reason = f"LLM Call Failed (Fallback to Random Score {score}) after {MAX_LLM_RETRIES} attempts."
-    # 🟢 Fallback ควรคืนค่าที่ตรงกับ StatementAssessment.model_dump()
-    return {"score": score, "reason": reason}
+    
+    # Fallback Logic
+    is_pass = score >= 1
+    status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
+    
+    # 🟢 Fallback ควรคืนค่าที่ตรงกับ StatementAssessment.model_dump() + pass status
+    return {
+        "score": score, 
+        "reason": reason,
+        "pass_status": is_pass, # ⬅️ เพิ่ม pass status
+        "status_th": status_th  # ⬅️ เพิ่ม status ภาษาไทย
+    }
 
 
 # =================================================================
@@ -404,7 +445,7 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
 # === EVIDENCE DESCRIPTION GENERATION (NEW FUNCTION) ===
 # =================================================================
 
-def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int) -> Dict[str, str]:
+def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str, schema: Any) -> Dict[str, str]:
     """
     ใช้ LLM เพื่อสรุปบริบทหลักฐานตามเกณฑ์และระดับที่กำหนด 
     และ Validate ผลลัพธ์ด้วย EvidenceSummary Schema.
@@ -432,9 +473,10 @@ def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int)
     try:
         # 1. จัดเตรียม Human Prompt
         human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
-            sub_criteria_name=sub_criteria_name,
+            standard=sub_criteria_name,
             level=level,
-            context=context_to_use
+            context=context_to_use,
+            sub_id=sub_id # 🚨 FIX 2: เพิ่ม sub_id ในการ format
         )
         
         # 2. เรียกใช้ LLM 
