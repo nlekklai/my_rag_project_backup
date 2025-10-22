@@ -1,16 +1,18 @@
-#core/action_plan_schema.py
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+# core/action_plan_schema.py
+from pydantic import BaseModel, Field, field_validator
+from typing import List
 
 # -----------------------------------------------------------------------------
-# Pydantic Schema Definitions for Structured LLM Output (Action Plan)
+# 📘 Action Plan Schema for Structured LLM Output
+# -----------------------------------------------------------------------------
+# ใช้ในขั้นตอนที่ LLM สร้างแผนปฏิบัติการ (Action Plan) เพื่อตอบสนองต่อผลการประเมิน maturity
 # -----------------------------------------------------------------------------
 
 class ActionItem(BaseModel):
-    """Schema สำหรับ Action แต่ละรายการใน Action Plan"""
+    """📌 Schema สำหรับ Action แต่ละรายการใน Action Plan"""
     Statement_ID: str = Field(
         ..., 
-        description="ระบุ ID ของ Statement ที่ล้มเหลวที่ Action นี้มุ่งแก้ไข (เช่น L2 S3, L1 S1, ฯลฯ)"
+        description="ระบุ ID ของ Statement ที่ล้มเหลวที่ Action นี้มุ่งแก้ไข (เช่น 'L2 S3', 'L1 S1', ฯลฯ)"
     )
     Failed_Level: int = Field(
         ..., 
@@ -29,10 +31,12 @@ class ActionItem(BaseModel):
         description="ตัวชี้วัดความสำเร็จของ Action นี้ (เช่น Document approved by CXO, 90% staff trained)"
     )
 
+
 class ActionPlanActions(BaseModel):
     """
-    Schema หลักสำหรับผลลัพธ์ JSON ของ Action Plan
-    (โครงสร้างนี้แทน ActionPlanPhase เดิม โดยคาดหวัง Output เป็น 1 Phase ต่อการเรียก LLM)
+    🎯 Schema หลักสำหรับผลลัพธ์ JSON ของ Action Plan
+    
+    ใช้ validate JSON ที่ได้จาก LLM ให้ตรงตาม format ที่ระบบต้องการ
     """
     Phase: str = Field(
         ..., 
@@ -42,30 +46,21 @@ class ActionPlanActions(BaseModel):
         ..., 
         description="เป้าหมายหลักของ Phase นี้"
     )
-    
-    # 🚨 FIX: ใช้ List[ActionItem] และกำหนด constraint min_length ผ่าน Field
     Actions: List[ActionItem] = Field(
         ..., 
         description="รายการ Actions ที่ต้องดำเนินการ",
-        min_length=1 
+        min_length=1
     )
 
-# -----------------------------------------------------------------------------
-# ตัวอย่างการใช้งาน (สำหรับอ้างอิงภายใน)
-# -----------------------------------------------------------------------------
-# Note:
-# LLM จะต้องสร้าง JSON ที่ตรงตามโครงสร้าง ActionPlanActions เพื่อให้ Pydantic Parse ได้
-# ตัวอย่าง JSON output ที่คาดหวัง:
-# {
-#     "Phase": "Phase 1: Foundation Setup",
-#     "Goal": "Establish basic governance framework.",
-#     "Actions": [
-#         {
-#             "Statement_ID": "DS1.1.2",
-#             "Failed_Level": 2,
-#             "Recommendation": "Develop and approve a formal Data Governance Policy...",
-#             "Target_Evidence_Type": "Policy Document",
-#             "Key_Metric": "Policy approved by steering committee."
-#         }
-#     ]
-# }
+    # -------------------------------------------------------------------------
+    # 🧩 Validation Helper: รองรับกรณีที่ LLM คืนค่า 'actions' (ตัวเล็ก)
+    # -------------------------------------------------------------------------
+    @field_validator("Actions", mode="before")
+    @classmethod
+    def handle_lowercase_key(cls, v):
+        """
+        แก้ปัญหากรณี LLM ส่ง key 'actions' แทน 'Actions'
+        """
+        if isinstance(v, dict) and "actions" in v:
+            return v["actions"]
+        return v

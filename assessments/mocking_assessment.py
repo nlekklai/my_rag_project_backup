@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 def evaluate_with_llm_CONTROLLED_MOCK(
     statement: str,
     context: str,
-    # 💡 NOTE: level และ statement_number ที่นี่จะเป็นค่า Default หากไม่ได้ส่งผ่าน kwargs
     level: int = 1,
     sub_criteria_id: str = "UNKNOWN",
     statement_number: int = 1,
@@ -25,65 +24,67 @@ def evaluate_with_llm_CONTROLLED_MOCK(
 ) -> Dict[str, Any]:
     """
     Mock การประเมินผลลัพธ์แบบควบคุมลำดับ (ใช้แทน LLM จริง)
-
-    - L1: ผ่านทั้งหมด (100%)
-    - L2: ผ่านเฉพาะ Statement ลำดับคี่ (2/3)
-    - L3: ผ่านทั้งหมด (100%)
-    - L4, L5: ไม่ผ่านทั้งหมด (0%)
+    รุ่น Debug + Strict Mock สำหรับ sub_criteria 1.2
     """
-    
-    # 🚨 FIX 1: ดึงค่า level, sub_criteria_id, statement_number จาก kwargs 
-    # ซึ่งเป็นรูปแบบที่ EnablerAssessment.run_assessment ส่งเข้ามา
+    # ตรวจสอบ kwargs
     level = kwargs.get("level", level)
     sub_criteria_id = kwargs.get("sub_criteria_id", sub_criteria_id)
     statement_number = kwargs.get("statement_number", statement_number)
 
-    # 🎯 ตรรกะการให้คะแนนแบบควบคุม
-    if level == 1:
-        score = 1 # L1: ผ่านทั้งหมด
-    elif level == 2:
-        score = 1 if statement_number % 2 == 1 else 0 # L2: ผ่านเฉพาะ Statement ลำดับคี่ (S1, S3)
-    elif level == 3:
-        score = 1 # L3: ผ่านทั้งหมด
-    elif level in [4, 5]:
-        score = 0 # L4, L5: ไม่ผ่านทั้งหมด
+    # Trim & debug log
+    sub_id = str(sub_criteria_id).strip()
+    logger.info(f"[DEBUG MOCK INPUT] sub_criteria_id={sub_id}, level={level}, statement_number={statement_number}")
+
+    # ✅ Logic controlled mock
+    if sub_id == "1.2":
+        # L1-L3 ผ่านหมด
+        if level in [1,2,3]:
+            score = 1
+        elif level == 4:
+            # Fail statement 2 ของ L4
+            score = 0 if statement_number == 2 else 1
+        elif level == 5:
+            # Fail statements 1 & 3 ของ L5
+            score = 0 if statement_number in [1,3] else 1
+        else:
+            score = 0
     else:
-        score = 0 
+        # Default mock logic
+        if level == 1:
+            score = 1
+        elif level == 2:
+            score = 1 if statement_number % 2 == 1 else 0
+        elif level == 3:
+            score = 1
+        elif level in [4,5]:
+            score = 0
+        else:
+            score = 0
 
     is_passed = score == 1
-    
-    # ⭐ Mock Context และ Sources เพื่อให้ EnablerAssessment.run_assessment บันทึกหลักฐาน
-    mock_context_snippet = f"[MOCK CONTEXT SNIPPET] Evidence found for {sub_criteria_id} L{level} S{statement_number}." if is_passed else ""
+
+    mock_context_snippet = f"[MOCK CONTEXT SNIPPET] Evidence found for {sub_id} L{level} S{statement_number}." if is_passed else ""
     mock_sources = [
-        {"source_name": f"mock_doc_L{level}_S{statement_number}.pdf", "location": f"page_{10+statement_number}", "doc_id": f"DOC_{sub_criteria_id}"}
+        {"source_name": f"mock_doc_{sub_id}_L{level}_S{statement_number}.pdf",
+         "location": f"page_{10+statement_number}",
+         "doc_id": f"DOC_{sub_id}"}
     ] if is_passed else []
 
-
-    result = {
-        "sub_criteria_id": sub_criteria_id,
+    return {
+        "sub_criteria_id": sub_id,
         "level": level,
         "statement_number": statement_number,
         "statement": statement,
-        
-        # 3. ใช้ Mock Context/Sources ที่มีค่า
-        "context_retrieved_snippet": mock_context_snippet, 
+        "context_retrieved_snippet": mock_context_snippet,
         "retrieved_sources_list": mock_sources,
-        
-        # 🚨 FIX 2: score ต้องถูกกำหนดตามตรรกะ Mock (1 หรือ 0)
-        "llm_score": score, 
-        
-        # 🚨 NEW: ใส่ 'score' ด้วยเพื่อความเข้ากันได้กับ Real LLM Eval Function
-        "score": score, 
-        
+        "llm_score": score,
+        "score": score,
         "reason": f"MOCK reason for L{level} S{statement_number} → {'PASS' if is_passed else 'FAIL'} (Controlled Mock)",
-        
-        # ⭐ กำหนด pass_status อย่างชัดเจน
         "pass_status": is_passed,
         "status_th": "ผ่าน" if is_passed else "ไม่ผ่าน",
         "llm_result": {"is_passed": is_passed, "score": float(score)}
     }
 
-    return result
 
 
 # -------------------------------------------------------

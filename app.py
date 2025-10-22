@@ -540,10 +540,16 @@ async def query_endpoint(
     doc_ids: Optional[str] = Form(None),
     doc_types: Optional[str] = Form(None)
 ):
+    """
+    RAG Endpoint สำหรับถามเอกสารหลายฉบับ
+    Output เป็น string สำหรับ UI
+    """
+    # แปลง doc_ids/doc_types เป็น list
     doc_id_list = doc_ids.split(",") if doc_ids else None
     doc_type_list = doc_types.split(",") if doc_types else None
     skipped = []
 
+    # โหลด vectorstores (เฉพาะ doc_ids ที่เลือก)
     try:
         multi_retriever = load_all_vectorstores(
             doc_ids=doc_id_list,
@@ -556,44 +562,80 @@ async def query_endpoint(
 
     loaded_doc_ids = [r.doc_id for r in multi_retriever.retrievers_list]
 
+    # ฟอร์แมต context: แยกเอกสาร + ชื่อจริง/metadata
+    def format_context_for_multiple_docs(docs):
+        context_sections = []
+        for i, d in enumerate(docs, 1):
+            doc_name = d.metadata.get("name", f"Document {i}")
+            context_sections.append(f"[{doc_name}]\n{d.page_content}")
+        return "\n\n".join(context_sections)
+
+    # ดึงเอกสาร rerank แล้ว กรองตาม doc_id ที่เลือก
     def get_all_docs_text(query_text):
         docs = multi_retriever._get_relevant_documents(query_text)
-        return "\n\n".join([d.page_content for d in docs if hasattr(d, "page_content")])
+        if doc_id_list:
+            docs = [d for d in docs if d.metadata.get("doc_id") in doc_id_list]
+        return format_context_for_multiple_docs(docs)
 
     context_text = await run_in_threadpool(lambda: get_all_docs_text(question))
 
-    # 🟢 NEW RAG PROMPT STRUCTURE IMPLEMENTATION
-    # 1. Format the Human Message content (Context + Question)
+    # สร้าง Prompt
     human_message_content = QA_PROMPT.format(context=context_text, question=question)
-
-    # 2. Create the message list (System Instruction + Human Message)
     messages = [
         SystemMessage(content=SYSTEM_QA_INSTRUCTION),
         HumanMessage(content=human_message_content)
     ]
-    
-    def call_llm_safe(messages_list: List[Any]) -> str: # Function signature updated
-        # 3. Invoke with the list of messages
-        res = llm_instance.invoke(messages_list) 
+
+    # เรียก LLM แบบ safe
+    def call_llm_safe(messages_list: List[Any]) -> str:
+        res = llm_instance.invoke(messages_list)
         if isinstance(res, dict) and "result" in res:
             return res["result"]
-        elif hasattr(res, 'content'): # Handle LangChain/SDK response object
+        elif hasattr(res, 'content'):
             return res.content.strip()
         elif isinstance(res, str):
             return res.strip()
         return str(res).strip()
 
-    # 4. Call LLM with the new messages list
-    answer = await run_in_threadpool(lambda: call_llm_safe(messages))
-    # 🟢 END NEW RAG PROMPT STRUCTURE IMPLEMENTATION
+    answer_text = await run_in_threadpool(lambda: call_llm_safe(messages))
 
-    return {
+    # แปลง LLM output เป็น string สำหรับ UI
+    output = {
         "question": question,
         "doc_ids": loaded_doc_ids,
         "doc_types": doc_type_list if doc_type_list else ["document", "faq"],
-        "answer": answer,
+        "answer": "",
         "skipped": skipped
     }
+
+    try:
+        import json
+        llm_json = json.loads(answer_text)
+        flattened_answer = []
+
+        if 'summary' in llm_json and llm_json['summary']:
+            flattened_answer.append("📌 Summary:\n" + llm_json['summary'])
+
+        if 'details' in llm_json and llm_json['details']:
+            for d in llm_json['details']:
+                flattened_answer.append(f"📄 {d.get('doc_name', '')}: {d.get('text', '')}")
+
+        if 'comparison' in llm_json and llm_json['comparison']:
+            flattened_answer.append("⚖️ Comparison:")
+            for k,v in llm_json['comparison'].items():
+                flattened_answer.append(f"{k}: {v}")
+
+        if 'search_results' in llm_json and llm_json['search_results']:
+            flattened_answer.append("🔍 Search Results:")
+            for r in llm_json['search_results']:
+                flattened_answer.append(f"{r.get('doc_name','')}: {r.get('text','')}")
+
+        output['answer'] = "\n\n".join(flattened_answer) if flattened_answer else answer_text
+
+    except Exception:
+        output['answer'] = answer_text
+
+    return output
 
 
 # -----------------------------
