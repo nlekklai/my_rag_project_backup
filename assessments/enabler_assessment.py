@@ -1,3 +1,4 @@
+#assessments/enabler_assessment.py
 import os
 import json
 import logging
@@ -92,6 +93,7 @@ class EnablerAssessment:
         self.RUBRIC_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_rating_criteria_rubric.json")
         self.LEVEL_FRACTIONS_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_scoring_level_fractions.json")
         self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_evidence_mapping.json")
+        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_mapping_by_level.json")
 
         # LOAD DATA
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
@@ -204,11 +206,38 @@ class EnablerAssessment:
     def _get_metadata_filter(self) -> Optional[Dict]:
         """Return None เสมอ เพราะ Filter Logic ถูกย้ายไปใช้กับ document ID"""
         return None 
+    
+    # 🌟 NEW HELPER METHOD: สำหรับสร้างข้อจำกัดให้กับ Query ตาม Level
+    def _get_level_constraint_prompt(self, level: int) -> str:
+        """
+        สร้าง Prompt Constraint เพื่อบอก LLM/Vector Search ให้กรองหลักฐาน L3/L4/L5 ออก
+        เพื่อให้ RAG ดึงหลักฐานที่เหมาะสมกับระดับวุฒิภาวะ
+        """
+        # หลักการ: ห้ามดึงหลักฐานที่มีระดับสูงกว่าระดับที่กำลังประเมิน
+        if level == 1:
+            # L1: ห้ามดึงหลักฐาน L3-L5 (การบูรณาการ, นวัตกรรม, การวัดผลระยะยาว)
+            return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การเริ่มต้น', 'การมีอยู่', หรือ 'การวางแผน' เท่านั้น ห้ามเกี่ยวข้องกับ 'การปรับปรุงอย่างต่อเนื่อง', 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L1-Filter)"
+        elif level == 2:
+            # L2: อนุญาต L1/L2 เท่านั้น ห้ามดึงหลักฐาน L4-L5
+            return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การปฏิบัติ', 'การทำให้เป็นมาตรฐาน', หรือ 'การประเมินเบื้องต้น' ห้ามเกี่ยวข้องกับ 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L2-Filter)"
+        elif level == 3:
+            # L3: มุ่งเน้นไปที่การควบคุมและการวัดผลระยะสั้น ห้าม L5
+            return "ข้อจำกัด: หลักฐานควรเกี่ยวกับ 'การควบคุม', 'การกำกับดูแล', หรือ 'การวัดผลเบื้องต้น' ห้ามเกี่ยวข้องกับ 'นวัตกรรม', หรือ 'การสร้างคุณค่าทางธุรกิจระยะยาว' (L3-Filter)"
+        elif level == 4:
+            # L4: อนุญาตทุกอย่างยกเว้น L5 (เน้นการบูรณาการและการปรับปรุง)
+            return "ข้อจำกัด: หลักฐานควรแสดงถึง 'การบูรณาการ' หรือ 'การปรับปรุงอย่างต่อเนื่อง' ห้ามเกี่ยวข้องกับการพิสูจน์ 'คุณค่าทางธุรกิจระยะยาว' (L4-Filter)"
+        elif level == 5:
+            # L5: ไม่จำกัด แต่เน้นเฉพาะคำสำคัญของ L5
+            return "ข้อจำกัด: หลักฐานควรแสดงถึง 'นวัตกรรม', 'การสร้างคุณค่าทางธุรกิจ', หรือ 'ผลลัพธ์ระยะยาว' โดยชัดเจน (L5-Focus)"
+        else:
+            return "กรุณาหาหลักฐานที่สอดคล้องกับเกณฑ์ที่ต้องการ"
 
 
     def _retrieve_context(self, query: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None, statement_number: int = 0) -> Dict[str, Any]:
         """
         ดึง Context โดยใช้ Filter จาก evidence mapping และ Metadata Filter ตาม Sub ID ที่ส่งมา
+        
+        🛑 อัพเดทตรรกะ: ใช้ Constrained Query เสมอ เพื่อเป็นเกราะป้องกันการ Mapping ที่ผิดพลาด
         """
         effective_mapping_data = mapping_data if mapping_data is not None else self.evidence_mapping_data
         
@@ -219,20 +248,25 @@ class EnablerAssessment:
         # 1. สร้างคีย์สำหรับ Mapping: "1.1_L1", "1.1_L2", ...
         mapping_key = f"{sub_criteria_id}_L{level}"
         
-        # 2. ดึง Filter IDs 
+        # 2. ดึง Filter IDs (Hard Filter - อาจจะว่างเปล่า)
         filter_ids: List[str] = effective_mapping_data.get(mapping_key, {}).get("filter_ids", [])
         
+        # 3. 🌟 (NEW) สร้าง Constrained Query เสมอ
+        constraint_instruction = self._get_level_constraint_prompt(level)
+        effective_query = f"{query}. {constraint_instruction}"
+        
+        logger.info(f"🔑 Constrained Query (L{level}, Filtered={bool(filter_ids)}): {effective_query}")
         
         # --- LOGIC สำหรับ REAL MODE (mapping_data is None) ---
         if mapping_data is None: 
-            if not filter_ids:
-                logger.warning(f"No filter IDs found for {mapping_key}. Retrieving context without doc_id restriction.")
 
-            # 4. เรียกใช้ RAG Retrieval (ส่ง filter_ids ที่ได้จาก mapping ไปที่ retrieve_context_with_filter)
+            # 4. เรียกใช้ RAG Retrieval 
+            # - query: ใช้ effective_query (มี Level Constraint เสมอ)
+            # - metadata_filter: ใช้ filter_ids (จะเป็น Hard Filter ถ้ามี ID, หรือเป็น Full-Scope ถ้าว่างเปล่า)
             result = retrieve_context_with_filter(
-                query=query, 
+                query=effective_query, 
                 retriever=self.vectorstore_retriever, 
-                metadata_filter=filter_ids # ส่ง filter_ids (doc_id) ไปที่ RAG
+                metadata_filter=filter_ids 
             )
             return result
 
@@ -412,7 +446,7 @@ class EnablerAssessment:
                         final_score = result.get("score", 0) # ใช้ score จาก LLM จริง
                         final_reason = result.get("reason", "")
                         final_sources = unique_sources # จาก RAG
-                        final_context_snippet = context[:120] + "..." if context else ""
+                        final_context_snippet = context[:240] + "..." if context else ""
                         final_pass_status = final_score == 1
                         final_status_th = "ผ่าน" if final_pass_status else "ไม่ผ่าน"
 
@@ -468,7 +502,7 @@ class EnablerAssessment:
         for i, statement in enumerate(statements):
             query_string = f"{statement} ({sub_criteria_name})"
             
-            # NOTE: ใน Mock Mode การเรียก _retrieve_context ที่นี่จะถูก Patch โดย run_assessment2.py
+            # NOTE: การเรียก _retrieve_context ที่นี่จะใช้ Logic Constrained Query ที่ปรับปรุงใหม่แล้ว
             retrieval_result = self._retrieve_context(
                 query=query_string,
                 sub_criteria_id=sub_criteria_id,

@@ -469,7 +469,7 @@ def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int,
     """
     Use LLM to create EvidenceSummary and validate via imported EvidenceSummary Pydantic model.
     """
-    MAX_LLM_SUMMARY_CONTEXT = 3000
+    MAX_LLM_SUMMARY_CONTEXT = 5000
 
     if llm_instance is None:
         return {"summary": "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งาน", "suggestion_for_next_level": "N/A"}

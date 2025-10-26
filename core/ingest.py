@@ -1,10 +1,10 @@
-# core/ingest.py
 import os
 import re
 import logging
-from datetime import datetime
+import unicodedata 
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Set, Iterable, Dict, Any
+from typing import List, Optional, Set, Iterable, Dict, Any, Union, Tuple
 import pandas as pd
 
 # Document loaders
@@ -16,10 +16,16 @@ from langchain_community.document_loaders import (
     UnstructuredPowerPointLoader,
     CSVLoader
 )
+try:
+    # 🚨 FIX: ใช้ UnstructuredFileLoader จาก langchain_community
+    from langchain_community.document_loaders import UnstructuredFileLoader 
+except ImportError:
+    from langchain.document_loaders import UnstructuredFileLoader 
+    
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 
-# vectorstore helpers
+# vectorstore helpers - สมมติว่าไฟล์ vectorstore.py อยู่ใน .
 from .vectorstore import save_to_vectorstore, vectorstore_exists
 
 # Optional OCR
@@ -32,10 +38,16 @@ except Exception:
     pytesseract = None
     _HAS_PDF2IMAGE = False
 
+# Try to import helper for filtering metadata
+try:
+    from langchain_community.vectorstores.utils import filter_complex_metadata as _imported_filter_complex_metadata
+except Exception:
+    _imported_filter_complex_metadata = None
+
 # -------------------- Config --------------------
 DATA_DIR = "data"
 VECTORSTORE_DIR = "vectorstore"
-SUPPORTED_TYPES = [".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv"]
+SUPPORTED_TYPES = [".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv", ".jpg", ".jpeg", ".png"]
 
 # Logging
 logging.basicConfig(
@@ -45,30 +57,86 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# -------------------- Helper: safe metadata filter --------------------
+def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
+    """
+    Ensure metadata is serializable and safe for Chroma / storage.
+    Prefer the imported `filter_complex_metadata` if available; otherwise fallback.
+    """
+    if _imported_filter_complex_metadata:
+        try:
+            if hasattr(meta, "items"):
+                return _imported_filter_complex_metadata(meta)
+            elif isinstance(meta, dict):
+                return _imported_filter_complex_metadata(meta)
+            else:
+                return _imported_filter_complex_metadata(dict(meta))
+        except Exception as e:
+            logger.debug(f"_imported_filter_complex_metadata failed: {e}")
+            # fallback to local
+    # Local safe fallback: keep primitives and stringify complex types
+    if not isinstance(meta, dict):
+        return {}
+    clean = {}
+    for k, v in meta.items():
+        if v is None:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            clean[k] = v
+        elif isinstance(v, (list, tuple)):
+            try:
+                clean[k] = [str(x) for x in v]
+            except Exception:
+                clean[k] = str(v)
+        elif isinstance(v, dict):
+            try:
+                clean[k] = {str(kk): str(vv) for kk, vv in v.items()}
+            except Exception:
+                clean[k] = str(v)
+        else:
+            try:
+                clean[k] = str(v)
+            except Exception:
+                # skip if cannot serialize
+                continue
+    return clean
+
+# -------------------- Normalization utility (FINAL REVISION) --------------------
+
+def _normalize_doc_id(text: str) -> str:
+    """
+    Final Logic: doc_id is the filename with the last extension removed, 
+    retaining all characters (including Thai and spaces). 
+    This function primarily ensures no leading/trailing spaces remain.
+    """
+    if not text:
+        return "default_doc"
+    # 🚨 โค้ดเหลือแค่ .strip()
+    doc_id = text.strip() 
+    
+    if not doc_id:
+        return "default_doc"
+        
+    return doc_id
+
+
 # -------------------- Text Cleaning --------------------
 def clean_text(text: str) -> str:
+    """Clean Thai/English text including typical OCR mistakes."""
     if not text:
         return ""
     text = text.replace('\xa0', ' ').replace('\u200b', '').replace('\u00ad', '')
     text = re.sub(r'[\uFFFD\u2000-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]', '', text)
-    
-    # 🚨 NEW: Aggressive collapsing of spaces between single Thai characters.
-    # แก้ไขปัญหาข้อความถูกแยกด้วยช่องว่าง (e.g., 'ก า ร ไ ฟ ฟ า' -> 'การไฟฟ้า') 
-    # โดยจะแทนที่อักขระไทย + ช่องว่าง 1-3 ครั้ง ด้วยอักขระไทยตัวนั้น โดยใช้ Lookahead
+    # Collapse spaces between Thai characters that were incorrectly split
     text = re.sub(r'([ก-๙])\s{1,3}(?=[ก-๙])', r'\1', text)
-    
     ocr_replacements = {
-        "สำนักงน": "สำนักงาน",
-        "คณะกรรมกร": "คณะกรรมการ",
-        "รัฐวิสหกิจ": "รัฐวิสาหกิจ",
-        "นโยบย": "นโยบาย",
-        "ดาน": "ด้าน",
-        "การดาเนนงาน": "การดำเนินงาน",
-        "การดาเนน": "การดำเนิน",
-        "ท\"": "ที่",
+        "สำนักงน": "สำนักงาน", "คณะกรรมกร": "คณะกรรมการ", "รัฐวิสหกิจ": "รัฐวิสาหกิจ",
+        "นโยบย": "นโยบาย", "ดาน": "ด้าน", "การดาเนนงาน": "การดำเนินงาน",
+        "การดาเนน": "การดำเนิน", "ท\"": "ที่",
     }
     for bad, good in ocr_replacements.items():
         text = text.replace(bad, good)
+    # remove chars outside ASCII and Thai ranges
     text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F]', '', text)
     text = re.sub(r'\(\s+', '(', text)
     text = re.sub(r'\s+\)', ')', text)
@@ -85,6 +153,46 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 # -------------------- Loaders --------------------
+
+def load_unstructured(path: str) -> List[Document]:
+    """
+    Loads complex/image files using UnstructuredFileLoader with enhanced error handling.
+    """
+    try:
+        # 1. ลองโหลดด้วย mode="elements"
+        try:
+            loader = UnstructuredFileLoader(path, mode="elements")
+            docs = loader.load()
+            return docs
+        except Exception as inner_e:
+            error_message = str(inner_e)
+            
+            # ดักจับ Error เฉพาะเจาะจง
+            if "NoneType" in error_message or "__str__ returned non-string" in error_message or "Unsupported file type" in error_message:
+                logger.warning(
+                    f"⚠️ Fallback: Unstructured mode='elements' failed for {os.path.basename(path)} (Error type: {error_message[:50]}). "
+                    f"Attempting load without 'elements' mode."
+                )
+                
+                # 2. Fallback: ลองโหลดแบบปกติ
+                try:
+                    loader_fallback = UnstructuredFileLoader(path)
+                    docs_fallback = loader_fallback.load()
+                    return docs_fallback
+                except Exception as fallback_e:
+                    # ถ้า Fallback ล้มเหลวอีกครั้ง ให้ Log เป็น Error และ Return เป็น List ว่าง
+                    logger.error(f"❌ Unstructured final load failed for {os.path.basename(path)}: {fallback_e}")
+                    return []
+            
+            # ถ้าเป็น Error อื่นๆ ที่ไม่รู้จัก ให้ส่งต่อไป
+            raise inner_e 
+            
+    except Exception as e:
+        # ดักจับ Error ที่มาจาก raise inner_e หรือ Error อื่นๆ ที่เกิดขึ้นในขั้นตอนการโหลด
+        logger.error(f"❌ Failed to load unstructured file {path}: {e}")
+        return []
+
+
 def load_txt(path: str) -> List[Document]:
     for enc in ["utf-8", "latin-1", "cp1252"]:
         try:
@@ -103,6 +211,7 @@ def _ocr_page_from_pdf(pdf_path: str, page_number: int, lang: str = "tha+eng") -
         if not images:
             return ""
         img = images[0]
+        # pytesseract.image_to_string should return str; wrap in try/except to avoid breaking
         return (pytesseract.image_to_string(img, lang=lang) or "").strip()
     except Exception as e:
         logger.warning(f"OCR error {os.path.basename(pdf_path)} page {page_number}: {e}")
@@ -117,6 +226,7 @@ def load_pdf(path: str, ocr_pages: Optional[Iterable[int]] = None) -> List[Docum
         logger.warning(f"PyPDFLoader failed for {path}: {e}.")
         pages = []
     total_pages = len(pages)
+    # if loader didn't provide pages, try to get page count via pdf2image
     if total_pages == 0 and _HAS_PDF2IMAGE:
         try:
             images = convert_from_path(path, dpi=50)
@@ -133,8 +243,9 @@ def load_pdf(path: str, ocr_pages: Optional[Iterable[int]] = None) -> List[Docum
                 if ocr_text:
                     text = ocr_text
         if text:
+            # Metadata: source_file is used to retain original filename
             docs.append(Document(page_content=text, metadata={"source_file": os.path.basename(path), "page": i}))
-    # Deduplicate
+    # Deduplicate by content
     seen = set()
     deduped = []
     for d in docs:
@@ -145,15 +256,23 @@ def load_pdf(path: str, ocr_pages: Optional[Iterable[int]] = None) -> List[Docum
     return deduped
 
 def load_docx(path: str) -> List[Document]:
-    try: return UnstructuredWordDocumentLoader(path).load()
-    except Exception as e: logger.error(f"Failed to load .docx {path}: {e}"); return []
+    try:
+        return UnstructuredWordDocumentLoader(path).load()
+    except Exception as e:
+        logger.error(f"Failed to load .docx {path}: {e}")
+        return []
 
 def load_xlsx_generic_structured(path: str) -> List[Document]:
     try:
         xls = pd.ExcelFile(path)
     except Exception as e:
         logger.error(f"Failed to open Excel file {path}: {e}")
-        return UnstructuredExcelLoader(path).load()
+        # fallback to unstructured loader if available
+        try:
+            return UnstructuredExcelLoader(path).load()
+        except Exception as e2:
+            logger.error(f"UnstructuredExcelLoader fallback failed for {path}: {e2}")
+            return []
 
     all_docs: List[Document] = []
     score_keywords = ["น้ำหนัก", "คะแนน", "score", "weight"]
@@ -195,7 +314,8 @@ def load_xlsx_generic_structured(path: str) -> List[Document]:
                 sheet_content_seen = set()
                 for idx, row in df_structured.iterrows():
                     page_content_raw = str(row[detail_col]).strip()
-                    if len(page_content_raw) < 10 or page_content_raw in sheet_content_seen: continue
+                    if len(page_content_raw) < 10 or page_content_raw in sheet_content_seen:
+                        continue
                     sheet_content_seen.add(page_content_raw)
                     metadata = {
                         "source_file": os.path.basename(path),
@@ -229,7 +349,11 @@ def load_xlsx_generic_structured(path: str) -> List[Document]:
             logger.error(f"Error processing sheet '{sheet_name}' of {os.path.basename(path)}: {e}")
     if not all_docs:
         logger.warning(f"Structured load failed for {os.path.basename(path)}. Falling back to UnstructuredExcelLoader.")
-        return UnstructuredExcelLoader(path).load()
+        try:
+            return UnstructuredExcelLoader(path).load()
+        except Exception as e:
+            logger.error(f"UnstructuredExcelLoader fallback failed for {path}: {e}")
+            return []
     # Deduplicate final
     final_seen = set()
     final_docs = []
@@ -240,80 +364,255 @@ def load_xlsx_generic_structured(path: str) -> List[Document]:
             final_docs.append(d)
     if not final_docs:
         logger.warning(f"Structured load resulted in zero documents after filtering. Falling back to UnstructuredExcelLoader.")
-        return UnstructuredExcelLoader(path).load()
+        try:
+            return UnstructuredExcelLoader(path).load()
+        except Exception as e:
+            logger.error(f"UnstructuredExcelLoader fallback failed for {path}: {e}")
+            return []
     return final_docs
 
 def load_xlsx(path: str) -> List[Document]:
     return load_xlsx_generic_structured(path)
 
 def load_pptx(path: str) -> List[Document]:
-    try: return UnstructuredPowerPointLoader(path).load()
-    except Exception as e: logger.error(f"Failed to load .pptx {path}: {e}"); return []
+    try:
+        return UnstructuredPowerPointLoader(path).load()
+    except Exception as e:
+        logger.error(f"Failed to load .pptx {path}: {e}")
+        return []
 
 def load_md(path: str) -> List[Document]:
-    try: return TextLoader(path, encoding="utf-8").load()
-    except Exception as e: logger.error(f"Failed to load .md {path}: {e}"); return []
+    try:
+        return TextLoader(path, encoding="utf-8").load()
+    except Exception as e:
+        logger.error(f"Failed to load .md {path}: {e}")
+        return []
 
 def load_csv(path: str) -> List[Document]:
-    try: return CSVLoader(path).load()
-    except Exception as e: logger.error(f"Failed to load .csv {path}: {e}"); return []
+    try:
+        return CSVLoader(path).load()
+    except Exception as e:
+        logger.error(f"Failed to load .csv {path}: {e}")
+        return []
 
 FILE_LOADER_MAP = {
     ".pdf": load_pdf, ".docx": load_docx, ".txt": load_txt,
-    ".xlsx": load_xlsx, ".pptx": load_pptx, ".md": load_md, ".csv": load_csv
+    ".xlsx": load_xlsx, ".pptx": load_pptx, ".md": load_md, ".csv": load_csv,
+    ".jpg": load_unstructured, ".jpeg": load_unstructured, ".png": load_unstructured
 }
+
+# -------------------- Normalization utility --------------------
+def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] = None) -> List[Document]:
+    """
+    Normalize loader outputs to a list of langchain.schema.Document
+    """
+    normalized: List[Document] = []
+    for idx, item in enumerate(raw_docs):
+        try:
+            if isinstance(item, Document):
+                doc = item
+            elif isinstance(item, str):
+                doc = Document(page_content=item, metadata={})
+            elif isinstance(item, dict):
+                content = item.get("page_content") or item.get("text") or item.get("content") or ""
+                meta = item.get("metadata") or item.get("meta") or {}
+                doc = Document(page_content=content, metadata=meta)
+            else:
+                # try common attributes
+                text = None
+                if hasattr(item, "page_content"):
+                    text = getattr(item, "page_content")
+                elif hasattr(item, "text"):
+                    text = getattr(item, "text")
+                elif hasattr(item, "get_text"):
+                    try:
+                        text = item.get_text()
+                    except Exception:
+                        text = str(item)
+                else:
+                    text = str(item)
+                doc = Document(page_content=text, metadata={})
+            # ensure metadata is a dict
+            if not isinstance(doc.metadata, dict):
+                doc.metadata = {"_raw_meta": str(doc.metadata)}
+            # add source file if provided and not exists (used as source name for display/lookup)
+            if source_path:
+                doc.metadata.setdefault("source_file", os.path.basename(source_path))
+            # sanitize metadata
+            try:
+                doc.metadata = _safe_filter_complex_metadata(doc.metadata)
+            except Exception:
+                doc.metadata = {}
+            normalized.append(doc)
+        except Exception as e:
+            logger.warning(f"normalize_loaded_documents: skipping item #{idx} due to error: {e}")
+            continue
+    return normalized
+
+# -------------------- Load & Chunk Document (for Retrieval/Mapping) --------------------
+def load_and_chunk_document(
+    file_path: str,
+    doc_id: str,
+    year: Optional[int] = None,
+    version: str = "v1",
+    metadata: Optional[Dict[str, Any]] = None,
+    ocr_pages: Optional[Iterable[int]] = None
+) -> List[Document]:
+    """
+    Load, clean, chunk — return list of Documents (not saving to vectorstore)
+    """
+    file_name = os.path.basename(file_path)
+    ext = os.path.splitext(file_name)[1].lower()
+
+    if ext not in SUPPORTED_TYPES:
+        raise ValueError(f"Unsupported file type: {file_name}")
+
+    loader_func = FILE_LOADER_MAP.get(ext)
+    if not loader_func:
+        logger.error(f"No loader for extension {ext}")
+        return []
+
+    # Load raw
+    try:
+        raw_docs = loader_func(file_path) if ext != ".pdf" else load_pdf(file_path, ocr_pages=ocr_pages)
+    except Exception as e:
+        logger.error(f"Loader {loader_func} raised for {file_path}: {e}")
+        raw_docs = []
+
+    if not raw_docs:
+        logger.warning(f"No content loaded from {file_name}")
+        return []
+
+    # Normalize to Document objects
+    docs = normalize_loaded_documents(raw_docs, source_path=file_path)
+
+    # Update metadata with provided values
+    for d in docs:
+        if metadata:
+            try:
+                d.metadata.update(metadata)
+            except Exception:
+                d.metadata["injected_metadata"] = str(metadata)
+        if year:
+            d.metadata["year"] = year
+        d.metadata["version"] = version
+        d.metadata["doc_id"] = doc_id
+        # d.metadata["source_file"] is set in normalize_loaded_documents, use it as 'source'
+        d.metadata["source"] = d.metadata.get("source_file", file_name) 
+
+    # Determine structured vs text
+    is_structured_data = ext in [".xlsx", ".csv", ".jpg", ".jpeg", ".png"]
+
+    if not is_structured_data:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+        try:
+            chunks = splitter.split_documents(docs)
+        except Exception as e:
+            logger.warning(f"Text splitter failed on {file_name}: {e}. Falling back to using whole documents as chunks.")
+            chunks = docs
+    else:
+        chunks = docs
+
+    # Clean text and annotate chunk_index
+    for idx, c in enumerate(chunks, start=1):
+        c.page_content = clean_text(c.page_content)
+        c.metadata["chunk_index"] = idx
+
+    logger.info(f"Loaded and chunked {file_name} -> {len(chunks)} chunks.")
+    return chunks
 
 # -------------------- Process single document --------------------
 def process_document(
     file_path: str,
     file_name: str,
-    collection_id: Optional[str] = None,
+    doc_id: Optional[str] = None,
     doc_type: Optional[str] = None,
-    base_path: str = VECTORSTORE_DIR,
+    base_path: str = VECTORSTORE_DIR, 
     year: Optional[int] = None,
     version: str = "v1",
     metadata: dict = None,
+    source_name_for_display: Optional[str] = None,
     ocr_pages: Optional[Iterable[int]] = None
 ) -> str:
-    final_doc_id = collection_id if collection_id else os.path.splitext(file_name)[0]
-    doc_type = doc_type or "default"  # ✅ fallback
+    """
+    Load -> chunk -> save to vectorstore. Returns doc_id used.
+    """
+    
+    # 1. Normalize doc_id: ตัด Extension ออกก่อน แล้วใช้ _normalize_doc_id
+    raw_doc_id_input = doc_id if doc_id else os.path.splitext(file_name)[0]
+    final_doc_id = _normalize_doc_id(raw_doc_id_input) 
+    
+    if not final_doc_id or len(final_doc_id) < 3:
+        raise ValueError(f"Validation error: Cannot generate a valid Doc ID from '{raw_doc_id_input}'. Got: {final_doc_id}")
+        
+    doc_type = doc_type or "default"
     ext = os.path.splitext(file_name)[1].lower()
+    final_source_name = source_name_for_display or file_name
+    
     if ext not in SUPPORTED_TYPES:
         raise ValueError(f"Unsupported file type: {file_name}")
     loader_func = FILE_LOADER_MAP.get(ext)
-    docs = loader_func(file_path) if ext != ".pdf" else load_pdf(file_path, ocr_pages=ocr_pages)
-    if not docs:
+    if not loader_func:
+        logger.error(f"No loader for extension {ext}")
+        return final_doc_id
+
+    # Load raw and normalize
+    try:
+        raw_docs = loader_func(file_path) if ext != ".pdf" else load_pdf(file_path, ocr_pages=ocr_pages)
+    except Exception as e:
+        logger.error(f"Loader {loader_func} raised for {file_path}: {e}")
+        raw_docs = []
+
+    if not raw_docs:
         logger.warning(f"No content loaded from {file_name}")
         return final_doc_id
-    for doc in docs:
-        doc.metadata.setdefault("source_file", file_name)
-        if metadata: doc.metadata.update(metadata)
-        if year: doc.metadata["year"] = year
-        doc.metadata["version"] = version
 
-    is_structured_data = ext == ".xlsx"
+    docs = normalize_loaded_documents(raw_docs, source_path=file_path)
+
+    # ensure base metadata keys
+    for d in docs:
+        d.metadata.setdefault("source_file", file_name)
+        if metadata:
+            try:
+                d.metadata.update(metadata)
+            except Exception:
+                d.metadata["injected_metadata"] = str(metadata)
+        if year:
+            d.metadata["year"] = year
+        d.metadata["version"] = version
+        d.metadata["source"] = final_source_name 
+        d.metadata["doc_id"] = final_doc_id
+
+    is_structured_data = ext in [".xlsx", ".csv", ".jpg", ".jpeg", ".png"]
+
     if not is_structured_data:
         splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
-        chunks = splitter.split_documents(docs)
+        try:
+            chunks = splitter.split_documents(docs)
+        except Exception as e:
+            logger.warning(f"Text splitter failed on {file_name}: {e}. Using original docs as chunks.")
+            chunks = docs
     else:
         chunks = docs
 
+    # Clean chunk content and metadata
     for idx, c in enumerate(chunks, start=1):
         c.page_content = clean_text(c.page_content)
         c.metadata["chunk_index"] = idx
+
     chunk_texts = [c.page_content for c in chunks]
+    chunk_metadatas = [c.metadata for c in chunks]
 
     try:
         save_to_vectorstore(
-            final_doc_id,
-            chunk_texts,
-            metadata={"source_file": file_name},
-            doc_type=doc_type,
-            base_path=base_path
+            texts=chunk_texts,         
+            metadatas=chunk_metadatas, 
+            doc_id=final_doc_id,       
+            doc_type=doc_type          
         )
         logger.info(f"Processed {file_name} -> doc_id: {final_doc_id} ({len(chunks)} chunks) in doc_type={doc_type}")
     except Exception as e:
-        logger.error(f"Failed to save vectorstore for {final_doc_id}: {e}")
+        logger.error(f"Failed to save vectorstore for {final_doc_id}: {e}", exc_info=True)
         raise
     return final_doc_id
 
@@ -327,6 +626,7 @@ def ingest_all_files(
     version: str = "v1",
     sequential: bool = True
 ) -> List[Dict[str, Any]]:
+    """Process all files in a folder (ThreadPoolExecutor if not sequential)"""
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(base_path, exist_ok=True)
     files_to_process = [
@@ -334,28 +634,31 @@ def ingest_all_files(
         if os.path.isfile(os.path.join(data_dir, f))
     ]
     results = []
+
     def _process_file(f):
         file_path = os.path.join(data_dir, f)
-        doc_id = os.path.splitext(f)[0]
         return process_document(
             file_path=file_path,
             file_name=f,
-            collection_id=doc_id,
             doc_type=doc_type or "default",
             base_path=base_path,
             year=year,
             version=version
         )
+
     if sequential:
         for f in files_to_process:
             try:
                 doc_id = _process_file(f)
                 results.append({"file": f, "doc_id": doc_id, "status": "processed"})
             except Exception as e:
+                raw_doc_id = os.path.splitext(f)[0]
+                error_doc_id = _normalize_doc_id(raw_doc_id)
                 logger.error(f"Error processing {f}: {e}")
-                results.append({"file": f, "doc_id": None, "status": "failed", "error": str(e)})
+                results.append({"file": f, "doc_id": error_doc_id, "status": "failed", "error": str(e)})
     else:
-        with ThreadPoolExecutor() as executor:
+        max_workers = min(8, (os.cpu_count() or 4))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {executor.submit(_process_file, f): f for f in files_to_process}
             for future in as_completed(future_to_file):
                 f = future_to_file[future]
@@ -363,64 +666,111 @@ def ingest_all_files(
                     doc_id = future.result()
                     results.append({"file": f, "doc_id": doc_id, "status": "processed"})
                 except Exception as e:
+                    raw_doc_id = os.path.splitext(f)[0]
+                    error_doc_id = _normalize_doc_id(raw_doc_id)
                     logger.error(f"Error processing {f}: {e}")
-                    results.append({"file": f, "doc_id": None, "status": "failed", "error": str(e)})
+                    results.append({"file": f, "doc_id": error_doc_id, "status": "failed", "error": str(e)})
     return results
 
-# -------------------- List & Delete --------------------
+# -------------------- List & Delete (REVISED FINAL) --------------------
 def list_documents(doc_types: Optional[List[str]] = None) -> List[dict]:
+    """
+    แสดงรายการไฟล์ที่ถูกอัปโหลดทั้งหมด โดยค้นหาไฟล์ต้นฉบับทั้งหมดภายใต้ DATA_DIR
+    และตรวจสอบสถานะ Ingested จาก Vectorstore paths (ใช้ชื่อไฟล์ดิบที่ตัด ext เป็น doc_id)
+    """
     files = []
-    for f in os.listdir(DATA_DIR):
-        if f.startswith('.'):  # skip hidden/system files
-            continue
-        path = os.path.join(DATA_DIR, f)
-        if not os.path.isfile(path):
-            continue
-        stat = os.stat(path)
-        doc_id = os.path.splitext(f)[0]
-        if doc_types:
-            valid = False
-            for dt in doc_types:
-                vectordir = os.path.join(VECTORSTORE_DIR, dt, doc_id)
-                if os.path.exists(vectordir):
-                    valid = True
-                    break
-            if not valid:
+    processed_doc_ids: Dict[str, str] = {} # doc_id -> filename
+    
+    for root, _, filenames in os.walk(DATA_DIR):
+        for f in filenames:
+            if f.startswith('.'):
                 continue
-        files.append({
-            "doc_id": doc_id,
-            "filename": f,
-            "file_type": os.path.splitext(f)[1].lower(),
-            "upload_date": datetime.utcfromtimestamp(stat.st_mtime).isoformat(),
-            "status": "Ingested" if os.path.exists(os.path.join(VECTORSTORE_DIR, doc_id)) else "Pending"
-        })
+            
+            file_extension = os.path.splitext(f)[1].lower()
+            if file_extension not in SUPPORTED_TYPES:
+                continue
+
+            path = os.path.join(root, f)
+            stat = os.stat(path)
+            
+            # 1. ตัด Extension สุดท้ายออก (รองรับ double extension)
+            raw_doc_id_no_ext = os.path.splitext(f)[0]
+            # 2. ใช้ _normalize_doc_id (strip เท่านั้น)
+            doc_id = _normalize_doc_id(raw_doc_id_no_ext)
+            
+            if doc_id in processed_doc_ids:
+                logger.warning(f"Skipping duplicate file with same doc_id '{doc_id}': {f} (original: {processed_doc_ids[doc_id]})")
+                continue
+            
+            processed_doc_ids[doc_id] = f
+
+            # 3. ตรวจสอบสถานะ Ingested
+            doc_type_candidates = ['document', 'faq'] 
+            relative_path = os.path.relpath(root, DATA_DIR)
+            current_folder_name = relative_path.split(os.sep)[0] if relative_path != '.' else 'document'
+            
+            if current_folder_name != 'document' and current_folder_name not in doc_type_candidates:
+                 doc_type_candidates.insert(0, current_folder_name)
+                 
+            if doc_types:
+                doc_type_candidates = [dt for dt in doc_type_candidates if dt in doc_types]
+            
+            is_ingested = False
+            found_doc_type = None
+
+            for dt in doc_type_candidates:
+                # 🚨 ใช้ doc_id ที่เป็นชื่อไฟล์ดิบ (ตัด ext) ในการตรวจสอบ
+                if vectorstore_exists(doc_id, doc_type=dt, base_path=VECTORSTORE_DIR):
+                    is_ingested = True
+                    found_doc_type = dt
+                    break
+            
+            # 4. สร้างรายการผลลัพธ์
+            file_entry = {
+                "doc_id": doc_id, 
+                "filename": f,
+                "doc_type": found_doc_type or current_folder_name, 
+                "file_type": file_extension,
+                "upload_date": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "status": "Ingested" if is_ingested else "Not Ingested",
+            }
+            files.append(file_entry)
+            
     return files
 
-def delete_document(doc_id: str, doc_type: Optional[str] = None):
-    file_found = False
-    for f in os.listdir(DATA_DIR):
-        if os.path.splitext(f)[0] == doc_id:
-            path = os.path.join(DATA_DIR, f)
-            try:
-                os.remove(path)
-                file_found = True
-                logger.info(f"Deleted source file: {path}")
-            except Exception as e:
-                logger.error(f"Failed to delete source file {path}: {e}")
-            break
-    vectordirs = []
-    if doc_type:
-        vectordirs.append(os.path.join(VECTORSTORE_DIR, doc_type, doc_id))
-    else:
-        for dt in os.listdir(VECTORSTORE_DIR):
-            vectordirs.append(os.path.join(VECTORSTORE_DIR, dt, doc_id))
-    for vd in vectordirs:
-        if os.path.exists(vd):
-            try:
-                import shutil
-                shutil.rmtree(vd)
-                logger.info(f"Deleted vectorstore: {vd}")
-            except Exception as e:
-                logger.error(f"Failed to delete vectorstore {vd}: {e}")
-    if not file_found:
-        logger.warning(f"No source file found for doc_id={doc_id}")
+def delete_document(doc_id: str, doc_type: str = "document", base_path: str = VECTORSTORE_DIR) -> bool:
+    """
+    ลบไฟล์ต้นฉบับใน DATA_DIR และ vectorstore ที่เกี่ยวข้องกับ doc_id
+    
+    Returns True ถ้าลบสำเร็จ, False ถ้าไฟล์หรือ vectorstore ไม่พบ
+    """
+    # 1️⃣ ลบไฟล์ต้นฉบับใน DATA_DIR
+    deleted_any = False
+    for root, _, files in os.walk(DATA_DIR):
+        for f in files:
+            raw_doc_id_no_ext = os.path.splitext(f)[0]
+            normalized_id = _normalize_doc_id(raw_doc_id_no_ext)
+            if normalized_id == doc_id:
+                path = os.path.join(root, f)
+                try:
+                    os.remove(path)
+                    logger.info(f"Deleted original file: {path}")
+                    deleted_any = True
+                except Exception as e:
+                    logger.error(f"Failed to delete file {path}: {e}")
+
+    # 2️⃣ ลบ vectorstore folder ถ้ามี
+    vs_path = os.path.join(base_path, doc_type, doc_id)
+    if os.path.exists(vs_path):
+        try:
+            import shutil
+            shutil.rmtree(vs_path)
+            logger.info(f"Deleted vectorstore for doc_id={doc_id}, doc_type={doc_type}")
+            deleted_any = True
+        except Exception as e:
+            logger.error(f"Failed to delete vectorstore {vs_path}: {e}")
+    
+    if not deleted_any:
+        logger.warning(f"No file or vectorstore found for doc_id={doc_id}")
+    
+    return deleted_any

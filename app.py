@@ -1,3 +1,4 @@
+#app.py
 import logging
 import os
 import json
@@ -24,6 +25,8 @@ from models.llm import llm as llm_instance
 from core.run_assessment import run_assessment_process 
 # -------------------------------------------
 
+from core.evidence_mapping_generator import EvidenceMappingGenerator
+generator = EvidenceMappingGenerator(enabler_id="KM")
 
 # -----------------------------
 # --- Logging Setup ---
@@ -383,6 +386,16 @@ def _background_auto_mapper(enabler: str):
 async def get_documents():
     return list_documents(doc_types=['document', 'faq'])
 
+# 🟢 NEW: Endpoint สำหรับแสดงรายการเอกสารทั้งหมด
+@app.get("/api/uploads/list", response_model=List[UploadResponse])
+async def list_all_uploads():
+    """
+    แสดงรายการไฟล์ที่ถูกอัปโหลดทั้งหมด โดยไม่จำกัด doc_type
+    (ใช้ list_documents ที่แก้ไขแล้วจาก ingest.py)
+    """
+    # เรียก list_documents โดยไม่ส่ง doc_types เพื่อให้แสดงทั้งหมด
+    return list_documents()
+
 @app.delete("/api/documents/{doc_id}")
 async def remove_document(doc_id: str):
     try:
@@ -395,7 +408,7 @@ async def remove_document(doc_id: str):
 # --- Upload Endpoints (โค้ดเดิม) ---
 # -----------------------------
 @app.post("/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile):
+async def upload_file(file: UploadFile = File(...), source_name: Optional[str] = Form(None)):
     os.makedirs(DATA_DIR, exist_ok=True)
     file_path = os.path.join(DATA_DIR, file.filename)
     with open(file_path, "wb") as f:
@@ -420,6 +433,7 @@ async def upload_file_type(doc_type: str, file: UploadFile = File(...)):
 
     try:
         doc_id = process_document(file_path=file_path, file_name=file.filename, doc_type=doc_type)
+        
     except Exception as e:
         logger.error(f"Failed to process {file.filename} as {doc_type}: {e}")
         return UploadResponse(
@@ -498,7 +512,7 @@ async def download_upload(doc_type: str, file_id: str):
 
 
 # -----------------------------
-# --- Ingest Endpoint (โค้ดเดิม) ---
+# --- Ingest Endpoint (ปรับปรุงพร้อม Logic ป้องกัน) ---
 # -----------------------------
 class IngestRequest(BaseModel):
     doc_ids: List[str]
@@ -506,26 +520,59 @@ class IngestRequest(BaseModel):
 
 @app.post("/ingest")
 async def ingest_documents(request: IngestRequest):
+    """
+    ประมวลผลเอกสารที่มีอยู่แล้วตาม doc_ids
+    """
     results = []
+    
+    # 1. กำหนดโฟลเดอร์สำหรับเอกสารต้นฉบับ
+    folder = os.path.join(DATA_DIR, request.doc_type)
+    if not os.path.isdir(folder):
+         return {"status": "failed", "error": f"Document type folder not found: {folder}"}
+
     for doc_id in request.doc_ids:
-        folder = os.path.join(DATA_DIR, request.doc_type)
-        matched_files = [f for f in os.listdir(folder) if os.path.splitext(f)[0] == doc_id]
+        # 2. ค้นหาไฟล์ต้นฉบับ
+        matched_files = [
+            f for f in os.listdir(folder) 
+            if os.path.splitext(f)[0] == doc_id
+        ]
 
         if not matched_files:
-            results.append({"doc_id": doc_id, "result": "failed", "error": "File not found"})
+            results.append({"doc_id": doc_id, "result": "failed", "error": f"File for doc_id '{doc_id}' not found in {folder}"})
             continue
 
         file_name = matched_files[0]
+        
+        # 🟢 NEW: Logic ป้องกันไฟล์ที่ไม่รองรับ
+        file_extension = os.path.splitext(file_name)[1].lower()
+        if file_extension not in SUPPORTED_TYPES:
+            results.append({"doc_id": doc_id, "result": "failed", "error": f"Unsupported file type: {file_extension}. Supported types are: {', '.join(SUPPORTED_TYPES)}"})
+            continue
+        
         file_path = os.path.join(folder, file_name)
+        logger.info(f"Attempting to re-ingest file: {file_path}")
 
         try:
-            process_document(file_path=file_path, file_name=file_name, doc_type=request.doc_type)
+            # 3. เรียกใช้ process_document พร้อมส่ง doc_id และ base_path (VECTORSTORE_DIR)
+            process_document(
+                file_path=file_path, 
+                file_name=file_name, 
+                doc_type=request.doc_type, 
+                doc_id=doc_id, # 💡 การส่ง doc_id เข้าไปโดยตรง
+                base_path=VECTORSTORE_DIR # 💡 ส่ง base_path เข้าไป
+            )
+            
         except Exception as e:
-            logger.warning(f"Warning while processing {doc_id}: {e}")
-
-        if vectorstore_exists(doc_id, doc_type=request.doc_type):
+            logger.error(f"Error while processing document {doc_id}: {e}", exc_info=True)
+            results.append({"doc_id": doc_id, "result": "failed", "error": str(e)})
+            continue
+        
+        # 4. ตรวจสอบสถานะการสร้าง Vector Store
+        # ต้องส่ง base_path เข้าไปด้วย
+        if vectorstore_exists(doc_id, doc_type=request.doc_type, base_path=VECTORSTORE_DIR):
             results.append({"doc_id": doc_id, "result": "success"})
         else:
+            logger.warning(f"Vectorstore not found for {doc_id} after processing.")
             results.append({"doc_id": doc_id, "result": "failed", "error": "Vectorstore not found after processing"})
 
     return {"status": "completed", "results": results}
@@ -560,7 +607,9 @@ async def query_endpoint(
     except ValueError as e:
         return {"error": str(e), "skipped": skipped}
 
-    loaded_doc_ids = [r.doc_id for r in multi_retriever.retrievers_list]
+    # ดึง doc_id จากเอกสารที่เรียกมาแทน retrievers_list
+    docs_for_question = await run_in_threadpool(lambda: multi_retriever._get_relevant_documents(question))
+    loaded_doc_ids = list({d.metadata.get("doc_id") for d in docs_for_question if d.metadata.get("doc_id")})
 
     # ฟอร์แมต context: แยกเอกสาร + ชื่อจริง/metadata
     def format_context_for_multiple_docs(docs):
@@ -570,14 +619,7 @@ async def query_endpoint(
             context_sections.append(f"[{doc_name}]\n{d.page_content}")
         return "\n\n".join(context_sections)
 
-    # ดึงเอกสาร rerank แล้ว กรองตาม doc_id ที่เลือก
-    def get_all_docs_text(query_text):
-        docs = multi_retriever._get_relevant_documents(query_text)
-        if doc_id_list:
-            docs = [d for d in docs if d.metadata.get("doc_id") in doc_id_list]
-        return format_context_for_multiple_docs(docs)
-
-    context_text = await run_in_threadpool(lambda: get_all_docs_text(question))
+    context_text = format_context_for_multiple_docs(docs_for_question)
 
     # สร้าง Prompt
     human_message_content = QA_PROMPT.format(context=context_text, question=question)
@@ -636,6 +678,7 @@ async def query_endpoint(
         output['answer'] = answer_text
 
     return output
+
 
 
 # -----------------------------
@@ -736,6 +779,23 @@ async def compare(
         "skipped": skipped
     }
 
+@app.post("/map-evidence/")
+async def map_evidence(file: UploadFile):
+    # บันทึกไฟล์ชั่วคราว
+    file_path = f"/tmp/{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    # เรียก generator
+    results = generator.process_and_suggest_mapping(
+        file_path=file_path,
+        doc_id=file.filename,
+        top_k_statements=7,
+        similarity_threshold=0.85,
+        suggestion_limit=5
+    )
+
+    return {"results": results}
 
 # -----------------------------
 # --- Health & Status (โค้ดเดิม) ---

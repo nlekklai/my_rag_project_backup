@@ -122,6 +122,7 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
     for r in raw_results:
         score_val = r.get('llm_score', r.get('score', 1))
         try:
+            # รวม statements ที่ถูก Skip ด้วย (score -1) แต่โดยทั่วไปควรจะถูกกรองไปตั้งแต่ต้น
             if int(score_val) == 0:
                 all_failed.append({
                     "sub_id": r.get('sub_criteria_id', 'N/A'),
@@ -250,28 +251,32 @@ def generate_and_integrate_l5_summary(assessor, results):
             except Exception:
                 l5_context_info = None
             
-            # NOTE: l5_context_info ใน EnablerAssessment.generate_evidence_summary_for_level คาดว่าจะ return string
-            l5_context = l5_context_info.get("combined_context", "") if isinstance(l5_context_info, dict) else (l5_context_info if isinstance(l5_context_info, str) else "")
-            
-            if "MOCK SUMMARY" in l5_context:
-                l5_summary_result = {"summary": l5_context, "suggestion_for_next_level": "N/A (MOCK)"}
-            elif not l5_context.strip():
-                l5_summary_result = {"summary": "ไม่พบหลักฐานที่เกี่ยวข้องสำหรับ Level 5 ในฐานข้อมูล RAG.", "suggestion_for_next_level": "N/A"}
+            # NOTE: l5_context_info ใน EnablerAssessment.generate_evidence_summary_for_level คาดว่าจะ return dict
+            # 🛑 FIX: เนื่องจากการเรียก generate_evidence_summary_for_level() ใน enabler_assessment.py ถูกออกแบบให้ return str (summary) 
+            # เราจึงต้องปรับการดึงค่าตรงนี้เล็กน้อย หรือให้ LLM ใน retrieval_utils return Dict ตาม schema
+            # ในกรณีนี้ เราจะสมมติว่า generate_evidence_summary_for_level (ที่ใช้ summarize_context_with_llm) คาดว่าจะได้ Dict
+            if isinstance(l5_context_info, dict):
+                l5_context = l5_context_info.get("combined_context", "")
+            elif isinstance(l5_context_info, str):
+                l5_context = l5_context_info
             else:
-                try:
-                    # 🛑 ใช้ summarize_context_with_llm() ของ core.retrieval_utils ซึ่งจะถูก Patch
-                    l5_summary_result = core.retrieval_utils.summarize_context_with_llm(
-                        context=l5_context,
-                        sub_criteria_name=sub_name,
-                        level=5,
-                        sub_id=sub_id,
-                        schema=EvidenceSummary
-                    )
-                    if not isinstance(l5_summary_result, dict):
-                        l5_summary_result = {"summary": str(l5_summary_result), "suggestion_for_next_level": "N/A"}
-                except Exception as e:
-                    l5_summary_result = {"summary": f"Error generating L5 summary: {e}", "suggestion_for_next_level": "N/A"}
-                    
+                l5_context = ""
+            
+            # NOTE: ในโค้ดปัจจุบัน (enabler_assessment.py) generate_evidence_summary_for_level() return summary_result ซึ่งเป็น dict หรือ str 
+            # แต่เนื่องจากโค้ดเดิมมีปัญหาเรื่องการจัดการ context_info เราจะรัน summarize_context_with_llm (ซึ่งถูก Patch) ใน enabler_assessment.py โดยตรง
+            
+            # 🛑 FIX LOGIC: เนื่องจาก generate_evidence_summary_for_level ถูกแก้ไขให้ return summary (str หรือ dict จาก LLM) โดยตรง
+            l5_summary_result = l5_context_info
+
+            if isinstance(l5_summary_result, str):
+                if "ไม่พบหลักฐาน" in l5_summary_result:
+                    l5_summary_result = {"summary": l5_summary_result, "suggestion_for_next_level": "N/A (No Evidence Found)"}
+                else:
+                    l5_summary_result = {"summary": l5_summary_result, "suggestion_for_next_level": "N/A"}
+            
+            if not l5_summary_result.get("summary", "").strip():
+                l5_summary_result = {"summary": "ไม่พบหลักฐานที่เกี่ยวข้องสำหรับ Level 5 ในฐานข้อมูล RAG.", "suggestion_for_next_level": "N/A"}
+
             sub_data["evidence_summary_L5"] = l5_summary_result
             updated_breakdown[sub_id] = sub_data
         except Exception as e_outer:
@@ -309,12 +314,20 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
                 all_enabler_file_ids.extend(data.get('filter_ids', []))
             base_enabler_files = list(set(all_enabler_file_ids))
             target_collection_names = base_enabler_files
+            
+            # --- TANGIBLE FIX: Filter Vector Store Collections ---
             if filter_mode and sub_criteria_id != "all":
                 file_ids_to_load = []
                 for key, data in evidence_mapping.items():
                     if key.startswith(f"{sub_criteria_id}_L"): 
                         file_ids_to_load.extend(data.get('filter_ids', []))
                 target_collection_names = list(set(file_ids_to_load))
+                
+                logger.info(
+                    f"✅ Filter Mode: Loading {len(target_collection_names)} collections "
+                    f"for {sub_criteria_id} (e.g., {target_collection_names[:2]}...)"
+                )
+            # --- END TANGIBLE FIX ---
             
             retriever = load_all_vectorstores(doc_ids=target_collection_names, doc_type=["evidence"])
             
@@ -324,7 +337,7 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
         logger.warning(f"⚠️ MODE CHANGED TO: {mode.upper()} due to Vectorstore Load Failure. Assessment will run in RANDOM mode.")
 
 
-    # 2. Load & Filter Evidence
+    # 2. Load & Filter Evidence (Rubric Statements)
     try:
         if 'temp_loader' in locals() and mode=="real":
             enabler_loader = temp_loader
@@ -332,8 +345,52 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
             enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever)
         
         filtered_evidence = enabler_loader.evidence_data
+        
+        # 2a. Filter by Sub-Criteria ID
         if sub_criteria_id != "all":
             filtered_evidence = [e for e in filtered_evidence if e.get("Sub_Criteria_ID")==sub_criteria_id]
+            
+        
+        # --- TANGIBLE FIX 2: Filter statements based on Evidence Mapping (Your required fix) ---
+        if filter_mode and sub_criteria_id != "all":
+            evidence_mapping = enabler_loader.evidence_mapping_data
+            
+            # 1. Identify all Level Keys (e.g., '1.1_L1', '1.1_L2') that actually have files mapped.
+            valid_level_keys = set()
+            for key, data in evidence_mapping.items():
+                if key.startswith(sub_criteria_id):
+                    # Check if filter_ids is a non-empty list
+                    if isinstance(data.get('filter_ids'), list) and data['filter_ids']:
+                        valid_level_keys.add(key)
+
+            # 2. Filter the statements array (filtered_evidence)
+            statements_to_assess = []
+            skipped_statements = 0
+            for statement in filtered_evidence:
+                current_sub_id = statement.get("Sub_Criteria_ID")
+                # NOTE: Statement Data ไม่มี 'level' key, ต้องวนลูปผ่าน level 1-5
+                statement_added = False
+                for level in range(1, 6):
+                    level_key = f"{current_sub_id}_L{level}"
+                    # Check if the statement list for this level is non-empty AND has mapped files
+                    level_statements: List[str] = statement.get(f"Level_{level}_Statements", [])
+                    
+                    if level_statements and level_key in valid_level_keys:
+                        # Append the statement object only once, if any level has mapped files
+                        statements_to_assess.append(statement)
+                        statement_added = True
+                        break
+                
+                if not statement_added:
+                    skipped_statements += 1
+                    
+            filtered_evidence = statements_to_assess
+            if skipped_statements > 0:
+                logger.warning(
+                    f"⚠️ Strict Filter Mode: Skipped {skipped_statements} statements for {sub_criteria_id} "
+                    f"because the corresponding level key (e.g., {sub_criteria_id}_L1) had no mapped evidence files."
+                )
+        # --- END TANGIBLE FIX 2 ---
             
     except Exception as e:
         summary.update(EnablerAssessment(enabler_abbr=enabler).summarize_results())
@@ -344,7 +401,7 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
     # 3. Create Assessment Engine
     assessment_engine = EnablerAssessment(
         enabler_abbr=enabler,
-        evidence_data=filtered_evidence,
+        evidence_data=filtered_evidence, # <-- Now only contains statements for levels with mapped evidence
         rubric_data=enabler_loader.rubric_data,
         level_fractions=enabler_loader.level_fractions,
         evidence_mapping_data=enabler_loader.evidence_mapping_data,
@@ -382,6 +439,8 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
     summary_patcher_utils = None
     if original_mode=="mock":
         # Patch ใน enabler_assessment.py (สำหรับ generate_evidence_summary_for_level)
+        # NOTE: เมื่อ enabler_assessment ถูกแก้ไขให้ใช้ self.mock_llm_summarize_func แล้ว การ patch นี้อาจซ้ำซ้อน
+        # แต่เพื่อความปลอดภัยในระบบ patch ที่ซ้อนกัน เราจะรักษา patch นี้ไว้
         summary_patcher_enabler = patch('assessments.enabler_assessment.summarize_context_with_llm', new=summarize_context_with_llm_MOCK)
         # Patch ใน core.retrieval_utils (สำหรับ generate_and_integrate_l5_summary)
         summary_patcher_utils = patch('core.retrieval_utils.summarize_context_with_llm', new=summarize_context_with_llm_MOCK)
@@ -394,10 +453,22 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
             target_level = data.get("highest_full_level", 0)
             summary_key_name = f"evidence_summary_L{target_level}"
             if target_level>0:
+                # 🛑 ใช้ generate_evidence_summary_for_level() ของ EnablerAssessment
                 summary_text = assessment_engine.generate_evidence_summary_for_level(sub_id, target_level)
-                data[summary_key_name] = summary_text
+                
+                # NOTE: จัดการกับผลลัพธ์ที่อาจเป็น Dict/Str 
+                if isinstance(summary_text, dict):
+                    final_summary_data = summary_text
+                elif isinstance(summary_text, str):
+                    final_summary_data = {"summary": summary_text, "suggestion_for_next_level": "N/A"}
+                else:
+                    final_summary_data = {"summary": "การสรุปหลักฐานล้มเหลว", "suggestion_for_next_level": "N/A"}
+                    
+                data[summary_key_name] = final_summary_data
             else:
-                data[summary_key_name] = "ไม่พบหลักฐานที่ผ่านเกณฑ์ Level 1"
+                data[summary_key_name] = {"summary": "ไม่พบหลักฐานที่ผ่านเกณฑ์ Level 1", "suggestion_for_next_level": "N/A"}
+                
+        # NOTE: generate_and_integrate_l5_summary ถูกปรับให้เรียก summary_context_with_llm (ที่ถูก patch)
         summary = generate_and_integrate_l5_summary(assessment_engine, summary)
     finally:
         if original_mode=="mock":
@@ -532,13 +603,12 @@ if __name__ == "__main__":
                 highest_full_level = data.get('highest_full_level', 0)
                 summary_key = f"evidence_summary_L{highest_full_level}"
                 
-                evidence_summary_raw = data.get(summary_key, "N/A")
-                if isinstance(evidence_summary_raw, dict):
-                    evidence_summary = evidence_summary_raw.get('summary', 'N/A')
-                elif isinstance(evidence_summary_raw, str):
-                    evidence_summary = evidence_summary_raw
+                # 🛑 FIX: ดึงข้อมูลสรุปหลักฐาน (evidence_summary_L5)
+                evidence_summary_data = data.get(summary_key, {})
+                if isinstance(evidence_summary_data, dict):
+                    evidence_summary = evidence_summary_data.get('summary', 'N/A')
                 else:
-                    evidence_summary = "N/A"
+                    evidence_summary = str(evidence_summary_data)
                 
                 ratios = data.get('pass_ratios', {})
                 ratios_display = []
