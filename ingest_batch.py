@@ -2,7 +2,7 @@
 import argparse
 import logging
 import sys
-from pathlib import Path
+from typing import List, Dict, Any, Optional
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -39,6 +39,29 @@ ingest_parser.add_argument(
     default="all",
     help=f"Document type to ingest (supported: {SUPPORTED_DOC_TYPES})",
 )
+ingest_parser.add_argument(
+    "--skip_ext",
+    nargs="*",
+    default=None,
+    help="Skip files with these extensions (e.g. .jpg .png)"
+)
+ingest_parser.add_argument(
+    "--sequential",
+    action="store_true",
+    help="Run ingestion sequentially instead of multithreaded"
+)
+ingest_parser.add_argument(
+    "--log_every",
+    type=int,
+    default=50,
+    help="Log progress every N files"
+)
+ingest_parser.add_argument(
+    "--batch_size",
+    type=int,
+    default=500,
+    help="Batch size for indexing into vectorstore"
+)
 
 # list
 subparsers.add_parser("list", help="List all documents and status")
@@ -49,7 +72,7 @@ wipe_parser.add_argument(
     "doc_type",
     nargs='?',
     default="all",
-    help="Document type to wipe ('all' for all types)",
+    help="Document type to wipe ('all', 'document', 'evidence', 'faq')",
 )
 
 # delete
@@ -66,6 +89,11 @@ if args.command == "list":
 
 elif args.command == "wipe":
     target = args.doc_type.lower()
+    valid_targets = ["all", "document", "evidence", "faq"]
+    if target not in valid_targets:
+        logger.error(f"Invalid doc_type '{target}'. Choose from {valid_targets}")
+        sys.exit(1)
+
     logger.warning(f"⚠️ You are about to wipe '{target}' collection(s)")
     if input("Type 'YES' to confirm: ") == "YES":
         wipe_vectorstore(target)
@@ -91,21 +119,28 @@ elif args.command == "delete":
 elif args.command == "ingest":
     doc_type = args.doc_type.lower()
     logger.info(f"--- Starting ingestion for '{doc_type}' ---")
-    
-    # 🔹 Pre-load vectorstore (embedding model)
+
+    # 🔹 Pre-load vectorstore (embedding model/service)
     try:
-        vector_service = get_vectorstore()  # Prepare model/service
+        vector_service = get_vectorstore()
     except Exception as e:
         logger.warning(f"Cannot preload vectorstore service: {e}")
         vector_service = None
-    
-    ingest_all_files(doc_type=(None if doc_type=="all" else doc_type), base_path=VECTORSTORE_DIR)
-    
+
+    # 🔹 Ingest
+    results = ingest_all_files(
+        doc_type=(None if doc_type == "all" else doc_type),
+        base_path=VECTORSTORE_DIR,
+        skip_ext=args.skip_ext,
+        sequential=args.sequential,
+        log_every=args.log_every,
+        batch_size=args.batch_size
+    )
+
+    logger.info(f"--- Ingestion finished for '{doc_type}' ---")
     if vector_service:
         try:
             vector_service.close()
         except Exception:
             pass
-    
-    logger.info("--- Ingestion finished ---")
     sys.exit(0)

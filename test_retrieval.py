@@ -24,11 +24,11 @@ except ImportError as e:
     sys.exit(1)
 
 # -------------------- Test Parameters --------------------
-TEST_DOC_TYPE = "document"
+TEST_DOC_TYPE = "evidence"
 # ID ที่คุณส่งมา: aad986f9-8269-4820-9b79-e3d6b4f55f70 คาดว่าเป็น Chunk UUID
 # TEST_CHUNK_UUID = "aad986f9-8269-4820-9b79-e3d6b4f55f70" 
-TEST_QUESTION = "สรุปเอกสาร PEA"
-TEST_STABLE_DOC_ID = "2e1acddf-ce20-4c0a-9ee0-d3e3db1062b3"
+TEST_QUESTION = "สรุปเอกสาร"
+TEST_STABLE_DOC_ID = "d9d7ba9b-35af-4bfe-9e8c-7d84467801d8"
 
 def test_vectorstore_retrieval():
     print("\n" + "=" * 60)

@@ -541,7 +541,7 @@ def get_vectorstore(collection_name: str = "default", base_path: str = VECTORSTO
         logger.critical(f"❌ Failed to load Chroma for collection '{collection_name}': {e}")
         # 🔴 NEW: ถ้าเกิด Error จาก ChromaDB ที่เกี่ยวกับ Validation ให้ re-raise เป็น RuntimeError
         raise RuntimeError(f"Failed to initialize Chroma DB: {e}")
-
+    
 
 def create_vectorstore_from_documents(
     chunks: List[Document], 
@@ -553,7 +553,6 @@ def create_vectorstore_from_documents(
     Creates/updates a Chroma vector store collection and records the document ID mapping.
     """
     
-    # 📌 ใช้ get_vectorstore แทนการโหลดเอง
     vectorstore = get_vectorstore(collection_name, base_path)
 
     if not chunks:
@@ -566,64 +565,47 @@ def create_vectorstore_from_documents(
     try:
         ids = [str(uuid.uuid4()) for _ in texts]
         
-        # 🚨 ตรวจสอบการลบ/อัปเดตไฟล์เก่าที่มี stable_doc_uuid เดียวกัน (Logic re-ingest)
+        # ตรวจสอบ stable_doc_uuid เก่า
         stable_doc_uuids_to_delete = set()
         old_chunk_ids_to_delete = []
 
         for m in metadatas:
             s_uuid = m.get("stable_doc_uuid")
             if s_uuid and s_uuid in doc_mapping_db:
-                # 🟢 การปรับปรุง: ตรวจสอบว่ามี chunk_uuids อยู่ก่อนถึงจะพิจารณาว่าต้องลบ
                 existing_chunk_uuids = doc_mapping_db[s_uuid].get("chunk_uuids")
-                if existing_chunk_uuids and isinstance(existing_chunk_uuids, list) and len(existing_chunk_uuids) > 0:
+                if existing_chunk_uuids and isinstance(existing_chunk_uuids, list):
                     stable_doc_uuids_to_delete.add(s_uuid)
                     old_chunk_ids_to_delete.extend(existing_chunk_uuids)
-                    # เคลียร์รายการ chunk เก่าใน mapping DB ล่วงหน้า
-                    doc_mapping_db[s_uuid]["chunk_uuids"] = [] 
+                    doc_mapping_db[s_uuid]["chunk_uuids"] = []
 
-        
-        if stable_doc_uuids_to_delete:
-            logger.info(f"Detected {len(stable_doc_uuids_to_delete)} Stable IDs being re-indexed. Deleting {len(old_chunk_ids_to_delete)} old chunks...")
-            
-            if old_chunk_ids_to_delete:
-                # 📌 หากมี ID เก่าที่ต้องลบจริงๆ
-                vectorstore.delete(ids=old_chunk_ids_to_delete)
-                logger.info(f"🧹 Deleted {len(old_chunk_ids_to_delete)} old chunks from Chroma.")
-            else:
-                 # 📌 กรณีที่ ID มีอยู่ใน mapping แต่ไม่มี chunk ID (เช่น เพิ่งถูกเพิ่ม)
-                logger.info("ℹ️ No old chunks found in Chroma for recorded Stable IDs, proceeding to add new chunks.")
+        if old_chunk_ids_to_delete:
+            vectorstore.delete(ids=old_chunk_ids_to_delete)
+            logger.info(f"🧹 Deleted {len(old_chunk_ids_to_delete)} old chunks from Chroma.")
 
-        # Add texts to the vector store using generated IDs
+        # Add new chunks
         vectorstore.add_texts(
             texts=texts,
             metadatas=metadatas,
             ids=ids 
         )
 
+        # Update mapping DB
         for i, chunk_uuid in enumerate(ids):
             stable_doc_uuid = metadatas[i].get("stable_doc_uuid") 
-            
             if stable_doc_uuid:
                 if stable_doc_uuid not in doc_mapping_db:
                     doc_mapping_db[stable_doc_uuid] = {"chunk_uuids": []}
-                
-                doc_entry = doc_mapping_db[stable_doc_uuid]
-                
-                if "chunk_uuids" not in doc_entry or not isinstance(doc_entry["chunk_uuids"], list):
-                     doc_entry["chunk_uuids"] = []
-                
-                if chunk_uuid not in doc_entry["chunk_uuids"]:
-                    doc_entry["chunk_uuids"].append(chunk_uuid)
-                
+                if chunk_uuid not in doc_mapping_db[stable_doc_uuid]["chunk_uuids"]:
+                    doc_mapping_db[stable_doc_uuid]["chunk_uuids"].append(chunk_uuid)
                 metadatas[i]["chunk_uuid"] = chunk_uuid 
         
-        # vectorstore.persist()
         logger.info(f"✅ Indexed {len(ids)} chunks and updated mapping for {collection_name}. Persist finished.")
         
     except Exception as e:
         logger.error(f"❌ Error during Chroma indexing or persisting for {collection_name}: {e}")
     
     return vectorstore
+
 
 def save_doc_id_mapping(mapping_data: Dict[str, Dict[str, Any]], path: str):
     """Saves the document metadata and chunk UUID mapping to a JSON file."""
@@ -670,120 +652,111 @@ def get_stable_uuids_by_doc_type(doc_types: List[str]) -> List[str]:
             
     return target_uuids
         
-# -------------------- Batch ingestion --------------------
+
 def ingest_all_files(
     data_dir: str = DATA_DIR,
-    doc_type: Optional[str] = None, 
+    doc_type: Optional[str] = None,
     base_path: str = VECTORSTORE_DIR,
     exclude_dirs: Set[str] = set(),
     year: Optional[int] = None,
     version: str = "v1",
-    sequential: bool = True
+    sequential: bool = True,
+    skip_ext: Optional[List[str]] = None,
+    log_every: int = 50,
+    batch_size: int = 500
 ) -> List[Dict[str, Any]]:
-    
+    """
+    Ingest documents into vectorstore.
+    Supports sequential or multithreaded chunking, skipping file extensions,
+    and batch indexing with logging progress.
+    """
+    skip_ext = skip_ext or []
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(base_path, exist_ok=True)
-    
     files_to_process = []
-    
-    # 1. รวบรวมไฟล์ทั้งหมดและกำหนด doc_type
+
+    # 1. รวบรวมไฟล์ทั้งหมด
     for root, dirs, filenames in os.walk(data_dir):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
-        
         current_doc_type = doc_type or "default"
         if root != data_dir:
             folder_name = os.path.basename(root)
-            if folder_name.lower() == 'statement':
-                current_doc_type = 'statement'
-            else:
-                current_doc_type = folder_name.lower()
-
+            current_doc_type = folder_name.lower() if folder_name.lower() != 'statement' else 'statement'
         if doc_type and doc_type != 'all' and current_doc_type != doc_type:
             continue
-
         for f in filenames:
             file_extension = os.path.splitext(f)[1].lower()
             if f.startswith('.') or file_extension not in SUPPORTED_TYPES:
                 continue
-            
+            if file_extension in skip_ext:
+                logger.info(f"⚠️ Skipping {file_extension} file: {f}")
+                continue
             files_to_process.append({
                 "file_path": os.path.join(root, f),
                 "file_name": f,
                 "doc_type": current_doc_type
             })
 
-    # ---------------------------------------------------------
-    # 0. Load Mapping DB และกำหนด Stable IDs/Entry
-    # ---------------------------------------------------------
+    # 2. Load Mapping DB และกำหนด Stable IDs
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    doc_uuid_lookup: Dict[str, str] = {} # {filename_doc_id_key: stable_doc_uuid}
-    
+    doc_uuid_lookup: Dict[str, str] = {}
     for s_uuid, entry in doc_mapping_db.items():
-        if "doc_id_key" in entry: 
+        if "doc_id_key" in entry:
             doc_uuid_lookup[entry["doc_id_key"]] = s_uuid
 
     for file_info in files_to_process:
-        raw_doc_id_input = os.path.splitext(file_info["file_name"])[0]
-        filename_doc_id_key = _normalize_doc_id(raw_doc_id_input)
-
+        filename_doc_id_key = _normalize_doc_id(os.path.splitext(file_info["file_name"])[0])
         stable_doc_uuid = doc_uuid_lookup.get(filename_doc_id_key)
-        
         if stable_doc_uuid:
             file_info["stable_doc_uuid"] = stable_doc_uuid
             doc_mapping_db[stable_doc_uuid]["file_name"] = file_info["file_name"]
-            
         else:
             new_uuid = str(uuid.uuid4())
             file_info["stable_doc_uuid"] = new_uuid
-            
             doc_mapping_db[new_uuid] = {
                 "file_name": file_info["file_name"],
                 "doc_type": file_info["doc_type"],
-                "doc_id_key": filename_doc_id_key, 
-                "notes": "",                     
-                "statement_id": "",              
+                "doc_id_key": filename_doc_id_key,
+                "notes": "",
+                "statement_id": "",
                 "chunk_uuids": []
             }
-            doc_uuid_lookup[filename_doc_id_key] = new_uuid 
-
+            doc_uuid_lookup[filename_doc_id_key] = new_uuid
 
     all_chunks: List[Document] = []
     results = []
-    
     logger.info(f"Starting batch Load & Chunk of {len(files_to_process)} files...")
 
-    # ---------------------------------------------------------
-    # 1. Load & Chunk (Sequential or Multi-threading)
-    # ---------------------------------------------------------
-    
-    def _process_file_task_new(file_info: Dict[str, str]):
+    # 3. Load & Chunk
+    def _process_file_task(file_info: Dict[str, str]):
         return process_document(
             file_path=file_info["file_path"],
             file_name=file_info["file_name"],
-            stable_doc_uuid=file_info["stable_doc_uuid"], 
+            stable_doc_uuid=file_info["stable_doc_uuid"],
             doc_type=file_info["doc_type"],
             base_path=base_path,
             year=year,
             version=version
         )
-    
+
     if sequential:
-        for file_info in files_to_process:
+        for idx, file_info in enumerate(files_to_process, 1):
             f = file_info["file_name"]
             stable_doc_uuid = file_info["stable_doc_uuid"]
             try:
-                chunks, doc_id, dt = _process_file_task_new(file_info)
+                chunks, doc_id, dt = _process_file_task(file_info)
                 all_chunks.extend(chunks)
                 results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks)})
+                if idx % log_every == 0:
+                    logger.info(f"Processed {idx}/{len(files_to_process)} files...")
             except Exception as e:
-                error_doc_id = stable_doc_uuid
-                logger.error(f"Error processing/chunking {f} (ID: {error_doc_id}): {e}")
-                results.append({"file": f, "doc_id": error_doc_id, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e)})
+                results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e)})
+                logger.error(f"Error processing {f} (ID: {stable_doc_uuid}): {e}")
     else:
         max_workers = min(8, (os.cpu_count() or 4))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_file = {executor.submit(_process_file_task_new, f_info): f_info for f_info in files_to_process}
-            for future in as_completed(future_to_file):
+            future_to_file = {executor.submit(_process_file_task, f_info): f_info for f_info in files_to_process}
+            for idx, future in enumerate(as_completed(future_to_file), 1):
                 f_info = future_to_file[future]
                 f = f_info["file_name"]
                 stable_doc_uuid = f_info["stable_doc_uuid"]
@@ -791,45 +764,41 @@ def ingest_all_files(
                     chunks, doc_id, dt = future.result()
                     all_chunks.extend(chunks)
                     results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks)})
+                    if idx % log_every == 0:
+                        logger.info(f"Processed {idx}/{len(files_to_process)} files...")
                 except Exception as e:
-                    error_doc_id = stable_doc_uuid
-                    logger.error(f"Error processing/chunking {f} (ID: {error_doc_id}): {e}")
-                    results.append({"file": f, "doc_id": error_doc_id, "doc_type": f_info["doc_type"], "status": "failed_chunk", "error": str(e)})
-                    
-    # ---------------------------------------------------------
-    # 2. Group Chunks by doc_type
-    # ---------------------------------------------------------
+                    results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": f_info["doc_type"], "status": "failed_chunk", "error": str(e)})
+                    logger.error(f"Error processing {f} (ID: {stable_doc_uuid}): {e}")
+
+    # 4. Group Chunks by doc_type
     chunks_by_type: Dict[str, List[Document]] = {}
     for chunk in all_chunks:
         dt = chunk.metadata.get("doc_type", "default")
-        if dt not in chunks_by_type:
-            chunks_by_type[dt] = []
-        chunks_by_type[dt].append(chunk)
-
+        chunks_by_type.setdefault(dt, []).append(chunk)
     logger.info(f"Grouping complete. Found {len(chunks_by_type)} collection(s): {list(chunks_by_type.keys())}")
-    
-    # ---------------------------------------------------------
-    # 3. Indexing Chunks and Saving Mapping
-    # ---------------------------------------------------------
-    
+
+    # 5. Indexing Chunks with batch + logging
     for dt, dt_chunks in chunks_by_type.items():
         if dt_chunks:
-            # ใช้ try/except เพื่อให้การ Index ของ Collection หนึ่งไม่หยุด Collection อื่น
-            try:
-                create_vectorstore_from_documents(
-                    chunks=dt_chunks,
-                    collection_name=dt,
-                    doc_mapping_db=doc_mapping_db,
-                    base_path=base_path
-                )
-            except RuntimeError as e:
-                 logger.critical(f"❌ Failed to index collection '{dt}' due to service initialization error: {e}")
-
+            logger.info(f"--- Start indexing collection '{dt}' ({len(dt_chunks)} chunks) ---")
+            for i in range(0, len(dt_chunks), batch_size):
+                batch = dt_chunks[i:i+batch_size]
+                logger.info(f"Indexing chunks {i+1} to {i+len(batch)} of {len(dt_chunks)}")
+                try:
+                    create_vectorstore_from_documents(
+                        chunks=batch,
+                        collection_name=dt,
+                        doc_mapping_db=doc_mapping_db,
+                        base_path=base_path
+                    )
+                except Exception as e:
+                    logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
+            logger.info(f"--- Finished indexing collection '{dt}' ---")
 
     save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
-
-    logger.info("Batch ingestion process finished.")
+    logger.info("✅ Batch ingestion process finished.")
     return results
+
 
 def wipe_vectorstore(doc_type_to_wipe: str = 'all', base_path: str = VECTORSTORE_DIR):
     """Wipes the vector store directory/collection(s) and potentially the doc_id_mapping file."""

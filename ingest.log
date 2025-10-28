@@ -2170,3 +2170,61 @@ query_instruction
 2025-10-28 14:30:01,275 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
 2025-10-28 14:30:01,275 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
 2025-10-28 14:30:02,495 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 15:29:53,277 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:29:55,977 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:29:55,989 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:29:56,000 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:46:01,589 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:46:04,145 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:46:04,154 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:46:04,165 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:46:09,423 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:46:11,260 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:46:11,269 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:46:11,277 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:49:38,906 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:49:41,298 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:49:41,309 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:49:41,320 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:55:36,443 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:55:38,768 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:56:01,430 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:56:03,303 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:56:03,312 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:56:03,322 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 15:58:33,002 | INFO | 🛑 Application shutdown complete.
+2025-10-28 15:58:35,425 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 15:58:35,434 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 15:58:35,444 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:34:36,648 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:34:41,823 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 16:34:41,838 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 16:34:41,857 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:37:22,667 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:37:27,293 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 16:37:27,306 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 16:37:27,322 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:46:15,432 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:46:17,295 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:46:17,901 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:46:19,675 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:47:33,772 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:47:35,726 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 16:47:35,735 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 16:47:35,746 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 16:47:41,916 | INFO | 🛑 Application shutdown complete.
+2025-10-28 16:47:43,798 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 16:47:43,807 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 16:47:43,816 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 17:08:45,541 | INFO | 🛑 Application shutdown complete.
+2025-10-28 17:08:47,978 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 17:08:47,988 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 17:08:47,999 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 17:08:50,932 | INFO | 🛑 Application shutdown complete.
+2025-10-28 17:08:52,807 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 17:08:52,816 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 17:08:52,825 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 17:22:11,973 | INFO | 🛑 Application shutdown complete.
+2025-10-28 17:22:14,398 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 17:22:14,408 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 17:22:14,420 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
