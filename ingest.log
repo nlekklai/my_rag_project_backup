@@ -2079,3 +2079,94 @@ query_instruction
 2025-10-28 14:19:34,678 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
 2025-10-28 14:19:34,678 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
 2025-10-28 14:19:46,179 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 14:26:33,007 | INFO | 🛑 Application shutdown complete.
+2025-10-28 14:26:36,104 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 14:26:36,114 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 14:26:36,125 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 14:27:22,840 | INFO | 🛑 Application shutdown complete.
+2025-10-28 14:27:25,005 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
+2025-10-28 14:27:25,014 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
+2025-10-28 14:27:25,024 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 14:27:27,441 | WARNING | ⚠️ Detected MPS but running in process-parallel mode: forcing device -> cpu to avoid MPS multi-process failures
+2025-10-28 14:27:27,441 | WARNING | ⚠️ Detected MPS but running in process-parallel mode: forcing device -> cpu to avoid MPS multi-process failures
+2025-10-28 14:27:27,441 | INFO | 📦 Creating HuggingFaceEmbeddings (model=intfloat/multilingual-e5-large, device=cpu)
+2025-10-28 14:27:27,441 | INFO | 📦 Creating HuggingFaceEmbeddings (model=intfloat/multilingual-e5-large, device=cpu)
+2025-10-28 14:27:29,083 | INFO | Load pretrained SentenceTransformer: intfloat/multilingual-e5-large
+2025-10-28 14:27:34,317 | INFO | ✅ Loaded Doc ID Mapping: 6 original documents, 6 total chunks.
+2025-10-28 14:27:34,317 | INFO | ✅ Loaded Doc ID Mapping: 6 original documents, 6 total chunks.
+2025-10-28 14:27:34,318 | INFO | Initialized VectorStoreManager. Loaded 6 doc IDs.
+2025-10-28 14:27:34,318 | INFO | Initialized VectorStoreManager. Loaded 6 doc IDs.
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:27:34,318 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:27:34,318 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:27:34,318 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:27:34,318 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:27:34,318 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:27:34,319 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:27:34,319 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:27:34,319 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:27:34,319 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:27:34,319 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:27:34,319 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:27:34,320 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:27:34,320 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:27:34,335 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-28 14:27:34,388 | INFO | ✅ Loaded Chroma instance for collection: document
+2025-10-28 14:27:34,388 | INFO | ✅ Loaded Chroma instance for collection: document
+2025-10-28 14:27:34,388 | INFO | 📦 Preloading Flashrank model 'ms-marco-MiniLM-L-12-v2' (cache dir: /Users/oddnaphat/.hf_cache_dir/flashrank_models)
+2025-10-28 14:27:34,388 | INFO | 📦 Preloading Flashrank model 'ms-marco-MiniLM-L-12-v2' (cache dir: /Users/oddnaphat/.hf_cache_dir/flashrank_models)
+2025-10-28 14:27:34,500 | INFO | ✅ Flashrank model 'ms-marco-MiniLM-L-12-v2' loaded
+2025-10-28 14:27:34,500 | INFO | ✅ Flashrank model 'ms-marco-MiniLM-L-12-v2' loaded
+2025-10-28 14:27:36,496 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:27:36,496 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:27:53,572 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 14:28:53,423 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:28:53,423 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:28:53,424 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:28:53,424 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:28:53,424 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:28:53,424 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:28:53,424 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:28:53,427 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:28:53,427 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:28:53,427 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:28:53,427 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:28:55,590 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:28:55,590 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:28:58,417 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 14:29:59,138 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:29:59,138 | INFO | 🔍 DEBUG: Target doc_types=['document', 'faq'], Filter={'document', 'faq'}
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Found available collections: ['default', 'document']
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 14:29:59,139 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:29:59,139 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/document/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 14:29:59,139 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:29:59,139 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/document/chroma.sqlite3
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'document'.
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:29:59,139 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 14:29:59,142 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:29:59,142 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 14:29:59,142 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:29:59,142 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 14:30:01,275 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:30:01,275 | INFO | 📝 Query='เปรียบเทียบสองเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 14:30:02,495 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"

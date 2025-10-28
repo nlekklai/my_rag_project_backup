@@ -670,9 +670,6 @@ async def ingest_documents(request: IngestRequest):
 # -----------------------------
 # --- Query Endpoint (Full Multi Doc/Type Support) ---
 # -----------------------------
-# -----------------------------
-# --- Query Endpoint (Full Multi Doc/Type Support) ---
-# -----------------------------
 @app.post("/query")
 async def query_endpoint(
     question: str = Form(...),
@@ -682,42 +679,40 @@ async def query_endpoint(
     """
     RAG Endpoint:
     - doc_ids: list of Stable IDs
-    - doc_types: comma-separated string or single type
+    - doc_types: comma-separated string หรือ single type
     """
+
     import json
+    skipped = []
+    output = {
+        "question": question,
+        "doc_ids": [],
+        "doc_types": [],
+        "answer": "",
+        "skipped": skipped
+    }
 
     # -----------------------------
-    # 1. Parse doc_types
+    # 1️⃣ Parse doc_types
     # -----------------------------
     if doc_types:
         doc_type_list = [dt.strip() for dt in doc_types.split(",") if dt.strip()]
     else:
         doc_type_list = ["document"]
+    output['doc_types'] = doc_type_list
 
     # -----------------------------
-    # 2. Parse doc_ids
+    # 2️⃣ Parse doc_ids
     # -----------------------------
     uuid_list = [uid.strip() for uid in doc_ids if uid] if doc_ids else []
-
-    skipped = []
-
-    output = {
-        "question": question,
-        "doc_ids": [],
-        "doc_types": doc_type_list,
-        "answer": "",
-        "skipped": skipped
-    }
-
-    answer_text = None
 
     # -----------------------------
     # Helper: format context
     # -----------------------------
-    def format_context_for_multiple_docs(docs):
+    def format_context(docs):
         context_sections = []
         for i, d in enumerate(docs, 1):
-            doc_name = d.metadata.get("doc_id", f"Document {i}") 
+            doc_name = d.metadata.get("doc_id", f"Document {i}")
             doc_type = d.metadata.get("doc_type", "N/A")
             context_sections.append(f"[{doc_name} ({doc_type})]\n{d.page_content}")
         return "\n\n".join(context_sections)
@@ -729,7 +724,7 @@ async def query_endpoint(
         res = llm_instance.invoke(messages_list)
         if isinstance(res, dict) and "result" in res:
             return res["result"]
-        elif hasattr(res, 'content'):
+        elif hasattr(res, "content"):
             return res.content.strip()
         elif isinstance(res, str):
             return res.strip()
@@ -743,9 +738,9 @@ async def query_endpoint(
         # Load MultiRetriever
         # -----------------------------
         multi_retriever = await run_in_threadpool(
-            load_all_vectorstores, 
+            load_all_vectorstores,
             doc_types=doc_type_list,
-            top_k=5, 
+            top_k=5,
             final_k=3
         )
 
@@ -755,31 +750,24 @@ async def query_endpoint(
         all_docs = await run_in_threadpool(lambda: multi_retriever.invoke(question))
 
         # -----------------------------
-        # Filter by UUID
+        # Filter by UUID if provided
         # -----------------------------
         if uuid_list:
-            docs_for_question = []
-            found_set = set()
-            for d in all_docs:
-                doc_id_in_metadata = d.metadata.get("doc_id")
-                if doc_id_in_metadata in uuid_list:
-                    docs_for_question.append(d)
-                    found_set.add(doc_id_in_metadata)
-            skipped = [uid for uid in uuid_list if uid not in found_set]
+            docs_for_question = [d for d in all_docs if d.metadata.get("doc_id") in uuid_list]
+            skipped = [uid for uid in uuid_list if uid not in [d.metadata.get("doc_id") for d in docs_for_question]]
         else:
             docs_for_question = all_docs
 
         if not docs_for_question:
             raise ValueError("No relevant content could be retrieved from the selected documents or collections.")
 
-        loaded_doc_ids = list(set(d.metadata.get("doc_id") for d in docs_for_question if d.metadata.get("doc_id")))
-        output['doc_ids'] = loaded_doc_ids
+        output['doc_ids'] = list({d.metadata.get("doc_id") for d in docs_for_question if d.metadata.get("doc_id")})
         output['skipped'] = skipped
 
         # -----------------------------
         # Build context + prompt
         # -----------------------------
-        context_text = format_context_for_multiple_docs(docs_for_question)
+        context_text = format_context(docs_for_question)
         human_message_content = QA_PROMPT.format(context=context_text, question=question)
         messages = [
             SystemMessage(content=SYSTEM_QA_INSTRUCTION),
@@ -803,8 +791,8 @@ async def query_endpoint(
     # Flatten JSON output from LLM if possible
     # -----------------------------
     if answer_text:
-        is_json_format = answer_text.strip().startswith('{') and answer_text.strip().endswith('}')
-        if is_json_format:
+        answer_text = answer_text.strip()
+        if answer_text.startswith("{") and answer_text.endswith("}"):
             try:
                 llm_json = json.loads(answer_text)
                 flattened_answer = []
@@ -813,7 +801,7 @@ async def query_endpoint(
                     flattened_answer.append("📌 Summary:\n" + llm_json['summary'])
                 if 'details' in llm_json and llm_json['details']:
                     for d in llm_json['details']:
-                        flattened_answer.append(f"📄 {d.get('doc_name', '')}: {d.get('text', '')}")
+                        flattened_answer.append(f"📄 {d.get('doc_name','')}: {d.get('text','')}")
                 if 'comparison' in llm_json and llm_json['comparison']:
                     flattened_answer.append("⚖️ Comparison:")
                     for k,v in llm_json['comparison'].items():
@@ -823,7 +811,9 @@ async def query_endpoint(
                     for r in llm_json['search_results']:
                         flattened_answer.append(f"{r.get('doc_name','')}: {r.get('text','')}")
 
-                output['answer'] = "\n\n".join(flattened_answer) if flattened_answer else answer_text
+                if flattened_answer:
+                    output['answer'] = "\n\n".join(flattened_answer)
+
             except Exception as e:
                 if 'error' not in output:
                     output['error'] = f"JSON Parsing Error: {str(e)}"
