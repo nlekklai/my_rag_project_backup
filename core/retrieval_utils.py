@@ -1,4 +1,3 @@
-# core/action_plan_utils.py
 import logging
 import random
 import json
@@ -23,7 +22,8 @@ from core.rag_prompts import (
 )
 
 try:
-    from core.vectorstore import VectorStoreManager, load_all_vectorstores
+    # 🟢 ใช้ VectorStoreManager
+    from core.vectorstore import VectorStoreManager, load_all_vectorstores 
 except Exception:
     # keep optional for minimal patching; vectorstore usage is elsewhere
     VectorStoreManager = None
@@ -35,7 +35,8 @@ except Exception:
     llm_instance = None
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 🔴 ลบ logging.basicConfig ออกเพื่อไม่ให้ไปทับ config หลัก
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
 
 # =================================================================
 # MOCKING LOGIC AND GLOBAL FLAGS
@@ -55,12 +56,63 @@ def set_mock_control_mode(enable: bool):
         logger.info("❌ CONTROLLED MOCK Mode DISABLED.")
 
 
+# --------------------
+# NEW FUNCTION: Retrieve documents directly by UUIDs
+# --------------------
+
+def retrieve_context_by_doc_ids(
+    doc_uuids: List[str],
+    doc_type: str = "default_collection"
+) -> Dict[str, Any]:
+    """
+    🟢 NEW: Retrieves documents (chunks) directly by their UUIDs from a specific 
+    Chroma collection using VectorStoreManager.
+    
+    Returns: {"top_evidences": List[Dict[str, Any]]}
+    """
+    if VectorStoreManager is None:
+        logger.error("❌ VectorStoreManager is not available.")
+        return {"top_evidences": []}
+        
+    if not doc_uuids:
+        return {"top_evidences": []}
+
+    try:
+        manager = VectorStoreManager()
+        # 🟢 เรียกใช้เมธอดใหม่จาก VectorStoreManager
+        docs: List[Document] = manager.get_documents_by_id(doc_uuids, doc_type=doc_type)
+
+        # Format result
+        top_evidences = []
+        for d in docs:
+            meta = d.metadata
+            top_evidences.append({
+                "doc_id": meta.get("doc_id"),
+                "doc_type": meta.get("doc_type"), # 🟢 เพิ่ม doc_type
+                "chunk_uuid": meta.get("chunk_uuid"), # 🟢 เพิ่ม chunk_uuid
+                "source": meta.get("source") or meta.get("doc_source"),
+                "content": d.page_content.strip(),
+                "chunk_index": meta.get("chunk_index")
+            })
+
+        logger.info(f"✅ Successfully retrieved {len(top_evidences)} evidences by UUIDs from collection '{doc_type}'.")
+        return {"top_evidences": top_evidences}
+
+    except Exception as e:
+        logger.error(f"Error during UUID-based retrieval: {e}")
+        return {"top_evidences": []}
+
+
+# --------------------
+# RETRIEVER FUNCTION (RAG Search)
+# --------------------
+
 def retrieve_context_with_filter(
     query: str,
     retriever: Any,
     metadata_filter: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Retrieves documents from the vector store, optionally filtering by document ID."""
+    """Retrieves documents from the vector store using RAG search, optionally filtering by document ID."""
     if retriever is None:
         return {"top_evidences": []}
 
@@ -72,12 +124,21 @@ def retrieve_context_with_filter(
         # Manual Filtering
         if filter_document_ids:
             filter_set = set(filter_document_ids)
-
             filtered_docs = []
+            
             for doc in docs:
-                doc_id_in_metadata = doc.metadata.get("doc_id")
-                if doc_id_in_metadata in filter_set:
+                doc_id_in_metadata = doc.metadata.get("doc_id") # 🟢 ใช้ doc_id
+                doc_source_in_metadata = doc.metadata.get("doc_source") # 🟢 ใช้ doc_source (สำหรับ MultiDocRetriever)
+                
+                # Filter if either doc_id or doc_source is in the filter set
+                if (doc_id_in_metadata and doc_id_in_metadata in filter_set) or \
+                   (doc_source_in_metadata and doc_source_in_metadata in filter_set):
                     filtered_docs.append(doc)
+                else:
+                    # Fallback for old/unspecified metadata
+                    source = doc.metadata.get("source")
+                    if source and source in filter_set:
+                         filtered_docs.append(doc)
 
             docs = filtered_docs
 
@@ -86,11 +147,14 @@ def retrieve_context_with_filter(
         for d in docs:
             meta = d.metadata
             top_evidences.append({
-                "doc_id": meta.get("doc_id"),
-                "source": meta.get("source"),
+                "doc_id": meta.get("doc_id") or meta.get("doc_source"), # 🟢 ใช้ doc_id หรือ doc_source
+                "doc_type": meta.get("doc_type"), # 🟢 เพิ่ม doc_type
+                "relevance_score": meta.get("relevance_score"), # 🟢 เพิ่ม relevance_score
+                "source": meta.get("source") or meta.get("doc_source"),
                 "content": d.page_content.strip()
             })
 
+        logger.info(f"RAG Retrieval for query='{query[:30]}...' found {len(top_evidences)} evidences (filtered: {bool(filter_document_ids)})")
         return {"top_evidences": top_evidences}
 
     except Exception as e:

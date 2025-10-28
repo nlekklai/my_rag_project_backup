@@ -1,4 +1,3 @@
-#assessments/enabler_assessment.py
 import os
 import json
 import logging
@@ -15,7 +14,15 @@ try:
     
     from core.vectorstore import load_all_vectorstores, FINAL_K_RERANKED 
     # NOTE: ต้องมั่นใจว่า evaluate_with_llm และ summarize_context_with_llm ถูกเรียกใช้ใน Core/Retrieval_utils
-    from core.retrieval_utils import evaluate_with_llm, retrieve_context_with_filter, set_mock_control_mode, summarize_context_with_llm
+    # 🛑 FIX: ต้อง import evaluate_with_llm_with_raw_response แทน evaluate_with_llm เดิม
+    from core.retrieval_utils import (
+        evaluate_with_llm, 
+        retrieve_context_with_filter, 
+        set_mock_control_mode, 
+        summarize_context_with_llm,
+        # 🟢 NEW IMPORT: Assuming retrieval_utils now has a function that returns raw response
+        # If not, we call evaluate_with_llm and assume it returns a tuple (dict, str) in real mode
+    )
     from core.assessment_schema import EvidenceSummary
     from core.action_plan_schema import ActionPlanActions
 
@@ -415,36 +422,64 @@ class EnablerAssessment:
                         "statement_number": i + 1
                     }
                     
-                    result = llm_eval_func(
-                        statement=statement,
-                        context=context, 
-                        standard=standard,
-                        **llm_kwargs 
-                    )
+                    # 🟢 FIX: Call LLM และตรวจสอบผลลัพธ์เพื่อแยก Dict และ Raw Text
+                    raw_llm_response_content = ""
+                    llm_result_dict = {}
+
+                    if is_mock_mode:
+                        # Mock Mode: mock_llm_eval_func ถูกตั้งให้ return dict ที่มีข้อมูลที่ต้องการ
+                        llm_result_dict = llm_eval_func(
+                            statement=statement, context=context, standard=standard, **llm_kwargs
+                        )
+                        # ใน Mock Mode เราจะสมมติว่า raw response คือ JSON string ของ dict ที่ return มา
+                        try:
+                            raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
+                        except:
+                            raw_llm_response_content = str(llm_result_dict)
+                    else:
+                        # Real Mode: เราต้องสมมติว่า evaluate_with_llm ถูกแก้ไขให้ return (Dict, Str)
+                        # หรือถ้าไม่ เราก็เรียกใช้ evaluate_with_llm เดิม และสมมติว่ามีการแก้ไขใน retrieval_utils
+                        # ในโค้ดนี้ เราจะปรับให้รองรับการรับค่า return เป็น tuple (Dict, Str)
+                        llm_output = llm_eval_func(
+                            statement=statement, context=context, standard=standard, **llm_kwargs
+                        )
+                        if isinstance(llm_output, tuple) and len(llm_output) == 2:
+                            llm_result_dict, raw_llm_response_content = llm_output
+                        elif isinstance(llm_output, dict):
+                            llm_result_dict = llm_output
+                            # หาก LLM Function เดิมไม่คืนค่า Raw Response ให้ใช้ JSON ของ Dict เป็น Fallback (แต่ควรแก้ไข evaluate_with_llm ใน retrieval_utils)
+                            try:
+                                raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
+                            except:
+                                raw_llm_response_content = str(llm_result_dict)
+                        else:
+                            logger.error(f"Unexpected return type from LLM evaluation: {type(llm_output)}")
+                            llm_result_dict = {}
+
                     
-                    # 5. Deduplicate sources 
+                    # 5. Deduplicate sources & Final Data Structuring 
                     unique_sources = []
                     seen = set()
                     
-                    # 🛑 FIX LOGIC: กำหนดค่า Context/Sources/Status ตาม Mode
                     if is_mock_mode:
                         # ใน Mock Mode: ใช้ค่า Context/Sources/Status/Score ที่มาจาก Mock Function โดยตรง
-                        final_score = result.get("llm_score", 0)
-                        final_reason = result.get("reason", "")
-                        final_sources = result.get("retrieved_sources_list", []) # 👈 ใช้ Mock Sources
-                        final_context_snippet = result.get("context_retrieved_snippet", "") # 👈 ใช้ Mock Context
-                        final_pass_status = result.get("pass_status", False)
-                        final_status_th = result.get("status_th", "ไม่ผ่าน")
+                        final_score = llm_result_dict.get("llm_score", 0)
+                        final_reason = llm_result_dict.get("reason", "")
+                        final_sources = llm_result_dict.get("retrieved_sources_list", []) # 👈 ใช้ Mock Sources
+                        final_context_snippet = llm_result_dict.get("context_retrieved_snippet", "") # 👈 ใช้ Mock Context
+                        final_pass_status = llm_result_dict.get("pass_status", False)
+                        final_status_th = llm_result_dict.get("status_th", "ไม่ผ่าน")
                     else:
                         # ใน Real Mode: ใช้ Context/Sources ที่ได้จาก RAG
                         for src in retrieved_sources_list:
+                            # 🟢 FIXED: ใช้ doc_id และ location เป็นคีย์ในการ Deduplicate
                             key = (src['doc_id'], src['location']) 
                             if key not in seen:
                                 seen.add(key)
                                 unique_sources.append(src)
 
-                        final_score = result.get("score", 0) # ใช้ score จาก LLM จริง
-                        final_reason = result.get("reason", "")
+                        final_score = llm_result_dict.get("score", 0) # ใช้ score จาก LLM จริง
+                        final_reason = llm_result_dict.get("reason", "")
                         final_sources = unique_sources # จาก RAG
                         final_context_snippet = context[:240] + "..." if context else ""
                         final_pass_status = final_score == 1
@@ -466,7 +501,9 @@ class EnablerAssessment:
                         "context_retrieved_snippet": final_context_snippet, 
                         "pass_status": final_pass_status,
                         "status_th": final_status_th,
-                        "statement_id": "N/A" 
+                        "statement_id": "N/A", 
+                        "llm_result": llm_result_dict, # 🟢 เก็บ Dict Result เดิมไว้
+                        "llm_raw_response_content": raw_llm_response_content # 🟢 NEW: เก็บ Raw Response สำหรับดึง UUIDs
                     })
         
         self._process_subcriteria_results()
@@ -476,7 +513,7 @@ class EnablerAssessment:
     # ----------------------------------------------------
     # 🌟 NEW FEATURE: Generate Evidence Summary
     # ----------------------------------------------------
-    def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> str:
+    def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Union[str, Dict]: # 🟢 อัพเดท Type Hint
         """
         รวมบริบทจากทุก Statement ใน Sub-Criteria/Level ที่กำหนด และให้ LLM สร้างคำอธิบาย
         """
@@ -537,6 +574,7 @@ class EnablerAssessment:
             # NOTE: ใน run_assessment2.py เราใช้ patch() ครอบอีกที ซึ่งจะ override ตรงนี้ แต่เราเขียนโค้ดเผื่อไว้
             summarize_func = self.mock_llm_summarize_func if self.mock_llm_summarize_func else summarize_context_with_llm
             
+            # NOTE: summarize_context_with_llm ควรถูกแก้ไขให้ return Dict (EvidenceSummary) หรือ Str (Fallback)
             summary_result = summarize_func(
                 context=final_context,
                 sub_criteria_name=sub_criteria_name,
@@ -545,16 +583,17 @@ class EnablerAssessment:
                 schema=EvidenceSummary
             )
             
+            # 🟢 FIXED: Return Dict เพื่อให้ run_assessment2.py จัดการได้ง่ายขึ้น
             if isinstance(summary_result, dict):
-                return summary_result.get("summary", "LLM ไม่สามารถสร้างคำอธิบายได้")
-            elif isinstance(summary_result, str):
                 return summary_result
+            elif isinstance(summary_result, str):
+                return {"summary": summary_result, "suggestion_for_next_level": "N/A"}
             else:
-                return "LLM return type ไม่ถูกต้อง"
+                return {"summary": "LLM return type ไม่ถูกต้อง", "suggestion_for_next_level": "N/A"}
             
         except Exception as e:
             logger.error(f"Failed to generate summary with LLM: {e}")
-            return f"เกิดข้อผิดพลาดในการเรียกใช้ LLM เพื่อสรุปข้อมูล: {e}"
+            return {"summary": f"เกิดข้อผิดพลาดในการเรียกใช้ LLM เพื่อสรุปข้อมูล: {e}", "suggestion_for_next_level": "Error"}
     # ----------------------------------------------------
     
     # ----------------------------------------------------

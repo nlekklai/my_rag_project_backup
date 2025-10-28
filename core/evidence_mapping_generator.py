@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# core/evidence_mapping_generator.py
 
 # ====================================================================
 # 🛠️ WARNING SUPPRESSION BLOCK (ถูกย้ายมาที่นี่เพื่อให้มีผลก่อน Import อื่นๆ)
@@ -48,9 +47,13 @@ class EvidenceMappingGenerator:
     def __init__(self, enabler_id: str):
         self.enabler_id = enabler_id.lower()
         # ตรวจสอบ Path ของ Statement Checklist
-        self.STATEMENTS_JSON_PATH = f"evidence_checklist/{self.enabler_id}_evidence_statements_checklist.json"
-
-        # โหลด Retriever สำหรับ Statement Vector Store
+        # 📌 FIX/ASSUMPTION: Path ต้องชี้ไปที่ REF_DATA_DIR ตามที่กำหนดใน app.py
+        # เนื่องจากไฟล์นี้ไม่มี Global Constant REF_DATA_DIR, จึงใช้ Path ที่สอดคล้องกับ app.py
+        # NOTE: ถ้าโครงสร้างไฟล์คุณใช้ 'evidence_checklist' ให้คงไว้ แต่ถ้าใช้ 'ref_data' ให้ปรับ
+        # ผมจะใช้ Path ที่สมมติว่าไฟล์อยู่ในโฟลเดอร์หลักของโปรเจกต์ หรือปรับให้สอดคล้องกับ App.py
+        self.STATEMENTS_JSON_PATH = f"ref_data/{self.enabler_id}_evidence_statements_checklist.json"
+        
+        # 🟢 โหลด Retriever สำหรับ Statement Vector Store
         self.statement_retriever = load_vectorstore(
             doc_id=f"{self.enabler_id}_statements",
             doc_types="statement"
@@ -59,19 +62,27 @@ class EvidenceMappingGenerator:
 
     def _load_statements_data(self):
         if not os.path.exists(self.STATEMENTS_JSON_PATH):
-            raise FileNotFoundError(f"❌ Statement checklist not found at {self.STATEMENTS_JSON_PATH}")
+            # 🛠️ ปรับปรุง Error message ให้ชัดเจนขึ้น
+            error_path = os.path.abspath(self.STATEMENTS_JSON_PATH)
+            raise FileNotFoundError(f"❌ Statement checklist not found at {error_path}. Please check if the file exists or if the Enabler ID is correct.")
         with open(self.STATEMENTS_JSON_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
             logger.info(f"✅ Loaded statements data from {os.path.basename(self.STATEMENTS_JSON_PATH)}.")
             return data
 
-    def _extract_sub_criteria_id(self, doc_id: str) -> Optional[str]:
-        # Logic นี้ถูกคงไว้ แต่ถูก Bypass ใน _get_dynamic_augmentation
-        match = re.search(r'(\d\.\d)L?', doc_id, re.IGNORECASE)
-        if match:
-             return match.group(1)
-        match_alt = re.search(r'(\d\.\d)_L', doc_id, re.IGNORECASE)
-        return match_alt.group(1) if match_alt else None
+    def _extract_level_and_sub_criteria(self, doc_id: str) -> tuple[Optional[str], Optional[int]]:
+        """
+        แยก Sub-criteria ID และ Level ออกจาก doc_id เช่น KM1.1L301 -> ('1.1', 3)
+        """
+        # 1. แยก Sub-Criteria (เช่น 1.1, 2.3)
+        sub_criteria_match = re.search(r'(\d\.\d)', doc_id, re.IGNORECASE)
+        sub_criteria_id = sub_criteria_match.group(1) if sub_criteria_match else None
+        
+        # 2. แยก Level (เช่น L1, L3)
+        level_match = re.search(r'L(\d)', doc_id, re.IGNORECASE)
+        level_int = int(level_match.group(1)) if level_match else None
+        
+        return sub_criteria_id, level_int
 
     # 🌟 HELPER METHOD: สำหรับสร้างข้อจำกัดให้กับ Query ตาม Level
     def _get_level_constraint_prompt(self, level: int) -> str:
@@ -81,22 +92,16 @@ class EvidenceMappingGenerator:
         """
         # หลักการ: ห้ามดึงหลักฐานที่มีระดับสูงกว่าระดับที่กำลังประเมิน
         if level == 1:
-            # L1: ห้ามดึงหลักฐาน L3-L5 (การบูรณาการ, นวัตกรรม, การวัดผลระยะยาว)
             return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การเริ่มต้น', 'การมีอยู่', หรือ 'การวางแผน' เท่านั้น ห้ามเกี่ยวข้องกับ 'การปรับปรุงอย่างต่อเนื่อง', 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L1-Filter)"
         elif level == 2:
-            # L2: อนุญาต L1/L2 เท่านั้น ห้ามดึงหลักฐาน L4-L5
             return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การปฏิบัติ', 'การทำให้เป็นมาตรฐาน', หรือ 'การประเมินเบื้องต้น' ห้ามเกี่ยวข้องกับ 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L2-Filter)"
         elif level == 3:
-            # L3: มุ่งเน้นไปที่การควบคุมและการวัดผลระยะสั้น ห้าม L5
             return "ข้อจำกัด: หลักฐานควรเกี่ยวกับ 'การควบคุม', 'การกำกับดูแล', หรือ 'การวัดผลเบื้องต้น' ห้ามเกี่ยวข้องกับ 'นวัตกรรม', หรือ 'การสร้างคุณค่าทางธุรกิจระยะยาว' (L3-Filter)"
         elif level == 4:
-            # L4: อนุญาตทุกอย่างยกเว้น L5 (เน้นการบูรณาการและการปรับปรุง)
             return "ข้อจำกัด: หลักฐานควรแสดงถึง 'การบูรณาการ' หรือ 'การปรับปรุงอย่างต่อเนื่อง' ห้ามเกี่ยวข้องกับการพิสูจน์ 'คุณค่าทางธุรกิจระยะยาว' (L4-Filter)"
         elif level == 5:
-            # L5: ไม่จำกัด แต่เน้นเฉพาะคำสำคัญของ L5
             return "ข้อจำกัด: หลักฐานควรแสดงถึง 'นวัตกรรม', 'การสร้างคุณค่าทางธุรกิจ', หรือ 'ผลลัพธ์ระยะยาว' โดยชัดเจน (L5-Focus)"
         else:
-            # Default หรือ Level ไม่ถูกต้อง ให้ใช้คำค้นหาสากล
             return "กรุณาหาหลักฐานที่สอดคล้องกับเกณฑ์ที่ต้องการ"
         
     def _get_dynamic_augmentation(self, doc_id: str, base_query_content: str) -> str:
@@ -156,7 +161,9 @@ class EvidenceMappingGenerator:
         else:
              keywords = ENABLER_KEYWORDS[enabler_key]
         
-        logger.warning(f"⚠️ Warning: Using {enabler_key.upper()}-specific keywords for augmentation.")
+        # 🛠️ เปลี่ยนจาก logger.warning เป็น logger.info เมื่อใช้ keywords ที่รู้จัก
+        if enabler_key in ENABLER_KEYWORDS:
+             logger.info(f"✅ Using {enabler_key.upper()}-specific keywords for query augmentation.")
         
         # 🟢 สร้าง String สำหรับ Augmentation
         return (
@@ -166,27 +173,30 @@ class EvidenceMappingGenerator:
         
     def _get_statement_detail(self, content: str) -> Optional[Dict[str, str]]:
         # โค้ดส่วนนี้ยังคงใช้ statement_data ที่โหลดมาจาก JSON เพื่อดึงรายละเอียด
+        # 🛠️ ปรับปรุง: ใช้ set() ในการตรวจสอบเพื่อเพิ่มความเร็วในการค้นหา Statement
+        clean_content_lower = content.strip().lower()
+
         for enabler_block in self.statement_data:
             sub_criteria_id = enabler_block.get("Sub_Criteria_ID")
             for i in range(1, 6):
                 level_key = f"Level_{i}_Statements"
                 statements_list = enabler_block.get(level_key, [])
                 for j, statement_text in enumerate(statements_list):
-                    clean_content = content.strip().lower()
+                    
                     clean_statement = statement_text.strip().lower()
                     
-                    # 1. ตรวจสอบแบบมีเลขนำหน้า
+                    # 1. ตรวจสอบแบบมีเลขนำหน้า (เช่น 1. Text)
                     if clean_statement and clean_statement[0].isdigit():
                         clean_statement_no_num = clean_statement.split(maxsplit=1)[-1].strip()
-                        if clean_content == clean_statement_no_num.lower():
+                        if clean_content_lower == clean_statement_no_num.lower():
                             return {
                                 "statement_key": f"{sub_criteria_id}_L{i}_{j + 1}",
                                 "sub_level": f"{sub_criteria_id} Level {i} Statement {j + 1}",
                                 "statement_text": statement_text
                             }
                             
-                    # 2. ตรวจสอบแบบไม่มีเลขนำหน้า
-                    if clean_content == clean_statement:
+                    # 2. ตรวจสอบแบบไม่มีเลขนำหน้า (ตรงตัว)
+                    if clean_content_lower == clean_statement:
                         return {
                             "statement_key": f"{sub_criteria_id}_L{i}_{j + 1}",
                             "sub_level": f"{sub_criteria_id} Level {i} Statement {j + 1}",
@@ -214,13 +224,23 @@ class EvidenceMappingGenerator:
         base_query = docs[0].page_content
         
         logger.info(f"Loaded and chunked {file_path} -> {len(docs)} chunks.")
-        logger.info(f"Primary Chunk Content (Base Query): \n---START---\n{base_query}\n---END---")
+        logger.info(f"Primary Chunk Content (Base Query): \n---START---\n{base_query[:200]}...\n---END---")
         
         if len(re.sub(r'[\d\s\W]', '', base_query)) < len(base_query) * 0.1:
              logger.warning(f"⚠️ Warning: Base Query chunk from {effective_doc_id} appears to be mostly noise/numbers.")
 
         # ===================================================================================================
-        # FINAL/BALANCED MODE: ใช้ Dynamic Augmentation (Enabler-specific Keywords) และ Level Constraint
+        # 🟢 NEW/FIXED LOGIC: ดึง Level จากชื่อไฟล์ (ถ้า Level ไม่ได้ถูกระบุใน Arguments)
+        # ===================================================================================================
+        effective_level = level
+        if effective_level is None:
+            _, level_from_doc_id = self._extract_level_and_sub_criteria(effective_doc_id)
+            if level_from_doc_id:
+                effective_level = level_from_doc_id
+                logger.info(f"💡 Level {effective_level} extracted from Document ID: {effective_doc_id}")
+            else:
+                logger.info("💡 No Level constraint specified/extracted. Using general query.")
+        
         # ===================================================================================================
         
         # 🟢 1. สร้าง Enabler-specific Augmentation
@@ -228,8 +248,8 @@ class EvidenceMappingGenerator:
         
         # 🟢 2. สร้าง Level Constraint (ถ้า Level ถูกระบุ)
         level_constraint = ""
-        if level is not None and 1 <= level <= 5:
-            level_constraint = self._get_level_constraint_prompt(level)
+        if effective_level is not None and 1 <= effective_level <= 5:
+            level_constraint = self._get_level_constraint_prompt(effective_level)
             logger.info(f"Applying Level Constraint: {level_constraint}")
         
         # 🟢 3. รวม Prompt ทั้งหมด
@@ -307,10 +327,12 @@ class EvidenceMappingGenerator:
             logger.info(f"==================================================")
 
             try:
+                # 📌 NEW: ส่ง Level ที่รับมา (ซึ่งอาจเป็น None) เข้าไปใน process_and_suggest_mapping
+                # หากเป็น None ฟังก์ชันจะพยายามดึง Level จาก doc_id เอง
                 suggested = self.process_and_suggest_mapping(
                     file_path=file_path,
                     doc_id=doc_id,
-                    level=level, # 👈 ส่ง Level เข้าไป
+                    level=level, 
                     top_k_statements=top_k,
                     similarity_threshold=threshold,
                     suggestion_limit=suggestion_limit
@@ -371,9 +393,16 @@ def main():
             similarity_threshold=args.threshold,
             suggestion_limit=args.suggestion_limit
         )
+        # ... (ส่วนแสดงผลลัพธ์เหมือนเดิม)
         if isinstance(result, list) and result:
+             # 📌 NEW: แสดง Level Constraint ที่ใช้จริง
+             used_level = args.level
+             if used_level is None:
+                 _, extracted_level = generator._extract_level_and_sub_criteria(args.doc_id or os.path.splitext(os.path.basename(args.file_path))[0])
+                 used_level = extracted_level
+             
              print("================================================================================")
-             print(f"✅ Suggested Mappings for Evidence File '{os.path.basename(args.file_path)}' ({args.enabler}) [Level Filter: {args.level or 'None'}]:")
+             print(f"✅ Suggested Mappings for Evidence File '{os.path.basename(args.file_path)}' ({args.enabler}) [Level Filter: {used_level or 'None'}]:")
              print("================================================================================")
              for i, suggestion in enumerate(result):
                 print(f"--- Suggestion {i + 1} (Score: {suggestion['score']:.4f}) ---")

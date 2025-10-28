@@ -1,211 +1,111 @@
-import os
-import sys
-import logging
+#!/usr/bin/env python3
 import argparse
-import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Dict, Any
+import logging
+import sys
+from pathlib import Path
 
-# 🚨 ปิด Warning Tokenizer Parallelism
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# --- PATH SETUP ---
-project_root = os.path.abspath(os.path.dirname(__file__))
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# --- Imports ---
-from core.vectorstore import get_vectorstore
-from core.ingest import process_document 
-
-# -------------------- Config --------------------
-DATA_DIR = "data"
-VECTORSTORE_DIR = "vectorstore"
-SEQUENTIAL = True  # True = process one by one, False = multi-thread
-SUPPORTED_DOC_TYPES = ["evidence", "faq", "document"]
-DEFAULT_DOC_TYPES_TO_RUN = ["document", "faq"]
-
-# Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+# -------------------- Logging --------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
-# -------------------- Helper --------------------
-def get_all_files(data_dir: str = DATA_DIR) -> List[Dict[str, str]]:
-    files = []
-    if not os.path.isdir(data_dir):
-        logger.warning(f"Data directory '{data_dir}' not found. Creating it now.")
-        os.makedirs(data_dir, exist_ok=True)
-        return files
-
-    for root, _, filenames in os.walk(data_dir):
-        folder_name = os.path.relpath(root, data_dir)
-        for f in filenames:
-            if f.startswith('.'):
-                continue
-            full_path = os.path.join(root, f)
-            doc_type = folder_name if folder_name in SUPPORTED_DOC_TYPES else "default"
-            files.append({
-                "file_path": full_path,
-                "file_name": f,
-                "doc_type": doc_type
-            })
-    return files
-
-# -------------------- Status Update --------------------
-def mark_ingested(doc_type: str, doc_id: str):
-    """
-    อัปเดตสถานะไฟล์เป็น Ingested ใน JSON metadata (uploads/<doc_type>_uploads.json)
-    """
-    metadata_dir = "uploads"
-    os.makedirs(metadata_dir, exist_ok=True)
-    metadata_path = os.path.join(metadata_dir, f"{doc_type}_uploads.json")
-
-    if os.path.exists(metadata_path):
-        with open(metadata_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        data = []
-
-    updated = False
-    for doc in data:
-        if doc.get('doc_id') == doc_id:
-            doc['status'] = 'Ingested'
-            updated = True
-            break
-
-    if not updated:
-        # ถ้าไฟล์นี้ยังไม่เคยอยู่ใน metadata ให้เพิ่มเข้าไป
-        data.append({
-            "doc_id": doc_id,
-            "filename": doc_id,  # หรือใส่ชื่อจริงของไฟล์ถ้ามี
-            "file_type": os.path.splitext(doc_id)[1] if '.' in doc_id else '',
-            "status": "Ingested"
-        })
-
-    with open(metadata_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# -------------------- Ingestion --------------------
-def ingest_all_files(
-    sequential: bool = SEQUENTIAL,
-    data_dir: str = DATA_DIR,
-    base_path: str = VECTORSTORE_DIR,
-    doc_types_to_process: Optional[List[str]] = None
-) -> List[Dict[str, Any]]:
-    
-    vector_service = get_vectorstore()
-    os.makedirs(data_dir, exist_ok=True)
-    os.makedirs(base_path, exist_ok=True)
-
-    files_to_process = get_all_files(data_dir)
-    results = []
-
-    # Filter files by doc_type
-    if doc_types_to_process:
-        initial_count = len(files_to_process)
-        files_to_process = [f for f in files_to_process if f["doc_type"] in doc_types_to_process]
-        logger.info(
-            f"Filtering enabled. Kept {len(files_to_process)} files out of {initial_count} "
-            f"matching types: {doc_types_to_process}"
-        )
-
-    if not files_to_process:
-        logger.warning("No files found to process after filtering. Exiting ingestion.")
-        return results
-
-    def _process_file(file_info):
-        return process_document(
-            file_path=file_info["file_path"],
-            file_name=file_info["file_name"],
-            doc_type=file_info["doc_type"],
-            base_path=base_path
-        )
-
-    if sequential:
-        logger.info("Running ingestion in SEQUENTIAL mode.")
-        for f in files_to_process:
-            try:
-                doc_id = _process_file(f)
-                mark_ingested(f["doc_type"], doc_id)  # ✅ อัปเดต status
-                results.append({
-                    "file": f["file_name"],
-                    "doc_id": doc_id,
-                    "doc_type": f["doc_type"],
-                    "status": "processed"
-                })
-            except Exception as e:
-                logger.error(f"Error processing {f['file_name']}: {e}", exc_info=True)
-                results.append({
-                    "file": f["file_name"],
-                    "doc_id": None,
-                    "doc_type": f["doc_type"],
-                    "status": "failed",
-                    "error": str(e)
-                })
-    else:
-        logger.info("Running ingestion in MULTI-THREAD mode.")
-        with vector_service.executor as executor:
-            future_to_file = {executor.submit(_process_file, f): f for f in files_to_process}
-            for future in as_completed(future_to_file):
-                f = future_to_file[future]
-                try:
-                    doc_id = future.result()
-                    mark_ingested(f["doc_type"], doc_id)
-                    results.append({
-                        "file": f["file_name"],
-                        "doc_id": doc_id,
-                        "doc_type": f["doc_type"],
-                        "status": "processed"
-                    })
-                except Exception as e:
-                    logger.error(f"Error processing {f['file_name']}: {e}", exc_info=True)
-                    results.append({
-                        "file": f["file_name"],
-                        "doc_id": None,
-                        "doc_type": f["doc_type"],
-                        "status": "failed",
-                        "error": str(e)
-                    })
-    return results
-
-# -------------------- Main --------------------
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run RAG Batch Ingestion.")
-    parser.add_argument(
-        "doc_types",
-        nargs='*',
-        default=DEFAULT_DOC_TYPES_TO_RUN,
-        help="Specify document types to ingest (e.g., 'document faq'). Defaults to: " + str(DEFAULT_DOC_TYPES_TO_RUN)
+# -------------------- Import core functions --------------------
+try:
+    from core.ingest import (
+        ingest_all_files,
+        list_documents,
+        wipe_vectorstore,
+        delete_document_by_uuid,
+        VECTORSTORE_DIR,
+        get_vectorstore,
+        SUPPORTED_DOC_TYPES,
     )
-    args = parser.parse_args()
+except ImportError as e:
+    logger.critical(f"Cannot import core.ingest: {e}")
+    sys.exit(1)
 
-    # Validate doc types
-    if args.doc_types and all(dt in SUPPORTED_DOC_TYPES for dt in args.doc_types):
-        DOC_TYPES_TO_RUN = args.doc_types
+# -------------------- Argument Parsing --------------------
+parser = argparse.ArgumentParser(description="RAG Batch Ingestion & Vectorstore Management")
+subparsers = parser.add_subparsers(dest="command", required=True)
+
+# ingest
+ingest_parser = subparsers.add_parser("ingest", help="Ingest files into vectorstore")
+ingest_parser.add_argument(
+    "doc_type",
+    nargs='?',
+    default="all",
+    help=f"Document type to ingest (supported: {SUPPORTED_DOC_TYPES})",
+)
+
+# list
+subparsers.add_parser("list", help="List all documents and status")
+
+# wipe
+wipe_parser = subparsers.add_parser("wipe", help="Wipe vectorstore")
+wipe_parser.add_argument(
+    "doc_type",
+    nargs='?',
+    default="all",
+    help="Document type to wipe ('all' for all types)",
+)
+
+# delete
+delete_parser = subparsers.add_parser("delete", help="Delete document by UUID")
+delete_parser.add_argument("doc_type", help="Document collection")
+delete_parser.add_argument("stable_doc_uuid", help="Stable UUID of document to delete")
+
+args = parser.parse_args()
+
+# -------------------- Command Handling --------------------
+if args.command == "list":
+    list_documents()
+    sys.exit(0)
+
+elif args.command == "wipe":
+    target = args.doc_type.lower()
+    logger.warning(f"⚠️ You are about to wipe '{target}' collection(s)")
+    if input("Type 'YES' to confirm: ") == "YES":
+        wipe_vectorstore(target)
+        logger.info("✅ Wipe finished")
     else:
-        DOC_TYPES_TO_RUN = DEFAULT_DOC_TYPES_TO_RUN
+        logger.info("Cancelled")
+    sys.exit(0)
 
-    if not all(dt in SUPPORTED_DOC_TYPES for dt in args.doc_types):
-        invalid_types = [dt for dt in args.doc_types if dt not in SUPPORTED_DOC_TYPES]
-        if invalid_types:
-            logger.error(f"Invalid document types specified: {invalid_types}. Using default: {DEFAULT_DOC_TYPES_TO_RUN}")
+elif args.command == "delete":
+    doc_type = args.doc_type.lower()
+    uuid = args.stable_doc_uuid
+    logger.warning(f"⚠️ You are about to delete document {uuid} in {doc_type}")
+    if input("Type 'YES' to confirm: ") == "YES":
+        success = delete_document_by_uuid(uuid, doc_type, VECTORSTORE_DIR)
+        if success:
+            logger.info(f"✅ Deleted {uuid}")
+        else:
+            logger.error("❌ Document not found or deletion failed")
+    else:
+        logger.info("Cancelled")
+    sys.exit(0)
 
-    logger.info(f"--- Starting Ingestion Batch Process (Target types: {DOC_TYPES_TO_RUN}) ---")
-    vector_service_instance = None
-
+elif args.command == "ingest":
+    doc_type = args.doc_type.lower()
+    logger.info(f"--- Starting ingestion for '{doc_type}' ---")
+    
+    # 🔹 Pre-load vectorstore (embedding model)
     try:
-        vector_service_instance = get_vectorstore()
-        res = ingest_all_files(sequential=SEQUENTIAL, doc_types_to_process=DOC_TYPES_TO_RUN)
-
-        print("\n--- Ingestion Summary Results ---")
-        for r in res:
-            print(f"[{r['status'].upper():<9}] Type: {r['doc_type']:<10} | File: {r['file']} | Doc ID: {r['doc_id']}")
-            if r['status'] == 'failed':
-                print(f"   -> ERROR: {r['error']}")
-
+        vector_service = get_vectorstore()  # Prepare model/service
     except Exception as e:
-        logger.critical(f"A critical error occurred in main execution: {e}", exc_info=True)
-    finally:
-        if vector_service_instance:
-            vector_service_instance.close()
-        logger.info("--- Ingestion Batch Process Finished ---")
+        logger.warning(f"Cannot preload vectorstore service: {e}")
+        vector_service = None
+    
+    ingest_all_files(doc_type=(None if doc_type=="all" else doc_type), base_path=VECTORSTORE_DIR)
+    
+    if vector_service:
+        try:
+            vector_service.close()
+        except Exception:
+            pass
+    
+    logger.info("--- Ingestion finished ---")
+    sys.exit(0)

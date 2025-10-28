@@ -20,6 +20,10 @@ try:
     from core.retrieval_utils import set_mock_control_mode
     from core.vectorstore import load_all_vectorstores 
 
+    # 🟢 NEW IMPORT: Import UUID extraction and retrieval by ID
+    from core.llm_utils import extract_uuids_from_llm_response
+    from core.retrieval_utils import retrieve_context_by_doc_ids
+
     # 🛑 FIX: Import Mock Functions ทั้งหมด
     from assessments.mocking_assessment import (
         summarize_context_with_llm_MOCK,
@@ -48,8 +52,11 @@ def print_detailed_results(raw_llm_results: List[Dict], target_sub_id: str):
         logger.info("\n[Detailed Results] No raw LLM results found to display.")
         return
 
+    # 🟢 NEW: ดึงข้อมูลไฟล์ต้นฉบับทั้งหมดจาก UUIDs ที่ LLM แนะนำ
+    updated_raw_llm_results = _retrieve_full_source_info(raw_llm_results)
+
     grouped: Dict[str, Dict[int, List[Dict]]] = {}
-    for r in raw_llm_results:
+    for r in updated_raw_llm_results:
         sub_id = r.get('sub_criteria_id')
         level = r.get('level')
         if sub_id and level is not None:
@@ -74,13 +81,16 @@ def print_detailed_results(raw_llm_results: List[Dict], target_sub_id: str):
                 print(f"    - S{statement_num}: {fail_status} Statement: {r.get('statement', 'N/A')[:100]}...")
                 print(f"      [Score]: {score_text}")
                 print(f"      [Reason]: {r.get('reason', 'N/A')[:120]}...")
-                sources = r.get('retrieved_sources_list', [])
+
+                # 🟢 ใช้ sources จาก UUIDs ที่ถูกดึงมาใหม่
+                sources = r.get('retrieved_full_source_info', []) # NEW KEY
                 if sources:
                      print("      [SOURCE FILES]:")
                      for src in sources:
                          source_name = src.get('source_name', 'Unknown File')
                          location = src.get('location', 'N/A')
-                         print(f"        -> {source_name} (Location: {location})")
+                         chunk_uuid = src.get('chunk_uuid', 'N/A') # 🟢 NEW: แสดง UUID ของ Chunk
+                         print(f"        -> {source_name} (Location: {location}, UUID: {chunk_uuid[:8]}...)")
                 print(f"      [Context]: {r.get('context_retrieved_snippet', 'N/A')}")
 
 # -------------------- PASS STATUS --------------------
@@ -106,11 +116,73 @@ def add_pass_status_to_raw_results(raw_results: List[Dict[str, Any]]) -> List[Di
         item['sub_criteria_id'] = item.get('sub_criteria_id', 'N/A')
         item['level'] = item.get('level', 0)
         item['statement_id'] = item.get('statement_id', 'N/A')
+
+        # 🟢 NEW: Extract UUIDs from the LLM's raw response (if available)
+        llm_raw_response = item.get('llm_raw_response_content', '')
+        if llm_raw_response:
+            # We look for UUIDs in any key, as the exact key name might vary 
+            # (though 'evidence_uuids' or 'chunk_uuids' is expected)
+            extracted_uuids = extract_uuids_from_llm_response(
+                llm_raw_response, 
+                key_hint=["chunk_uuids", "evidence_uuids", "doc_uuids"] # Keys LLM is instructed to use
+            )
+            item['llm_extracted_chunk_uuids'] = extracted_uuids
+        else:
+            item['llm_extracted_chunk_uuids'] = []
+
         updated_results.append(item)
     return updated_results
 
+# -------------------- POST-ASSESSMENT RETRIEVAL --------------------
+
+def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    🟢 NEW FUNCTION: Collects all unique chunk UUIDs and retrieves full document details 
+    using the dedicated function, then merges the results back.
+    """
+    all_uuids = set()
+    for r in raw_llm_results:
+        uuids = r.get('llm_extracted_chunk_uuids')
+        if uuids:
+            all_uuids.update(uuids)
+
+    if not all_uuids:
+        logger.info("ℹ️ No Chunk UUIDs extracted from LLM results for post-retrieval.")
+        return raw_llm_results
+
+    logger.info(f"🔎 Attempting to retrieve full source info for {len(all_uuids)} unique chunks...")
+    
+    # 🟢 Call the new function from retrieval_utils
+    retrieval_result = retrieve_context_by_doc_ids(list(all_uuids))
+    full_docs_map: Dict[str, Dict[str, Any]] = {
+        doc.get("chunk_uuid"): {
+            "chunk_uuid": doc.get("chunk_uuid"),
+            "doc_id": doc.get("doc_id"),
+            "source_name": doc.get("source"), # Use 'source' field as the file name/source name
+            "location": doc.get("doc_type"), # Use 'doc_type' or a similar field for location hint
+            "content_snippet": doc.get("content", "")[:100] + "..."
+        } for doc in retrieval_result.get("top_evidences", []) if doc.get("chunk_uuid")
+    }
+    
+    # Merge results back into raw_llm_results
+    updated_results = []
+    for r in raw_llm_results:
+        chunk_uuids = r.get('llm_extracted_chunk_uuids', [])
+        source_info_list = []
+        for uuid in chunk_uuids:
+            if uuid in full_docs_map:
+                source_info_list.append(full_docs_map[uuid])
+        
+        # 🟢 Store the full source info list
+        r['retrieved_full_source_info'] = source_info_list
+        updated_results.append(r)
+        
+    return updated_results
+
+
 # -------------------- SUB CRITERIA UTILITIES & ACTION PLAN --------------------
 def get_sub_criteria_data(sub_id: str, criteria_list: List[Dict]) -> Dict:
+# ... (โค้ดเดิม)
     for criteria in criteria_list:
         if criteria.get('Sub_Criteria_ID') == sub_id:
             return criteria
@@ -137,6 +209,7 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
     return all_failed
 
 def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
+# ... (โค้ดเดิม)
     """Generate Action Plan per Sub-Criteria. (จะใช้ generate_action_plan_via_llm ซึ่งจะถูก Patch)"""
 
     highest_full_level = summary_data.get('highest_full_level', 0)
@@ -235,6 +308,7 @@ def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: 
 
 # -------------------- L5 SUMMARY --------------------
 def generate_and_integrate_l5_summary(assessor, results):
+# ... (โค้ดเดิม)
     """
     Generate L5 Summary (จะเรียก generate_evidence_summary_for_level และ summarize_context_with_llm ซึ่งจะถูก Patch)
     """
@@ -434,7 +508,17 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
         summary['Error_Details'] = str(e)
         
 
-    # 5. Generate Evidence Summaries (จัดการ Patch)
+    # 5. Pre-process and Enhance Raw Results (NEW STEP)
+    if 'raw_llm_results' in summary:
+        # 🟢 STEP 5a: Add pass status and EXTRACT UUIDS
+        summary['raw_llm_results'] = add_pass_status_to_raw_results(summary['raw_llm_results'])
+        
+        # 🟢 STEP 5b: Retrieve full source info based on extracted UUIDs
+        summary['raw_llm_results'] = _retrieve_full_source_info(summary['raw_llm_results'])
+
+
+    # 6. Generate Evidence Summaries (จัดการ Patch)
+    # ... (โค้ดเดิม)
     summary_patcher_enabler = None
     summary_patcher_utils = None
     if original_mode=="mock":
@@ -475,7 +559,8 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
             summary_patcher_enabler.stop()
             summary_patcher_utils.stop()
 
-    # 6. Generate Action Plans (จัดการ Patch)
+    # 7. Generate Action Plans (จัดการ Patch)
+    # ... (โค้ดเดิม)
     action_patcher = None
     full_summary_data = summary
     if original_mode=="mock":
@@ -495,7 +580,7 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
         if original_mode=="mock" and action_patcher:
             action_patcher.stop()
 
-    # 7. Export JSON
+    # 8. Export JSON (Original Step 7 + New Raw Data Handling)
     if export and "Overall" in summary:
         EXPORT_DIR = os.path.join(project_root, "results")
         os.makedirs(EXPORT_DIR, exist_ok=True)
@@ -514,7 +599,7 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
                 json.dump(export_summary, f, ensure_ascii=False, indent=4)
             summary['export_path_used'] = FULL_EXPORT_PATH
             if raw_data_to_export:
-                raw_data_to_export = add_pass_status_to_raw_results(raw_data_to_export)
+                # 🛑 RAW DATA HAS ALREADY BEEN PROCESSED WITH UUIDS/PASS STATUS
                 raw_filename = FULL_EXPORT_PATH.replace(".json", "_RAW_EVAL.json")
                 with open(raw_filename, 'w', encoding='utf-8') as f:
                     json.dump({"raw_llm_results": raw_data_to_export}, f, ensure_ascii=False, indent=4)
@@ -662,21 +747,20 @@ if __name__ == "__main__":
                                 print(f"    - Target Evidence: {action.get('Target_Evidence_Type', 'N/A')}")
                                 print(f"    - Key Metric: {action.get('Key_Metric', 'N/A')}")
                         else:
-                            print("[ACTIONS] No specific actions listed in this phase.")
+                            print("[ACTIONS] No specific actions listed.")
                 else:
-                    print(f"Error: Action plan for {sub_id} is not a valid list. Details: {action_plan_phases}")
-
-        
-        print(f"\n[⏱️ TOTAL EXECUTION TIME] All processes completed in: {final_results['Execution_Time']['total']:.2f} seconds.")
-        
-        if args.export and 'export_path_used' in final_results:
-            print(f"\n[✅ EXPORT SUCCESS] Report JSON exported to: {final_results['export_path_used']}")
-            if 'raw_export_path_used' in final_results:
-                print(f"[✅ RAW DATA EXPORTED] Raw Evaluation JSON exported to: {final_results['raw_export_path_used']}")
-                
+                    print(f"[ACTION PLAN ERROR] Unexpected format for action plans: {type(action_plan_phases)}")
+                    
         print("\n=====================================================")
-        
-        print_detailed_results(summary.get('raw_llm_results', []), args.sub) 
-        
+        print(f"Total Execution Time: {final_results.get('Execution_Time', {}).get('total', 0.0):.2f} seconds.")
+        if args.export and 'export_path_used' in final_results:
+            print(f"Report exported to: {final_results['export_path_used']}")
+            print(f"Raw evaluation data exported to: {final_results['raw_export_path_used']}")
+        print("=====================================================")
+
+        # -------------------- Detailed Results Display --------------------
+        if 'raw_llm_results' in final_results:
+             print_detailed_results(final_results['raw_llm_results'], args.sub)
+             
     except Exception as e:
-        logger.error(f"An unexpected error occurred during CLI execution: {e}")
+        logger.error(f"FATAL ERROR in CLI execution: {e}", exc_info=True)

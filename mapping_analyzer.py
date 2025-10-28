@@ -4,7 +4,7 @@ import os
 import re
 
 # กำหนดชื่อไฟล์และโฟลเดอร์สำหรับ Export
-OUTPUT_FILE_PATH = "evidence_checklist/km_mapping_by_level.json"
+OUTPUT_FILE_PATH = "evidence_checklist/ em.json"
 DEFAULT_STATEMENTS_COUNT = 3
 MAPPING_THRESHOLD = 0.9500 # ใช้ค่า default ตามที่คุณเคยกำหนด
 
