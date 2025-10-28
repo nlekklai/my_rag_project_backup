@@ -2228,3 +2228,115 @@ query_instruction
 2025-10-28 17:22:14,398 | WARNING | ⚠️ Initializing LLM for EVALUATION: Setting temperature=0.0 for stability.
 2025-10-28 17:22:14,408 | INFO | ✅ LLM Instance created successfully: llama3.1:8b (Temp: 0.0)
 2025-10-28 17:22:14,420 | INFO | ✅ Data directory 'data', vectorstore 'vectorstore', and ref_data 'ref_data' ensured.
+2025-10-28 18:08:15,657 | WARNING | ⚠️ Detected MPS but running in process-parallel mode: forcing device -> cpu to avoid MPS multi-process failures
+2025-10-28 18:08:15,657 | WARNING | ⚠️ Detected MPS but running in process-parallel mode: forcing device -> cpu to avoid MPS multi-process failures
+2025-10-28 18:08:15,658 | INFO | 📦 Creating HuggingFaceEmbeddings (model=intfloat/multilingual-e5-large, device=cpu)
+2025-10-28 18:08:15,658 | INFO | 📦 Creating HuggingFaceEmbeddings (model=intfloat/multilingual-e5-large, device=cpu)
+2025-10-28 18:08:17,936 | INFO | Load pretrained SentenceTransformer: intfloat/multilingual-e5-large
+2025-10-28 18:08:22,591 | INFO | ✅ Loaded Doc ID Mapping: 276 original documents, 6 total chunks.
+2025-10-28 18:08:22,591 | INFO | ✅ Loaded Doc ID Mapping: 276 original documents, 6 total chunks.
+2025-10-28 18:08:22,591 | INFO | Initialized VectorStoreManager. Loaded 276 doc IDs.
+2025-10-28 18:08:22,591 | INFO | Initialized VectorStoreManager. Loaded 276 doc IDs.
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:08:22,591 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:08:22,591 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:08:22,591 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:08:22,591 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:08:22,591 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:08:22,592 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:08:22,592 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:08:22,592 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:08:22,592 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:08:22,593 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:08:22,593 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:08:22,593 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:08:22,593 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:08:22,607 | INFO | Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-28 18:08:22,656 | INFO | ✅ Loaded Chroma instance for collection: evidence
+2025-10-28 18:08:22,656 | INFO | ✅ Loaded Chroma instance for collection: evidence
+2025-10-28 18:08:22,656 | INFO | 📦 Preloading Flashrank model 'ms-marco-MiniLM-L-12-v2' (cache dir: /Users/oddnaphat/.hf_cache_dir/flashrank_models)
+2025-10-28 18:08:22,656 | INFO | 📦 Preloading Flashrank model 'ms-marco-MiniLM-L-12-v2' (cache dir: /Users/oddnaphat/.hf_cache_dir/flashrank_models)
+2025-10-28 18:08:22,780 | INFO | ✅ Flashrank model 'ms-marco-MiniLM-L-12-v2' loaded
+2025-10-28 18:08:22,780 | INFO | ✅ Flashrank model 'ms-marco-MiniLM-L-12-v2' loaded
+2025-10-28 18:08:24,729 | INFO | 📝 Query='สรุปเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:08:24,729 | INFO | 📝 Query='สรุปเอกสาร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:08:35,609 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 18:10:45,333 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:10:45,333 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:10:45,334 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:10:45,334 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:10:45,334 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:10:45,334 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:10:45,334 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:10:45,334 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:10:45,335 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:10:45,337 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:10:45,337 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:10:45,338 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:10:45,338 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:10:46,820 | INFO | 📝 Query='สรุปเอกสารอย่างละเอียด...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:10:46,820 | INFO | 📝 Query='สรุปเอกสารอย่างละเอียด...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:10:51,136 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 18:13:11,953 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:13:11,953 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:13:11,954 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:13:11,954 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:13:11,954 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:13:11,954 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:13:11,955 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:13:11,955 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:13:11,955 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:13:11,958 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:13:11,958 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:13:11,958 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:13:11,958 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:13:13,956 | INFO | 📝 Query='เอกสารนี้เกี่ยวกับอะไร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:13:13,956 | INFO | 📝 Query='เอกสารนี้เกี่ยวกับอะไร...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:13:24,732 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"
+2025-10-28 18:14:03,585 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:14:03,585 | INFO | 🔍 DEBUG: Target doc_types=['evidence'], Filter={'evidence'}
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Found available collections: ['evidence', 'default', 'document']
+2025-10-28 18:14:03,586 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:14:03,586 | INFO | 🔍 V-Exists Check: Checking path: vectorstore/evidence/chroma.sqlite3 (from CWD: /Users/oddnaphat/my_rag_project)
+2025-10-28 18:14:03,586 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:14:03,586 | INFO | ✅ V-Exists Check 2: Found required file at vectorstore/evidence/chroma.sqlite3
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Successfully added retriever for collection 'evidence'.
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Skipping collection 'default' (not in filter)
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Skipping collection 'document' (not in filter)
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:14:03,586 | INFO | 🔍 DEBUG: Final count of all_retrievers = 1
+2025-10-28 18:14:03,588 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:14:03,588 | INFO | Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues
+2025-10-28 18:14:03,588 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:14:03,588 | INFO | ⚙️ Running MultiDocRetriever with thread executor (1 workers)
+2025-10-28 18:14:03,783 | INFO | 📝 Query='กระบวนการจัดการความรู้อย่างไรบ้าง...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:14:03,783 | INFO | 📝 Query='กระบวนการจัดการความรู้อย่างไรบ้าง...' found 5 unique docs across sources (Executor=thread)
+2025-10-28 18:14:11,736 | INFO | HTTP Request: POST http://127.0.0.1:11434/api/generate "HTTP/1.1 200 OK"

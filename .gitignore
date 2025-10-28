@@ -18,6 +18,7 @@ asessment_data/
 results/
 output/
 ref_data
+ingest.log
 
 # Ignore large files
 *.pdf
