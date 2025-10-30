@@ -1,3 +1,4 @@
+#models/llm.py
 from langchain_ollama import OllamaLLM # <<< ใช้คลาสและแพ็คเกจใหม่
 import logging
 from typing import Optional # เพิ่ม Optional สำหรับ Type Hint

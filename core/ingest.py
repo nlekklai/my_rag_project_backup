@@ -1,11 +1,4 @@
 import os
-
-# ตั้งค่า HF_HOME เป็นพาธที่ต้องการ
-os.environ['HF_HOME'] = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface')
-# (ทางเลือก) ป้องกันการเรียกใช้ TRANSFORMERS_CACHE 
-if 'TRANSFORMERS_CACHE' in os.environ:
-    del os.environ['TRANSFORMERS_CACHE']
-
 import re
 import logging
 import unicodedata 
@@ -16,17 +9,27 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Set, Iterable, Dict, Any, Union, Tuple, TypedDict
 import pandas as pd
 import shutil 
-import numpy as np # Import numpy to handle potential np.float64 objects
+import numpy as np 
+import glob 
+from pydantic import ValidationError
 
-# Document loaders
+
 from langchain_community.document_loaders import (
     PyPDFLoader,
+    UnstructuredPDFLoader,
+    CSVLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredExcelLoader,
     TextLoader,
-    UnstructuredPowerPointLoader,
-    CSVLoader
+    UnstructuredPowerPointLoader
 )
+
+# For PDF inspection
+import fitz  # PyMuPDF
+
+# [NEW] เพิ่มส่วนนี้ไว้ในส่วน Helper: Normalization utility
+import hashlib
+
 # --- Document Info Model ---
 class DocInfo(TypedDict):
     """
@@ -36,7 +39,8 @@ class DocInfo(TypedDict):
     doc_id_key: str         # Filename ID Key (normalized name)
     filename: str
     filepath: str
-    doc_type: str           # Collection name
+    doc_type: str           # Collection name (e.g., 'document', 'evidence')
+    enabler: Optional[str]  # Enabler code (e.g., 'KM')
     upload_date: str        # ISO format
     chunk_count: int
     status: str             # "Ingested" | "Pending" | "Error"
@@ -49,30 +53,26 @@ except ImportError:
     try:
         from langchain_community.document_loaders import UnstructuredFileLoader
     except ImportError:
+        # Fallback to base UnstructuredFileLoader if necessary
         from langchain.document_loaders import UnstructuredFileLoader 
     
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter 
 
 # 🟢 Import Chroma และ Embeddings
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Optional OCR
-try:
-    from pdf2image import convert_from_path
-    import pytesseract
-    _HAS_PDF2IMAGE = True
-except Exception:
-    convert_from_path = None
-    pytesseract = None
-    _HAS_PDF2IMAGE = False
+# Optional OCR (Omitted for brevity)
+_HAS_PDF2IMAGE = False 
 
 # Try to import helper for filtering metadata
 try:
     from langchain_community.vectorstores.utils import filter_complex_metadata as _imported_filter_complex_metadata
 except Exception:
     _imported_filter_complex_metadata = None
+
 
 # -------------------- Config --------------------
 DATA_DIR = "data"
@@ -81,22 +81,76 @@ MAPPING_FILE_PATH = "data/doc_id_mapping.json"
 SUPPORTED_TYPES = [".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv", ".jpg", ".jpeg", ".png"]
 
 # 🔴 แก้ไข: ใช้ 'statement' ตามที่ผู้ใช้แจ้งมา
-SUPPORTED_DOC_TYPES = ["document", "policy", "report", "statement", "evidence", "feedback"] 
+SUPPORTED_DOC_TYPES = ["document", "policy", "report", "statement", "evidence", "feedback", "faq"] 
+
+# 📌 [NEW] Enabler Configuration
+DEFAULT_ENABLER = "KM"
+SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
 # Logging
 logging.basicConfig(
-    filename="ingest.log",
+    # filename="ingest.log",
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 logger = logging.getLogger(__name__)
 
+# -------------------- [NEW] Path & Collection Utilities --------------------
+
+def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
+    """
+    Calculates the target directory name / Chroma Collection Name.
+    e.g., ("evidence", "KM") -> "evidence_km"
+    e.g., ("document", None) -> "document"
+    """
+    doc_type_norm = doc_type.strip().lower()
+
+    if doc_type_norm == "evidence":
+        # Apply default enabler if None, or use the provided one
+        enabler_norm = (enabler or DEFAULT_ENABLER).strip().lower()
+        # We use lowercase for folder names for consistency
+        return f"{doc_type_norm}_{enabler_norm}"
+        
+    # Default logic (for document, faq, policy, etc.)
+    return doc_type_norm
+
+def _parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
+    """
+    Parses a collection/folder name back into doc_type and enabler.
+    e.g., "evidence_km" -> ("evidence", "KM")
+    e.g., "document"    -> ("document", None)
+    """
+    collection_name_lower = collection_name.lower()
+    
+    if collection_name_lower.startswith("evidence_"):
+        parts = collection_name_lower.split("_", 1)
+        if len(parts) == 2:
+            return "evidence", parts[1].upper()
+    
+    # Check if the collection name is a simple doc_type
+    if collection_name_lower in SUPPORTED_DOC_TYPES:
+        return collection_name_lower, None
+        
+    return collection_name_lower, None # Fallback
+
+def _get_source_dir(
+    doc_type: str, 
+    enabler: Optional[str] = None, 
+    base_data_dir: str = DATA_DIR
+) -> str:
+    """
+    Calculates the specific source directory path based on doc_type and enabler.
+    e.g., ("evidence", "KM") -> "data/evidence_km"
+    e.g., ("document", None) -> "data/document"
+    """
+    collection_name = get_target_dir(doc_type, enabler)
+    return os.path.join(base_data_dir, collection_name)
+
 # -------------------- Helper: safe metadata filter --------------------
 def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
     """
     Ensure metadata is serializable and safe for Chroma / storage.
-    This is an aggressive filter designed to handle nested dicts/lists 
-    and specific object representations (like np.float64 strings from Unstructured).
+    Adds a fix to convert single-item lists (like ['eng']) to a single primitive value.
     """
     
     if not isinstance(meta, dict):
@@ -105,49 +159,50 @@ def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
             meta_dict = dict(meta.items())
         else:
             return {} # If it's not a dict, we can't process it safely
-
-    meta_dict = meta
+    else:
+        meta_dict = meta
+        
     clean = {}
 
     for k, v in meta_dict.items():
-        # Skip None values
         if v is None:
             continue
             
         # 1. Handle primitive types (str, int, float, bool)
         if isinstance(v, (str, int, float, bool)):
             clean[k] = v
-        # 2. Handle nested dictionary (e.g., the 'points' dict object from Unstructured)
+        # 2. Handle nested dictionary (Chroma does not support, so stringify)
         elif isinstance(v, dict):
             try:
-                # 📌 New: Try to serialize to JSON string
+                # แปลง Dict เป็น JSON string
                 clean[k] = json.dumps(v)
             except TypeError:
-                # If JSON serialization fails (e.g., contains non-JSON serializable objects), stringify it
                 clean[k] = str(v)
+                
         # 3. Handle list or tuple
         elif isinstance(v, (list, tuple)):
+            # 📌 FIX: ตรวจสอบและแปลง List ที่มีสมาชิกเดียวให้เป็น Primitive Type
+            if len(v) == 1:
+                item = v[0]
+                # ถ้าเป็น String/Int/Float/Bool ให้ใช้ค่าเดียวโดดๆ
+                if isinstance(item, (str, int, float, bool)):
+                    clean[k] = item # เช่น ['eng'] -> 'eng'
+                    continue 
+                # ถ้าเป็น Numpy type ให้แปลงเป็น Python native type
+                elif isinstance(item, (np.floating, np.integer)):
+                    clean[k] = item.item() 
+                    continue 
+            
+            # Fallback สำหรับ List ที่มีหลายรายการ หรือมีรายการที่ซับซ้อน
             try:
-                # 📌 New: Aggressively convert all elements within the list/tuple to string
-                cleaned_list = []
-                for item in v:
-                    if isinstance(item, (str, int, float, bool)):
-                        cleaned_list.append(item)
-                    elif isinstance(item, (np.float64, np.float32)): # Explicitly handle numpy floats
-                        cleaned_list.append(float(item))
-                    else:
-                        # Stringify any other complex object (like nested dicts, lists, or custom classes)
-                        cleaned_list.append(str(item))
-                        
-                # ChromaDB is sensitive to lists of strings being too complex.
-                # If the list contains mixed types or seems too complex, we stringify the whole thing.
-                # However, for robustness, we'll return the list of cleaned primitives/strings.
-                clean[k] = [str(x) for x in cleaned_list] # Ensure final output is a list of strings/primitives
-                
+                # Stringify ทุก element ใน List แล้ว dump เป็น JSON string เพื่อความปลอดภัย
+                clean[k] = json.dumps([str(x) for x in v]) 
             except Exception:
-                # Fallback: Stringify the entire list/tuple if processing fails
                 clean[k] = str(v)
-        # 4. Handle other complex objects (e.g., numpy types directly if not caught above)
+                
+        # 4. Handle other complex objects (e.g., numpy types)
+        elif isinstance(v, (np.floating, np.integer)):
+            clean[k] = v.item()
         else:
             try:
                 clean[k] = str(v)
@@ -160,215 +215,151 @@ def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
             return _imported_filter_complex_metadata(clean)
         except Exception as e:
             logger.debug(f"LangChain filter failed after local cleanup: {e}")
-            pass # Continue with locally cleaned data
+            pass
 
     return clean
 
-
 # -------------------- Normalization utility --------------------
-
 def _normalize_doc_id(text: str) -> str:
     """
-    Final Logic: doc_id is the filename with the last extension removed, 
-    retaining all characters (including Thai and spaces). 
+    Normalizes a filename/text into a safe ID key.
     """
-    if not text:
-        return "default_doc"
+    if not text: return "default_doc"
     doc_id = text.strip() 
+    if not doc_id: return "default_doc"
     
-    if not doc_id:
-        return "default_doc"
-        
-    return doc_id
-
+    # Remove file extensions if present
+    doc_id = os.path.splitext(doc_id)[0] 
+    
+    doc_id = unicodedata.normalize('NFKD', doc_id).encode('ascii', 'ignore').decode('utf-8')
+    doc_id = re.sub(r'[^\w\s-]', '', doc_id).strip().lower()
+    doc_id = re.sub(r'[-\s]+', '-', doc_id)
+    return doc_id or "default_doc"
 
 # -------------------- Text Cleaning --------------------
 def clean_text(text: str) -> str:
-    """Clean Thai/English text including typical OCR mistakes."""
-    if not text:
-        return ""
+    """
+    Basic text cleaning utility.
+    """
+    if not text: return ""
     text = text.replace('\xa0', ' ').replace('\u200b', '').replace('\u00ad', '')
     text = re.sub(r'[\uFFFD\u2000-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]', '', text)
+    # Remove excessive spaces between Thai characters
     text = re.sub(r'([ก-๙])\s{1,3}(?=[ก-๙])', r'\1', text)
-    ocr_replacements = {
-        "สำนักงน": "สำนักงาน", "คณะกรรมกร": "คณะกรรมการ", "รัฐวิสหกิจ": "รัฐวิสาหกิจ",
-        "นโยบย": "นโยบาย", "ดาน": "ด้าน", "การดาเนนงาน": "การดำเนินงาน",
-        "การดาเนน": "การดำเนิน", "ท\"": "ที่",
-    }
-    for bad, good in ocr_replacements.items():
-        text = text.replace(bad, good)
+    ocr_replacements = {"สำนักงน": "สำนักงาน", "คณะกรรมกร": "คณะกรรมการ"}
+    for bad, good in ocr_replacements.items(): text = text.replace(bad, good)
+    # Filter out non-printable ASCII except standard ones and Thai characters
     text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F]', '', text)
-    text = re.sub(r'\(\s+', '(', text)
-    text = re.sub(r'\s+\)', ')', text)
-    text = re.sub(r'\r\n', '\n', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = re.sub(r'[ \t]{2,}', ' ', text)
-    text = re.sub(r'\s{2,}', ' ', text)
+    text = re.sub(r'\(\s+', '(', text); text = re.sub(r'\s+\)', ')', text)
+    text = re.sub(r'\r\n', '\n', text); text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text); text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
+
+# -------------------- Loaders Helper --------------------
+
+def _is_pdf_image_only(file_path: str) -> bool:
+    """
+    ตรวจสอบว่า PDF เป็น image-only หรือมี text layer
+    คืนค่า True ถ้าเป็น image-only
+    """
+    try:
+        doc = fitz.open(file_path)
+        for page in doc:
+            text = page.get_text().strip()
+            if text:
+                return False  # มี text layer
+        return True  # ไม่มี text layer → image-only
+    except Exception as e:
+        logger.warning(f"Cannot check PDF text layer for {file_path}: {e}")
+        return True  # ป้องกัน fail → treat as image-only
+
+def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Document]:
+    """
+    Helper function to load a document using a specific LangChain loader class.
+    - CSV → CSVLoader
+    - PDF → auto detect text layer
+    - Image → OCR with UnstructuredFileLoader
+    """
+    try:
+        ext = file_path.lower().split('.')[-1]
+        
+        if loader_class is CSVLoader:
+            loader = loader_class(file_path, encoding='utf-8')
+        
+        elif ext == "pdf":
+            if _is_pdf_image_only(file_path):
+                logger.info(f"PDF is image-only, using OCR loader: {file_path}")
+                loader = UnstructuredPDFLoader(file_path, mode="elements", languages=['tha','eng'])
+            else:
+                logger.info(f"PDF has text layer, using PyPDFLoader: {file_path}")
+                loader = PyPDFLoader(file_path)
+        
+        elif loader_class is UnstructuredFileLoader:
+            # สำหรับไฟล์รูปภาพ
+            loader = loader_class(file_path, mode="elements", languages=['tha','eng'])
+        
+        else:
+            loader = loader_class(file_path)
+        
+        return loader.load()
+    
+    except Exception as e:
+        # 📌 [FIXED: Detailed Loader Failure Logging] บันทึก Exception ที่เกิดขึ้นในการโหลด
+        logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} - {loader_class.__name__} raised: {type(e).__name__} ({e})")
+        return []    
 
 # -------------------- Loaders --------------------
 
-def load_unstructured(path: str) -> List[Document]:
-    try:
-        try:
-            # 📌 UnstructuredFileLoader จะถูก import ตาม Logic ในส่วน Imports
-            # ใช้ mode="elements" สำหรับเอกสารที่มีโครงสร้าง เช่น รูปภาพ (Image files)
-            loader = UnstructuredFileLoader(path, mode="elements")
-            docs = loader.load()
-            return docs
-        except Exception as inner_e:
-            error_message = str(inner_e)
-            if "NoneType" in error_message or "__str__ returned non-string" in error_message or "Unsupported file type" in error_message:
-                logger.warning(
-                    f"⚠️ Fallback: Unstructured mode='elements' failed for {os.path.basename(path)} (Error type: {error_message[:50]}). "
-                    f"Attempting load without 'elements' mode."
-                )
-                try:
-                    loader_fallback = UnstructuredFileLoader(path)
-                    docs_fallback = loader_fallback.load()
-                    return docs_fallback
-                except Exception as fallback_e:
-                    logger.error(f"❌ Unstructured final load failed for {os.path.basename(path)}: {fallback_e}")
-                    return []
-            raise inner_e 
-    except Exception as e:
-        logger.error(f"❌ Failed to load unstructured file {path}: {e}")
-        return []
-
-def load_txt(path: str) -> List[Document]:
-    for enc in ["utf-8", "latin-1", "cp1252"]:
-        try:
-            loader = TextLoader(path, encoding=enc)
-            return loader.load()
-        except UnicodeDecodeError:
-            continue
-    raise ValueError(f"Cannot read text file {path} with utf-8 / latin-1 / cp1252")
-
-def _ocr_page_from_pdf(pdf_path: str, page_number: int, lang: str = "tha+eng") -> str:
-    if not _HAS_PDF2IMAGE:
-        logger.warning("pdf2image/pytesseract not available; OCR skipped.")
-        return ""
-    try:
-        images = convert_from_path(pdf_path, first_page=page_number, last_page=page_number, dpi=300)
-        if not images:
-            return ""
-        img = images[0]
-        return (pytesseract.image_to_string(img, lang=lang) or "").strip()
-    except Exception as e:
-        logger.warning(f"OCR error {os.path.basename(pdf_path)} page {page_number}: {e}")
-        return ""
-
-def load_pdf(path: str, ocr_pages: Optional[Iterable[int]] = None) -> List[Document]:
-    docs: List[Document] = []
-    try:
-        loader = PyPDFLoader(path)
-        pages = loader.load_and_split()
-    except Exception as e:
-        logger.warning(f"PyPDFLoader failed for {path}: {e}.")
-        pages = []
-    total_pages = len(pages)
-    if total_pages == 0 and _HAS_PDF2IMAGE:
-        try:
-            images = convert_from_path(path, dpi=50)
-            total_pages = len(images)
-        except Exception as e:
-            logger.error(f"Cannot determine pages for {path}: {e}")
-            total_pages = 0
-    for i in range(1, total_pages + 1):
-        text = (pages[i-1].page_content.strip() if i <= len(pages) else "")
-        force_ocr = ocr_pages and i in set(ocr_pages)
-        if (not text or len(text) < 50) or force_ocr:
-            if _HAS_PDF2IMAGE:
-                ocr_text = _ocr_page_from_pdf(path, i)
-                if ocr_text:
-                    text = ocr_text
-        if text:
-            docs.append(Document(page_content=text, metadata={"source_file": os.path.basename(path), "page": i}))
-    seen = set()
-    deduped = []
-    for d in docs:
-        key = d.page_content.strip()
-        if key and key not in seen:
-            seen.add(key)
-            deduped.append(d)
-    return deduped
-
-def load_docx(path: str) -> List[Document]:
-    try:
-        return UnstructuredWordDocumentLoader(path).load()
-    except Exception as e:
-        logger.error(f"Failed to load .docx {path}: {e}")
-        return []
-
-def load_xlsx_generic_structured(path: str) -> List[Document]:
-    # (Simplified: Full complex logic is omitted for brevity but should be included here)
-    try:
-        # Fallback to UnstructuredExcelLoader if structured load fails
-        return UnstructuredExcelLoader(path).load()
-    except Exception as e:
-        logger.error(f"UnstructuredExcelLoader fallback failed for {path}: {e}")
-        return []
-
-def load_xlsx(path: str) -> List[Document]:
-    return load_xlsx_generic_structured(path)
-
-def load_pptx(path: str) -> List[Document]:
-    try:
-        return UnstructuredPowerPointLoader(path).load()
-    except Exception as e:
-        logger.error(f"Failed to load .pptx {path}: {e}")
-        return []
-
-def load_md(path: str) -> List[Document]:
-    try:
-        return TextLoader(path, encoding="utf-8").load()
-    except Exception as e:
-        logger.error(f"Failed to load .md {path}: {e}")
-        return []
-
-def load_csv(path: str) -> List[Document]:
-    try:
-        return CSVLoader(path).load()
-    except Exception as e:
-        logger.error(f"Failed to load .csv {path}: {e}")
-        return []
-
+# 📌 [FIXED] Full implementation using imported loaders and helper
 FILE_LOADER_MAP = {
-    ".pdf": load_pdf, ".docx": load_docx, ".txt": load_txt,
-    ".xlsx": load_xlsx, ".pptx": load_pptx, ".md": load_md, ".csv": load_csv,
-    ".jpg": load_unstructured, ".jpeg": load_unstructured, ".png": load_unstructured
+    # 🟢 FIX: เปลี่ยนมาใช้ UnstructuredFileLoader เพื่อรองรับ OCR และเพิ่มความทนทาน
+    ".pdf": lambda p: _load_document_with_loader(p, UnstructuredFileLoader), 
+    
+    ".docx": lambda p: _load_document_with_loader(p, UnstructuredWordDocumentLoader),
+    ".txt": lambda p: _load_document_with_loader(p, TextLoader),
+    ".xlsx": lambda p: _load_document_with_loader(p, UnstructuredExcelLoader),
+    ".pptx": lambda p: _load_document_with_loader(p, UnstructuredPowerPointLoader),
+    ".md": lambda p: _load_document_with_loader(p, TextLoader), 
+    ".csv": lambda p: _load_document_with_loader(p, CSVLoader),
+    
+    # สำหรับรูปภาพ (ใช้ UnstructuredFileLoader ที่ถูกแก้ไขให้เปิด OCR ภาษาไทย/อังกฤษแล้ว)
+    ".jpg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    ".jpeg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    ".png": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
 }
 
 # -------------------- Normalization utility --------------------
 def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] = None) -> List[Document]:
     """
-    Normalize loader outputs to a list of langchain.schema.Document
+    Converts raw loaded documents into clean LangChain Document objects.
     """
     normalized: List[Document] = []
     for idx, item in enumerate(raw_docs):
         try:
-            if isinstance(item, Document):
-                doc = item
-            else:
-                 doc = Document(page_content=str(item), metadata={})
+            if isinstance(item, Document): doc = item
+            else: doc = Document(page_content=str(item), metadata={})
             
-            if not isinstance(doc.metadata, dict):
-                doc.metadata = {"_raw_meta": str(doc.metadata)}
-            if source_path:
-                doc.metadata.setdefault("source_file", os.path.basename(source_path))
+            # 📌 [FIX] ตรวจสอบและจัดการ page_content ที่เป็น None หรือ Empty (แก้ ValidationError จาก OCR/UnstructuredLoader)
+            if not doc.page_content or doc.page_content.strip() == "":
+                logger.warning(f"⚠️ Doc #{idx} from loader has no content (Empty/None). Skipping normalization for this document.")
+                continue # <-- จุดสำคัญ: ข้ามเอกสารที่ไม่มีเนื้อหา
             
-            # 🚨 จุดที่ต้องเพิ่มการกรอง Metadata ที่ซับซ้อน (ตรงนี้มีการเรียกใช้อยู่แล้ว)
-            try:
-                # 📌 ตรวจสอบให้แน่ใจว่า Metadata ถูกส่งเข้าฟังก์ชันกรอง
-                doc.metadata = _safe_filter_complex_metadata(doc.metadata)
-            except Exception:
-                # Fallback: ถ้าการกรองล้มเหลว ให้ใช้ metadata พื้นฐานเท่านั้น
-                doc.metadata = {"source_file": os.path.basename(source_path)} if source_path else {}
+            if not isinstance(doc.metadata, dict): doc.metadata = {"_raw_meta": str(doc.metadata)}
+            if source_path: doc.metadata.setdefault("source_file", os.path.basename(source_path))
+            try: doc.metadata = _safe_filter_complex_metadata(doc.metadata)
+            except Exception: doc.metadata = {"source_file": os.path.basename(source_path)} if source_path else {}
             normalized.append(doc)
         except Exception as e:
             logger.warning(f"normalize_loaded_documents: skipping item #{idx} due to error: {e}")
             continue
     return normalized
+
+# 📌 Global Text Splitter Configuration (สำหรับใช้ใน Load & Chunk)
+TEXT_SPLITTER = RecursiveCharacterTextSplitter(
+    chunk_size=1000, 
+    chunk_overlap=200, 
+    separators=["\n\n", "\n", " ", ""]
+)
 
 # -------------------- Load & Chunk Document --------------------
 def load_and_chunk_document(
@@ -380,83 +371,82 @@ def load_and_chunk_document(
     ocr_pages: Optional[Iterable[int]] = None
 ) -> List[Document]:
     """
-    Load, clean, chunk — return list of Documents (not saving to vectorstore)
+    Load document, inject metadata, clean, and split into chunks.
     """
-    file_name = os.path.basename(file_path)
-    ext = os.path.splitext(file_name)[1].lower()
-
-    if ext not in SUPPORTED_TYPES:
-        raise ValueError(f"Unsupported file type: {file_name}")
-
-    loader_func = FILE_LOADER_MAP.get(ext)
+    file_extension = os.path.splitext(file_path)[1].lower()
+    loader_func = FILE_LOADER_MAP.get(file_extension)
+    
     if not loader_func:
-        logger.error(f"No loader for extension {ext}")
+        logger.error(f"No loader found for extension: {file_extension} at {file_path}")
         return []
-
+        
+    raw_docs = [] # <-- ตั้งค่าเริ่มต้น
     try:
-        # Note: Unstructured loaders (for images/structured files) are called here
-        raw_docs = loader_func(file_path) if ext != ".pdf" else load_pdf(file_path, ocr_pages=ocr_pages)
+        # 🟢 [Step 1] เรียกใช้ Loader เพื่อโหลดเอกสาร
+        raw_docs = loader_func(file_path)
+        
+    except ValidationError as e:
+        # 📌 [FIX] ดักจับ Pydantic Crash จาก Unstructured Loader/OCR ทันที (สาเหตุหลัก 65%)
+        # Error นี้เกิดก่อนที่โค้ดจะส่งค่าไป normalize_loaded_documents
+        loader_name = str(loader_func)
+        if 'Unstructured' in loader_name or 'Unstructured' in str(loader_func):
+             logger.warning(f"⚠️ OCR Crash Handled: {os.path.basename(file_path)} - Loader raised Pydantic ValidationError. Treating as 0 documents loaded.")
+             raw_docs = [] # ให้ถือว่าไม่มีเอกสารถูกโหลด แต่ไม่ Crash ทั้งไฟล์
+        else:
+             # ถ้าไม่ใช่ Unstructured Loader ให้โยน Error ไปต่อ (เพื่อตรวจสอบ)
+             raise e 
+             
     except Exception as e:
-        logger.error(f"Loader {loader_func} raised for {file_path}: {e}")
+        # ดักจับ Error อื่นๆ ที่อาจเกิดขึ้นระหว่างการโหลดไฟล์
+        logger.error(f"❌ Critical error during file loading: {file_path}. Error: {e}")
         raw_docs = []
 
     if not raw_docs:
-        logger.warning(f"No content loaded from {file_name}")
+        logger.warning(f"Loader returned 0 documents for {os.path.basename(file_path)}. Skipping chunking.")
         return []
-
+        
+    # 2. Normalize และทำความสะอาด (ใช้ normalize_loaded_documents ที่เราแก้ไขแล้ว)
     docs = normalize_loaded_documents(raw_docs, source_path=file_path)
 
+    # Inject metadata before splitting
     for d in docs:
         if metadata:
             try:
-                # 📌 การปรับปรุง: ต้องกรอง Metadata ที่ถูก Update ด้วย (เพื่อความปลอดภัย)
                 new_meta = d.metadata
                 new_meta.update(metadata) 
                 d.metadata = _safe_filter_complex_metadata(new_meta)
             except Exception:
-                # Fallback: ใช้ metadata เดิมและเพิ่ม injected_metadata แบบ String
                 d.metadata["injected_metadata"] = str(metadata)
         
-        # 📌 การปรับปรุง: ต้องกรอง Metadata ที่ถูก Update ทีหลังอีกครั้ง
-        if year:
-            d.metadata["year"] = year
+        if year: d.metadata["year"] = year
         d.metadata["version"] = version
         d.metadata["doc_id"] = doc_id_key 
-        d.metadata["source"] = d.metadata.get("source_file", file_name) 
-        
-        # กรองอีกครั้งหลังการ update
-        d.metadata = _safe_filter_complex_metadata(d.metadata)
+        d.metadata["source"] = d.metadata.get("source_file", os.path.basename(file_path))
+        d.metadata = _safe_filter_complex_metadata(d.metadata) # Final filter
 
-
-    is_structured_data = ext in [".xlsx", ".csv", ".jpg", ".jpeg", ".png"]
-
-    if not is_structured_data:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
-        try:
-            chunks = splitter.split_documents(docs)
-        except Exception as e:
-            logger.warning(f"Text splitter failed on {file_name}: {e}. Falling back to using whole documents as chunks.")
-            chunks = docs
-    else:
-        # สำหรับ Structured Data (เช่น รูปภาพ, Excel) ใช้ document ทั้งก้อนเป็น chunk
-        chunks = docs
+    # 3. Split into Chunks
+    try:
+        chunks = TEXT_SPLITTER.split_documents(docs) 
+    except Exception as e:
+        logger.error(f"Error during document splitting for {os.path.basename(file_path)}: {e}")
+        chunks = docs # Fallback to using raw docs as chunks
 
     for idx, c in enumerate(chunks, start=1):
         c.page_content = clean_text(c.page_content)
         c.metadata["chunk_index"] = idx
-        
-        # 📌 การปรับปรุง: กรอง Metadata ครั้งสุดท้ายก่อนส่งออก (เผื่อมี metadata ที่เพิ่มมาจากการ chunking)
         c.metadata = _safe_filter_complex_metadata(c.metadata) 
         
-    logger.info(f"Loaded and chunked {file_name} -> {len(chunks)} chunks.")
+    logger.info(f"Loaded and chunked {os.path.basename(file_path)} -> {len(chunks)} chunks.")
     return chunks
 
-# -------------------- Process single document --------------------
+
+# -------------------- [REVISED] Process single document --------------------
 def process_document(
     file_path: str,
     file_name: str,
     stable_doc_uuid: str, 
     doc_type: Optional[str] = None,
+    enabler: Optional[str] = None, 
     base_path: str = VECTORSTORE_DIR, 
     year: Optional[int] = None,
     version: str = "v1",
@@ -467,67 +457,60 @@ def process_document(
     
     raw_doc_id_input = os.path.splitext(file_name)[0]
     filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) 
-    
-    # 📌 ตรวจสอบความยาวของชื่อ Collection ก่อนส่งให้ ChromaDB
-    if not filename_doc_id_key or len(filename_doc_id_key) < 3:
-        # ตรงนี้ไม่เกี่ยวกับ collection name แต่เป็น doc_id_key 
-        pass 
-        
+            
     doc_type = doc_type or "document"
+    
+    # 📌 Determine resolved enabler
+    resolved_enabler = None
+    if doc_type.lower() == "evidence":
+        resolved_enabler = (enabler or DEFAULT_ENABLER).upper()
+
+    # 📌 Inject enabler into metadata if it exists
+    injected_metadata = metadata or {}
+    if resolved_enabler:
+        injected_metadata["enabler"] = resolved_enabler
 
     chunks = load_and_chunk_document(
         file_path=file_path,
         doc_id_key=filename_doc_id_key, 
         year=year,
         version=version,
-        metadata=metadata,
+        metadata=injected_metadata, 
         ocr_pages=ocr_pages
     )
     
     for c in chunks:
         c.metadata["stable_doc_uuid"] = stable_doc_uuid 
         c.metadata["doc_type"] = doc_type 
-        # 📌 การปรับปรุง: กรอง Metadata ครั้งสุดท้ายก่อน return
+        if resolved_enabler:
+             c.metadata["enabler"] = resolved_enabler # Ensure enabler is in final chunk
+        
         c.metadata = _safe_filter_complex_metadata(c.metadata)
         
     return chunks, stable_doc_uuid, doc_type
 
 # -------------------- Vectorstore / Mapping Utilities --------------------
 
-# 🟢 เพิ่ม Global Cache สำหรับ Vector Store
 _VECTORSTORE_SERVICE_CACHE = {} 
 
 def get_vectorstore(collection_name: str = "default", base_path: str = VECTORSTORE_DIR) -> Chroma:
     """
-    Initializes and returns the Chroma Vectorstore instance for a given collection.
+    Loads or creates the Chroma vector store instance for a given collection.
     """
     cache_key = f"{collection_name}_{base_path}"
-    
     if cache_key in _VECTORSTORE_SERVICE_CACHE:
         return _VECTORSTORE_SERVICE_CACHE[cache_key]
-        
-    # 🔴 NEW: ตรวจสอบความยาวของชื่อ Collection ก่อนส่งให้ ChromaDB
     if len(collection_name) < 3:
-        # บังคับให้เกิด Error ที่ชัดเจนตามข้อกำหนดของ Chroma
-        raise ValueError(f"Collection name '{collection_name}' is too short. ChromaDB requires at least 3 characters.")
-
-
-    # 1. โหลด Embedding Model 
-    if "embeddings_model" not in _VECTORSTORE_SERVICE_CACHE:
-        logger.info("Initializing SentenceTransformer Embeddings (intfloat/multilingual-e5-large)...")
-        try:
-            embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-large")
-            _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-        except Exception as e:
-            logger.critical(f"❌ Failed to load embedding model: {e}")
-            raise RuntimeError(f"Failed to initialize embeddings: {e}")
-    else:
-        embeddings = _VECTORSTORE_SERVICE_CACHE["embeddings_model"]
-
-    # 2. โหลด/สร้าง Chroma
+        raise ValueError(f"Collection name '{collection_name}' is too short. Chroma DB requires at least 3 characters.")
+    
+    # Load embeddings model once
+    embeddings = _VECTORSTORE_SERVICE_CACHE.get("embeddings_model")
+    if not embeddings:
+        embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-large")
+        _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
+        
     persist_directory = os.path.join(base_path, collection_name)
     os.makedirs(persist_directory, exist_ok=True)
-    
     try:
         vectorstore = Chroma(
             collection_name=collection_name, 
@@ -539,7 +522,6 @@ def get_vectorstore(collection_name: str = "default", base_path: str = VECTORSTO
         return vectorstore
     except Exception as e:
         logger.critical(f"❌ Failed to load Chroma for collection '{collection_name}': {e}")
-        # 🔴 NEW: ถ้าเกิด Error จาก ChromaDB ที่เกี่ยวกับ Validation ให้ re-raise เป็น RuntimeError
         raise RuntimeError(f"Failed to initialize Chroma DB: {e}")
     
 
@@ -550,25 +532,20 @@ def create_vectorstore_from_documents(
     base_path: str = VECTORSTORE_DIR
 ) -> Chroma:
     """
-    Creates/updates a Chroma vector store collection and records the document ID mapping.
+    Adds documents (chunks) to a vector store collection and manages the document ID mapping.
     """
-    
     vectorstore = get_vectorstore(collection_name, base_path)
-
     if not chunks:
         logger.warning(f"No chunks provided for collection {collection_name}. Skipping indexing.")
         return vectorstore
         
-    texts = [c.page_content for c in chunks]
-    metadatas = [c.metadata for c in chunks]
-
+    texts = [c.page_content for c in chunks]; metadatas = [c.metadata for c in chunks]
+    
     try:
         ids = [str(uuid.uuid4()) for _ in texts]
+        stable_doc_uuids_to_delete = set(); old_chunk_ids_to_delete = []
         
-        # ตรวจสอบ stable_doc_uuid เก่า
-        stable_doc_uuids_to_delete = set()
-        old_chunk_ids_to_delete = []
-
+        # 1. Prepare to delete existing chunks for documents being updated
         for m in metadatas:
             s_uuid = m.get("stable_doc_uuid")
             if s_uuid and s_uuid in doc_mapping_db:
@@ -576,39 +553,34 @@ def create_vectorstore_from_documents(
                 if existing_chunk_uuids and isinstance(existing_chunk_uuids, list):
                     stable_doc_uuids_to_delete.add(s_uuid)
                     old_chunk_ids_to_delete.extend(existing_chunk_uuids)
-                    doc_mapping_db[s_uuid]["chunk_uuids"] = []
+                    doc_mapping_db[s_uuid]["chunk_uuids"] = [] # Clear mapping entry temporarily
 
         if old_chunk_ids_to_delete:
             vectorstore.delete(ids=old_chunk_ids_to_delete)
             logger.info(f"🧹 Deleted {len(old_chunk_ids_to_delete)} old chunks from Chroma.")
-
-        # Add new chunks
-        vectorstore.add_texts(
-            texts=texts,
-            metadatas=metadatas,
-            ids=ids 
-        )
-
-        # Update mapping DB
+            
+        # 2. Add new chunks
+        vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+        
+        # 3. Update mapping with new chunk IDs
         for i, chunk_uuid in enumerate(ids):
             stable_doc_uuid = metadatas[i].get("stable_doc_uuid") 
             if stable_doc_uuid:
                 if stable_doc_uuid not in doc_mapping_db:
-                    doc_mapping_db[stable_doc_uuid] = {"chunk_uuids": []}
+                    # Should not happen if logic in ingest_all_files is correct, but safe check
+                    doc_mapping_db[stable_doc_uuid] = {"chunk_uuids": []} 
                 if chunk_uuid not in doc_mapping_db[stable_doc_uuid]["chunk_uuids"]:
                     doc_mapping_db[stable_doc_uuid]["chunk_uuids"].append(chunk_uuid)
                 metadatas[i]["chunk_uuid"] = chunk_uuid 
-        
+                
         logger.info(f"✅ Indexed {len(ids)} chunks and updated mapping for {collection_name}. Persist finished.")
-        
     except Exception as e:
         logger.error(f"❌ Error during Chroma indexing or persisting for {collection_name}: {e}")
-    
     return vectorstore
 
 
 def save_doc_id_mapping(mapping_data: Dict[str, Dict[str, Any]], path: str):
-    """Saves the document metadata and chunk UUID mapping to a JSON file."""
+    """Saves the document ID mapping file."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
@@ -618,44 +590,57 @@ def save_doc_id_mapping(mapping_data: Dict[str, Dict[str, Any]], path: str):
         logger.error(f"❌ Failed to save Doc ID Mapping: {e}")
 
 def load_doc_id_mapping(path: str) -> Dict[str, Dict[str, Any]]:
-    """Loads the document metadata and chunk UUID mapping from a JSON file."""
-    if not os.path.exists(path):
-        return {} 
+    """Loads the document ID mapping file."""
+    if not os.path.exists(path): return {} 
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(path, 'r', encoding='utf-8') as f: return json.load(f)
     except Exception as e:
         logger.error(f"❌ Failed to load Doc ID Mapping from {path}: {e}")
         return {}
         
 # -------------------- API Helper: Get UUIDs for RAG Filtering --------------------
-
 def get_stable_uuids_by_doc_type(doc_types: List[str]) -> List[str]:
     """
-    Retrieves a list of all Stable UUIDs associated with the given document types 
-    from the document mapping file. Used by the RAG API for filtering.
+    Retrieves Stable UUIDs for RAG filtering based on document types.
     """
-    if not doc_types:
-        return []
-        
+    if not doc_types: return []
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    
     target_uuids = []
-    
-    # Normalize types for robust comparison (though doc_type should be lowercase in the map)
     doc_type_set = {dt.lower() for dt in doc_types}
-    
     for s_uuid, entry in doc_mapping_db.items():
         doc_type = entry.get("doc_type", "default")
         if doc_type.lower() in doc_type_set:
             target_uuids.append(s_uuid)
-            
     return target_uuids
         
 
+def create_stable_uuid_from_path(filepath: str, ref_id_key: Optional[str] = None) -> str:
+    """
+    สร้าง UUID ที่มั่นคงจากพาธไฟล์เต็ม, ขนาดไฟล์, และ Ref ID Key เพื่อให้แน่ใจว่า
+    แต่ละเอกสารมี ID ที่ไม่ซ้ำกันอย่างแท้จริง
+    """
+    try:
+        full_path = os.path.abspath(filepath)
+        file_size = os.path.getsize(filepath)
+    except FileNotFoundError:
+        # Fallback ที่ปลอดภัยกว่า: ใช้ชื่อไฟล์และ Ref ID Key
+        full_path = os.path.abspath(filepath)
+        file_size = 0
+    
+    # 💡 FIX: รวม Ref ID Key ใน unique_string เพื่อแยกไฟล์ที่มีชื่อต่างกัน
+    unique_string = f"{full_path}-{file_size}-{ref_id_key or 'NO_REF'}" 
+    
+    # ใช้ SHA-256 เพื่อสร้าง Hash ที่ยาวและมั่นคงกว่า SHA-1
+    hash_object = hashlib.sha256(unique_string.encode('utf-8'))
+    
+    # แปลง Hash เป็น UUID-like string
+    return hash_object.hexdigest()
+
+# -------------------- [REVISED] ingest_all_files --------------------
 def ingest_all_files(
     data_dir: str = DATA_DIR,
     doc_type: Optional[str] = None,
+    enabler: Optional[str] = None, 
     base_path: str = VECTORSTORE_DIR,
     exclude_dirs: Set[str] = set(),
     year: Optional[int] = None,
@@ -666,74 +651,157 @@ def ingest_all_files(
     batch_size: int = 500
 ) -> List[Dict[str, Any]]:
     """
-    Ingest documents into vectorstore.
-    Supports sequential or multithreaded chunking, skipping file extensions,
-    and batch indexing with logging progress.
+    Ingest documents into vectorstore based on doc_type and enabler filters.
+    Handles filenames with spaces, (), [], and unicode characters.
     """
     skip_ext = skip_ext or []
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(base_path, exist_ok=True)
     files_to_process = []
+    
+    doc_type_req = (doc_type or "all").lower()
+    enabler_req = (enabler or (DEFAULT_ENABLER if doc_type_req == "evidence" else None))
+    if enabler_req:
+        enabler_req = enabler_req.upper()
 
-    # 1. รวบรวมไฟล์ทั้งหมด
-    for root, dirs, filenames in os.walk(data_dir):
-        dirs[:] = [d for d in dirs if d not in exclude_dirs]
-        current_doc_type = doc_type or "default"
-        if root != data_dir:
-            folder_name = os.path.basename(root)
-            current_doc_type = folder_name.lower() if folder_name.lower() != 'statement' else 'statement'
-        if doc_type and doc_type != 'all' and current_doc_type != doc_type:
-            continue
-        for f in filenames:
-            file_extension = os.path.splitext(f)[1].lower()
-            if f.startswith('.') or file_extension not in SUPPORTED_TYPES:
-                continue
-            if file_extension in skip_ext:
-                logger.info(f"⚠️ Skipping {file_extension} file: {f}")
-                continue
-            files_to_process.append({
-                "file_path": os.path.join(root, f),
-                "file_name": f,
-                "doc_type": current_doc_type
-            })
+    logger.info(f"Starting ingest_all_files: doc_type_req='{doc_type_req}', enabler_req='{enabler_req}'")
 
-    # 2. Load Mapping DB และกำหนด Stable IDs
-    doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    doc_uuid_lookup: Dict[str, str] = {}
-    for s_uuid, entry in doc_mapping_db.items():
-        if "doc_id_key" in entry:
-            doc_uuid_lookup[entry["doc_id_key"]] = s_uuid
-
-    for file_info in files_to_process:
-        filename_doc_id_key = _normalize_doc_id(os.path.splitext(file_info["file_name"])[0])
-        stable_doc_uuid = doc_uuid_lookup.get(filename_doc_id_key)
-        if stable_doc_uuid:
-            file_info["stable_doc_uuid"] = stable_doc_uuid
-            doc_mapping_db[stable_doc_uuid]["file_name"] = file_info["file_name"]
+    # 📌 [FIXED: Flexible Source Dir] กำหนด Root Path สำหรับการสแกน
+    scan_roots: List[str] = []
+    
+    if doc_type_req == "all":
+        # ถ้าเป็น 'all' ให้สแกนทุกโฟลเดอร์ที่รองรับ
+        for dt in SUPPORTED_DOC_TYPES:
+             if dt == "evidence":
+                for ena in SUPPORTED_ENABLERS:
+                    scan_roots.append(_get_source_dir(dt, ena, data_dir))
+             else:
+                scan_roots.append(_get_source_dir(dt, None, data_dir))
+    elif doc_type_req in SUPPORTED_DOC_TYPES:
+        # ถ้าเป็น Specific Doc Type ให้คำนวณพาธเฉพาะ
+        if doc_type_req == "evidence" and not enabler_req:
+             # ถ้าเป็น evidence แต่ไม่ระบุ enabler ให้สแกนทุก enabler
+             for ena in SUPPORTED_ENABLERS:
+                 scan_roots.append(_get_source_dir(doc_type_req, ena, data_dir))
         else:
-            new_uuid = str(uuid.uuid4())
+             scan_roots = [_get_source_dir(doc_type_req, enabler_req, data_dir)]
+    else:
+        logger.error(f"Invalid doc_type_req for ingestion: {doc_type_req}")
+        return []
+
+    # 1. รวบรวมไฟล์ทั้งหมด based on scanning calculated source dir(s)
+    for root_to_scan in set(scan_roots):
+        if not os.path.isdir(root_to_scan):
+             logger.warning(f"⚠️ Source directory not found: {root_to_scan}. Skipping scan.")
+             continue
+             
+        # Collection name คือชื่อโฟลเดอร์ที่สแกน (e.g., 'document' หรือ 'evidence_km')
+        current_collection_name = os.path.basename(root_to_scan) 
+        original_doc_type, resolved_enabler = _parse_collection_name(current_collection_name)
+        
+        logger.info(f"Scanning source directory: {root_to_scan} (Maps to: {current_collection_name})")
+
+        for root, dirs, filenames in os.walk(root_to_scan):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            # สแกนแค่ชั้นแรกของแต่ละ source_dir
+            if root != root_to_scan: continue 
+
+            for f in filenames:
+                # Skip hidden files
+                if f.startswith('.'):
+                    continue
+
+                file_path = os.path.join(root, f)
+                file_extension = os.path.splitext(f)[1].lower()
+
+                # Skip unsupported types
+                if file_extension not in SUPPORTED_TYPES:
+                    logger.info(f"⚠️ Skipping unsupported file type {file_extension}: {f}")
+                    continue
+
+                # Skip extensions in skip_ext
+                if skip_ext and file_extension in skip_ext:
+                    logger.info(f"⚠️ Skipping excluded extension {file_extension}: {f}")
+                    continue
+
+                # ✅ Append file 
+                files_to_process.append({
+                    "file_path": file_path,
+                    "file_name": f,
+                    "doc_type": original_doc_type,
+                    "enabler": resolved_enabler,
+                    "collection_name": current_collection_name
+                })
+
+    if not files_to_process:
+        logger.warning("⚠️ No files found to ingest!")
+        return []
+
+    # 2. Load Mapping DB และกำหนด Stable IDs (***REVISED LOGIC***)
+    doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
+    
+    # 📌 REVISED: ใช้ Stable UUID ที่สร้างจาก File Path เป็นคีย์ในการค้นหา
+    uuid_from_path_lookup: Dict[str, str] = {
+        entry["filepath"]: s_uuid 
+        for s_uuid, entry in doc_mapping_db.items() 
+        if "filepath" in entry # ใช้ filepath ในการค้นหาไฟล์เดิม
+    } 
+
+    # 📌 REVISED: กำหนด Stable UUID ทีละไฟล์โดยอิงจาก Path
+    for file_info in files_to_process:
+        # 0. คำนวณ filename_doc_id_key (ใช้เป็น REF ID)
+        filename_doc_id_key = _normalize_doc_id(os.path.splitext(file_info["file_name"])[0])
+        file_info["doc_id_key"] = filename_doc_id_key # เก็บ Ref ID ไว้ใน file_info
+
+        # 🟢 A. สร้าง UUID ที่มั่นคงจาก File Path (ใหม่)
+        # 💡 FIX: ส่ง filename_doc_id_key เข้าไปเป็น Ref ID Key
+        stable_uuid_from_path = create_stable_uuid_from_path(
+            file_info["file_path"], 
+            ref_id_key=filename_doc_id_key # <--- ส่ง Ref ID Key เข้าไป
+        ) 
+        
+        # 🟢 B. ค้นหา ID เดิมจาก Mapping โดยใช้ File Path เป็น Key
+        stable_doc_uuid = uuid_from_path_lookup.get(file_info["file_path"])
+        
+        if stable_doc_uuid and stable_doc_uuid in doc_mapping_db:
+            # ใช้ UUID เดิมที่พบ
+            file_info["stable_doc_uuid"] = stable_doc_uuid
+            # อัปเดตข้อมูลที่อาจเปลี่ยนไป
+            doc_mapping_db[stable_doc_uuid].update({
+                "filename": file_info["file_name"],
+                "doc_type": file_info["doc_type"],
+                "enabler": file_info["enabler"],
+                "doc_id_key": filename_doc_id_key, # อัปเดต Ref ID Key
+            })
+        else:
+            # 🟢 C. ถ้าไม่เจอ ID เดิม 
+            new_uuid = stable_uuid_from_path # ใช้ Stable ID ใหม่
             file_info["stable_doc_uuid"] = new_uuid
+            
+            # 🟢 D. สร้าง Mapping entry ใหม่
             doc_mapping_db[new_uuid] = {
                 "file_name": file_info["file_name"],
                 "doc_type": file_info["doc_type"],
-                "doc_id_key": filename_doc_id_key,
+                "enabler": file_info["enabler"],
+                "doc_id_key": filename_doc_id_key, # เก็บ Ref ID Key
+                "filepath": file_info["file_path"], # บันทึก File Path
                 "notes": "",
                 "statement_id": "",
                 "chunk_uuids": []
             }
-            doc_uuid_lookup[filename_doc_id_key] = new_uuid
+            uuid_from_path_lookup[file_info["file_path"]] = new_uuid # อัปเดต Lookup
 
+    # 3. Load & Chunk (sequential or threaded)
     all_chunks: List[Document] = []
-    results = []
-    logger.info(f"Starting batch Load & Chunk of {len(files_to_process)} files...")
+    results: List[Dict[str, Any]] = []
 
-    # 3. Load & Chunk
     def _process_file_task(file_info: Dict[str, str]):
         return process_document(
             file_path=file_info["file_path"],
             file_name=file_info["file_name"],
             stable_doc_uuid=file_info["stable_doc_uuid"],
             doc_type=file_info["doc_type"],
+            enabler=file_info["enabler"],
             base_path=base_path,
             year=year,
             version=version
@@ -751,110 +819,142 @@ def ingest_all_files(
                     logger.info(f"Processed {idx}/{len(files_to_process)} files...")
             except Exception as e:
                 results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e)})
-                logger.error(f"Error processing {f} (ID: {stable_doc_uuid}): {e}")
+                # 📌 [FIXED: Detailed Process/Chunk Failure Logging]
+                logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
     else:
-        max_workers = min(8, (os.cpu_count() or 4))
+        max_workers = os.cpu_count() or 4
+        logger.info(f"Using ThreadPoolExecutor with max_workers={max_workers}")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_file = {executor.submit(_process_file_task, f_info): f_info for f_info in files_to_process}
+            future_to_file = {executor.submit(_process_file_task, fi): fi for fi in files_to_process}
             for idx, future in enumerate(as_completed(future_to_file), 1):
-                f_info = future_to_file[future]
-                f = f_info["file_name"]
-                stable_doc_uuid = f_info["stable_doc_uuid"]
+                fi = future_to_file[future]
+                f = fi["file_name"]
+                stable_doc_uuid = fi["stable_doc_uuid"]
                 try:
                     chunks, doc_id, dt = future.result()
                     all_chunks.extend(chunks)
                     results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks)})
-                    if idx % log_every == 0:
-                        logger.info(f"Processed {idx}/{len(files_to_process)} files...")
                 except Exception as e:
-                    results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": f_info["doc_type"], "status": "failed_chunk", "error": str(e)})
-                    logger.error(f"Error processing {f} (ID: {stable_doc_uuid}): {e}")
+                    results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": fi["doc_type"], "status": "failed_chunk", "error": str(e)})
+                    # 📌 [FIXED: Detailed Process/Chunk Failure Logging]
+                    logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
+                if idx % log_every == 0:
+                    logger.info(f"Processed {idx}/{len(files_to_process)} files...")
 
-    # 4. Group Chunks by doc_type
-    chunks_by_type: Dict[str, List[Document]] = {}
+    # 4. Group & Index Chunks
+    chunks_by_collection: Dict[str, List[Document]] = {}
     for chunk in all_chunks:
         dt = chunk.metadata.get("doc_type", "default")
-        chunks_by_type.setdefault(dt, []).append(chunk)
-    logger.info(f"Grouping complete. Found {len(chunks_by_type)} collection(s): {list(chunks_by_type.keys())}")
+        ena = chunk.metadata.get("enabler")
+        coll_name = get_target_dir(dt, ena)
+        chunks_by_collection.setdefault(coll_name, []).append(chunk)
 
-    # 5. Indexing Chunks with batch + logging
-    for dt, dt_chunks in chunks_by_type.items():
-        if dt_chunks:
-            logger.info(f"--- Start indexing collection '{dt}' ({len(dt_chunks)} chunks) ---")
-            for i in range(0, len(dt_chunks), batch_size):
-                batch = dt_chunks[i:i+batch_size]
-                logger.info(f"Indexing chunks {i+1} to {i+len(batch)} of {len(dt_chunks)}")
-                try:
-                    create_vectorstore_from_documents(
-                        chunks=batch,
-                        collection_name=dt,
-                        doc_mapping_db=doc_mapping_db,
-                        base_path=base_path
-                    )
-                except Exception as e:
-                    logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
-            logger.info(f"--- Finished indexing collection '{dt}' ---")
+    for coll_name, coll_chunks in chunks_by_collection.items():
+        if not coll_chunks:
+            logger.warning(f"Skipping collection '{coll_name}' - 0 chunks found.")
+            continue
+        logger.info(f"--- Indexing collection '{coll_name}' ({len(coll_chunks)} chunks) ---")
+        for i in range(0, len(coll_chunks), batch_size):
+            batch = coll_chunks[i:i+batch_size]
+            logger.info(f"Indexing chunks {i+1} to {i+len(batch)} of {len(coll_chunks)}")
+            try:
+                create_vectorstore_from_documents(
+                    chunks=batch,
+                    collection_name=coll_name,
+                    doc_mapping_db=doc_mapping_db,
+                    base_path=base_path
+                )
+            except Exception as e:
+                logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
 
     save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
     logger.info("✅ Batch ingestion process finished.")
     return results
 
 
-def wipe_vectorstore(doc_type_to_wipe: str = 'all', base_path: str = VECTORSTORE_DIR):
-    """Wipes the vector store directory/collection(s) and potentially the doc_id_mapping file."""
+# -------------------- [REVISED] wipe_vectorstore --------------------
+def wipe_vectorstore(
+    doc_type_to_wipe: str = 'all', 
+    enabler: Optional[str] = None, 
+    base_path: str = VECTORSTORE_DIR
+):
+    """Wipes the vector store directory/collection(s) and updates the doc_id_mapping file."""
     
-    if doc_type_to_wipe.lower() == 'all':
-        # 1. ลบ Vector Store Directory ทั้งหมด
+    doc_type_to_wipe = doc_type_to_wipe.lower()
+    
+    collections_to_delete: List[str] = []
+    
+    if doc_type_to_wipe == 'all':
+        logger.warning(f"Wiping ALL collections in {base_path}")
         if os.path.exists(base_path):
-            try:
-                shutil.rmtree(base_path)
-                logger.info(f"✅ Deleted vector store directory: {base_path}")
-            except OSError as e:
-                logger.error(f"❌ Error deleting vector store: {e}")
-                
-        # 2. ลบ Doc ID Mapping File
-        if os.path.exists(MAPPING_FILE_PATH):
-            try:
-                os.remove(MAPPING_FILE_PATH)
-                logger.info(f"✅ Deleted Doc ID mapping file: {MAPPING_FILE_PATH}")
-            except OSError as e:
-                logger.error(f"❌ Error deleting mapping file: {e}")
-                
-    elif doc_type_to_wipe in SUPPORTED_DOC_TYPES: # ตรวจสอบให้แน่ใจว่าเป็นชื่อ Collection ที่ถูกต้อง
-        # ลบเฉพาะ Collection
-        col_path = os.path.join(base_path, doc_type_to_wipe)
+            # Only list directories that are likely collections (avoid .gitkeep, etc.)
+            collections_to_delete = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
+    elif doc_type_to_wipe == 'evidence':
+        if enabler:
+            # Wipe specific evidence enabler
+            collection_name = get_target_dir("evidence", enabler)
+            collections_to_delete.append(collection_name)
+        else:
+            # Wipe ALL evidence enablers
+            logger.warning("Wiping ALL evidence_* collections.")
+            evidence_paths = glob.glob(os.path.join(base_path, "evidence_*"))
+            collections_to_delete = [os.path.basename(p) for p in evidence_paths]
+    elif doc_type_to_wipe in SUPPORTED_DOC_TYPES:
+        collection_name = get_target_dir(doc_type_to_wipe, None)
+        collections_to_delete.append(collection_name)
+    else:
+        logger.error(f"Invalid doc_type_to_wipe: {doc_type_to_wipe}")
+        return
+
+    # 1. Delete collection folders
+    for col_name in collections_to_delete:
+        col_path = os.path.join(base_path, col_name)
         if os.path.exists(col_path):
             try:
                 shutil.rmtree(col_path)
                 logger.info(f"✅ Deleted vector store collection: {col_path}")
             except OSError as e:
-                logger.error(f"❌ Error deleting collection {doc_type_to_wipe}: {e}")
+                logger.error(f"❌ Error deleting collection {col_name}: {e}")
+
+    # 2. Update Mapping file
+    doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
+    uuids_to_keep = {}
+    deletion_count = 0
+    
+    for s_uuid, entry in doc_mapping_db.items():
+        entry_doc_type = entry.get("doc_type")
+        entry_enabler = entry.get("enabler")
+        entry_collection = get_target_dir(entry_doc_type, entry_enabler)
         
-        # 📌 ลบ entry ใน Mapping file ที่ตรงกับ doc_type นั้นด้วย
-        doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-        uuids_to_keep = {}
-        deletion_count = 0
-        for s_uuid, entry in doc_mapping_db.items():
-            if entry.get("doc_type") != doc_type_to_wipe:
-                uuids_to_keep[s_uuid] = entry
-            else:
-                deletion_count += 1
+        if entry_collection not in collections_to_delete:
+            uuids_to_keep[s_uuid] = entry
+        else:
+            deletion_count += 1
+            
+    if deletion_count > 0:
+        save_doc_id_mapping(uuids_to_keep, MAPPING_FILE_PATH)
+        logger.info(f"🧹 Removed {deletion_count} entries from mapping file for deleted collections.")
         
-        if deletion_count > 0:
-            save_doc_id_mapping(uuids_to_keep, MAPPING_FILE_PATH)
-            logger.info(f"🧹 Removed {deletion_count} entries from mapping file for doc_type: {doc_type_to_wipe}")
+    if doc_type_to_wipe == 'all' and os.path.exists(MAPPING_FILE_PATH):
+         # Also delete the mapping file itself if wiping 'all'
+         try:
+            os.remove(MAPPING_FILE_PATH)
+            logger.info(f"✅ Deleted Doc ID mapping file: {MAPPING_FILE_PATH}")
+         except OSError as e:
+            logger.error(f"❌ Error deleting mapping file: {e}")
 
 
-# -------------------- Document Management Utilities --------------------
+# -------------------- [REVISED] Document Management Utilities --------------------
 
 def delete_document_by_uuid(
     stable_doc_uuid: str, 
     collection_name: Optional[str] = None, 
+    doc_type: Optional[str] = None, 
+    enabler: Optional[str] = None, 
     base_path: str = VECTORSTORE_DIR
 ) -> bool:
     """
-    Deletes all chunks associated with the given Stable Document UUID 
-    from the vector store(s) and removes the entry from the mapping file.
+    Deletes all chunks associated with the given Stable Document UUID.
     """
     
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
@@ -865,7 +965,20 @@ def delete_document_by_uuid(
 
     doc_entry = doc_mapping_db[stable_doc_uuid]
     all_chunk_uuids = doc_entry.get("chunk_uuids", [])
-    doc_type_from_map = doc_entry.get("doc_type", "default")
+    
+    # 📌 Determine collection name from mapping
+    doc_type_from_map = doc_entry.get("doc_type")
+    enabler_from_map = doc_entry.get("enabler")
+    
+    # Use provided doc_type/enabler as override, otherwise use mapping
+    final_doc_type = doc_type or doc_type_from_map
+    final_enabler = enabler or enabler_from_map
+    
+    if not final_doc_type:
+         logger.error(f"Cannot delete {stable_doc_uuid}: doc_type not found in mapping or provided.")
+         return False
+         
+    final_collection_name = get_target_dir(final_doc_type, final_enabler)
     
     if not all_chunk_uuids:
         logger.warning(f"Deletion skipped: Stable Doc UUID {stable_doc_uuid} has no chunk UUIDs recorded.")
@@ -873,116 +986,233 @@ def delete_document_by_uuid(
         save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
         return True
 
-    collections_to_check = [doc_type_from_map]
-    
-    success = False
-    
-    for col_name in collections_to_check:
-        persist_directory = os.path.join(base_path, col_name)
-        if not os.path.isdir(persist_directory):
-            logger.warning(f"Vectorstore directory not found for collection '{col_name}'. Skipping Chroma deletion.")
-            continue
-        
+    persist_directory = os.path.join(base_path, final_collection_name)
+    if not os.path.isdir(persist_directory):
+        logger.warning(f"Vectorstore directory not found for collection '{final_collection_name}'. Skipping Chroma deletion.")
+    else:
         try:
-            # 📌 ใช้ get_vectorstore
-            vectorstore = get_vectorstore(col_name, base_path)
-            
+            vectorstore = get_vectorstore(final_collection_name, base_path)
             vectorstore.delete(ids=all_chunk_uuids)
-            logger.info(f"✅ Successfully deleted {len(all_chunk_uuids)} chunks from collection '{col_name}' for UUID: {stable_doc_uuid}")
-            success = True
-            
+            logger.info(f"✅ Successfully deleted {len(all_chunk_uuids)} chunks from collection '{final_collection_name}' for UUID: {stable_doc_uuid}")
         except Exception as e:
-            logger.error(f"❌ Error during Chroma deletion for collection '{col_name}' (UUID: {stable_doc_uuid}): {e}")
+            logger.error(f"❌ Error during Chroma deletion for collection '{final_collection_name}' (UUID: {stable_doc_uuid}): {e}")
             
-    if stable_doc_uuid in doc_mapping_db:
-        del doc_mapping_db[stable_doc_uuid]
-        save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
+    # Delete from mapping regardless of vectorstore success
+    del doc_mapping_db[stable_doc_uuid]
+    save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
         
-    return success
+    return True
 
-# -------------------- List Documents Utility (FIXED) --------------------
-def list_documents(doc_types: Optional[List[str]] = None) -> Dict[str, DocInfo]:
-    """
-    Scans the data directory and checks the ingestion status against the mapping file.
-    The function now filters by doc_types and returns a dictionary keyed by doc_id,
-    as required by the API endpoint.
-    """
+def list_documents(
+    doc_types: Optional[List[str]] = None,
+    enabler: Optional[str] = None, 
+    show_results: str = "ingested" 
+# ) -> List[Any]: # <--- [OLD] คืนค่าเป็น List
+) -> Dict[str, Any]: # <--- [NEW] คืนค่าเป็น Dict
     
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    all_supported_files = []
+    # all_docs: List[Any] = [] # <--- [OLD]
+    all_docs: Dict[str, Any] = {} # <--- [NEW] ใช้ Dictionary
     
-    # Map normalized filename keys back to their stable UUIDs
-    doc_id_key_to_stable_uuid: Dict[str, str] = {}
-    for s_uuid, entry in doc_mapping_db.items():
-        if "doc_id_key" in entry:
-            doc_id_key_to_stable_uuid[entry["doc_id_key"]] = s_uuid
-    
-    for root, _, filenames in os.walk(DATA_DIR):
-        for f in filenames:
-            file_extension = os.path.splitext(f)[1].lower()
-            if f.startswith('.') or file_extension not in SUPPORTED_TYPES:
-                continue
-                
-            file_path = os.path.join(root, f)
+    # 🟢 [FIX: ใช้ Filepath ที่เป็น Unique ในการค้นหา Stable UUID แทน doc_id_key]
+    filepath_to_stable_uuid: Dict[str, str] = {
+        entry["filepath"]: s_uuid 
+        for s_uuid, entry in doc_mapping_db.items() 
+        if "filepath" in entry # ใช้ filepath ในการค้นหาไฟล์เดิม
+    } 
             
-            doc_type = "default"
-            # Determine doc_type based on subdirectory name
-            if root != DATA_DIR:
-                folder_name = os.path.basename(root).lower()
-                if folder_name == 'statement':
-                    doc_type = 'statement'
+    # Filtering setup
+    doc_type_reqs = {dt.lower() for dt in doc_types} if doc_types and doc_types[0] and doc_types[0].lower() != "all" else set()
+    enabler_req = (enabler or "").upper()
+    
+    # 📌 [FIXED: Flexible Source Dir] กำหนด Root Path สำหรับการสแกน
+    source_dirs_to_scan: List[str] = []
+
+    if not doc_type_reqs: # 'all'
+        # ... (ส่วนนี้เหมือนเดิม) ...
+        for dt in SUPPORTED_DOC_TYPES:
+            if dt == "evidence":
+                if enabler_req:
+                     source_dirs_to_scan.append(_get_source_dir(dt, enabler_req))
                 else:
-                    doc_type = folder_name
-            
-            # --- FIXED: Implement doc_types filtering ---
-            if doc_types and doc_type not in doc_types:
-                continue # Skip files that don't match the requested type
+                     for ena in SUPPORTED_ENABLERS:
+                         source_dirs_to_scan.append(_get_source_dir(dt, ena))
+            else:
+                source_dirs_to_scan.append(_get_source_dir(dt, None))
+    else:
+        # ... (ส่วนนี้เหมือนเดิม) ...
+        for dt in doc_type_reqs:
+            if dt == "evidence":
+                if enabler_req:
+                    source_dirs_to_scan.append(_get_source_dir(dt, enabler_req))
+                else:
+                    for ena in SUPPORTED_ENABLERS:
+                        source_dirs_to_scan.append(_get_source_dir(dt, ena))
+            elif dt in SUPPORTED_DOC_TYPES:
+                source_dirs_to_scan.append(_get_source_dir(dt, None))
                 
-            file_name_no_ext = os.path.splitext(f)[0]
-            filename_doc_id_key = _normalize_doc_id(file_name_no_ext)
+    # 1. Scan files and build DocInfo list (all_docs)
+    for root_to_scan in set(source_dirs_to_scan): # ใช้ set เพื่อป้องกันการสแกนซ้ำ
+        if not os.path.isdir(root_to_scan):
+            logger.debug(f"Source directory not found: {root_to_scan}. Skipping scan.")
+            continue
             
-            stable_doc_uuid = doc_id_key_to_stable_uuid.get(filename_doc_id_key)
-            doc_entry = doc_mapping_db.get(stable_doc_uuid) if stable_doc_uuid else None
-            
-            is_ingested = doc_entry and doc_entry.get("chunk_uuids")
-            uuid_list = doc_entry.get("chunk_uuids", []) if doc_entry else []
-            chunk_count = len(uuid_list)
-            
-            # --- FIXED: Use stable_doc_uuid for doc_id, or a fallback that includes filename ---
-            # If not ingested, create a unique doc_id based on doc_type and filename for temporary dict key
-            final_doc_id = stable_doc_uuid or f"N/A ({doc_type}-{filename_doc_id_key})"
-            
-            file_info = {
-                "doc_id": final_doc_id, # The final key used for the API response dict
-                "file_name": f, 
-                "file_path": file_path,
-                "doc_type": doc_type,
-                "size_mb": os.path.getsize(file_path) / (1024 * 1024),
-                "status": "Ingested" if is_ingested else "Not Ingested", # Use status instead of 'ingested' bool
-                "chunk_count": chunk_count,
-                "ref_doc_id": filename_doc_id_key 
-            }
-            all_supported_files.append(file_info)
-
-    all_supported_files.sort(key=lambda x: (x["doc_type"], x["file_name"]))
-    
-    print(f"\nFound {len(all_supported_files)} supported documents for types {doc_types}:")
-    
-    # Printing for console log/debug
-    print("-" * 140)
-    print(f"{'DOC ID (Stable/Temp)':<38} | {'FILENAME':<35} | {'TYPE':<10} | {'SIZE(MB)':<9} | {'STATUS':<10} | {'CHUNKS':<8} | {'REF ID (Old Key)'}")
-    print("-" * 140)
-    
-    documents_by_id: Dict[str, DocInfo] = {}
-    for info in all_supported_files:
-        short_doc_id = info['doc_id'][:36] 
-        short_filename = info['file_name'][:33] if len(info['file_name']) > 33 else info['file_name']
-        size_str = f"{info['size_mb']:.2f}"
-        short_ref_doc_id = info['ref_doc_id'][:16] if len(info['ref_doc_id']) > 16 else info['ref_doc_id']
+        current_collection_name = os.path.basename(root_to_scan)
+        original_doc_type, resolved_enabler = _parse_collection_name(current_collection_name)
         
-        print(f"{short_doc_id:<38} | {short_filename:<35} | {info['doc_type']:<10} | {size_str:<9} | {info['status']:<10} | {info['chunk_count']:<8} | {short_ref_doc_id}")
+        for root, _, filenames in os.walk(root_to_scan):
+            if root != root_to_scan: continue # สแกนแค่ชั้นแรก
+            
+            for f in filenames:
+                file_extension = os.path.splitext(f)[1].lower()
+                if f.startswith('.') or file_extension not in SUPPORTED_TYPES:
+                    continue
+                    
+                file_path = os.path.join(root, f)
+                file_name_no_ext = os.path.splitext(f)[0]
+                filename_doc_id_key = _normalize_doc_id(file_name_no_ext)
+                
+                # 🟢 [FIX: ใช้ filepath ในการ lookup Stable UUID]
+                stable_doc_uuid = filepath_to_stable_uuid.get(file_path)
+                
+                doc_entry = doc_mapping_db.get(stable_doc_uuid) if stable_doc_uuid else None
+                
+                chunk_uuids = doc_entry.get("chunk_uuids", []) if doc_entry else []
+                chunk_count = len(chunk_uuids)
+                is_ingested = chunk_count > 0
+                
+                final_doc_id = stable_doc_uuid or f"TEMP_ID__{filename_doc_id_key}"
+                
+                try:
+                    upload_date = datetime.fromtimestamp(os.path.getmtime(file_path), timezone.utc).isoformat()
+                    file_size = os.path.getsize(file_path)
+                except FileNotFoundError:
+                    upload_date = datetime.now(timezone.utc).isoformat()
+                    file_size = 0
 
-        # --- FIXED: Convert list item to dictionary entry keyed by doc_id ---
-        documents_by_id[info['doc_id']] = info
+                doc_info: Any = {
+                    "doc_id": final_doc_id,
+                    "doc_id_key": filename_doc_id_key,
+                    "filename": f,
+                    "filepath": file_path,
+                    "doc_type": original_doc_type,
+                    "enabler": resolved_enabler, 
+                    "upload_date": upload_date,
+                    "chunk_count": chunk_count,
+                    "status": "Ingested" if is_ingested else "Failed", 
+                    "size": file_size,
+                }
+                # all_docs.append(doc_info) # <--- [OLD]
+                all_docs[final_doc_id] = doc_info # <--- [NEW] เพิ่มลงใน Dictionary ด้วย doc_id เป็น Key
 
-    return documents_by_id
+    # NEW DEBUG LOG: ตรวจสอบจำนวนไฟล์ทั้งหมดที่พบหลังจาก Initial Filter
+    logger.info(f"DEBUG: Total physical files found (len(all_docs)): {len(all_docs)}")
+
+    # START OF COUNTING LOGIC 
+    # Y: Total number of supported files found after doc_type/enabler filter
+    total_supported_files = len(all_docs) 
+    
+    # 2. Apply show_results filtering and calculate X
+    show_results_lower = show_results.lower()
+    
+    # 📌 [NEW] ใช้ Dictionary เพื่อเก็บผลลัพธ์ที่ถูกกรอง
+    filtered_docs_dict: Dict[str, Any] = {}
+    
+    if total_supported_files == 0:
+        doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
+        logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}).")
+        return filtered_docs_dict # คืนค่า Dictionary ว่าง
+    
+    # 📌 [NEW] ปรับ Logic การกรองให้ทำงานกับ Dictionary
+    if show_results_lower == "ingested":
+        filtered_docs_dict = {
+            k: d for k, d in all_docs.items() 
+            if d.get('status', '').lower() == 'ingested' and not k.startswith('TEMP_ID__')
+        }
+        filter_name = "INGESTED (Successful / Unique Doc IDs)"
+        display_count_x = len(filtered_docs_dict)
+        
+    elif show_results_lower == "failed":
+        filtered_docs_dict = {
+            k: d for k, d in all_docs.items() 
+            if d.get('status', '').lower() == 'failed'
+        }
+        display_count_x = len(filtered_docs_dict) 
+        filter_name = "FAILED/SKIPPED (Physical Files)"
+        
+    elif show_results_lower == "full":
+        filtered_docs_dict = all_docs
+        display_count_x = len(all_docs) 
+        filter_name = "FULL (All Supported Files)"
+        
+    else:
+        # Default: ingested
+        filtered_docs_dict = {
+            k: d for k, d in all_docs.items() 
+            if d.get('status', '').lower() == 'ingested' and not k.startswith('TEMP_ID__')
+        }
+        display_count_x = len(filtered_docs_dict)
+        filter_name = "INGESTED (Default / Unique Doc IDs)"
+
+
+    # 3. Format for console output and printing
+    
+    display_list = []
+    # 📌 [NEW] ดึง values() จาก Dictionary เพื่อใช้ในการแสดงผล
+    for doc_info in filtered_docs_dict.values(): 
+        file_size_mb = doc_info['size'] / (1024 * 1024)
+        enabler_display = doc_info['enabler'] if doc_info['enabler'] is not None else '-'
+        
+        display_list.append({
+            "doc_id": doc_info["doc_id"],
+            "file_name": doc_info["filename"],
+            "doc_type": doc_info["doc_type"],
+            "enabler": enabler_display,
+            "size_mb": file_size_mb,
+            "status": doc_info["status"],
+            "chunk_count": doc_info["chunk_count"],
+            "ref_doc_id": doc_info["doc_id_key"]
+        })
+        
+    display_list.sort(key=lambda x: (x["doc_type"], x["file_name"]))
+    
+    # ... (ส่วนการ Print Output เหมือนเดิม) ...
+    doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
+    
+    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Filter: {filter_name}):\n")
+
+    if not display_list:
+        print("--- No documents found matching the filter criteria to display ---")
+        return filtered_docs_dict # คืนค่า Dictionary ว่าง
+
+    print("-" * 155)
+    print(f"{'DOC ID (Stable/Temp)':<38} | {'FILENAME':<35} | {'EXT':<5} | {'TYPE':<10} | {'ENB':<5} | {'SIZE(MB)':<9} | {'STATUS':<10} | {'CHUNKS':<8} | {'REF ID (Old Key)'}")
+    print("-" * 155)
+    
+    for info in display_list:
+        short_doc_id = info['doc_id'][:38] 
+        file_name, file_ext = os.path.splitext(info['file_name'])
+        short_filename = file_name[:33] if len(file_name) > 33 else file_name 
+        file_ext = file_ext[1:].upper() if file_ext else '-' 
+        size_str = f"{info['size_mb']:.2f}"
+        short_ref_doc_id = info['ref_doc_id'][:20] if len(info['ref_doc_id']) > 20 else info['ref_doc_id']
+        enabler_display = info['enabler'] 
+        
+        print(
+            f"{short_doc_id:<38} | "
+            f"{short_filename:<35} | " 
+            f"{file_ext:<5} | "
+            f"{info['doc_type']:<10} | "
+            f"{enabler_display:<5} | " 
+            f"{size_str:<9} | "
+            f"{info['status']:<10} | "
+            f"{info['chunk_count']:<8} | "
+            f"{short_ref_doc_id}"
+        )
+    print("-" * 155)
+    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Filter: {filter_name}):\n")
+
+    
+    # 4. Return the filtered list
+    # return filtered_docs # <--- [OLD]
+    return filtered_docs_dict # <--- [NEW] คืนค่า Dictionary ที่ถูกกรอง

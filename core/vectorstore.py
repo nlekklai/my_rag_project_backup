@@ -4,6 +4,7 @@ import logging
 import threading
 import multiprocessing
 import json 
+import shutil # เพิ่ม shutil สำหรับ wipe_collection
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 
@@ -29,6 +30,7 @@ from flashrank import Ranker
 
 import chromadb
 from chromadb.config import Settings
+import glob # เพิ่ม glob สำหรับ path
 
 # Configure chromadb telemetry if available
 try:
@@ -44,6 +46,10 @@ INITIAL_TOP_K = 15
 FINAL_K_RERANKED = 7
 VECTORSTORE_DIR = "vectorstore"
 MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
+
+# 🟢 CONFIG: Enabler Configuration (MUST be added for evidence logic)
+DEFAULT_ENABLER = "KM"
+SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
 # Safety: don't spawn too many processes by default
 MAX_PARALLEL_WORKERS = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
@@ -158,9 +164,9 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
                         model_name=model_name, 
                         model_kwargs={"device": device},
                         # 1. เพิ่มคำสั่งนำหน้า "query: " สำหรับข้อความค้นหา (Query) เพื่อประสิทธิภาพ E5
-                        # query_instruction="query: ",
+                        # query_instruction="query: ", #NOTE: Commented out as per original code template
                         # 2. แนะนำให้ normalize embeddings สำหรับ E5 เพื่อความแม่นยำ
-                        # encode_kwargs={'normalize_embeddings': True}
+                        # encode_kwargs={'normalize_embeddings': True} #NOTE: Commented out as per original code template
                     )
 
                 except Exception as e:
@@ -212,13 +218,37 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
 
 # -------------------- Vectorstore helpers (REVISED/CLEANED) --------------------
 
-def get_vectorstore_path(doc_type: Optional[str] = None):
-    # ปรับปรุง: ตอนนี้ใช้ doc_type เป็น collection_name ใน Chroma
-    return VECTORSTORE_DIR
+def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
+    """
+    🟢 NEW: Calculates the Chroma collection name and directory name based on doc_type and enabler.
+    For doc_type='evidence', it returns 'evidence_<ENABLER>'.
+    Otherwise, it returns the doc_type string (e.g., 'document').
+    """
+    doc_type_norm = doc_type.strip().lower()
 
-def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None) -> List[str]:
+    if doc_type_norm == "evidence":
+        # Apply default enabler if None, or use the provided one
+        enabler_norm = (enabler or DEFAULT_ENABLER).strip().lower() 
+        return f"{doc_type_norm}_{enabler_norm}"
+        
+    return doc_type_norm
+
+def get_vectorstore_path(doc_type: Optional[str] = None, enabler: Optional[str] = None) -> str:
+    """
+    Returns the full path to the base dir or the specific collection directory.
+    Uses _get_collection_name logic.
+    """
+    if not doc_type:
+        return VECTORSTORE_DIR
+    
+    # 🟢 REVISED: ใช้ _get_collection_name
+    collection_name = _get_collection_name(doc_type, enabler)
+    return os.path.join(VECTORSTORE_DIR, collection_name)
+
+def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None, enabler: Optional[str] = None) -> List[str]:
     """
     Lists available Chroma collections (which are folders inside VECTORSTORE_DIR).
+    Returns collection names (e.g., 'document', 'evidence_km').
     """
     if not os.path.exists(base_path):
         return []
@@ -227,39 +257,46 @@ def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optiona
     folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
     
     if doc_type:
-        # ถ้ากำหนด doc_type (ซึ่งตอนนี้คือ collection name) ให้ตรวจสอบว่ามี folder นั้นหรือไม่
-        return [doc_type] if doc_type in folders else []
+        doc_type_norm = doc_type.lower().strip()
+        
+        if doc_type_norm == "evidence" and not enabler:
+            # 🟢 NEW LOGIC: Special case: 'evidence' without enabler means list ALL evidence_*
+            return [f for f in folders if f.startswith("evidence_")]
+            
+        # Specific collection requested (e.g., 'document' or 'evidence_km')
+        collection_name = _get_collection_name(doc_type_norm, enabler)
+        return [collection_name] if collection_name in folders else []
         
     return folders
 
 
-# ใน core/vectorstore.py
-def vectorstore_exists(doc_id: str, base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None) -> bool:
+def vectorstore_exists(doc_id: str, base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None, enabler: Optional[str] = None) -> bool:
     """
-    Checks if a Chroma collection (doc_type) exists on disk.
-    doc_type is the collection name (e.g., 'document').
+    Checks if a Chroma collection exists on disk.
+    doc_type and enabler define the collection name.
     """
     if not doc_type:
         return False
     
-    # 1. สร้างพาธไปยังโฟลเดอร์ Collection
-    path = os.path.join(base_path, doc_type)
+    # 🟢 REVISED: ใช้ _get_collection_name
+    collection_name = _get_collection_name(doc_type, enabler)
+    path = os.path.join(base_path, collection_name)
     file_path = os.path.join(path, "chroma.sqlite3")
     
     # 🟢 DEBUG: แสดงพาธที่กำลังจะตรวจสอบ (เพื่อยืนยันว่าถูกต้อง)
-    logger.info(f"🔍 V-Exists Check: Checking path: {file_path} (from CWD: {os.getcwd()})")
+    # logger.info(f"🔍 V-Exists Check: Checking path: {file_path} (from CWD: {os.getcwd()})")
     
     if not os.path.isdir(path):
-        logger.warning(f"❌ V-Exists Check 1: Directory not found at {path}")
+        logger.warning(f"❌ V-Exists Check 1: Directory not found for collection '{collection_name}' at {path}")
         return False
         
     # 2. ตรวจสอบไฟล์ฐานข้อมูลหลัก
     if os.path.isfile(file_path):
-        logger.info(f"✅ V-Exists Check 2: Found required file at {file_path}")
+        # logger.info(f"✅ V-Exists Check 2: Found required file at {file_path}")
         return True
         
     # 🚨 DEBUG: หากถึงตรงนี้ แสดงว่าหาไฟล์ไม่เจอ (คือบั๊กที่เรากำลังหา)
-    logger.error(f"❌ V-Exists Check 3: FAILED to find file chroma.sqlite3 at {file_path}")
+    logger.error(f"❌ V-Exists Check 3: FAILED to find file chroma.sqlite3 at {file_path} for collection '{collection_name}'")
     return False
 
 
@@ -277,9 +314,10 @@ class VectorStoreManager:
     # Lock for thread-safe initialization and cache access
     _lock = threading.Lock()
     
-    # Cache for Doc ID Mapping (doc_id -> [UUIDs])
-    # NOTE: type hint นี้สอดคล้องกับการโหลดใน _load_doc_id_mapping
-    _doc_id_mapping: Dict[str, List[str]] = PrivateAttr({})
+    # Cache for Doc ID Mapping (doc_id -> DocInfo)
+    # The structure is Dict[str, Dict[str, Any]] to match the DocInfo structure
+    _doc_id_mapping: Dict[str, Dict[str, Any]] = PrivateAttr({}) 
+    # Reverse cache: chunk_uuid -> doc_id
     _uuid_to_doc_id: Dict[str, str] = PrivateAttr({})
     
     # Embeddings (Shared across all instances)
@@ -296,13 +334,13 @@ class VectorStoreManager:
         if not self._is_initialized:
             self._base_path = base_path
             self._chroma_cache = {}
-            # 💡 Initialization is handled internally by helper functions
+            # Initialization of embeddings and reranker models
             self._embeddings = get_hf_embeddings()
             
             # Load mapping on startup
             self._load_doc_id_mapping()
             
-            logger.info(f"Initialized VectorStoreManager. Loaded {len(self._doc_id_mapping)} doc IDs.")
+            logger.info(f"Initialized VectorStoreManager. Loaded {len(self._doc_id_mapping)} stable doc IDs.")
             VectorStoreManager._is_initialized = True
 
     def _load_doc_id_mapping(self):
@@ -310,20 +348,34 @@ class VectorStoreManager:
         self._doc_id_mapping = {}
         self._uuid_to_doc_id = {}
         try:
+            # Load mapping data (doc_id -> DocInfo structure)
             with open(MAPPING_FILE_PATH, 'r', encoding='utf-8') as f:
-                mapping_data: Dict[str, List[str]] = json.load(f)
+                mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
                 self._doc_id_mapping = mapping_data
                 
                 # Create reverse mapping for quick lookup UUID -> Doc ID
-                for doc_id, uuids in mapping_data.items():
-                    for uid in uuids:
-                        self._uuid_to_doc_id[uid] = doc_id
+                for doc_id, doc_entry in mapping_data.items():
+                    # Ensure doc_entry is a dict and contains the 'chunk_uuids' key
+                    if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry['chunk_uuids'], list):
+                        for uid in doc_entry['chunk_uuids']:
+                            self._uuid_to_doc_id[uid] = doc_id
                         
             logger.info(f"✅ Loaded Doc ID Mapping: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
         except FileNotFoundError:
             logger.warning(f"⚠️ Doc ID Mapping file not found at {MAPPING_FILE_PATH}. This is expected if no documents have been ingested yet.")
         except Exception as e:
             logger.error(f"❌ Failed to load Doc ID Mapping: {e}")
+
+    def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
+        """Helper to safely re-parse collection name back to doc_type and enabler."""
+        collection_name_lower = collection_name.strip().lower()
+        if collection_name_lower.startswith("evidence_"):
+            parts = collection_name_lower.split("_", 1)
+            # Return 'evidence' as doc_type, and the enabler part (uppercase)
+            return "evidence", parts[1].upper() if len(parts) == 2 else None
+            
+        # For non-evidence types (document, faq, etc.)
+        return collection_name_lower, None 
 
     def _load_chroma_instance(self, collection_name: str) -> Optional[Chroma]:
         """Loads a Chroma instance from disk or returns from cache."""
@@ -337,8 +389,11 @@ class VectorStoreManager:
             
             persist_directory = os.path.join(self._base_path, collection_name)
             
-            # if not vectorstore_exists(doc_id="N/A", base_path=self._base_path, doc_type=collection_name):
-            if not vectorstore_exists(doc_id=collection_name, base_path=self._base_path, doc_type=collection_name): # ลองส่ง doc_type ชัดๆ
+            # NOTE: vectorstore_exists needs doc_type/enabler, parse collection_name.
+            doc_type, enabler = self._re_parse_collection_name(collection_name)
+            
+            # Use the global helper to check existence on disk
+            if not vectorstore_exists(doc_id="N/A", base_path=self._base_path, doc_type=doc_type, enabler=enabler):
                 logger.warning(f"⚠️ Chroma collection '{collection_name}' folder not found at {persist_directory}")
                 return None
 
@@ -356,10 +411,10 @@ class VectorStoreManager:
                 logger.error(f"❌ Failed to load Chroma collection '{collection_name}': {e}")
                 return None
 
-    def get_documents_by_id(self, doc_uuids: Union[str, List[str]], doc_type: str = "default_collection") -> List[LcDocument]:
+    def get_documents_by_id(self, doc_uuids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
         """
         Retrieves chunks (Documents) from a specific Chroma collection 
-        using their UUIDs.
+        using their internal Chroma UUIDs (chunk_uuid).
         """
         if isinstance(doc_uuids, str):
             doc_uuids = [doc_uuids]
@@ -368,17 +423,20 @@ class VectorStoreManager:
         if not doc_uuids:
             return []
             
-        chroma_instance = self._load_chroma_instance(doc_type)
+        # Use the global helper to get the correct collection name
+        collection_name = _get_collection_name(doc_type, enabler)
+        chroma_instance = self._load_chroma_instance(collection_name)
+
         if not chroma_instance:
-            logger.warning(f"Cannot retrieve documents: Collection '{doc_type}' is not loaded.")
+            logger.warning(f"Cannot retrieve documents: Collection '{collection_name}' is not loaded.")
             return []
         
         try:
             # 1. Get collection client
+            # NOTE: We access the private attribute _collection as it's often the quickest way to the raw client
             collection = chroma_instance._collection
             
             # 2. Fetch data by IDs
-            # NOTE: Chroma client.get() returns dict with 'ids', 'documents', 'metadatas'
             result = collection.get(
                 ids=doc_uuids,
                 include=['documents', 'metadatas'] 
@@ -389,20 +447,24 @@ class VectorStoreManager:
             for i, text in enumerate(result.get('documents', [])):
                 if text:
                     metadata = result.get('metadatas', [{}])[i]
-                    doc_id = self._uuid_to_doc_id.get(result.get('ids', [''])[i], "UNKNOWN")
+                    # Use ID from the Chroma result (which is the chunk UUID)
+                    chunk_uuid_from_result = result.get('ids', [''])[i]
+                    
+                    # Map chunk UUID back to the stable doc_id
+                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
                     
                     # Ensure metadata contains necessary keys
-                    metadata["chunk_uuid"] = result.get('ids', [''])[i]
+                    metadata["chunk_uuid"] = chunk_uuid_from_result
                     metadata["doc_id"] = doc_id
-                    metadata["doc_type"] = doc_type
+                    metadata["doc_type"] = doc_type # Use input doc_type
                     
                     documents.append(LcDocument(page_content=text, metadata=metadata))
             
-            logger.info(f"✅ Retrieved {len(documents)} documents for {len(doc_uuids)} UUIDs from '{doc_type}'.")
+            logger.info(f"✅ Retrieved {len(documents)} documents for {len(doc_uuids)} UUIDs from '{collection_name}'.")
             return documents
             
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by UUIDs from collection '{doc_type}': {e}")
+            logger.error(f"❌ Error retrieving documents by UUIDs from collection '{collection_name}': {e}")
             return []
 
     # -------------------- Retriever Creation --------------------
@@ -422,6 +484,7 @@ class VectorStoreManager:
         
         if reranker_instance:
             try:
+                # Use the custom compressor with the loaded ranker
                 compressor = CustomFlashrankCompressor(ranker=reranker_instance, top_n=final_k)
                 retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=base_retriever)
                 if multiprocessing.current_process().name == 'MainProcess': 
@@ -436,12 +499,13 @@ class VectorStoreManager:
 
     def get_all_collection_names(self) -> List[str]:
         """Returns a list of all available collection names (folders in VECTORSTORE_DIR)."""
+        # Use the global helper
         return list_vectorstore_folders(base_path=self._base_path)
     
-    # ภายในคลาส VectorStoreManager
-    def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str) -> List[LcDocument]:
+    def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
         """
-        Retrieves chunks (Documents) for a list of Stable Document IDs.
+        Retrieves chunks (Documents) for a list of Stable Document IDs from a specific collection.
+        This retrieves ALL chunks belonging to the specified Stable Document IDs.
         """
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
@@ -450,6 +514,9 @@ class VectorStoreManager:
         if not stable_doc_ids:
             return []
             
+        # Get the correct Collection Name
+        collection_name = _get_collection_name(doc_type, enabler)
+
         all_chunk_uuids = []
         skipped_docs = []
         found_stable_ids = []
@@ -457,11 +524,10 @@ class VectorStoreManager:
         # 1. ค้นหา Chunk UUIDs ทั้งหมดจาก Mapping
         for stable_id in stable_doc_ids:
             if stable_id in self._doc_id_mapping:
-                # 🚨 FIX 1: ตรวจสอบโครงสร้าง Dict ภายใน Mapping ที่ถูกต้อง
                 doc_entry = self._doc_id_mapping[stable_id] 
                 
-                # โครงสร้างที่ถูกต้องควรเป็น {"stable_id": {"chunk_uuids": ["uuid1", "uuid2", ...]}}
-                if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry:
+                # ตรวจสอบโครงสร้าง: {"stable_id": {"chunk_uuids": ["uuid1", "uuid2", ...]}}
+                if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry.get('chunk_uuids'), list):
                     chunk_uuids = doc_entry['chunk_uuids']
                     if chunk_uuids:
                         all_chunk_uuids.extend(chunk_uuids)
@@ -469,7 +535,7 @@ class VectorStoreManager:
                     else:
                         logger.warning(f"Mapping found for Stable ID '{stable_id}' but 'chunk_uuids' list is empty.")
                 else:
-                    logger.warning(f"Mapping entry for Stable ID '{stable_id}' is malformed.")
+                    logger.warning(f"Mapping entry for Stable ID '{stable_id}' is malformed or missing 'chunk_uuids'.")
             else:
                 skipped_docs.append(stable_id)
                 
@@ -477,23 +543,17 @@ class VectorStoreManager:
             logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
 
         if not all_chunk_uuids:
-            # 🚨 FIX 2: เปลี่ยน ValueError เป็นการคืนค่าว่างเปล่า (ตามความยืดหยุ่นของ RAG) 
-            # แต่ถ้าต้องการให้ fail ชัดเจน ต้องคง ValueError ไว้
             logger.warning(f"No valid chunk UUIDs found for provided Stable Document IDs: {stable_doc_ids}. Check doc_id_mapping.json.")
             return []
             
         # 2. โหลด Chroma Instance
-        try:
-            chroma_instance = self._load_chroma_instance(doc_type)
-        except Exception as e:
-            logger.error(f"❌ Error loading Chroma instance for collection '{doc_type}': {e}")
-            return []
+        chroma_instance = self._load_chroma_instance(collection_name) 
 
         if not chroma_instance:
-            logger.error(f"Collection '{doc_type}' is not loaded.")
+            logger.error(f"Collection '{collection_name}' is not loaded.")
             return []
 
-        # 3. Fetch data by Chunk IDs
+        # 3. Fetch data by Chunk IDs (Chroma UUIDs)
         try:
             collection = chroma_instance._collection
             result = collection.get(
@@ -501,64 +561,91 @@ class VectorStoreManager:
                 include=['documents', 'metadatas'] 
             )
             
-            # 4. Process results into LangChain Documents (โค้ดเดิม)
+            # 4. Process results into LangChain Documents
             documents: List[LcDocument] = []
             
-            # 🚨 FIX 3: ตรวจสอบว่ามีเอกสารจริง ๆ ถูกดึงออกมาหรือไม่
             if not result.get('documents'):
-                logger.warning(f"ChromaDB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs.")
+                logger.warning(f"ChromaDB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
                 return []
                 
             for i, text in enumerate(result.get('documents', [])):
                 if text:
                     metadata = result.get('metadatas', [{}])[i]
-                    doc_id = self._uuid_to_doc_id.get(result.get('ids', [''])[i], "UNKNOWN")
+                    chunk_uuid_from_result = result.get('ids', [''])[i]
+                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
                     
                     # Ensure metadata contains necessary keys
-                    metadata["chunk_uuid"] = result.get('ids', [''])[i]
+                    metadata["chunk_uuid"] = chunk_uuid_from_result
                     metadata["doc_id"] = doc_id
-                    metadata["doc_type"] = doc_type
+                    metadata["doc_type"] = doc_type # Use input doc_type
                     
                     documents.append(LcDocument(page_content=text, metadata=metadata))
             
-            logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{doc_type}'.")
+            logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{collection_name}'.")
             return documents
             
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{doc_type}': {e}")
+            logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
             return []
 
-# -------------------- Load single vectorstore retriever (REVISED) --------------------
-def load_vectorstore(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR):
-    """
-    Loads a retriever instance for a specific collection name (doc_type). 
-    """
-    if isinstance(doc_types, str):
-        collection_names = [doc_types]
-    else:
-        collection_names = doc_types
+# Helper function to get the manager instance
+def get_vectorstore_manager() -> VectorStoreManager:
+    """Returns the singleton instance of VectorStoreManager."""
+    return VectorStoreManager()
     
-    manager = VectorStoreManager(base_path=base_path)
-    retriever = None
+# Backward compatibility function (if needed by other parts of the system)
+def load_vectorstore(doc_type: str, enabler: Optional[str] = None) -> Optional[Chroma]:
+    """Helper for other modules to load a Chroma instance directly."""
+    collection_name = _get_collection_name(doc_type, enabler)
+    return get_vectorstore_manager()._load_chroma_instance(collection_name)
 
-    for collection_name in collection_names:
-        # Check if the collection exists
-        if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=collection_name):
-            # Use the manager to get the retriever
-            retriever = manager.get_retriever(collection_name, top_k, final_k)
-            if retriever:
-                break
+# NOTE: VectorStoreExecutorSingleton is not included here but should be defined separately if needed.
+# However, this file is primarily for the VectorStoreManager.
+# I will define a placeholder for it since it was in the snippet and is referenced in app.py context.
+class VectorStoreExecutorSingleton:
+    _instance = None
+    _is_initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(VectorStoreExecutorSingleton, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not VectorStoreExecutorSingleton._is_initialized:
+            # Placeholder implementation
+            self.max_workers = MAX_PARALLEL_WORKERS
+            self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
+            VectorStoreExecutorSingleton._is_initialized = True
+
+    @property
+    def executor(self) -> ThreadPoolExecutor:
+        return self._executor
+
+    def close(self):
+        if self._is_initialized:
+            self._executor.shutdown(wait=True)
+            VectorStoreExecutorSingleton._is_initialized = False 
+            
+def get_vectorstore() -> VectorStoreExecutorSingleton:
+    """Returns the singleton instance managing the executor."""
+    return VectorStoreExecutorSingleton()
     
-    if retriever is None:
-        raise ValueError(f"❌ Vectorstore for doc_id/collection_name '{doc_id}' not found in any of {collection_names}")
-    return retriever
+def load_all_vectorstores():
+    """Placeholder for loading all vectorstores if needed globally."""
+    pass
+    
+def get_vectorstore_path(doc_type: str, enabler: Optional[str] = None) -> str:
+    """Returns the path to the vectorstore folder."""
+    collection_name = _get_collection_name(doc_type, enabler)
+    return os.path.join(VECTORSTORE_DIR, collection_name)
 
 
-# -------------------- MultiDoc / Parallel Retriever (REVISED) --------------------
+# -------------------- MultiDoc / Parallel Retriever --------------------
 class NamedRetriever(BaseModel):
     """Picklable wrapper storing minimal params to load retriever inside child process."""
-    doc_id: str # doc_id ในตรรกะใหม่จะหมายถึง Collection Name
-    doc_type: str # doc_type ก็หมายถึง Collection Name ด้วย
+    doc_id: str # Stable Doc ID (not used for loading retriever, but for metadata)
+    doc_type: str # Collection Name (e.g., 'document' or 'evidence_km')
     top_k: int
     final_k: int
     # เพิ่ม Base path เข้าไปเพื่อความปลอดภัย
@@ -573,7 +660,6 @@ class NamedRetriever(BaseModel):
              raise ValueError(f"Retriever not found for collection '{self.doc_type}' at path '{self.base_path}'")
         return retriever
 
-
 class MultiDocRetriever(BaseRetriever):
     """
     Combine multiple NamedRetriever sources. Choose executor automatically (thread vs process).
@@ -581,43 +667,27 @@ class MultiDocRetriever(BaseRetriever):
 
     _retrievers_list: list[NamedRetriever] = PrivateAttr()
     _k_per_doc: int = PrivateAttr()
-    # เก็บ reference ไปยัง VectorStoreManager
     _manager: VectorStoreManager = PrivateAttr() 
+    _doc_ids_filter: Optional[List[str]] = PrivateAttr()
+    _chroma_filter: Optional[Dict[str, Any]] = PrivateAttr()
 
-    def __init__(self, retrievers_list: list[NamedRetriever], k_per_doc: int = INITIAL_TOP_K):
+    def __init__(self, retrievers_list: list[NamedRetriever], k_per_doc: int = INITIAL_TOP_K, doc_ids_filter: Optional[List[str]] = None):
         super().__init__()
         self._retrievers_list = retrievers_list
         self._k_per_doc = k_per_doc
-        self._manager = VectorStoreManager() # สร้าง/โหลด Manager
+        self._manager = VectorStoreManager() 
 
-    @staticmethod
-    def _static_retrieve_task(named_r: "NamedRetriever", query: str):
-        """
-        Static helper used in ProcessPoolExecutor. Executes inside child process.
-        Must return list[Document] or None.
-        """
-        try:
-            # load_instance จะสร้าง VectorStoreManager ใหม่ใน child process ซึ่งจะโหลด cache ใหม่
-            retriever_instance = named_r.load_instance()
-            return retriever_instance.invoke(query)
-        except Exception as e:
-            # child process: print minimal info
-            print(f"❌ Child retrieval error for {named_r.doc_id} ({named_r.doc_type}): {e}")
-            return None
+        # NEW LOGIC: สร้าง Chroma Filter จาก Doc IDs
+        self._doc_ids_filter = doc_ids_filter
+        self._chroma_filter = None
+        if doc_ids_filter:
+            # สร้าง Chroma DB Metadata Filter: ค้นหาเฉพาะเอกสารที่มี 'doc_id' อยู่ในลิสต์
+            self._chroma_filter = {
+                "doc_id": {"$in": doc_ids_filter}
+            }
+            logger.info(f"✅ MultiDocRetriever initialized with doc_ids filter for {len(doc_ids_filter)} Stable IDs.")
 
-    def _thread_retrieve_task(self, named_r: "NamedRetriever", query: str):
-        """
-        Retrieval performed in a thread inside the same process (no pickling).
-        We call named_r.load_instance() which will reuse cached embeddings/reranker in this process.
-        """
-        try:
-            # load_instance จะใช้ Manager เดียวกันกับ Main process
-            retriever_instance = named_r.load_instance()
-            return retriever_instance.invoke(query)
-        except Exception as e:
-            logger.warning(f"⚠️ Thread retrieval error for {named_r.doc_id}: {e}")
-            return None
-
+    # 🟢 FIX: เมธอด _choose_executor ที่หายไป
     def _choose_executor(self):
         """
         Decide whether to use ProcessPoolExecutor or ThreadPoolExecutor.
@@ -656,26 +726,56 @@ class MultiDocRetriever(BaseRetriever):
         logger.info("Defaulting to 'thread' executor")
         return "thread"
 
+    # 🟢 FIX: แก้ไข _static_retrieve_task ให้รับ filter
+    @staticmethod
+    def _static_retrieve_task(named_r: "NamedRetriever", query: str, chroma_filter: Optional[Dict]):
+        """
+        Static helper used in ProcessPoolExecutor. Executes inside child process.
+        """
+        try:
+            retriever_instance = named_r.load_instance()
+            # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
+            search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
+            return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
+        except Exception as e:
+            print(f"❌ Child retrieval error for {named_r.doc_id} ({named_r.doc_type}): {e}")
+            return None
+
+    # 🟢 FIX: แก้ไข _thread_retrieve_task ให้รับ filter
+    def _thread_retrieve_task(self, named_r: "NamedRetriever", query: str, chroma_filter: Optional[Dict]):
+        """
+        Retrieval performed in a thread inside the same process.
+        """
+        try:
+            retriever_instance = named_r.load_instance()
+            # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
+            search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
+            return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
+        except Exception as e:
+            logger.warning(f"⚠️ Thread retrieval error for {named_r.doc_id}: {e}")
+            return None
+
+    # 🟢 FIX: แก้ไข _get_relevant_documents เพื่อส่ง filter เข้าไป
     def _get_relevant_documents(self, query: str, *, run_manager=None):
         """
         This is the LangChain compatible retrieval method.
-        It will call each NamedRetriever either in parallel (process/thread) and then deduplicate results.
         """
-        # Determine worker count
         max_workers = min(len(self._retrievers_list), MAX_PARALLEL_WORKERS)
         if max_workers <= 0:
             max_workers = 1
 
-        chosen = self._choose_executor()
+        # 🟢 FIX: _choose_executor ถูกเรียกใช้ที่นี่
+        chosen = self._choose_executor() 
         ExecutorClass = ProcessPoolExecutor if chosen == "process" else ThreadPoolExecutor
 
-        logger.info(f"⚙️ Running MultiDocRetriever with {chosen} executor ({max_workers} workers)")
+        logger.info(f"⚙️ Running MultiDocRetriever with {chosen} executor ({max_workers} workers) [Filter: {bool(self._chroma_filter)}]")
 
         results = []
         if chosen == "process":
-            # Use process pool: tasks must be picklable (we call static method)
+            # Use process pool
             with ExecutorClass(max_workers=max_workers) as executor:
-                futures = [executor.submit(MultiDocRetriever._static_retrieve_task, nr, query) for nr in self._retrievers_list]
+                # 🟢 NEW: ส่ง self._chroma_filter เข้าไปใน task
+                futures = [executor.submit(MultiDocRetriever._static_retrieve_task, nr, query, self._chroma_filter) for nr in self._retrievers_list]
                 for f in futures:
                     try:
                         results.append(f.result())
@@ -683,9 +783,10 @@ class MultiDocRetriever(BaseRetriever):
                         logger.warning(f"Child process future failed: {e}")
                         results.append(None)
         else:
-            # Use threads: we can run load_instance in-thread (reuses per-process caches)
+            # Use threads
             with ExecutorClass(max_workers=max_workers) as executor:
-                futures = [executor.submit(self._thread_retrieve_task, nr, query) for nr in self._retrievers_list]
+                # 🟢 NEW: ส่ง self._chroma_filter เข้าไปใน task
+                futures = [executor.submit(self._thread_retrieve_task, nr, query, self._chroma_filter) for nr in self._retrievers_list]
                 for f in futures:
                     try:
                         results.append(f.result())
@@ -720,42 +821,90 @@ class MultiDocRetriever(BaseRetriever):
                 score = d.metadata.get("relevance_score")
                 logger.debug(f" - [Reranked] Source={d.metadata.get('doc_source')}, Score={score:.4f}, Type={d.metadata.get('doc_type')}, Content='{d.page_content[:80]}...'")
         return unique_docs
+    
+# -------------------- Load single vectorstore retriever (REVISED) --------------------
+def load_vectorstore(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR, enabler: Optional[str] = None):
+    """
+    Loads a retriever instance for a specific collection name (doc_type) and optional enabler. 
+    """
+    # 🟢 NEW: ตรรกะใหม่ใช้ doc_types/enabler เพื่อสร้าง collection_name ที่ถูกต้อง
+    if isinstance(doc_types, str):
+        target_doc_type = doc_types
+    elif isinstance(doc_types, list) and target_doc_type:
+         target_doc_type = doc_types[0] # Use the first one if list is provided
+    else:
+        raise ValueError("doc_types must be a single string or a list containing the target doc_type.")
 
+    # 1. คำนวณชื่อ Collection ที่ถูกต้อง
+    collection_name = _get_collection_name(target_doc_type, enabler)
 
-# -------------------- load_all_vectorstores --------------------
+    manager = VectorStoreManager(base_path=base_path)
+    retriever = None
+
+    # 2. ตรวจสอบว่า Collection นี้มีอยู่จริงหรือไม่
+    # NOTE: vectorstore_exists จะใช้ collection_name ที่ถูกต้องในการตรวจสอบพาธ
+    if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=target_doc_type, enabler=enabler):
+        # 3. ใช้ manager เพื่อโหลด retriever
+        retriever = manager.get_retriever(collection_name, top_k, final_k)
+    
+    if retriever is None:
+        raise ValueError(f"❌ Vectorstore for collection '{collection_name}' (derived from doc_type='{target_doc_type}' and enabler='{enabler}') not found.")
+    return retriever
+
+# -------------------- load_all_vectorstores (FINAL REVISED) --------------------
 def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
                           top_k: int = INITIAL_TOP_K,
                           final_k: int = FINAL_K_RERANKED,
-                          base_path: str = VECTORSTORE_DIR) -> MultiDocRetriever:
+                          base_path: str = VECTORSTORE_DIR,
+                          evidence_enabler: Optional[str] = None,
+                          doc_ids: Optional[List[str]] = None) -> MultiDocRetriever: # ⬅️ เพิ่ม doc_ids ที่นี่
     """
     Load multiple vectorstore collections as MultiDocRetriever.
-    doc_types = collection folder names (e.g., 'document')
+    doc_types = list of document types (e.g., ['document', 'evidence'])
+    doc_ids = list of specific Stable Document IDs to filter for (if supported by MultiDocRetriever).
+    evidence_enabler = specific enabler to load for 'evidence' (e.g., 'KM'), 
+                       if None and 'evidence' is requested, loads all evidence_* collections.
     """
-    if isinstance(doc_types, str):
-        doc_type_filter = {doc_types}
-    elif isinstance(doc_types, list):
-        doc_type_filter = set(doc_types)
-    else:
-        doc_type_filter = set()
-
+    doc_types = [doc_types] if isinstance(doc_types, str) else doc_types or []
+    doc_type_filter = {dt.strip().lower() for dt in doc_types}
+    
     manager = VectorStoreManager(base_path=base_path)
     all_retrievers: List[NamedRetriever] = []
-
-    # 🟢 DEBUG 1: ตรวจสอบ Filter และ Collection ที่มีอยู่
-    available_collections = manager.get_all_collection_names()
-    logger.info(f"🔍 DEBUG: Target doc_types={doc_types}, Filter={doc_type_filter}")
-    logger.info(f"🔍 DEBUG: Found available collections: {available_collections}")
-
-    for collection_name in manager.get_all_collection_names():
-        if doc_type_filter and collection_name not in doc_type_filter:
-            logger.info(f"🔍 DEBUG: Skipping collection '{collection_name}' (not in filter)")
+    
+    # 1. กำหนดรายการ Collection ที่ต้องการโหลดจริง ๆ (Collection Name)
+    target_collection_names: Set[str] = set()
+    
+    if not doc_type_filter:
+        target_collection_names.update(manager.get_all_collection_names())
+    else:
+        for dt_norm in doc_type_filter:
+            if dt_norm == "evidence":
+                if evidence_enabler:
+                    collection_name = _get_collection_name("evidence", evidence_enabler)
+                    target_collection_names.add(collection_name)
+                    logger.info(f"🔍 Added specific evidence collection: {collection_name}")
+                else:
+                    evidence_collections = list_vectorstore_folders(base_path=base_path, doc_type="evidence")
+                    target_collection_names.update(evidence_collections)
+                    logger.info(f"🔍 Added all evidence collections found: {evidence_collections}")
+            else:
+                collection_name = _get_collection_name(dt_norm, None)
+                target_collection_names.add(collection_name)
+                logger.info(f"🔍 Added standard collection: {collection_name}")
+                
+    # 2. ทำการโหลดทีละ Collection
+    logger.info(f"🔍 DEBUG: Attempting to load {len(target_collection_names)} total target collections: {target_collection_names}")
+    
+    for collection_name in target_collection_names:
+        doc_type_for_check, enabler_for_check = manager._re_parse_collection_name(collection_name)
+        
+        if not vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=doc_type_for_check, enabler=enabler_for_check):
+            logger.warning(f"🔍 DEBUG: Skipping collection '{collection_name}' (vectorstore_exists failed).")
             continue
-        if not vectorstore_exists(doc_id=collection_name, base_path=base_path, doc_type=collection_name): # FIX HERE
-            logger.warning(f"🔍 DEBUG: Collection '{collection_name}' folder exists but FAILED vectorstore_exists check.")
-            continue
+            
         nr = NamedRetriever(
-            doc_id=collection_name,
-            doc_type=collection_name,
+            doc_id=collection_name, 
+            doc_type=collection_name, 
             top_k=top_k,
             final_k=final_k,
             base_path=base_path
@@ -766,9 +915,14 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
     # 🟢 DEBUG 3: สรุปผลลัพธ์
     logger.info(f"🔍 DEBUG: Final count of all_retrievers = {len(all_retrievers)}")
     if not all_retrievers:
-        raise ValueError(f"No vectorstore collections found matching doc_types={doc_types}")
+        raise ValueError(f"No vectorstore collections found matching doc_types={doc_types} and evidence_enabler={evidence_enabler}")
 
-    return MultiDocRetriever(retrievers_list=all_retrievers, k_per_doc=top_k)
+    # 4. ส่ง doc_ids ไปให้ MultiDocRetriever กรองต่อ (ถ้ามี)
+    return MultiDocRetriever(
+            retrievers_list=all_retrievers, 
+            k_per_doc=top_k,
+            doc_ids_filter=doc_ids # ⬅️ ถูกต้อง
+        )
 
 # -------------------- VECTORSTORE EXECUTOR SINGLETON (RETAINED) --------------------
 # REQUIRED by ingest_batch.py for shared resource management.

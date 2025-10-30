@@ -1,4 +1,5 @@
-# app.py (Full Code - Fixed stable_doc_uuid argument in /ingest)
+# app.py (Full Code - Fixed robustness for missing 'file_path')
+
 from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
@@ -12,52 +13,45 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
+from typing import Tuple
 
-# --- Core Imports ---
-# 🟢 NOTE: Mock logic is present, using Bracket Notation in upload functions
-# (สมมติว่า core.ingest, core.vectorstore, models.llm, core.run_assessment, core.evidence_mapping_generator มีอยู่จริง)
+# --- Core Imports (ต้องมีไฟล์เหล่านี้ในโครงสร้างโปรเจกต์) ---
 try:
-    from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT, SYSTEM_QA_INSTRUCTION 
-    # NOTE: doc_info ในที่นี้คือ Dict ตามที่ถูกกำหนดใน ingest.py
-    from core.ingest import process_document, list_documents, delete_document_by_uuid, DATA_DIR, SUPPORTED_TYPES, DocInfo
-    from core.vectorstore import load_vectorstore, vectorstore_exists, load_all_vectorstores, get_vectorstore_path, VectorStoreManager
+    from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT, SYSTEM_QA_INSTRUCTION, SYSTEM_COMPARE_INSTRUCTION 
+    
+    # 🟢 FIX: นำเข้า SUPPORTED_DOC_TYPES, DocInfo, และอื่นๆ จาก core.ingest
+    from core.ingest import (
+        process_document, 
+        list_documents, 
+        delete_document_by_uuid, 
+        DATA_DIR, 
+        SUPPORTED_TYPES, 
+        DocInfo, 
+        SUPPORTED_ENABLERS,
+        SUPPORTED_DOC_TYPES # <--- นำเข้าจาก ingest อย่างถูกต้อง
+    )
+    
+    from core.vectorstore import (
+        vectorstore_exists, 
+        get_vectorstore_path, 
+        VectorStoreManager, 
+        MultiDocRetriever, 
+        NamedRetriever, 
+        _get_collection_name,
+        INITIAL_TOP_K, 
+        FINAL_K_RERANKED
+    )
+    
     from langchain.chains import RetrievalQA
     from models.llm import llm as llm_instance 
     from core.run_assessment import run_assessment_process 
     from core.evidence_mapping_generator import EvidenceMappingGenerator
+    
 except ImportError as e:
-    # สำหรับการรันแบบ Standalone ใน Canvas (ไม่มีไฟล์ Core อื่นๆ)
-    print(f"Warning: Core module import failed. Using Mock/Local definitions. Error: {e}")
-    
-    # Mock definitions for DocInfo and required functions if core files are missing
-    class DocInfo(BaseModel):
-        filename: str = Field(..., description="ชื่อไฟล์เดิม")
-        filepath: str = Field(..., description="Path ของไฟล์บนระบบ (ใช้สำหรับหา upload_date)")
-        doc_type: str = Field(..., description="ประเภทเอกสาร (e.g., 'document', 'policy')")
-        chunk_count: int = Field(0, description="จำนวน chunk ที่ถูก ingest แล้ว")
-        mock_upload_timestamp: float = Field(0.0)
-
-    def list_documents(doc_types: List[str]) -> Dict[str, DocInfo]:
-        current_time = time.time()
-        mock_data = {
-            "uuid-doc-123": DocInfo(filename="Annual_Report_2024.pdf", filepath="/tmp/annual.pdf", doc_type="document", chunk_count=50, mock_upload_timestamp=current_time - 86400 * 5),
-            "uuid-pol-456": DocInfo(filename="HR_Policy_V1.docx", filepath="/tmp/hr_policy.docx", doc_type="policy", chunk_count=0, mock_upload_timestamp=current_time - 86400 * 2),
-        }
-        if not doc_types:
-             return mock_data 
-        return {uuid: info for uuid, info in mock_data.items() if info.doc_type in doc_types}
-        
-    def delete_document_by_uuid(doc_id: str, doc_type: str): pass
-    def process_document(**kwargs): return "mock-doc-id"
-    def vectorstore_exists(doc_id: str, doc_type: str, base_path: str): return True 
-    def load_all_vectorstores(**kwargs): raise NotImplementedError("Mock function: load_all_vectorstores")
-    
-    DATA_DIR = "data"
-    SUPPORTED_TYPES = [".pdf", ".docx", ".txt"]
-    VECTORSTORE_DIR = "vectorstore"
-    QA_PROMPT = "{context}\n\nQuestion: {question}"
-    COMPARE_PROMPT = "Doc Names: {doc_names}\n\n{context}\n\nQuery: {query}"
-    SYSTEM_QA_INSTRUCTION = "You are a helpful assistant."
+    # 🔴 หากเกิด ImportError แสดงว่าขาดไฟล์อื่นนอกเหนือจากที่แก้ไขแล้ว
+    print(f"❌ FATAL ERROR: Core module import failed. Missing file: {e}")
+    class TempImportError(Exception): pass 
+    raise TempImportError(f"CRITICAL: Missing core files for non-mock operation. Check your imports and project structure. Error: {e}") 
 
 
 # -----------------------------
@@ -79,6 +73,29 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 VECTORSTORE_DIR = "vectorstore"
 REF_DATA_DIR = "ref_data" 
 
+# (Add this near other Pydantic model definitions in app.py)
+from langchain_core.pydantic_v1 import BaseModel as LangchainBaseModel # Import Langchain Pydantic v1
+from langchain_core.output_parsers import JsonOutputParser
+
+class LLMComparisonMetric(LangchainBaseModel):
+    """Schema for a single comparison point returned by the LLM."""
+    metric: str = Field(..., description="The key metric or area being compared (e.g., 'Required Documents', 'Fee Structure', 'Eligibility')")
+    doc1: str = Field(..., description="The value or description of this metric in Document 1")
+    doc2: str = Field(..., description="The value or description of this metric in Document 2")
+    delta: float = Field(..., description="The quantitative change between doc1 and doc2 (e.g., 5.0, -2.5, 0). Use 0 if not quantitative.")
+    remark: Optional[str] = Field(None, description="Any additional brief remark or explanation.")
+    
+# Update CompareRequest to include 'query'
+class CompareRequest(BaseModel):
+    # ✅ FIX: ตั้งค่า Default เป็น None อย่างเดียว เพื่อให้ Pydantic ยอมรับ null/omitted field
+    doc1_uuid: Optional[str] = None
+    doc2_uuid: Optional[str] = None
+    
+    # ✅ FIX: ตั้งค่า Default เป็น None
+    doc_type_list: Optional[List[str]] = None
+    
+    # ✅ FIX: ตั้งค่า Default เป็น None
+    query: Optional[str] = None
 # -----------------------------
 # --- Helper Functions (สำหรับจัดการ JSON Files) ---
 # -----------------------------
@@ -87,7 +104,6 @@ def get_ref_data_path(enabler: str, data_type: str) -> str:
     """สร้าง path เต็มของไฟล์ JSON สำหรับ Enabler และ Data Type ที่ระบุ"""
     enabler = enabler.lower()
     
-    # กำหนดชื่อไฟล์ตาม Data Type ที่เรารู้จัก
     if data_type == 'statements':
         filename = f"{enabler}_evidence_statements_checklist.json"
     elif data_type == 'rubrics':
@@ -99,7 +115,6 @@ def get_ref_data_path(enabler: str, data_type: str) -> str:
     else:
         raise ValueError(f"Invalid data_type: {data_type}")
         
-    # สมมติว่าไฟล์ JSON อยู่ในโฟลเดอร์หลักของ REF_DATA_DIR
     return os.path.join(REF_DATA_DIR, filename) 
 
 def load_ref_data_file(filepath: str) -> Any:
@@ -187,7 +202,7 @@ class AssessmentRecord(BaseModel):
     mode: str
     timestamp: str
     
-    status: str = "RUNNING" # PENDING, RUNNING, COMPLETED, FAILED
+    status: str = "RUNNING" 
 
     overall_score: Optional[float] = None
     highest_full_level: Optional[int] = None
@@ -200,6 +215,68 @@ class RefDataPayload(BaseModel):
 ASSESSMENT_HISTORY: List[AssessmentRecord] = []
 
 # -----------------------------
+# --- Helper: Setup MultiDocRetriever ---
+# -----------------------------
+def _setup_multi_retriever(doc_type_list: List[str], enabler: Optional[str] = None, filter_doc_ids: Optional[List[str]] = None) -> MultiDocRetriever:
+    """
+    สร้างและตั้งค่า MultiDocRetriever โดยรองรับ Enabler และ Doc Type หลายชนิด
+    """
+    # VectorStoreManager ถูกใช้สำหรับ path/config แต่ Retriver ถูกสร้างใหม่เสมอ
+    manager = VectorStoreManager()
+    retrievers_list: List[NamedRetriever] = []
+    
+    for doc_type in doc_type_list:
+        doc_type_lower = doc_type.lower()
+        
+        # Logic สำหรับ Evidence (ต้องใช้ Enabler)
+        if doc_type_lower == "evidence":
+            if not enabler:
+                logger.warning("⚠️ Skipping 'evidence': No enabler specified.")
+                continue
+            collection_name = _get_collection_name(doc_type_lower, enabler)
+        
+        # Logic สำหรับ Doc Type ทั่วไป
+        elif doc_type_lower in SUPPORTED_DOC_TYPES: # ใช้ SUPPORTED_DOC_TYPES จาก core.ingest
+            collection_name = _get_collection_name(doc_type_lower, None)
+        else:
+             logger.warning(f"⚠️ Skipping unsupported doc_type: {doc_type_lower}")
+             continue
+             
+        # ตรวจสอบว่า Collection มีอยู่จริงก่อนเพิ่ม
+        # NOTE: การเรียก vectorstore_exists ต้องระบุ enabler สำหรับ evidence
+        if doc_type_lower == "evidence":
+             exists = vectorstore_exists(doc_id="N/A", doc_type=doc_type_lower, enabler=enabler, base_path=VECTORSTORE_DIR)
+        else:
+             exists = vectorstore_exists(doc_id="N/A", doc_type=doc_type_lower, enabler=None, base_path=VECTORSTORE_DIR)
+             
+        if not exists:
+             logger.warning(f"⚠️ Vectorstore collection '{collection_name}' not found on disk. Skipping.")
+             continue
+             
+        retrievers_list.append(
+            NamedRetriever(
+                doc_id=doc_type_lower, 
+                doc_type=collection_name, 
+                top_k=INITIAL_TOP_K,
+                final_k=FINAL_K_RERANKED
+            )
+        )
+        logger.info(f"Adding RAG source: {collection_name}")
+
+
+    if not retrievers_list:
+        raise ValueError("No valid document sources configured for RAG based on input types/enabler.")
+
+    # 2. สร้าง MultiDocRetriever
+    multidoc_retriever = MultiDocRetriever(
+        retrievers_list=retrievers_list,
+        k_per_doc=INITIAL_TOP_K,
+        doc_ids_filter=filter_doc_ids 
+    )
+    return multidoc_retriever
+
+
+# -----------------------------
 # --- Assessment Endpoints ---
 # -----------------------------
 
@@ -207,9 +284,7 @@ ASSESSMENT_HISTORY: List[AssessmentRecord] = []
 async def debug_list_collections():
     """Returns a list of collection names that the server can see in the vectorstore directory."""
     try:
-        # Initialize VectorStoreManager 
         manager = VectorStoreManager() 
-        # ฟังก์ชันนี้จะเรียกใช้ list_vectorstore_folders() และแสดงชื่อโฟลเดอร์ทั้งหมดใน vectorstore
         collections = manager.get_all_collection_names() 
         return {"available_collections": collections, "status": "Success", "vectorstore_dir": manager._base_path}
     except Exception as e:
@@ -280,10 +355,9 @@ async def get_all_reference_data(enabler: str):
     
     def load_data_safe(data_type: str):
         filepath = get_ref_data_path(enabler, data_type)
-        return load_ref_data_file(filepath)
+        data[data_type] = load_ref_data_file(filepath)
 
     try:
-        # โหลดข้อมูลทั้งหมด
         await run_in_threadpool(lambda: load_data_safe('statements'))
         await run_in_threadpool(lambda: load_data_safe('rubrics'))
         await run_in_threadpool(lambda: load_data_safe('mapping'))
@@ -407,10 +481,10 @@ async def list_uploads_document_only():
 @app.get("/api/uploads/{doc_type}", response_model=List[UploadResponse]) 
 async def list_uploads_by_type(doc_type: str):
     """
-    ดึงรายการเอกสารทั้งหมดใน doc_type ที่กำหนด (ใช้ DocInfo Pydantic Model/Dict)
+    ดึงรายการเอกสารทั้งหมดใน doc_type ที่กำหนด (ใช้ DocInfo Dict)
     """
     
-    doc_data: Dict[str, DocInfo] = list_documents(doc_types=[doc_type])
+    doc_data: Dict[str, DocInfo] | List[DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=[doc_type]))
     
     uploads: List[UploadResponse] = []
     
@@ -418,28 +492,44 @@ async def list_uploads_by_type(doc_type: str):
         logger.error(
             f"API Error: list_documents for doc_type='{doc_type}' returned {type(doc_data).__name__}. Expected dict."
         )
+        # 🟢 FIX: ถ้าเป็น list ให้แปลงเป็น dict โดยใช้ 'doc_id' เป็น key
+        if isinstance(doc_data, list):
+            doc_data = {item['doc_id']: item for item in doc_data if isinstance(item, dict) and 'doc_id' in item}
+        else:
+            return uploads # ถ้าไม่ใช่ทั้ง dict และ list ก็คืนค่าว่าง
+        
+    if not isinstance(doc_data, dict):
+        # หากการแปลงล้มเหลว หรือได้ค่าว่าง
         return uploads
 
     for uuid, doc_info in doc_data.items():
         
-        if doc_info['doc_type'] != doc_type: # ใช้ Bracket Notation
+        if doc_info['doc_type'] != doc_type: 
             continue
             
-        try:
-            # ใช้ Bracket Notation
-            timestamp = doc_info['mock_upload_timestamp'] if 'mock_upload_timestamp' in doc_info else os.path.getmtime(doc_info['file_path']) 
-            upload_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            upload_date_iso = upload_datetime.isoformat()
+        # 🟢 FIX: ดึงข้อมูลอย่างปลอดภัยและลองเข้าถึงระบบไฟล์ใน try/except ที่แยกกัน
+        file_name = doc_info.get('filename', 'Unknown')
+        file_path = doc_info.get('file_path')
+        upload_date_iso = datetime.now(timezone.utc).isoformat() # Default
+
+        if file_path:
+            try:
+                timestamp = os.path.getmtime(file_path) 
+                upload_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                upload_date_iso = upload_datetime.isoformat()
+            except Exception as e:
+                # Log warning when the actual file is missing or inaccessible
+                logger.warning(f"Failed to get modification time for {file_name} ({file_path}). Error: {e}")
+        else:
+             # Log warning when 'file_path' metadata is missing (the root cause of the previous error)
+             logger.warning(f"Metadata missing 'file_path' for document {uuid} ({file_name}). Using current timestamp.")
+
             
-        except Exception as e:
-            logger.warning(f"Failed to get modification time for {doc_info.get('file_name')} ({doc_info.get('file_path')}). Error: {e}")
-            upload_date_iso = datetime.now(timezone.utc).isoformat()
-            
-        # ใช้ Bracket Notation
         uploads.append(UploadResponse(
             doc_id=uuid,
-            filename=doc_info['file_name'],
-            file_type=os.path.splitext(doc_info['file_name'])[1], 
+            # 🟢 FIX: ใช้ file_name ที่ดึงมาอย่างถูกต้อง
+            filename=file_name,
+            file_type=os.path.splitext(file_name)[1], 
             status="Ingested" if doc_info['chunk_count'] > 0 else "Pending",
             upload_date=upload_date_iso
         ))
@@ -455,31 +545,49 @@ async def get_documents():
 @app.get("/api/uploads/list", response_model=List[UploadResponse])
 async def list_all_uploads():
     """
-    แสดงรายการไฟล์ที่ถูกอัปโหลดทั้งหมด โดยไม่จำกัด doc_type (ใช้ DocInfo Pydantic Model/Dict)
+    แสดงรายการไฟล์ที่ถูกอัปโหลดทั้งหมด โดยไม่จำกัด doc_type (ใช้ DocInfo Dict)
     """
-    doc_data: Dict[str, DocInfo] = list_documents(doc_types=None)
+    doc_data: Dict[str, DocInfo] | List[DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=None))
     
     uploads: List[UploadResponse] = []
     
     if not isinstance(doc_data, dict):
         logger.error(f"API Error: list_documents returned {type(doc_data).__name__}. Expected dict.")
+        
+        # 🟢 FIX: ถ้าเป็น list ให้แปลงเป็น dict โดยใช้ 'doc_id' เป็น key
+        if isinstance(doc_data, list):
+            doc_data = {item['doc_id']: item for item in doc_data if isinstance(item, dict) and 'doc_id' in item}
+        else:
+            return uploads # ถ้าไม่ใช่ทั้ง dict และ list ก็คืนค่าว่าง
+
+    if not isinstance(doc_data, dict):
+        # หากการแปลงล้มเหลว หรือได้ค่าว่าง
         return uploads
 
     for uuid, doc_info in doc_data.items():
-        try:
-            # ใช้ Bracket Notation
-            timestamp = doc_info['mock_upload_timestamp'] if 'mock_upload_timestamp' in doc_info else os.path.getmtime(doc_info['file_path']) 
-            upload_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            upload_date_iso = upload_datetime.isoformat()
-            
-        except Exception as e:
-            logger.warning(f"Failed to get modification time for {doc_info.get('file_name', 'Unknown')} ({doc_info.get('file_path', 'Unknown')}). Error: {e}") 
-            upload_date_iso = datetime.now(timezone.utc).isoformat()
+        
+        # 🟢 FIX: ดึงข้อมูลอย่างปลอดภัยและลองเข้าถึงระบบไฟล์ใน try/except ที่แยกกัน
+        file_name = doc_info.get('filename', 'Unknown')
+        file_path = doc_info.get('file_path')
+        upload_date_iso = datetime.now(timezone.utc).isoformat() # Default
+
+        if file_path:
+            try:
+                timestamp = os.path.getmtime(file_path) 
+                upload_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                upload_date_iso = upload_datetime.isoformat()
+            except Exception as e:
+                # Log warning when the actual file is missing or inaccessible
+                logger.warning(f"Failed to get modification time for {file_name} ({file_path}). Error: {e}")
+        else:
+             # Log warning when 'file_path' metadata is missing 
+             logger.warning(f"Metadata missing 'file_path' for document {uuid} ({file_name}). Using current timestamp.")
             
         uploads.append(UploadResponse(
             doc_id=uuid,
-            filename=doc_info['file_name'], 
-            file_type=os.path.splitext(doc_info['file_name'])[1], 
+            # 🟢 FIX: ใช้ file_name ที่ดึงมาอย่างถูกต้อง
+            filename=file_name,
+            file_type=os.path.splitext(file_name)[1], 
             status="Ingested" if doc_info['chunk_count'] > 0 else "Pending",
             upload_date=upload_date_iso
         ))
@@ -488,10 +596,12 @@ async def list_all_uploads():
     return uploads
 
 @app.delete("/api/documents/{doc_id}")
-async def remove_document(doc_id: str, doc_type: str = Query("document", description="Document type collection name")):
+async def remove_document(doc_id: str, doc_type: str = Query("document", description="Document type collection name"), enabler: Optional[str] = Query(None)):
+    """ลบเอกสารออกจาก Vectorstore และ Mapping โดยใช้ UUID, doc_type และ enabler (ถ้าเป็น evidence)"""
     try:
-        await run_in_threadpool(lambda: delete_document_by_uuid(doc_id=doc_id, doc_type=doc_type))
-        return {"status": "ok", "doc_id": doc_id, "doc_type": doc_type}
+        # NOTE: delete_document_by_uuid ใน core/ingest.py ต้องรองรับ stable_doc_uuid, doc_type, และ enabler
+        await run_in_threadpool(lambda: delete_document_by_uuid(stable_doc_uuid=doc_id, doc_type=doc_type, enabler=enabler))
+        return {"status": "ok", "doc_id": doc_id, "doc_type": doc_type, "enabler": enabler}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -510,8 +620,11 @@ async def upload_file(file: UploadFile = File(...), source_name: Optional[str] =
         
     doc_id = await run_in_threadpool(lambda: process_document(file_path=file_path, file_name=file.filename, doc_type="document")) 
     
+    # ตรวจสอบสถานะการ Ingest (ใช้ doc_id และ doc_type)
+    status = "Ingested" if await run_in_threadpool(lambda: vectorstore_exists(doc_id=doc_id, doc_type="document", enabler=None, base_path=VECTORSTORE_DIR)) else "Pending"
+    
     return UploadResponse(
-        status="processed",
+        status=status,
         doc_id=doc_id,
         filename=file.filename,
         file_type=os.path.splitext(file.filename)[1],
@@ -519,7 +632,7 @@ async def upload_file(file: UploadFile = File(...), source_name: Optional[str] =
     )
 
 @app.post("/upload/{doc_type}", response_model=UploadResponse)
-async def upload_file_type(doc_type: str, file: UploadFile = File(...)):
+async def upload_file_type(doc_type: str, file: UploadFile = File(...), enabler: Optional[str] = Form(None)):
     folder = os.path.join(DATA_DIR, doc_type)
     os.makedirs(folder, exist_ok=True)
     file_path = os.path.join(folder, file.filename)
@@ -528,14 +641,15 @@ async def upload_file_type(doc_type: str, file: UploadFile = File(...)):
         f.write(await file.read())
 
     try:
-        doc_id = await run_in_threadpool(lambda: process_document(file_path=file_path, file_name=file.filename, doc_type=doc_type))
+        # NOTE: process_document ใน core/ingest.py ต้องรองรับ enabler 
+        doc_id = await run_in_threadpool(lambda: process_document(file_path=file_path, file_name=file.filename, doc_type=doc_type, enabler=enabler))
         
     except Exception as e:
         logger.error(f"Failed to process {file.filename} as {doc_type}: {e}")
         raise HTTPException(status_code=500, detail=f"File processing failed: {e}")
 
-    # 🟢 ใช้ doc_id และ doc_type ในการตรวจสอบ vectorstore
-    status = "Ingested" if await run_in_threadpool(lambda: vectorstore_exists(doc_id=doc_id, doc_type=doc_type, base_path=VECTORSTORE_DIR)) else "Pending"
+    # ใช้ doc_id และ doc_type/enabler ในการตรวจสอบ vectorstore
+    status = "Ingested" if await run_in_threadpool(lambda: vectorstore_exists(doc_id=doc_id, doc_type=doc_type, enabler=enabler, base_path=VECTORSTORE_DIR)) else "Pending"
 
     return UploadResponse(
         status=status,
@@ -546,31 +660,36 @@ async def upload_file_type(doc_type: str, file: UploadFile = File(...)):
     )
 
 # -----------------------------
-# --- Upload File Deletion, Download (Fixed logic to use DocInfo) ---
+# --- Upload File Deletion, Download ---
 # -----------------------------
 @app.delete("/upload/{doc_type}/{file_id}")
-async def delete_upload(doc_type: str, file_id: str):
+async def delete_upload(doc_type: str, file_id: str, enabler: Optional[str] = Query(None)):
     
-    # 1. ค้นหาชื่อไฟล์จริงและ path จาก UUID (DocInfo mapping)
-    doc_data: Dict[str, DocInfo] = list_documents(doc_types=[doc_type])
+    # 📌 NOTE: list_documents ถูกเรียกที่นี่ด้วย และอาจคืนค่าเป็น list
+    doc_data: Dict[str, DocInfo] | List[DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=[doc_type]))
+    
+    # 🟢 FIX: ต้องแปลงเป็น dict ก่อนหา filepath
+    if not isinstance(doc_data, dict) and isinstance(doc_data, list):
+         doc_data = {item['doc_id']: item for item in doc_data if isinstance(item, dict) and 'doc_id' in item}
+    
     filepath = None
     
-    for uuid, info in doc_data.items():
-        if uuid == file_id:
-            # 🟢 ใช้ Bracket Notation
-            filepath = info['file_path'] 
-            break
-            
+    # ตรวจสอบว่า doc_data เป็น dict ก่อนเรียก .items()
+    if isinstance(doc_data, dict):
+        for uuid, info in doc_data.items():
+            if uuid == file_id:
+                filepath = info.get('file_path') # ใช้ .get() เพื่อความปลอดภัย
+                break
+    
     if filepath and os.path.exists(filepath):
-        # 2. ลบไฟล์ต้นฉบับ
         await run_in_threadpool(lambda: os.remove(filepath))
         logger.info(f"Original file deleted: {filepath}")
     else:
         logger.warning(f"Original file for doc_id '{file_id}' not found. Proceeding with vectorstore deletion.")
         
     try:
-        # 3. ลบ Vector Store และข้อมูล Mapping
-        await run_in_threadpool(lambda: delete_document_by_uuid(doc_id=file_id, doc_type=doc_type))
+        # NOTE: delete_document_by_uuid ใน core/ingest.py ต้องรองรับ enabler
+        await run_in_threadpool(lambda: delete_document_by_uuid(stable_doc_uuid=file_id, doc_type=doc_type, enabler=enabler))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete vectorstore/mapping for {file_id}: {e}")
 
@@ -579,16 +698,24 @@ async def delete_upload(doc_type: str, file_id: str):
 @app.get("/upload/{doc_type}/{file_id}")
 async def download_upload(doc_type: str, file_id: str):
     
-    doc_data: Dict[str, DocInfo] = list_documents(doc_types=[doc_type])
+    # 📌 NOTE: list_documents ถูกเรียกที่นี่ด้วย และอาจคืนค่าเป็น list
+    doc_data: Dict[str, DocInfo] | List[DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=[doc_type]))
+    
+    # 🟢 FIX: ต้องแปลงเป็น dict ก่อนหา filepath
+    if not isinstance(doc_data, dict) and isinstance(doc_data, list):
+         doc_data = {item['doc_id']: item for item in doc_data if isinstance(item, dict) and 'doc_id' in item}
+         
     file_name_to_download = None
     filepath = None
     
-    for uuid, info in doc_data.items():
-        if uuid == file_id:
-            # 🟢 ใช้ Bracket Notation
-            file_name_to_download = info['file_name'] 
-            filepath = info['file_path'] 
-            break
+    # ตรวจสอบว่า doc_data เป็น dict ก่อนเรียก .items()
+    if isinstance(doc_data, dict):
+        for uuid, info in doc_data.items():
+            if uuid == file_id:
+                # 🟢 FIX: เปลี่ยน info['file_name'] เป็น info['filename']
+                file_name_to_download = info.get('filename') 
+                filepath = info.get('file_path') # ใช้ .get() เพื่อความปลอดภัย
+                break
             
     if not file_name_to_download:
         raise HTTPException(status_code=404, detail="Document ID not found in mapping.")
@@ -600,11 +727,12 @@ async def download_upload(doc_type: str, file_id: str):
 
 
 # -----------------------------
-# --- Ingest Endpoint (FIXED: Added stable_doc_uuid argument) ---
+# --- Ingest Endpoint ---
 # -----------------------------
 class IngestRequest(BaseModel):
     doc_ids: List[str]
     doc_type: Optional[str] = "document"
+    enabler: Optional[str] = None # NEW: เพิ่ม enabler
 
 @app.post("/ingest")
 async def ingest_documents(request: IngestRequest):
@@ -617,8 +745,15 @@ async def ingest_documents(request: IngestRequest):
     if not os.path.isdir(folder):
          return {"status": "failed", "error": f"Document type folder not found: {folder}"}
 
-    # 1. 🟢 FIX: ใช้ list_documents เพื่อดึง DocInfo Mapping (UUID -> File Path/Name)
-    doc_data: Dict[str, DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=[request.doc_type]))
+    # 📌 NOTE: list_documents ถูกเรียกที่นี่ด้วย และอาจคืนค่าเป็น list
+    doc_data: Dict[str, DocInfo] | List[DocInfo] = await run_in_threadpool(lambda: list_documents(doc_types=[request.doc_type]))
+    
+    # 🟢 FIX: ต้องแปลงเป็น dict ก่อนเข้าถึงด้วย doc_id
+    if not isinstance(doc_data, dict) and isinstance(doc_data, list):
+         doc_data = {item['doc_id']: item for item in doc_data if isinstance(item, dict) and 'doc_id' in item}
+         
+    if not isinstance(doc_data, dict):
+        return {"status": "failed", "error": "Failed to retrieve document list from DocInfo."}
 
     for doc_id in request.doc_ids:
         
@@ -627,8 +762,8 @@ async def ingest_documents(request: IngestRequest):
              results.append({"doc_id": doc_id, "result": "failed", "error": f"Document ID '{doc_id}' not found in DocInfo mapping. Was the file uploaded via /upload first?"})
              continue
         
-        # 2. 🟢 FIX: ใช้ file_name และ file_path จาก DocInfo (ใช้ Bracket Notation)
-        file_name = info['file_name']
+        # 🟢 FIX: เปลี่ยน info['file_name'] เป็น info['filename']
+        file_name = info['filename']
         file_path = info['file_path']
 
         file_extension = os.path.splitext(file_name)[1].lower()
@@ -643,14 +778,15 @@ async def ingest_documents(request: IngestRequest):
         logger.info(f"Attempting to re-ingest file: {file_path}")
 
         try:
-            # 3. 🔴 FIX: เพิ่ม stable_doc_uuid=doc_id ตามที่ Error ร้องขอ
+            # NOTE: process_document ใน core/ingest.py ต้องรองรับ enabler
             await run_in_threadpool(
                 process_document,
                 file_path=file_path, 
                 file_name=file_name, 
                 doc_type=request.doc_type, 
                 base_path=VECTORSTORE_DIR,
-                stable_doc_uuid=doc_id # <--- ARGUMENT ที่ถูกเพิ่มกลับเข้ามา
+                stable_doc_uuid=doc_id, 
+                enabler=request.enabler # <--- ส่ง enabler
             )
             
         except Exception as e:
@@ -658,8 +794,7 @@ async def ingest_documents(request: IngestRequest):
             results.append({"doc_id": doc_id, "result": "failed", "error": str(e)})
             continue
         
-        # 4. 🟢 FIX: ห่อหุ้ม vectorstore_exists ด้วย await run_in_threadpool
-        if await run_in_threadpool(lambda: vectorstore_exists(doc_id=doc_id, doc_type=request.doc_type, base_path=VECTORSTORE_DIR)):
+        if await run_in_threadpool(lambda: vectorstore_exists(doc_id=doc_id, doc_type=request.doc_type, enabler=request.enabler, base_path=VECTORSTORE_DIR)):
             results.append({"doc_id": doc_id, "result": "success"})
         else:
             logger.warning(f"Vectorstore not found for {doc_id} after processing.")
@@ -674,14 +809,10 @@ async def ingest_documents(request: IngestRequest):
 async def query_endpoint(
     question: str = Form(...),
     doc_ids: Optional[List[str]] = Query(None),
-    doc_types: Optional[str] = Form(None)  # รับเป็น comma-separated string
+    doc_types: Optional[str] = Form(None), 
+    enabler: Optional[str] = Form(None) # NEW: รับ enabler
 ):
-    """
-    RAG Endpoint:
-    - doc_ids: list of Stable IDs
-    - doc_types: comma-separated string หรือ single type
-    """
-
+    
     import json
     skipped = []
     output = {
@@ -689,38 +820,33 @@ async def query_endpoint(
         "doc_ids": [],
         "doc_types": [],
         "answer": "",
-        "skipped": skipped
+        "skipped": skipped,
+        "enabler": enabler.upper() if enabler else None
     }
 
-    # -----------------------------
     # 1️⃣ Parse doc_types
-    # -----------------------------
     if doc_types:
         doc_type_list = [dt.strip() for dt in doc_types.split(",") if dt.strip()]
     else:
-        doc_type_list = ["document"]
+        doc_type_list = ["document", "evidence"]
     output['doc_types'] = doc_type_list
 
-    # -----------------------------
     # 2️⃣ Parse doc_ids
-    # -----------------------------
-    uuid_list = [uid.strip() for uid in doc_ids if uid] if doc_ids else []
+    uuid_list = [uid.strip() for uid in doc_ids if uid] if doc_ids else None
 
-    # -----------------------------
     # Helper: format context
-    # -----------------------------
     def format_context(docs):
         context_sections = []
         for i, d in enumerate(docs, 1):
             doc_name = d.metadata.get("doc_id", f"Document {i}")
             doc_type = d.metadata.get("doc_type", "N/A")
-            context_sections.append(f"[{doc_name} ({doc_type})]\n{d.page_content}")
+            # ใช้ metadata.get("retriever_source") ซึ่งคือ Collection Name 
+            source = d.metadata.get("retriever_source", doc_type) 
+            context_sections.append(f"[{doc_name} ({source})]\n{d.page_content}")
         return "\n\n".join(context_sections)
 
-    # -----------------------------
     # Helper: LLM call
-    # -----------------------------
-    def call_llm_safe(messages_list):
+    def call_llm_safe(messages_list: List[Any]) -> str:
         res = llm_instance.invoke(messages_list)
         if isinstance(res, dict) and "result" in res:
             return res["result"]
@@ -735,13 +861,13 @@ async def query_endpoint(
             raise ValueError("Must specify at least one document type for RAG.")
 
         # -----------------------------
-        # Load MultiRetriever
+        # Load MultiRetriever (ใช้ Helper ใหม่)
         # -----------------------------
         multi_retriever = await run_in_threadpool(
-            load_all_vectorstores,
-            doc_types=doc_type_list,
-            top_k=5,
-            final_k=3
+            _setup_multi_retriever,
+            doc_type_list=doc_type_list,
+            enabler=enabler,
+            filter_doc_ids=uuid_list 
         )
 
         # -----------------------------
@@ -749,20 +875,12 @@ async def query_endpoint(
         # -----------------------------
         all_docs = await run_in_threadpool(lambda: multi_retriever.invoke(question))
 
-        # -----------------------------
-        # Filter by UUID if provided
-        # -----------------------------
-        if uuid_list:
-            docs_for_question = [d for d in all_docs if d.metadata.get("doc_id") in uuid_list]
-            skipped = [uid for uid in uuid_list if uid not in [d.metadata.get("doc_id") for d in docs_for_question]]
-        else:
-            docs_for_question = all_docs
-
-        if not docs_for_question:
+        if not all_docs:
             raise ValueError("No relevant content could be retrieved from the selected documents or collections.")
 
+        docs_for_question = all_docs 
+
         output['doc_ids'] = list({d.metadata.get("doc_id") for d in docs_for_question if d.metadata.get("doc_id")})
-        output['skipped'] = skipped
 
         # -----------------------------
         # Build context + prompt
@@ -781,15 +899,13 @@ async def query_endpoint(
         output['answer'] = answer_text
 
     except ValueError as e:
-        output['answer'] = f"เกิดข้อผิดพลาดในการโหลดแหล่งข้อมูล (Vector Store): {str(e)}"
+        output['answer'] = f"เกิดข้อผิดพลาดในการโหลดแหล่งข้อมูล: {str(e)}"
         output['error'] = str(e)
     except Exception as e:
         output['answer'] = f"เกิดข้อผิดพลาดที่ไม่คาดคิดในระหว่างการประมวลผล RAG: {str(e)}"
         output['error'] = str(e)
 
-    # -----------------------------
-    # Flatten JSON output from LLM if possible
-    # -----------------------------
+    # Flatten JSON output from LLM if possible (เหมือนเดิม)
     if answer_text:
         answer_text = answer_text.strip()
         if answer_text.startswith("{") and answer_text.endswith("}"):
@@ -801,7 +917,8 @@ async def query_endpoint(
                     flattened_answer.append("📌 Summary:\n" + llm_json['summary'])
                 if 'details' in llm_json and llm_json['details']:
                     for d in llm_json['details']:
-                        flattened_answer.append(f"📄 {d.get('doc_name','')}: {d.get('text','')}")
+                        # NOTE: doc_name ใน LLM output มักจะเป็น UUID หรือชื่อไฟล์
+                        flattened_answer.append(f"📄 {d.get('doc_name','')}: {d.get('text','')}") 
                 if 'comparison' in llm_json and llm_json['comparison']:
                     flattened_answer.append("⚖️ Comparison:")
                     for k,v in llm_json['comparison'].items():
@@ -820,115 +937,109 @@ async def query_endpoint(
 
     return output
 
-
-# -----------------------------
-# --- Compare Endpoint ---
-# -----------------------------
+# -----------------------------------------------------------------------------
+# 📌 API Endpoint
+# -----------------------------------------------------------------------------
 @app.post("/compare")
-async def compare(
-    doc1: str = Form(...),
-    doc2: str = Form(...),
-    query: str = Form(...),
-    doc_types: Optional[str] = Form(None)
-):
-    from core.vectorstore import vectorstore_exists 
+async def compare_two_documents(request: CompareRequest):
     
-    doc_type_list = [dt.strip() for dt in doc_types.split(",")] if doc_types else ["document"]
-    doc_ids = [doc1, doc2]
-    valid_docs, skipped = [], []
+    # 📌 การแก้ไข: ตรวจสอบ UUIDs ที่จำเป็นด้วยตัวเอง หลัง Pydantic ผ่าน
+    if not request.doc1_uuid or not request.doc2_uuid:
+        logger.error(f"Comparison failed: Missing required UUIDs. Doc1: {request.doc1_uuid}, Doc2: {request.doc2_uuid}")
+        raise HTTPException(status_code=400, detail="Both doc1_uuid and doc2_uuid must be selected and provided.")
 
-    # 1. ตรวจสอบ Vectorstores ที่มีอยู่ (ต้องห่อหุ้มด้วย run_in_threadpool)
-    def check_vectorstore_existence(doc_ids_list, doc_type_list):
-        valid, skipped_list = [], []
-        for dt in doc_type_list:
-            base_path = os.path.join(VECTORSTORE_DIR, dt)
-            for doc_id in doc_ids_list:
-                if vectorstore_exists(doc_id, doc_type=dt, base_path=base_path):
-                    valid.append((doc_id, dt))
-                else:
-                    skipped_list.append(f"{dt}/{doc_id}")
-        return valid, skipped_list
-        
-    valid_docs, skipped = await run_in_threadpool(lambda: check_vectorstore_existence(doc_ids, doc_type_list))
+    doc1_uuid = request.doc1_uuid
+    doc2_uuid = request.doc2_uuid
+    
+    # ✅ การแก้ไข: กำหนดค่า final_doc_type_list โดยใช้ค่า Default หากเป็น None หรือ Empty List
+    final_doc_type_list = request.doc_type_list if request.doc_type_list and len(request.doc_type_list) > 0 else ['document']
+    
+    # ✅ การแก้ไข: กำหนดค่า final_query โดยใช้ค่า Default หาก request.query เป็น None
+    default_query = "เปรียบเทียบความแตกต่างและความเหมือนของเอกสารทั้งสองฉบับนี้"
+    final_query = request.query if request.query else default_query
+    
+    # 1. Load VectorStoreManager
+    try:
+        # NOTE: manager ต้องถูก initialize จาก doc_type_list ที่กรองแล้ว
+        # 💡 ปรับปรุงการเรียก: ใช้ doc_type_list เป็นชื่อ parameter ที่ชัดเจน
+        manager = VectorStoreManager(doc_type_list=final_doc_type_list) 
+    except Exception as e:
+        logger.error(f"Failed to initialize VectorStoreManager for comparison: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to initialize RAG system: {e}")
 
-    if not valid_docs:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No valid vectorstores found for docs: {', '.join(doc_ids)} in doc_types: {doc_type_list}"
-        )
-
-    # 2. โหลด MultiRetriever (ต้องห่อหุ้มด้วย run_in_threadpool)
-    multi_retriever = await run_in_threadpool(
-        load_all_vectorstores, 
-        doc_ids=doc_ids, 
-        doc_types=doc_type_list, 
-        top_k=5, 
-        final_k=3
+    # 2. Retrieve Documents by UUID
+    
+    # 2.1 Fetch document 1
+    doc1_info = await run_in_threadpool(lambda: manager.get_doc_info_by_uuid(doc1_uuid))
+    if not doc1_info:
+        raise HTTPException(status_code=404, detail=f"Document 1 with UUID {doc1_uuid} not found.")
+    doc1_chunks, doc1_text, skipped1 = await run_in_threadpool(
+        lambda: manager.retrieve_all_text_for_uuid(doc1_uuid, doc1_info['doc_type'], doc1_info.get('enabler'))
     )
+    doc1_name = doc1_info['filename']
 
-    # 3. ฟังก์ชันค้นหาและกรอง (รันใน Threadpool)
-    def get_docs_text(query_text):
-        docs = multi_retriever.invoke(query_text)
-        doc_text_map = {doc1: "", doc2: ""}
-        
-        for d in docs:
-            # 🟢 FIX: ใช้ doc_id จาก metadata
-            doc_key = d.metadata.get("doc_id") 
+    # 2.2 Fetch document 2
+    doc2_info = await run_in_threadpool(lambda: manager.get_doc_info_by_uuid(doc2_uuid))
+    if not doc2_info:
+        raise HTTPException(status_code=404, detail=f"Document 2 with UUID {doc2_uuid} not found.")
+    doc2_chunks, doc2_text, skipped2 = await run_in_threadpool(
+        lambda: manager.retrieve_all_text_for_uuid(doc2_uuid, doc2_info['doc_type'], doc2_info.get('enabler'))
+    )
+    doc2_name = doc2_info['filename']
+    
+    skipped = skipped1 + skipped2
 
-            if doc_key == doc1:
-                doc_text_map[doc1] += (d.page_content + "\n")
-            elif doc_key == doc2:
-                doc_text_map[doc2] += (d.page_content + "\n")
-        
-        doc1_text = doc_text_map.get(doc1, "[No content found for Doc 1]")
-        doc2_text = doc_text_map.get(doc2, "[No content found for Doc 2]")
-        
-        return doc1_text, doc2_text
-
-    # 4. เรียกใช้ใน Threadpool 
-    doc1_text, doc2_text = await run_in_threadpool(lambda: get_docs_text(query))
-    context_text = f"Document 1 Content:\n{doc1_text}\n\nDocument 2 Content:\n{doc2_text}"
-
-    # 5. LLM Call
+    # 3. Combine Text and setup structured output
+    doc_names_formatted = f"{doc1_name} และ {doc2_name}"
+    context_text = f"--- Document 1: {doc1_name} ---\n{doc1_text}\n\n--- Document 2: {doc2_name} ---\n{doc2_text}"
+    
+    # Use JsonOutputParser to get the format instructions for the LLM
+    # NOTE: List[LLMComparisonMetric] ต้องถูก Import และเป็น Pydantic Model ที่ถูกต้อง
+    parser = JsonOutputParser(pydantic_object=List[LLMComparisonMetric]) 
+    json_format_instruction = parser.get_format_instructions()
+    
+    # 4. Format Prompt (COMPARE_PROMPT must accept {json_format_instruction})
     human_message_content = COMPARE_PROMPT.format(
         context=context_text, 
-        query=query, 
-        doc_names=f"{doc1} และ {doc2}"
+        query=final_query, # ใช้งาน final_query ที่ถูกตรวจสอบแล้ว
+        doc_names=doc_names_formatted,
+        json_format_instruction=json_format_instruction # Pass JSON format instruction
     )
 
+    # 5. Setup Messages
     messages = [
-        SystemMessage(content=SYSTEM_QA_INSTRUCTION),
+        SystemMessage(content=SYSTEM_COMPARE_INSTRUCTION), # ✅ แก้ไข: ใช้ SYSTEM_COMPARE_INSTRUCTION ที่เราปรับแล้ว
         HumanMessage(content=human_message_content)
     ]
     
     def call_llm_safe(messages_list: List[Any]) -> str:
-        """Helper to invoke LLM with message list and extract content (reused from /query)."""
+        """Helper to invoke LLM and return raw content (expected to be JSON string)."""
         res = llm_instance.invoke(messages_list) 
-        if isinstance(res, dict) and "result" in res:
-            return res["result"]
-        elif hasattr(res, 'content'): 
+        if hasattr(res, 'content'): 
             return res.content.strip()
-        elif isinstance(res, str):
-            return res.strip()
         return str(res).strip()
 
-    # 6. Call LLM with the new messages list
-    delta_answer = await run_in_threadpool(lambda: call_llm_safe(messages))
+    # 6. Call LLM to get the structured JSON string
+    logger.info(f"Calling LLM for comparison with query: {final_query}")
+    json_delta_string = await run_in_threadpool(lambda: call_llm_safe(messages))
 
+    # 7. Final response structure
     return {
         "result": {
             "metrics": [
                 {
-                    "metric": "Key comparison",
-                    "doc1": doc1_text,
-                    "doc2": doc2_text,
-                    "delta": delta_answer,
-                    "remark": f"Comparison generated from doc_types: {', '.join(doc_type_list)}"
+                    "metric": final_query, # ใช้งาน final_query ที่ถูกตรวจสอบแล้ว
+                    "doc1": doc1_text, 
+                    "doc2": doc2_text, 
+                    "delta": json_delta_string, # JSON string of List[LLMComparisonMetric]
+                    "remark": f"Comparison generated from doc_types: {', '.join(final_doc_type_list)}. LLM Query: {final_query}"
                 }
             ]
         },
         "skipped": skipped
     }
+
+
 
 # -----------------------------
 # --- Evidence Mapping Endpoint (Completed) ---
