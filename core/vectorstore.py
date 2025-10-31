@@ -1,3 +1,4 @@
+#core/vectorstore.py
 import os
 import platform
 import logging
@@ -44,6 +45,7 @@ except Exception:
 # -------------------- CONFIG --------------------
 INITIAL_TOP_K = 15
 FINAL_K_RERANKED = 7
+FINAL_K_NON_RERANKED = 10 # ใช้เป็นค่าเริ่มต้นสำหรับ k เมื่อไม่มี reranker (e.g., เมื่อ disable_semantic_filter)
 VECTORSTORE_DIR = "vectorstore"
 MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
 

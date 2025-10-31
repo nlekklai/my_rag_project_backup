@@ -1,3 +1,4 @@
+#core/retrieval_utils.py
 import logging
 import random
 import json
@@ -22,10 +23,19 @@ from core.rag_prompts import (
 )
 
 try:
-    # 🟢 ใช้ VectorStoreManager
-    from core.vectorstore import VectorStoreManager, load_all_vectorstores 
+    from core.vectorstore import (
+        VectorStoreManager, 
+        load_all_vectorstores,
+        # 🟢 NEW IMPORTS: จำเป็นสำหรับการสร้าง Retriever
+        get_vectorstore_manager, 
+        _get_collection_name, 
+        INITIAL_TOP_K, 
+        FINAL_K_RERANKED, 
+        FINAL_K_NON_RERANKED, # ตัวแปร K สำหรับกรณีไม่มี Reranker
+        NamedRetriever,
+        MultiDocRetriever,
+    )
 except Exception:
-    # keep optional for minimal patching; vectorstore usage is elsewhere
     VectorStoreManager = None
     load_all_vectorstores = None
 
@@ -60,12 +70,14 @@ def set_mock_control_mode(enable: bool):
 # NEW FUNCTION: Retrieve documents directly by UUIDs
 # --------------------
 
+
 def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
-    doc_type: str = "default_collection"
+    # 🛑 MODIFIED: เปลี่ยนชื่อเป็น collection_name เพื่อรับชื่อ collection ที่รวม enabler แล้ว
+    collection_name: str 
 ) -> Dict[str, Any]:
     """
-    🟢 NEW: Retrieves documents (chunks) directly by their UUIDs from a specific 
+    Retrieves documents (chunks) directly by their UUIDs from a specific 
     Chroma collection using VectorStoreManager.
     
     Returns: {"top_evidences": List[Dict[str, Any]]}
@@ -78,9 +90,12 @@ def retrieve_context_by_doc_ids(
         return {"top_evidences": []}
 
     try:
-        manager = VectorStoreManager()
-        # 🟢 เรียกใช้เมธอดใหม่จาก VectorStoreManager
-        docs: List[Document] = manager.get_documents_by_id(doc_uuids, doc_type=doc_type)
+        # 🚨 NOTE: Assuming VectorStoreManager can be initialized without arguments 
+        # or it handles loading all necessary vector stores internally.
+        manager = VectorStoreManager() 
+        
+        # 🛑 MODIFIED: ส่ง collection_name ไปเป็น doc_type เพื่อเข้าถึง Collection ที่ถูกต้อง
+        docs: List[Document] = manager.get_documents_by_id(doc_uuids, doc_type=collection_name)
 
         # Format result
         top_evidences = []
@@ -95,70 +110,87 @@ def retrieve_context_by_doc_ids(
                 "chunk_index": meta.get("chunk_index")
             })
 
-        logger.info(f"✅ Successfully retrieved {len(top_evidences)} evidences by UUIDs from collection '{doc_type}'.")
+        logger.info(f"✅ Successfully retrieved {len(top_evidences)} evidences by UUIDs from collection '{collection_name}'.") # 🛑 ใช้ collection_name
         return {"top_evidences": top_evidences}
 
     except Exception as e:
-        logger.error(f"Error during UUID-based retrieval: {e}")
+        logger.error(f"Error during UUID-based retrieval: {e}", exc_info=True)
         return {"top_evidences": []}
 
+# --------------------
+# RETRIEVER FUNCTION (RAG Search)
+# --------------------
+
+# core/retrieval_utils.py (แทนที่ฟังก์ชัน retrieve_context_with_filter ทั้งหมด)
 
 # --------------------
 # RETRIEVER FUNCTION (RAG Search)
 # --------------------
 
 def retrieve_context_with_filter(
-    query: str,
-    retriever: Any,
-    metadata_filter: Optional[List[str]] = None,
+    query: str, 
+    doc_type: str, # 🟢 ADDED: ต้องมี doc_type (e.g., 'evidence')
+    enabler: str, # 🟢 ADDED: ต้องมี enabler (e.g., 'km')
+    stable_doc_ids: Optional[List[str]] = None, # 🛑 RENAMED & USED: ใช้เป็น stable_doc_ids แทน metadata_filter
+    # 🟢 FIX: เพิ่ม keyword argument ที่หายไป
+    disable_semantic_filter: bool = False 
 ) -> Dict[str, Any]:
-    """Retrieves documents from the vector store using RAG search, optionally filtering by document ID."""
-    if retriever is None:
+    """
+    Retrieves documents for a given query, creates the appropriate retriever 
+    (MultiDocRetriever with Reranker or not) and filters results based on stable_doc_ids.
+    """
+    if VectorStoreManager is None or 'get_vectorstore_manager' not in globals():
+        logger.error("❌ VectorStoreManager or required components are not available. Skipping RAG retrieval.")
         return {"top_evidences": []}
-
-    filter_document_ids = metadata_filter
-
+        
     try:
-        docs: List[Document] = retriever.invoke(query)
+        # 1. เตรียม Vector Store
+        manager = get_vectorstore_manager()
+        collection_name = _get_collection_name(doc_type, enabler)
 
-        # Manual Filtering
-        if filter_document_ids:
-            filter_set = set(filter_document_ids)
-            filtered_docs = []
-            
-            for doc in docs:
-                doc_id_in_metadata = doc.metadata.get("doc_id") # 🟢 ใช้ doc_id
-                doc_source_in_metadata = doc.metadata.get("doc_source") # 🟢 ใช้ doc_source (สำหรับ MultiDocRetriever)
-                
-                # Filter if either doc_id or doc_source is in the filter set
-                if (doc_id_in_metadata and doc_id_in_metadata in filter_set) or \
-                   (doc_source_in_metadata and doc_source_in_metadata in filter_set):
-                    filtered_docs.append(doc)
-                else:
-                    # Fallback for old/unspecified metadata
-                    source = doc.metadata.get("source")
-                    if source and source in filter_set:
-                         filtered_docs.append(doc)
-
-            docs = filtered_docs
-
-        # Format result
+        # 2. เลือก Final K ที่เหมาะสมตาม flag
+        # ถ้า disable_semantic_filter เป็น True จะใช้ FINAL_K_NON_RERANKED (K=10)
+        # ถ้าเป็น False จะใช้ FINAL_K_RERANKED (K=7 พร้อม Reranker/Semantic Filter)
+        final_k = FINAL_K_NON_RERANKED if disable_semantic_filter else FINAL_K_RERANKED
+        
+        # 3. สร้าง NamedRetriever spec
+        retriever_spec = NamedRetriever(
+            doc_id=f"{doc_type}_{enabler}",
+            doc_type=collection_name,
+            # NOTE: INITIAL_TOP_K ต้องถูก Import จาก core.vectorstore
+            top_k=INITIAL_TOP_K, 
+            final_k=final_k # 🟢 ใช้ final_k ที่ถูกเลือก
+        )
+        
+        # 4. ใช้ MultiDocRetriever (ซึ่งจะสร้าง ContextualCompressionRetriever ภายใน)
+        # NOTE: MultiDocRetriever ต้องถูก Import จาก core.vectorstore
+        multi_retriever = MultiDocRetriever(
+            retrievers_list=[retriever_spec],
+            k_per_doc=INITIAL_TOP_K, 
+            doc_ids_filter=stable_doc_ids # ใช้ Hard Filter จาก Mapping
+        )
+        
+        # 5. ดำเนินการค้นหา
+        documents = multi_retriever.get_relevant_documents(query)
+        
+        logger.info(f"RAG Retrieval for query='{query[:30]}...' found {len(documents)} evidences (Filtered: {bool(stable_doc_ids)}, Semantic Filter: {'Disabled' if disable_semantic_filter else 'Enabled'})")
+        
+        # 6. Format result
         top_evidences = []
-        for d in docs:
+        for d in documents:
             meta = d.metadata
             top_evidences.append({
-                "doc_id": meta.get("doc_id") or meta.get("doc_source"), # 🟢 ใช้ doc_id หรือ doc_source
-                "doc_type": meta.get("doc_type"), # 🟢 เพิ่ม doc_type
-                "relevance_score": meta.get("relevance_score"), # 🟢 เพิ่ม relevance_score
+                "doc_id": meta.get("doc_id") or meta.get("doc_source"), 
+                "doc_type": meta.get("doc_type"),
+                "relevance_score": meta.get("relevance_score"),
                 "source": meta.get("source") or meta.get("doc_source"),
                 "content": d.page_content.strip()
             })
-
-        logger.info(f"RAG Retrieval for query='{query[:30]}...' found {len(top_evidences)} evidences (filtered: {bool(filter_document_ids)})")
+            
         return {"top_evidences": top_evidences}
 
     except Exception as e:
-        logger.error(f"Error during RAG retrieval with filter: {e}")
+        logger.error(f"Error during RAG retrieval with filter: {e}", exc_info=True)
         return {"top_evidences": []}
 
 

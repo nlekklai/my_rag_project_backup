@@ -1,9 +1,10 @@
+# enabler_assessment.py (Full Script)
 import os
 import json
 import logging
 import sys
 import re 
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 import time 
 
 # --- PATH SETUP (Must be executed first for imports to work) ---
@@ -12,16 +13,20 @@ try:
     if project_root not in sys.path:
         sys.path.append(project_root)
     
-    from core.vectorstore import load_all_vectorstores, FINAL_K_RERANKED 
-    # NOTE: ต้องมั่นใจว่า evaluate_with_llm และ summarize_context_with_llm ถูกเรียกใช้ใน Core/Retrieval_utils
-    # 🛑 FIX: ต้อง import evaluate_with_llm_with_raw_response แทน evaluate_with_llm เดิม
+    # 🟢 FIX: บรรทัดนี้จะดึง FINAL_K_NON_RERANKED จาก core.vectorstore
+    from core.vectorstore import (
+        load_all_vectorstores, 
+        FINAL_K_RERANKED,
+        FINAL_K_NON_RERANKED,
+        # 🟢 FIX: เพิ่ม get_vectorstore_manager เพื่อให้ฟังก์ชันนี้ถูกรู้จัก
+        get_vectorstore_manager 
+    )
+    
     from core.retrieval_utils import (
         evaluate_with_llm, 
         retrieve_context_with_filter, 
         set_mock_control_mode, 
         summarize_context_with_llm,
-        # 🟢 NEW IMPORT: Assuming retrieval_utils now has a function that returns raw response
-        # If not, we call evaluate_with_llm and assume it returns a tuple (dict, str) in real mode
     )
     from core.assessment_schema import EvidenceSummary
     from core.action_plan_schema import ActionPlanActions
@@ -63,11 +68,10 @@ DEFAULT_RUBRIC_STRUCTURE = {
     }
 }
 
-
 class EnablerAssessment:
     """
     Automated Enabler Maturity Assessment System
-    ประเมินระดับวุฒิภาวะของ Enabler ใดๆ (KM, SCM, DT ฯลฯ)
+    ประเมินระดับวุฒิภาวะของ Enabler ใดๆ (KM, SCM, DT ฯลฯ) โดยใช้ RAG
     """
 
     BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
@@ -86,10 +90,12 @@ class EnablerAssessment:
                  # Argument สำหรับควบคุม Filter 
                  use_retrieval_filter: bool = False, 
                  target_sub_id: Optional[str] = None, # e.g., '1.1'
-                 # Mock/Control LLM Function Override - 🛑 FIX: เพิ่ม 2 Argument ใหม่
+                 # Mock/Control LLM Function Override
                  mock_llm_eval_func=None,
                  mock_llm_summarize_func=None,
-                 mock_llm_action_plan_func=None):
+                 mock_llm_action_plan_func=None,
+                 # 🟢 NEW FEATURE: Argument สำหรับ Semantic Filter
+                 disable_semantic_filter: bool = False):
         
         self.enabler_abbr = enabler_abbr.lower()
         self.enabler_rubric_key = f"{self.enabler_abbr.upper()}_Maturity_Rubric"
@@ -99,24 +105,26 @@ class EnablerAssessment:
         self.EVIDENCE_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_evidence_statements_checklist.json")
         self.RUBRIC_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_rating_criteria_rubric.json")
         self.LEVEL_FRACTIONS_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_scoring_level_fractions.json")
-        self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_evidence_mapping.json")
-        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_mapping_by_level.json")
+        self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{self.enabler_abbr}_evidence_mapping_new.json")
 
         # LOAD DATA
+        self.evidence_mapping: Dict = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={})
+        
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
         default_rubric = {self.enabler_rubric_key: DEFAULT_RUBRIC_STRUCTURE["Default_Maturity_Rubric"]}
         self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
         self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
-        self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={})
         
         # เก็บสถานะ Filter
         self.use_retrieval_filter = use_retrieval_filter
         self.target_sub_id = target_sub_id
+        # 🟢 NEW: เก็บสถานะ Semantic Filter
+        self.disable_semantic_filter = disable_semantic_filter
         
         # เก็บ Mock Function
         self.mock_llm_eval_func = mock_llm_eval_func 
-        self.mock_llm_summarize_func = mock_llm_summarize_func # 🛑 NEW
-        self.mock_llm_action_plan_func = mock_llm_action_plan_func # 🛑 NEW
+        self.mock_llm_summarize_func = mock_llm_summarize_func 
+        self.mock_llm_action_plan_func = mock_llm_action_plan_func 
 
         self.raw_llm_results: List[Dict] = []
         self.final_subcriteria_results: List[Dict] = []
@@ -209,32 +217,70 @@ class EnablerAssessment:
             "weight": sub_criteria_weight
         }
 
-
-    def _get_metadata_filter(self) -> Optional[Dict]:
-        """Return None เสมอ เพราะ Filter Logic ถูกย้ายไปใช้กับ document ID"""
-        return None 
+    def _get_collection_name(self) -> str:
+        """
+        Constructs the specific collection name based on the enabler abbreviation.
+        Format: evidence_<ENABLER_ABBR_UPPER> (e.g., km -> evidence_KM)
+        """
+        return f"evidence_{self.enabler_abbr.upper()}"
     
-    # 🌟 NEW HELPER METHOD: สำหรับสร้างข้อจำกัดให้กับ Query ตาม Level
+    def _get_doc_uuid_filter(self, sub_id: str, level: int) -> Optional[List[str]]:
+        """
+        Generates a list of document UUIDs to filter the RAG retrieval.
+        Uses the pre-mapped JSON data (self.evidence_mapping) based on sub_id and level.
+        """
+        if not self.evidence_mapping: 
+            logger.warning("Evidence mapping data is not loaded. Returning None filter.")
+            return None
+
+        # Key format: "1.1_L1", "2.1_L3"
+        key = f"{sub_id}_L{level}"
+
+        if key not in self.evidence_mapping:
+            logger.warning(f"No evidence mapping found for key: {key}. Returning None filter.")
+            return None
+
+        try:
+            key_data = self.evidence_mapping[key]
+            
+            # ตรวจสอบว่ามี Key 'evidences' และเป็น List หรือไม่
+            if 'evidences' in key_data and isinstance(key_data['evidences'], list):
+                # วนลูปเพื่อดึงค่า 'doc_id' ทั้งหมด
+                doc_uuids = [
+                    evidence.get('doc_id') 
+                    for evidence in key_data['evidences'] 
+                    if isinstance(evidence, dict) and evidence.get('doc_id')
+                ]
+                
+                if doc_uuids:
+                    logger.info(f"Loaded {len(doc_uuids)} UUIDs for RAG filter key: {key}")
+                    return doc_uuids
+                else:
+                    logger.warning(f"Evidence list for {key} is empty or contains no valid doc_id. Returning None filter.")
+                    return None
+            else:
+                logger.warning(f"Mapping data for {key} is missing 'evidences' list. Returning None filter.")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error parsing evidence mapping for key {key}: {e}", exc_info=True)
+            return None
+
+
     def _get_level_constraint_prompt(self, level: int) -> str:
         """
-        สร้าง Prompt Constraint เพื่อบอก LLM/Vector Search ให้กรองหลักฐาน L3/L4/L5 ออก
-        เพื่อให้ RAG ดึงหลักฐานที่เหมาะสมกับระดับวุฒิภาวะ
+        สร้าง Prompt Constraint เพื่อจำกัดขอบเขตของหลักฐานให้เหมาะสมกับระดับวุฒิภาวะที่กำลังประเมิน
         """
         # หลักการ: ห้ามดึงหลักฐานที่มีระดับสูงกว่าระดับที่กำลังประเมิน
         if level == 1:
-            # L1: ห้ามดึงหลักฐาน L3-L5 (การบูรณาการ, นวัตกรรม, การวัดผลระยะยาว)
             return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การเริ่มต้น', 'การมีอยู่', หรือ 'การวางแผน' เท่านั้น ห้ามเกี่ยวข้องกับ 'การปรับปรุงอย่างต่อเนื่อง', 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L1-Filter)"
         elif level == 2:
-            # L2: อนุญาต L1/L2 เท่านั้น ห้ามดึงหลักฐาน L4-L5
             return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การปฏิบัติ', 'การทำให้เป็นมาตรฐาน', หรือ 'การประเมินเบื้องต้น' ห้ามเกี่ยวข้องกับ 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L2-Filter)"
         elif level == 3:
-            # L3: มุ่งเน้นไปที่การควบคุมและการวัดผลระยะสั้น ห้าม L5
             return "ข้อจำกัด: หลักฐานควรเกี่ยวกับ 'การควบคุม', 'การกำกับดูแล', หรือ 'การวัดผลเบื้องต้น' ห้ามเกี่ยวข้องกับ 'นวัตกรรม', หรือ 'การสร้างคุณค่าทางธุรกิจระยะยาว' (L3-Filter)"
         elif level == 4:
-            # L4: อนุญาตทุกอย่างยกเว้น L5 (เน้นการบูรณาการและการปรับปรุง)
             return "ข้อจำกัด: หลักฐานควรแสดงถึง 'การบูรณาการ' หรือ 'การปรับปรุงอย่างต่อเนื่อง' ห้ามเกี่ยวข้องกับการพิสูจน์ 'คุณค่าทางธุรกิจระยะยาว' (L4-Filter)"
         elif level == 5:
-            # L5: ไม่จำกัด แต่เน้นเฉพาะคำสำคัญของ L5
             return "ข้อจำกัด: หลักฐานควรแสดงถึง 'นวัตกรรม', 'การสร้างคุณค่าทางธุรกิจ', หรือ 'ผลลัพธ์ระยะยาว' โดยชัดเจน (L5-Focus)"
         else:
             return "กรุณาหาหลักฐานที่สอดคล้องกับเกณฑ์ที่ต้องการ"
@@ -242,43 +288,40 @@ class EnablerAssessment:
 
     def _retrieve_context(self, query: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None, statement_number: int = 0) -> Dict[str, Any]:
         """
-        ดึง Context โดยใช้ Filter จาก evidence mapping และ Metadata Filter ตาม Sub ID ที่ส่งมา
-        
-        🛑 อัพเดทตรรกะ: ใช้ Constrained Query เสมอ เพื่อเป็นเกราะป้องกันการ Mapping ที่ผิดพลาด
+        ดึง Context โดยใช้ Filter จาก evidence mapping และ Level Constraint Query
         """
-        effective_mapping_data = mapping_data if mapping_data is not None else self.evidence_mapping_data
         
-        if not self.vectorstore_retriever and mapping_data is None:
-            logger.warning("Vectorstore retriever is None and not in Mock Mode. Skipping RAG retrieval.")
-            return {"top_evidences": []} 
+        # 🟢 FIX: ลบเงื่อนไขการตรวจสอบที่ไม่ถูกต้องและ warning ออกไป
+        # if mapping_data is None and 'get_vectorstore_manager' not in globals():
+        #     logger.warning("Vectorstore components are not fully loaded. Skipping RAG retrieval.")
+        #     return {"top_evidences": []} 
 
-        # 1. สร้างคีย์สำหรับ Mapping: "1.1_L1", "1.1_L2", ...
-        mapping_key = f"{sub_criteria_id}_L{level}"
+
+        # 1. ดึง Filter IDs (Hard Filter - อาจจะว่างเปล่า)
+        filter_ids: List[str] = self._get_doc_uuid_filter(sub_criteria_id, level) or []
         
-        # 2. ดึง Filter IDs (Hard Filter - อาจจะว่างเปล่า)
-        filter_ids: List[str] = effective_mapping_data.get(mapping_key, {}).get("filter_ids", [])
-        
-        # 3. 🌟 (NEW) สร้าง Constrained Query เสมอ
+        # 2. สร้าง Constrained Query เสมอ
         constraint_instruction = self._get_level_constraint_prompt(level)
         effective_query = f"{query}. {constraint_instruction}"
         
-        logger.info(f"🔑 Constrained Query (L{level}, Filtered={bool(filter_ids)}): {effective_query}")
+        # แสดงสถานะ Semantic Filter 
+        semantic_filter_status = "Disabled" if self.disable_semantic_filter else "Enabled"
+        logger.info(f"🔑 Constrained Query (L{level}, Filtered={bool(filter_ids)}, Semantic Filter {semantic_filter_status}): {effective_query}")
         
         # --- LOGIC สำหรับ REAL MODE (mapping_data is None) ---
         if mapping_data is None: 
-
-            # 4. เรียกใช้ RAG Retrieval 
-            # - query: ใช้ effective_query (มี Level Constraint เสมอ)
-            # - metadata_filter: ใช้ filter_ids (จะเป็น Hard Filter ถ้ามี ID, หรือเป็น Full-Scope ถ้าว่างเปล่า)
+            # 3. เรียกใช้ RAG Retrieval ด้วยลายเซ็นใหม่
             result = retrieve_context_with_filter(
                 query=effective_query, 
-                retriever=self.vectorstore_retriever, 
-                metadata_filter=filter_ids 
+                doc_type="evidence", 
+                enabler=self.enabler_abbr, 
+                stable_doc_ids=filter_ids, 
+                disable_semantic_filter=self.disable_semantic_filter 
             )
             return result
 
         # --- LOGIC สำหรับ MOCK MODE ---
-        return {"top_evidences": []} # ใน Mock Mode การเรียกนี้ควรถูก Patch ใน run_assessment2.py
+        return {"top_evidences": []}
 
 
     def _process_subcriteria_results(self):
@@ -334,7 +377,7 @@ class EnablerAssessment:
             self.final_subcriteria_results.append(data)
 
 
-    def run_assessment(self) -> List[Dict]:
+    def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Run assessment across all levels & subtopics
         """
@@ -343,7 +386,7 @@ class EnablerAssessment:
         
         # ตรวจสอบว่ามีการ Patch ฟังก์ชันหรือไม่ 
         is_mock_mode = self.mock_llm_eval_func is not None
-        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None
+        mapping_data_for_mock = self.evidence_mapping if is_mock_mode else None
         
         # เลือกใช้ LLM Evaluation Function (Mock หรือ Real)
         llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
@@ -391,7 +434,12 @@ class EnablerAssessment:
                     if isinstance(retrieval_result, dict):
                         top_evidence = retrieval_result.get("top_evidences", [])
                         
-                        for doc in top_evidence[:FINAL_K_RERANKED]: 
+                        # 🟢 FIX: ใช้ k_to_use ที่กำหนดตาม Semantic Filter
+                        k_to_use = FINAL_K_RERANKED
+                        if self.disable_semantic_filter:
+                            k_to_use = FINAL_K_NON_RERANKED
+
+                        for doc in top_evidence[:k_to_use]: 
                             doc_content = doc.get("content", "")
                             source_name = doc.get("source", "N/A (No Source Tag)")
                             location = doc.get("metadata", {}).get("page_number", doc.get("doc_id", "N/A"))
@@ -422,24 +470,20 @@ class EnablerAssessment:
                         "statement_number": i + 1
                     }
                     
-                    # 🟢 FIX: Call LLM และตรวจสอบผลลัพธ์เพื่อแยก Dict และ Raw Text
                     raw_llm_response_content = ""
                     llm_result_dict = {}
 
                     if is_mock_mode:
-                        # Mock Mode: mock_llm_eval_func ถูกตั้งให้ return dict ที่มีข้อมูลที่ต้องการ
                         llm_result_dict = llm_eval_func(
                             statement=statement, context=context, standard=standard, **llm_kwargs
                         )
-                        # ใน Mock Mode เราจะสมมติว่า raw response คือ JSON string ของ dict ที่ return มา
                         try:
                             raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
                         except:
                             raw_llm_response_content = str(llm_result_dict)
                     else:
-                        # Real Mode: เราต้องสมมติว่า evaluate_with_llm ถูกแก้ไขให้ return (Dict, Str)
-                        # หรือถ้าไม่ เราก็เรียกใช้ evaluate_with_llm เดิม และสมมติว่ามีการแก้ไขใน retrieval_utils
-                        # ในโค้ดนี้ เราจะปรับให้รองรับการรับค่า return เป็น tuple (Dict, Str)
+                        # Real Mode: assume evaluate_with_llm returns (Dict, Str)
+                        # NOTE: หาก evaluate_with_llm ถูก Patch เป็น evaluate_with_llm_with_raw_response
                         llm_output = llm_eval_func(
                             statement=statement, context=context, standard=standard, **llm_kwargs
                         )
@@ -447,7 +491,6 @@ class EnablerAssessment:
                             llm_result_dict, raw_llm_response_content = llm_output
                         elif isinstance(llm_output, dict):
                             llm_result_dict = llm_output
-                            # หาก LLM Function เดิมไม่คืนค่า Raw Response ให้ใช้ JSON ของ Dict เป็น Fallback (แต่ควรแก้ไข evaluate_with_llm ใน retrieval_utils)
                             try:
                                 raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
                             except:
@@ -462,25 +505,22 @@ class EnablerAssessment:
                     seen = set()
                     
                     if is_mock_mode:
-                        # ใน Mock Mode: ใช้ค่า Context/Sources/Status/Score ที่มาจาก Mock Function โดยตรง
                         final_score = llm_result_dict.get("llm_score", 0)
                         final_reason = llm_result_dict.get("reason", "")
-                        final_sources = llm_result_dict.get("retrieved_sources_list", []) # 👈 ใช้ Mock Sources
-                        final_context_snippet = llm_result_dict.get("context_retrieved_snippet", "") # 👈 ใช้ Mock Context
+                        final_sources = llm_result_dict.get("retrieved_sources_list", []) 
+                        final_context_snippet = llm_result_dict.get("context_retrieved_snippet", "") 
                         final_pass_status = llm_result_dict.get("pass_status", False)
                         final_status_th = llm_result_dict.get("status_th", "ไม่ผ่าน")
                     else:
-                        # ใน Real Mode: ใช้ Context/Sources ที่ได้จาก RAG
                         for src in retrieved_sources_list:
-                            # 🟢 FIXED: ใช้ doc_id และ location เป็นคีย์ในการ Deduplicate
                             key = (src['doc_id'], src['location']) 
                             if key not in seen:
                                 seen.add(key)
                                 unique_sources.append(src)
 
-                        final_score = llm_result_dict.get("score", 0) # ใช้ score จาก LLM จริง
+                        final_score = llm_result_dict.get("score", 0) 
                         final_reason = llm_result_dict.get("reason", "")
-                        final_sources = unique_sources # จาก RAG
+                        final_sources = unique_sources 
                         final_context_snippet = context[:240] + "..." if context else ""
                         final_pass_status = final_score == 1
                         final_status_th = "ผ่าน" if final_pass_status else "ไม่ผ่าน"
@@ -501,19 +541,24 @@ class EnablerAssessment:
                         "context_retrieved_snippet": final_context_snippet, 
                         "pass_status": final_pass_status,
                         "status_th": final_status_th,
-                        "statement_id": "N/A", 
-                        "llm_result": llm_result_dict, # 🟢 เก็บ Dict Result เดิมไว้
-                        "llm_raw_response_content": raw_llm_response_content # 🟢 NEW: เก็บ Raw Response สำหรับดึง UUIDs
+                        "statement_id": f"{sub_criteria_id}_L{level}_S{i+1}", # 🟢 FIX: เพิ่ม statement_id
+                        "llm_result": llm_result_dict, 
+                        "llm_raw_response_content": raw_llm_response_content 
                     })
         
         self._process_subcriteria_results()
         
-        return self.final_subcriteria_results
+        # 🛑 FIX: run_assessment ต้องคืนค่าเป็น Tuple (Dict, Dict)
+        final_summary = self.summarize_results()
+        action_plan = {} # NOTE: Action plan generation is stubbed/handled externally
+        
+        return {"summary": final_summary, "action_plan": action_plan}, {f"{r['statement_id']}": r for r in self.raw_llm_results}
+
 
     # ----------------------------------------------------
     # 🌟 NEW FEATURE: Generate Evidence Summary
     # ----------------------------------------------------
-    def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Union[str, Dict]: # 🟢 อัพเดท Type Hint
+    def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Union[str, Dict]: 
         """
         รวมบริบทจากทุก Statement ใน Sub-Criteria/Level ที่กำหนด และให้ LLM สร้างคำอธิบาย
         """
@@ -536,21 +581,29 @@ class EnablerAssessment:
         total_context_length = 0
         
         # 2. วนลูปดึง Context
+        is_mock_mode = self.mock_llm_summarize_func is not None
+        mapping_data_for_mock = self.evidence_mapping if is_mock_mode else None
+        
+        # 🟢 NEW: กำหนด K และ Semantic Filter Flag สำหรับ Summary
+        k_to_use = FINAL_K_RERANKED 
+        if self.disable_semantic_filter:
+             k_to_use = FINAL_K_NON_RERANKED 
+        
         for i, statement in enumerate(statements):
             query_string = f"{statement} ({sub_criteria_name})"
             
-            # NOTE: การเรียก _retrieve_context ที่นี่จะใช้ Logic Constrained Query ที่ปรับปรุงใหม่แล้ว
             retrieval_result = self._retrieve_context(
                 query=query_string,
                 sub_criteria_id=sub_criteria_id,
                 level=level,
+                mapping_data=mapping_data_for_mock,
                 statement_number=i + 1
             )
             
             if isinstance(retrieval_result, dict):
                 top_evidence = retrieval_result.get("top_evidences", [])
                 
-                for doc in top_evidence[:FINAL_K_RERANKED]: 
+                for doc in top_evidence[:k_to_use]: # 🛑 FIX: ใช้ k_to_use
                     doc_content = doc.get("content", "")
                     
                     if total_context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
@@ -564,17 +617,14 @@ class EnablerAssessment:
                         break 
         
         if not aggregated_context_list:
-            return f"ไม่พบหลักฐานที่เกี่ยวข้องใน Vector Store สำหรับเกณฑ์ {sub_criteria_id} Level {level}"
+            return {"summary": f"ไม่พบหลักฐานที่เกี่ยวข้องใน Vector Store สำหรับเกณฑ์ {sub_criteria_id} Level {level}", "suggestion_for_next_level": "N/A"}
         
         final_context = "\n---\n".join(list(dict.fromkeys(aggregated_context_list)))
         
         # 3. เรียก LLM เพื่อสร้างคำอธิบายสรุป
         try:
-            # 🛑 FIX: เลือกใช้ Mock/Real Function (ถ้ามีการส่งเข้า __init__ โดยตรง)
-            # NOTE: ใน run_assessment2.py เราใช้ patch() ครอบอีกที ซึ่งจะ override ตรงนี้ แต่เราเขียนโค้ดเผื่อไว้
             summarize_func = self.mock_llm_summarize_func if self.mock_llm_summarize_func else summarize_context_with_llm
             
-            # NOTE: summarize_context_with_llm ควรถูกแก้ไขให้ return Dict (EvidenceSummary) หรือ Str (Fallback)
             summary_result = summarize_func(
                 context=final_context,
                 sub_criteria_name=sub_criteria_name,
@@ -583,13 +633,10 @@ class EnablerAssessment:
                 schema=EvidenceSummary
             )
             
-            # 🟢 FIXED: Return Dict เพื่อให้ run_assessment2.py จัดการได้ง่ายขึ้น
             if isinstance(summary_result, dict):
                 return summary_result
-            elif isinstance(summary_result, str):
-                return {"summary": summary_result, "suggestion_for_next_level": "N/A"}
             else:
-                return {"summary": "LLM return type ไม่ถูกต้อง", "suggestion_for_next_level": "N/A"}
+                return {"summary": summary_result if isinstance(summary_result, str) else "LLM return type ไม่ถูกต้อง", "suggestion_for_next_level": "N/A"}
             
         except Exception as e:
             logger.error(f"Failed to generate summary with LLM: {e}")
@@ -597,26 +644,22 @@ class EnablerAssessment:
     # ----------------------------------------------------
     
     # ----------------------------------------------------
-    # 🌟 NEW FEATURE: Generate Action Plan (เมธอดนี้ถูกใช้โดย generate_action_plan_for_sub ใน run_assessment2.py)
+    # 🌟 NEW FEATURE: Generate Action Plan (Mock Handler)
     # ----------------------------------------------------
-    # NOTE: เมธอดนี้อาจไม่ได้ถูกเรียกใช้โดยตรงเพราะ run_assessment2.py เรียก generate_action_plan_for_sub()
-    # แต่ถ้าคุณต้องการให้คลาสนี้มีเมธอด Action Plan ด้วย (เช่น เพื่อใช้กับฟังก์ชันจริงที่ไม่ได้ถูก patch)
     def generate_action_plan(self, sub_criteria_id: str) -> List[Dict]:
         """
-        สร้าง Action Plan สำหรับ Sub-Criteria ที่กำหนด (เมธอดที่คลาสควรมี แต่ถูก Patch ใน run_assessment2.py)
+        สร้าง Action Plan สำหรับ Sub-Criteria ที่กำหนด (เมธอดนี้ถูกออกแบบมาเพื่อรองรับ Mocking ใน run_assessment.py)
         """
-        # NOTE: การเรียกใช้ LLM จริงควรถูกเรียกจาก core.retrieval_utils 
-        # ดังนั้นเมธอดนี้จะ Return ค่าว่าง เนื่องจาก Logic การสร้าง Action Plan ถูกรวมไว้ใน run_assessment2.py
         
         if self.mock_llm_action_plan_func:
             # ใช้ Mock Function ที่ถูกส่งเข้ามา (ถ้ามีการส่ง)
             return self.mock_llm_action_plan_func(
-                failed_statements_data=[], # ต้องดึงข้อมูลจาก raw_llm_results
+                failed_statements_data=[],
                 sub_id=sub_criteria_id,
-                target_level=0 # ต้องคำนวณ Target Level
+                target_level=0 
             )
         
-        logger.warning(f"generate_action_plan is stubbed. Action Plan logic is handled in run_assessment2.py.")
+        logger.warning(f"generate_action_plan is stubbed. Action Plan logic is handled via external calls.")
         return []
     # ----------------------------------------------------
 

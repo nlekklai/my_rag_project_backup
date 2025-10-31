@@ -1,3 +1,4 @@
+# core/run_assessment.py
 import os
 import json
 import logging
@@ -46,14 +47,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 _MOCK_EVALUATION_COUNTER = 0
 
 # -------------------- DETAILED RESULTS --------------------
-def print_detailed_results(raw_llm_results: List[Dict], target_sub_id: str):
-    """แสดงผลลัพธ์การประเมิน LLM ราย Statement พร้อม Source File"""
+def print_detailed_results(raw_llm_results: List[Dict], target_sub_id: str, enabler_abbr: str):
+    """
+    แสดงผลลัพธ์การประเมิน LLM ราย Statement พร้อม Source File
+    🛑 MODIFIED: เพิ่ม enabler_abbr เพื่อส่งต่อให้ _retrieve_full_source_info
+    """
     if not raw_llm_results:
         logger.info("\n[Detailed Results] No raw LLM results found to display.")
         return
 
-    # 🟢 NEW: ดึงข้อมูลไฟล์ต้นฉบับทั้งหมดจาก UUIDs ที่ LLM แนะนำ
-    updated_raw_llm_results = _retrieve_full_source_info(raw_llm_results)
+    # 🛑 NEW: ดึงข้อมูลไฟล์ต้นฉบับทั้งหมดจาก UUIDs ที่ LLM แนะนำ, passing enabler_abbr
+    updated_raw_llm_results = _retrieve_full_source_info(raw_llm_results, enabler_abbr)
 
     grouped: Dict[str, Dict[int, List[Dict]]] = {}
     for r in updated_raw_llm_results:
@@ -90,7 +94,8 @@ def print_detailed_results(raw_llm_results: List[Dict], target_sub_id: str):
                          source_name = src.get('source_name', 'Unknown File')
                          location = src.get('location', 'N/A')
                          chunk_uuid = src.get('chunk_uuid', 'N/A') # 🟢 NEW: แสดง UUID ของ Chunk
-                         print(f"        -> {source_name} (Location: {location}, UUID: {chunk_uuid[:8]}...)")
+                         uuid_short = chunk_uuid[:8] + "..." if chunk_uuid else "N/A"
+                         print(f"        -> {source_name} (Location: {location}, UUID: {uuid_short})")
                 print(f"      [Context]: {r.get('context_retrieved_snippet', 'N/A')}")
 
 # -------------------- PASS STATUS --------------------
@@ -135,10 +140,11 @@ def add_pass_status_to_raw_results(raw_results: List[Dict[str, Any]]) -> List[Di
 
 # -------------------- POST-ASSESSMENT RETRIEVAL --------------------
 
-def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]], enabler_abbr: str) -> List[Dict[str, Any]]:
     """
     🟢 NEW FUNCTION: Collects all unique chunk UUIDs and retrieves full document details 
     using the dedicated function, then merges the results back.
+    🛑 MODIFIED: เพิ่ม enabler_abbr เพื่อใช้ในการกำหนด Collection Name
     """
     all_uuids = set()
     for r in raw_llm_results:
@@ -152,15 +158,24 @@ def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]]) -> List[Di
 
     logger.info(f"🔎 Attempting to retrieve full source info for {len(all_uuids)} unique chunks...")
     
-    # 🟢 Call the new function from retrieval_utils
-    retrieval_result = retrieve_context_by_doc_ids(list(all_uuids))
+    # 🛑 CONSTRUCT COLLECTION NAME: evidence_<ENABLER_ABBR_LOWER>
+    collection_name = f"evidence_{enabler_abbr.lower()}"
+    logger.info(f"Retrieving source info from collection: {collection_name}")
+    
+    # 🛑 Call the new function from retrieval_utils, passing the specific collection name
+    try:
+        retrieval_result = retrieve_context_by_doc_ids(list(all_uuids), collection_name) 
+    except Exception as e:
+        logger.error(f"Failed to retrieve full source info by doc ids: {e}", exc_info=True)
+        return raw_llm_results
+    
     full_docs_map: Dict[str, Dict[str, Any]] = {
         doc.get("chunk_uuid"): {
             "chunk_uuid": doc.get("chunk_uuid"),
             "doc_id": doc.get("doc_id"),
             "source_name": doc.get("source"), # Use 'source' field as the file name/source name
             "location": doc.get("doc_type"), # Use 'doc_type' or a similar field for location hint
-            "content_snippet": doc.get("content", "")[:100] + "..."
+            "content_snippet": (doc.get("content", "")[:100] + "...") if doc.get("content") else ""
         } for doc in retrieval_result.get("top_evidences", []) if doc.get("chunk_uuid")
     }
     
@@ -182,19 +197,20 @@ def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]]) -> List[Di
 
 # -------------------- SUB CRITERIA UTILITIES & ACTION PLAN --------------------
 def get_sub_criteria_data(sub_id: str, criteria_list: List[Dict]) -> Dict:
-# ... (โค้ดเดิม)
+    """Finds the sub-criteria dictionary from the full list."""
     for criteria in criteria_list:
         if criteria.get('Sub_Criteria_ID') == sub_id:
             return criteria
     return {}
 
 def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
+    """Extracts all statements with a score of 0 (Fail)."""
     all_failed = []
     raw_results = summary.get('raw_llm_results', []) 
     for r in raw_results:
         score_val = r.get('llm_score', r.get('score', 1))
         try:
-            # รวม statements ที่ถูก Skip ด้วย (score -1) แต่โดยทั่วไปควรจะถูกกรองไปตั้งแต่ต้น
+            # Statements that failed (score 0)
             if int(score_val) == 0:
                 all_failed.append({
                     "sub_id": r.get('sub_criteria_id', 'N/A'),
@@ -209,7 +225,6 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
     return all_failed
 
 def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
-# ... (โค้ดเดิม)
     """Generate Action Plan per Sub-Criteria. (จะใช้ generate_action_plan_via_llm ซึ่งจะถูก Patch)"""
 
     highest_full_level = summary_data.get('highest_full_level', 0)
@@ -307,10 +322,13 @@ def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: 
     return action_plan
 
 # -------------------- L5 SUMMARY --------------------
+# -------------------- L5 SUMMARY --------------------
 def generate_and_integrate_l5_summary(assessor, results):
-# ... (โค้ดเดิม)
     """
-    Generate L5 Summary (จะเรียก generate_evidence_summary_for_level และ summarize_context_with_llm ซึ่งจะถูก Patch)
+    Generate L5 Summary และ Highest Full Level Summary 
+    (จะเรียก generate_evidence_summary_for_level และ summarize_context_with_llm ซึ่งจะถูก Patch)
+
+    🛑 MODIFIED: เพิ่มการสร้างและผสานรวม Summary สำหรับ Level ที่ผ่านครบสูงสุด (Highest Full Level)
     """
     updated_breakdown = {}
     sub_criteria_breakdown = results.get("SubCriteria_Breakdown", {})
@@ -318,28 +336,18 @@ def generate_and_integrate_l5_summary(assessor, results):
         try:
             if isinstance(sub_data, str):
                 sub_data = {"name": sub_data}
-            sub_name = sub_data.get("name", sub_id)
+            
+            # 🟢 NEW: ดึง Highest Full Level
+            highest_full_level = sub_data.get('highest_full_level', 0)
+            
+            # 1. --- Generate L5 Summary (ยังคงทำเหมือนเดิม) ---
             try:
-                # 🛑 ใช้ generate_evidence_summary_for_level() ของ EnablerAssessment
+                # 🛑 ใช้ generate_evidence_summary_for_level() ของ EnablerAssessment สำหรับ Level 5
                 l5_context_info = assessor.generate_evidence_summary_for_level(sub_id, 5)
             except Exception:
                 l5_context_info = None
             
-            # NOTE: l5_context_info ใน EnablerAssessment.generate_evidence_summary_for_level คาดว่าจะ return dict
-            # 🛑 FIX: เนื่องจากการเรียก generate_evidence_summary_for_level() ใน enabler_assessment.py ถูกออกแบบให้ return str (summary) 
-            # เราจึงต้องปรับการดึงค่าตรงนี้เล็กน้อย หรือให้ LLM ใน retrieval_utils return Dict ตาม schema
-            # ในกรณีนี้ เราจะสมมติว่า generate_evidence_summary_for_level (ที่ใช้ summarize_context_with_llm) คาดว่าจะได้ Dict
-            if isinstance(l5_context_info, dict):
-                l5_context = l5_context_info.get("combined_context", "")
-            elif isinstance(l5_context_info, str):
-                l5_context = l5_context_info
-            else:
-                l5_context = ""
-            
-            # NOTE: ในโค้ดปัจจุบัน (enabler_assessment.py) generate_evidence_summary_for_level() return summary_result ซึ่งเป็น dict หรือ str 
-            # แต่เนื่องจากโค้ดเดิมมีปัญหาเรื่องการจัดการ context_info เราจะรัน summarize_context_with_llm (ซึ่งถูก Patch) ใน enabler_assessment.py โดยตรง
-            
-            # 🛑 FIX LOGIC: เนื่องจาก generate_evidence_summary_for_level ถูกแก้ไขให้ return summary (str หรือ dict จาก LLM) โดยตรง
+            # 🛑 การจัดการผลลัพธ์ L5 (ตาม logic เดิม)
             l5_summary_result = l5_context_info
 
             if isinstance(l5_summary_result, str):
@@ -351,67 +359,174 @@ def generate_and_integrate_l5_summary(assessor, results):
             if not l5_summary_result.get("summary", "").strip():
                 l5_summary_result = {"summary": "ไม่พบหลักฐานที่เกี่ยวข้องสำหรับ Level 5 ในฐานข้อมูล RAG.", "suggestion_for_next_level": "N/A"}
 
+            # ผสานรวม L5 Summary
             sub_data["evidence_summary_L5"] = l5_summary_result
+
+
+            # 2. --- Generate Highest Full Level Summary (NEW LOGIC) ---
+            highest_summary_result = {"summary": "N/A (Level 0 or Error)", "suggestion_for_next_level": "N/A"}
+            
+            if highest_full_level > 0 and highest_full_level <= 5:
+                 if highest_full_level == 5:
+                     # ถ้า Highest Full Level คือ 5 ให้ใช้ผลลัพธ์เดียวกับ L5 (ลดการเรียก LLM ซ้ำ)
+                     highest_summary_result = l5_summary_result
+                 else:
+                     try:
+                        # 🛑 ใช้ generate_evidence_summary_for_level() ของ EnablerAssessment สำหรับ Level ที่ผ่านสูงสุด
+                        highest_context_info = assessor.generate_evidence_summary_for_level(sub_id, highest_full_level)
+                     except Exception:
+                         highest_context_info = None
+
+                     # 🛑 การจัดการผลลัพธ์ Highest Level
+                     highest_summary_result = highest_context_info
+
+                     if isinstance(highest_summary_result, str):
+                        if "ไม่พบหลักฐาน" in highest_summary_result:
+                            highest_summary_result = {"summary": highest_summary_result, "suggestion_for_next_level": "N/A (No Evidence Found)"}
+                        else:
+                            highest_summary_result = {"summary": highest_summary_result, "suggestion_for_next_level": "N/A"}
+                    
+                     if not highest_summary_result.get("summary", "").strip():
+                         highest_summary_result = {"summary": f"ไม่พบหลักฐานที่เกี่ยวข้องสำหรับ Level {highest_full_level} ในฐานข้อมูล RAG.", "suggestion_for_next_level": "N/A"}
+
+            # 🟢 ผสานรวม Highest Full Level Summary โดยใช้คีย์ที่สร้างแบบ Dynamic
+            highest_summary_key = f"evidence_summary_L{highest_full_level}"
+            sub_data[highest_summary_key] = highest_summary_result
+
             updated_breakdown[sub_id] = sub_data
+            
         except Exception as e_outer:
-            updated_breakdown[sub_id] = {"name": str(sub_data), "evidence_summary_L5": {"summary": f"Error: {e_outer}", "suggestion_for_next_level": "N/A"}}
+            # Handle error gracefully
+            sub_data["evidence_summary_L5"] = {"summary": f"Error: {e_outer}", "suggestion_for_next_level": "N/A"}
+            # Ensure the highest_summary key is also updated in case of error
+            highest_summary_key = f"evidence_summary_L{sub_data.get('highest_full_level', 0)}"
+            sub_data[highest_summary_key] = {"summary": f"Error: {e_outer} (Highest Level Summary)", "suggestion_for_next_level": "N/A"}
+            updated_breakdown[sub_id] = sub_data
+            logger.error(f"[ERROR] during summary integration for {sub_id}: {e_outer}", exc_info=True)
+            
     results["SubCriteria_Breakdown"] = updated_breakdown
     return results
 
+# -------------------- EXPORT UTILITIES (NEW) --------------------
+def _export_results_to_json(
+    summary: Dict[str, Any], 
+    enabler_type: str, 
+    sub_id: Optional[str] = None
+) -> Dict[str, Optional[str]]:
+    """
+    จัดการการบันทึกไฟล์สรุปและข้อมูลดิบ โดยใช้ enabler_type และ sub_id 
+    (ถ้ามี) ในการตั้งชื่อไฟล์ และคืนค่าพาธที่ใช้
+
+    :param summary: ข้อมูลสรุปและข้อมูลดิบ (รวม raw_llm_results) ที่จะ export
+    :param enabler_type: ประเภทของ Enabler (เช่น 'KM' หรือ 'HCR')
+    :param sub_id: ID ของเกณฑ์ย่อย (เช่น '1.1') ถ้าเป็น None คือรันทั้งหมด
+    :return: Dict ที่มีพาธไฟล์ที่ export แล้ว
+    """
+    export_paths = {
+        'export_path_used': None,
+        'raw_export_path_used': None
+    }
+    
+    try:
+        # 1. เตรียม Export Directory และ Timestamp
+        # project_root ถูกกำหนดไว้ในส่วน PATH SETUP
+        # NOTE: ตรวจสอบให้แน่ใจว่า project_root และ logger ถูกกำหนดไว้ก่อนเรียกใช้ฟังก์ชันนี้
+        
+        # 💡 สร้างชื่อส่วนขยาย scope_prefix
+        scope_prefix = f"_{sub_id}" if sub_id else "_All"
+        
+        export_dir = os.path.abspath(os.path.join(project_root, "exports"))
+        os.makedirs(export_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        
+        # 2. Export Summary Report (ไม่รวม raw_llm_results)
+        summary_to_save = {k: v for k, v in summary.items() if k != 'raw_llm_results'}
+        
+        # 💡 ปรับปรุงชื่อไฟล์: [TYPE]_[SUMMARY]_[SCOPE]_[TIMESTAMP].json
+        # เช่น 'KM_summary_1.1_20251031_143851.json'
+        summary_filename = f"{enabler_type}_summary{scope_prefix}_{timestamp}.json" 
+        summary_file_path = os.path.join(export_dir, summary_filename)
+        
+        with open(summary_file_path, 'w', encoding='utf-8') as f:
+            json.dump(summary_to_save, f, ensure_ascii=False, indent=4)
+        export_paths['export_path_used'] = summary_file_path
+        logger.info(f"Report successfully exported to: {summary_file_path}")
+        
+        # 3. Export Raw Evaluation Data
+        raw_data = summary.get('raw_llm_results', [])
+        if raw_data:
+            # 💡 ปรับปรุงชื่อไฟล์: [TYPE]_[RAW_DETAILS]_[SCOPE]_[TIMESTAMP].json
+            # เช่น 'KM_raw_details_1.1_20251031_143851.json'
+            raw_filename = f"{enabler_type}_raw_details{scope_prefix}_{timestamp}.json" 
+            raw_file_path = os.path.join(export_dir, raw_filename)
+            
+            # 🛑 NOTE: บันทึกเฉพาะ raw_llm_results array
+            with open(raw_file_path, 'w', encoding='utf-8') as f:
+                json.dump(raw_data, f, ensure_ascii=False, indent=4)
+            export_paths['raw_export_path_used'] = raw_file_path
+            logger.info(f"Raw evaluation data successfully exported to: {raw_file_path}")
+            
+    except Exception as e:
+        logger.error(f"❌ ERROR during file export: {e}", exc_info=True)
+        
+    return export_paths
+
 # -------------------- MAIN ASSESSMENT --------------------
-def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real", filter_mode: bool = False, export: bool = False) -> Dict[str, Any]:
+def run_assessment_process(
+    enabler: str,
+    sub_criteria_id: str,
+    mode: str = "real",
+    filter_mode: bool = False,
+    export: bool = False,
+    disable_semantic_filter: bool = False
+) -> Dict[str, Any]:
     start_time_global = time.perf_counter()
-    global _MOCK_EVALUATION_COUNTER
-    _MOCK_EVALUATION_COUNTER = 0
-
     retriever = None
-    summary: Dict[str, Any] = {}
-    
-    original_mode = mode 
-    
-    # 🛑 FIX 1: แก้ไขการส่งค่า Boolean ไปยัง set_mock_control_mode
+    summary: Dict[str, Any] = {'raw_export_path_used': None}
+    original_mode = mode
+
+    # -------------------- Mock Setup --------------------
     set_mock_control_mode(original_mode == "mock")
-    
-    # 🛑 FIX: กำหนด Mock Functions ทั้งหมดที่นี่
     llm_eval_func = evaluate_with_llm_CONTROLLED_MOCK if original_mode=="mock" else None
-    llm_summarize_func = summarize_context_with_llm_MOCK if original_mode=="mock" else None 
-    llm_action_plan_func = generate_action_plan_MOCK if original_mode=="mock" else None 
+    llm_summarize_func = summarize_context_with_llm_MOCK if original_mode=="mock" else None
+    llm_action_plan_func = generate_action_plan_MOCK if original_mode=="mock" else None
 
-
-    # 1. Setup RAG/Vectorstore
+    # -------------------- Load Vectorstore --------------------
     try:
         if mode == "real":
             temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
-            evidence_mapping = temp_loader.evidence_mapping_data
-            all_enabler_file_ids = []
-            for key, data in evidence_mapping.items():
-                all_enabler_file_ids.extend(data.get('filter_ids', []))
-            base_enabler_files = list(set(all_enabler_file_ids))
-            target_collection_names = base_enabler_files
-            
-            # --- TANGIBLE FIX: Filter Vector Store Collections ---
+            evidence_mapping = temp_loader.evidence_mapping
+
+            # 🟢 Collection สำหรับ enabler
+            target_collection_names = [f"evidence_{enabler.lower()}"]
+
+            # Apply filter_mode doc_ids if requested
+            file_ids_to_load = []
             if filter_mode and sub_criteria_id != "all":
-                file_ids_to_load = []
                 for key, data in evidence_mapping.items():
-                    if key.startswith(f"{sub_criteria_id}_L"): 
-                        file_ids_to_load.extend(data.get('filter_ids', []))
-                target_collection_names = list(set(file_ids_to_load))
-                
-                logger.info(
-                    f"✅ Filter Mode: Loading {len(target_collection_names)} collections "
-                    f"for {sub_criteria_id} (e.g., {target_collection_names[:2]}...)"
-                )
-            # --- END TANGIBLE FIX ---
-            
-            retriever = load_all_vectorstores(doc_ids=target_collection_names, doc_type=["evidence"])
-            
+                    if key.startswith(f"{sub_criteria_id}_L"):
+                        for ev in data.get('evidences', []):
+                            doc_id = ev.get('doc_id')
+                            if doc_id:
+                                file_ids_to_load.append(doc_id)
+                logger.info(f"DEBUG: doc_ids to load for {sub_criteria_id}: {file_ids_to_load}")
+
+            # Load retriever with filter_doc_ids (เฉพาะ doc_ids ที่ต้องการ)
+            retriever = load_all_vectorstores(
+                doc_types=["evidence"],
+                evidence_enabler=enabler.lower(),
+                doc_ids=file_ids_to_load if file_ids_to_load else None
+            )
+
+
+            logger.info(f"✅ Vectorstore loaded for enabler {enabler}. Collections: {target_collection_names}")
+
     except Exception as e:
         logger.error(f"❌ ERROR: Failed to load Vectorstores in REAL mode: {e}", exc_info=True)
-        mode = "random" 
-        logger.warning(f"⚠️ MODE CHANGED TO: {mode.upper()} due to Vectorstore Load Failure. Assessment will run in RANDOM mode.")
+        mode = "random"
+        logger.warning(f"⚠️ MODE CHANGED TO: {mode.upper()} due to Vectorstore Load Failure.")
 
-
-    # 2. Load & Filter Evidence (Rubric Statements)
+    # -------------------- Load & Filter Evidence --------------------
     try:
         if 'temp_loader' in locals() and mode=="real":
             enabler_loader = temp_loader
@@ -419,203 +534,90 @@ def run_assessment_process(enabler: str, sub_criteria_id: str, mode: str = "real
             enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever)
         
         filtered_evidence = enabler_loader.evidence_data
-        
-        # 2a. Filter by Sub-Criteria ID
         if sub_criteria_id != "all":
             filtered_evidence = [e for e in filtered_evidence if e.get("Sub_Criteria_ID")==sub_criteria_id]
-            
-        
-        # --- TANGIBLE FIX 2: Filter statements based on Evidence Mapping (Your required fix) ---
-        if filter_mode and sub_criteria_id != "all":
-            evidence_mapping = enabler_loader.evidence_mapping_data
-            
-            # 1. Identify all Level Keys (e.g., '1.1_L1', '1.1_L2') that actually have files mapped.
-            valid_level_keys = set()
-            for key, data in evidence_mapping.items():
-                if key.startswith(sub_criteria_id):
-                    # Check if filter_ids is a non-empty list
-                    if isinstance(data.get('filter_ids'), list) and data['filter_ids']:
-                        valid_level_keys.add(key)
 
-            # 2. Filter the statements array (filtered_evidence)
+        # Strict Filter Mode: remove statements without mapped evidence
+        if filter_mode and sub_criteria_id != "all":
+            evidence_mapping = enabler_loader.evidence_mapping
+            valid_level_keys = {k for k, v in evidence_mapping.items() if k.startswith(sub_criteria_id) and v.get('evidences')}
             statements_to_assess = []
             skipped_statements = 0
-            for statement in filtered_evidence:
-                current_sub_id = statement.get("Sub_Criteria_ID")
-                # NOTE: Statement Data ไม่มี 'level' key, ต้องวนลูปผ่าน level 1-5
-                statement_added = False
-                for level in range(1, 6):
-                    level_key = f"{current_sub_id}_L{level}"
-                    # Check if the statement list for this level is non-empty AND has mapped files
-                    level_statements: List[str] = statement.get(f"Level_{level}_Statements", [])
-                    
+
+            for statement_dict in filtered_evidence:
+                added = False
+                for lvl in range(1, 6):
+                    level_key = f"{statement_dict['Sub_Criteria_ID']}_L{lvl}"
+                    level_statements = statement_dict.get(f"Level_{lvl}_Statements", [])
                     if level_statements and level_key in valid_level_keys:
-                        # Append the statement object only once, if any level has mapped files
-                        statements_to_assess.append(statement)
-                        statement_added = True
+                        statements_to_assess.append(statement_dict)
+                        added = True
                         break
-                
-                if not statement_added:
+                if not added:
                     skipped_statements += 1
-                    
+
             filtered_evidence = statements_to_assess
-            if skipped_statements > 0:
-                logger.warning(
-                    f"⚠️ Strict Filter Mode: Skipped {skipped_statements} statements for {sub_criteria_id} "
-                    f"because the corresponding level key (e.g., {sub_criteria_id}_L1) had no mapped evidence files."
-                )
-        # --- END TANGIBLE FIX 2 ---
-            
+            logger.info(f"DEBUG: Statements after Strict Filter: {len(filtered_evidence)} (Skipped: {skipped_statements})")
+
     except Exception as e:
         summary.update(EnablerAssessment(enabler_abbr=enabler).summarize_results())
         summary['Error'] = str(e)
-        summary['mode_used'] = mode 
+        summary['mode_used'] = mode
         return summary
 
-    # 3. Create Assessment Engine
+    # -------------------- Create Assessment Engine --------------------
     assessment_engine = EnablerAssessment(
         enabler_abbr=enabler,
-        evidence_data=filtered_evidence, # <-- Now only contains statements for levels with mapped evidence
+        evidence_data=filtered_evidence,
         rubric_data=enabler_loader.rubric_data,
         level_fractions=enabler_loader.level_fractions,
-        evidence_mapping_data=enabler_loader.evidence_mapping_data,
+        evidence_mapping_data=enabler_loader.evidence_mapping,
         vectorstore_retriever=retriever,
         use_retrieval_filter=filter_mode,
         target_sub_id=sub_criteria_id if sub_criteria_id!="all" else None,
-        # 🛑 FIX: ส่ง Mock Functions ทั้ง 3 ตัว
         mock_llm_eval_func=llm_eval_func,
-        mock_llm_summarize_func=llm_summarize_func, # <--- NEW
-        mock_llm_action_plan_func=llm_action_plan_func # <--- NEW
+        mock_llm_summarize_func=llm_summarize_func,
+        mock_llm_action_plan_func=llm_action_plan_func,
+        disable_semantic_filter=disable_semantic_filter
     )
 
-    # 4. Run Assessment
+    # -------------------- Override _retrieve_context สำหรับ Mock --------------------
+    if original_mode=="mock":
+        assessment_engine._retrieve_context = lambda **kwargs: retrieve_context_MOCK(
+            statement=kwargs.get('query'),
+            sub_criteria_id=kwargs['sub_criteria_id'],
+            level=kwargs.get('level'),
+            statement_number=kwargs.get('statement_number', 0),
+        )
+
+    # -------------------- Run Assessment --------------------
     try:
-        if mode=="mock":
-            # Patch retrieve_context เฉพาะใน Mock Mode
-            assessment_engine._retrieve_context = lambda **kwargs: retrieve_context_MOCK(
-                statement=kwargs.get('query'), 
-                sub_criteria_id=kwargs['sub_criteria_id'],
-                level=kwargs.get('level'),
-                statement_number=kwargs.get('statement_number', 0), 
-                mapping_data=kwargs.get('mapping_data') 
-            )
         assessment_engine.run_assessment()
-        summary = assessment_engine.summarize_results()
+        summary = assessment_engine.summarize_results() # <--- 1. สรุปคะแนนเบื้องต้น
         summary['raw_llm_results'] = assessment_engine.raw_llm_results
         
+        # 🟢 NEW: 1. Generate & Integrate L5/Highest Full Level Summary (<< ถูกเรียกใช้ตรงนี้)
+        summary = generate_and_integrate_l5_summary(assessment_engine, summary) # <--- 2. ถูกเรียกใช้ตรงนี้
+        
+        # 🟢 NEW: 2. Generate & Integrate Action Plans
+        action_plans: Dict[str, Any] = {}
+        for sub_id, sub_data in summary.get('SubCriteria_Breakdown', {}).items():
+            action_plan = generate_action_plan_for_sub(sub_id, sub_data, summary)
+            action_plans[sub_id] = action_plan
+        summary['Action_Plans'] = action_plans # <--- 3. ตามด้วย Action Plan
     except Exception as e:
         summary.update(assessment_engine.summarize_results())
         summary['Error_Details'] = str(e)
-        
 
-    # 5. Pre-process and Enhance Raw Results (NEW STEP)
-    if 'raw_llm_results' in summary:
-        # 🟢 STEP 5a: Add pass status and EXTRACT UUIDS
-        summary['raw_llm_results'] = add_pass_status_to_raw_results(summary['raw_llm_results'])
-        
-        # 🟢 STEP 5b: Retrieve full source info based on extracted UUIDs
-        summary['raw_llm_results'] = _retrieve_full_source_info(summary['raw_llm_results'])
+    if export:
+        export_paths = _export_results_to_json(summary, enabler, sub_id)
+        # 🛑 อัปเดต Dict summary ด้วยพาธที่ได้จากการ Export
+        summary.update(export_paths)
 
-
-    # 6. Generate Evidence Summaries (จัดการ Patch)
-    # ... (โค้ดเดิม)
-    summary_patcher_enabler = None
-    summary_patcher_utils = None
-    if original_mode=="mock":
-        # Patch ใน enabler_assessment.py (สำหรับ generate_evidence_summary_for_level)
-        # NOTE: เมื่อ enabler_assessment ถูกแก้ไขให้ใช้ self.mock_llm_summarize_func แล้ว การ patch นี้อาจซ้ำซ้อน
-        # แต่เพื่อความปลอดภัยในระบบ patch ที่ซ้อนกัน เราจะรักษา patch นี้ไว้
-        summary_patcher_enabler = patch('assessments.enabler_assessment.summarize_context_with_llm', new=summarize_context_with_llm_MOCK)
-        # Patch ใน core.retrieval_utils (สำหรับ generate_and_integrate_l5_summary)
-        summary_patcher_utils = patch('core.retrieval_utils.summarize_context_with_llm', new=summarize_context_with_llm_MOCK)
-        summary_patcher_enabler.start()
-        summary_patcher_utils.start()
-
-    try:
-        breakdown = summary.get("SubCriteria_Breakdown", {})
-        for sub_id, data in breakdown.items():
-            target_level = data.get("highest_full_level", 0)
-            summary_key_name = f"evidence_summary_L{target_level}"
-            if target_level>0:
-                # 🛑 ใช้ generate_evidence_summary_for_level() ของ EnablerAssessment
-                summary_text = assessment_engine.generate_evidence_summary_for_level(sub_id, target_level)
-                
-                # NOTE: จัดการกับผลลัพธ์ที่อาจเป็น Dict/Str 
-                if isinstance(summary_text, dict):
-                    final_summary_data = summary_text
-                elif isinstance(summary_text, str):
-                    final_summary_data = {"summary": summary_text, "suggestion_for_next_level": "N/A"}
-                else:
-                    final_summary_data = {"summary": "การสรุปหลักฐานล้มเหลว", "suggestion_for_next_level": "N/A"}
-                    
-                data[summary_key_name] = final_summary_data
-            else:
-                data[summary_key_name] = {"summary": "ไม่พบหลักฐานที่ผ่านเกณฑ์ Level 1", "suggestion_for_next_level": "N/A"}
-                
-        # NOTE: generate_and_integrate_l5_summary ถูกปรับให้เรียก summary_context_with_llm (ที่ถูก patch)
-        summary = generate_and_integrate_l5_summary(assessment_engine, summary)
-    finally:
-        if original_mode=="mock":
-            summary_patcher_enabler.stop()
-            summary_patcher_utils.stop()
-
-    # 7. Generate Action Plans (จัดการ Patch)
-    # ... (โค้ดเดิม)
-    action_patcher = None
-    full_summary_data = summary
-    if original_mode=="mock":
-        # Patch generate_action_plan_via_llm ใน core.retrieval_utils (เฉพาะใน mock mode)
-        action_patcher = patch('core.retrieval_utils.generate_action_plan_via_llm', new=generate_action_plan_MOCK)
-        action_patcher.start()
-    
-    # 🛑 NOTE: เมื่อไม่ใช้ mock mode การเรียก generate_action_plan_for_sub จะเรียก LLM จริง
-    try:
-        all_action_plans = {}
-        for sub_id_key, summary_data in summary.get('SubCriteria_Breakdown', {}).items():
-            action_plan_data = generate_action_plan_for_sub(sub_id_key, summary_data, full_summary_data)
-            all_action_plans[sub_id_key] = action_plan_data
-        summary['Action_Plans'] = all_action_plans
-    finally:
-        # 🛑 NOTE: ลบเงื่อนไข action_patcher ออกไปถ้าเราไม่ใช้ mock mode
-        if original_mode=="mock" and action_patcher:
-            action_patcher.stop()
-
-    # 8. Export JSON (Original Step 7 + New Raw Data Handling)
-    if export and "Overall" in summary:
-        EXPORT_DIR = os.path.join(project_root, "results")
-        os.makedirs(EXPORT_DIR, exist_ok=True)
-        
-        mode_suffix = original_mode.upper() 
-        filter_suffix = "STRICTFILTER" if filter_mode else "FULLSCOPE" 
-        random_suffix = os.urandom(4).hex()
-        
-        EXPORT_FILENAME = f"assessment_report_{enabler}_{sub_criteria_id}_{mode_suffix}_{filter_suffix}_{random_suffix}.json" 
-        FULL_EXPORT_PATH = os.path.join(EXPORT_DIR, EXPORT_FILENAME)
-        
-        try:
-            export_summary = summary.copy()
-            raw_data_to_export = export_summary.pop('raw_llm_results', None)
-            with open(FULL_EXPORT_PATH, 'w', encoding='utf-8') as f:
-                json.dump(export_summary, f, ensure_ascii=False, indent=4)
-            summary['export_path_used'] = FULL_EXPORT_PATH
-            if raw_data_to_export:
-                # 🛑 RAW DATA HAS ALREADY BEEN PROCESSED WITH UUIDS/PASS STATUS
-                raw_filename = FULL_EXPORT_PATH.replace(".json", "_RAW_EVAL.json")
-                with open(raw_filename, 'w', encoding='utf-8') as f:
-                    json.dump({"raw_llm_results": raw_data_to_export}, f, ensure_ascii=False, indent=4)
-                summary['raw_export_path_used'] = raw_filename
-        except Exception as e:
-            logger.error(f"Failed to export JSON report: {e}")
-
-    summary['Execution_Time'] = {
-        "total": time.perf_counter()-start_time_global
-    }
-    summary['mode_used'] = mode 
     return summary
 
-
 # -------------------- CLI Entry Point (Adapter) --------------------
-if __name__ == "__main__":
+if __name__ == "__main__":  
     try:
         parser = argparse.ArgumentParser(description="Automated Enabler Maturity Assessment System.")
         parser.add_argument("--mode", 
@@ -641,6 +643,10 @@ if __name__ == "__main__":
         parser.add_argument("--export", 
                             action="store_true",
                             help="Export the final summary results to a JSON file.")
+
+        parser.add_argument("--disable-semantic-filter",
+                            action="store_true",
+                            help="Disable semantic reranking / semantic filter in RAG (for debugging retrieval).")
         
         args = parser.parse_args()
         
@@ -651,9 +657,11 @@ if __name__ == "__main__":
             sub_criteria_id=args.sub,
             mode=args.mode, 
             filter_mode=args.filter,
-            export=args.export
+            export=args.export,
+            disable_semantic_filter=args.disable_semantic_filter
         )
         
+        enabler_abbr = args.enabler
         
         mode_used_for_report = final_results.get('mode_used', args.mode)
         
@@ -672,76 +680,45 @@ if __name__ == "__main__":
         print("=====================================================")
         
         if overall_data:
-            print(f"Overall Maturity Score (Avg.): {overall_data.get('overall_maturity_score', 0.0):.2f} (Scale: 0.0-1.0)")
-            print(f"Total Score (Weighted): {overall_data.get('total_weighted_score', 0.0):.2f}/{overall_data.get('total_possible_weight', 0.0):.2f} (Progress: {overall_data.get('overall_progress_percent', 0.0):.2f}%)")
-        else:
-            print("⚠️ Overall Summary Data Missing.")
-
-        print("\n-----------------------------------------------------")
+            # use .get with fallback for safe formatting
+            avg_score = overall_data.get('overall_maturity_score')
+            avg_score_text = f"{avg_score:.3f}" if isinstance(avg_score, (int, float)) else "N/A"
+            print(f"Overall Maturity Score (Avg.): {avg_score_text}")
+            print(f"Overall Maturity Level (Weighted): {overall_data.get('overall_maturity_level', 'N/A')}")
+            print(f"Number of Sub-Criteria Assessed: {overall_data.get('num_sub_criteria', 'N/A')}")
+            
         
-        if sub_breakdown:
-            for sub_id, data in sub_breakdown.items():
-                
-                if args.sub != "all" and sub_id != args.sub:
-                    continue
-                
-                highest_full_level = data.get('highest_full_level', 0)
-                summary_key = f"evidence_summary_L{highest_full_level}"
-                
-                # 🛑 FIX: ดึงข้อมูลสรุปหลักฐาน (evidence_summary_L5)
-                evidence_summary_data = data.get(summary_key, {})
-                if isinstance(evidence_summary_data, dict):
-                    evidence_summary = evidence_summary_data.get('summary', 'N/A')
-                else:
-                    evidence_summary = str(evidence_summary_data)
-                
-                ratios = data.get('pass_ratios', {})
-                ratios_display = []
-                for lvl in range(1, 6):
-                    ratio = ratios.get(str(lvl), 0.0)
-                    symbol = "🟢" if ratio == 1.0 else "🟡" if ratio > 0 and ratio < 1.0 else "🔴"
-                    ratios_display.append(f"L{lvl}: {symbol}{ratio:.2f}")
-                
-                print(f"| {sub_id}: {data.get('name', 'N/A')}")
-                print(f"| - Score: {data.get('score', 0.0):.2f}/{data.get('weight', 0.0):.2f} | Full Lvl: L{highest_full_level} | Gap: {'YES' if data.get('development_gap') else 'NO'}")
-                print(f"| - Ratios (L1-L5): {' | '.join(ratios_display)}") 
-                
-                print(f"| - Summary L{highest_full_level}: {evidence_summary}") 
+        print("\n--- Sub-Criteria Breakdown ---")
+        for sub_id, data in sub_breakdown.items():
+            highest_full = data.get('highest_full_level', 0)
+            score = data.get('weighted_score', 0.0)
+            
+            # 🛑 NOTE: ใช้ evidence_summary_L[highest_full_level] เพื่อแสดงสรุปของระดับที่ผ่าน
+            summary_key = f"evidence_summary_L{highest_full}"
+            summary_data = data.get(summary_key, {})
+            summary_text = summary_data.get('summary', 'No summary available.')
+            
+            print(f"\n[ID: {sub_id}] {data.get('name', 'N/A')}")
+            print(f"  - Highest Full Level: L{highest_full}")
+            print(f"  - Weighted Score: {score:.3f}")
+            print(f"  - Pass Ratios (L1-L5): {json.dumps(data.get('pass_ratios', {}))}")
+            print(f"  - Evidence Summary (L{highest_full}): {summary_text[:120]}...")
 
-                if data.get('development_gap'):
-                    print(f"| - Action: {data.get('action_item', 'See Action Plans section.')}") 
-                print("-----------------------------------------------------")
-        else:
-            print("⚠️ No Sub-Criteria breakdown results found.")
-
-
-        print("\n\n=====================================================")
-        print("        GENERATING ACTION PLAN...")
-        print("=====================================================")
-        
-        if 'Action_Plans' in final_results:
-            for sub_id, action_plan_phases in final_results.get('Action_Plans', {}).items():
-                
-                if args.sub != "all" and sub_id != args.sub:
-                    continue
-                
-                summary_data = sub_breakdown.get(sub_id, {})
-                highest_full_level = summary_data.get('highest_full_level', 0)
-                target_level = highest_full_level + 1
-
-                print(f"\n--- ACTION PLAN FOR {args.enabler.upper()} - {sub_id} (Target L{target_level}) ---")
-                
-                if isinstance(action_plan_phases, List):
+        # -------------------- Action Plan Output --------------------
+        print("\n--- Consolidated Action Plans (Next Steps) ---")
+        action_plans = summary.get('Action_Plans', {})
+        if action_plans:
+            for sub_id, action_plan_phases in action_plans.items():
+                print(f"\n[ACTION PLAN] Sub-Criteria {sub_id}")
+                if isinstance(action_plan_phases, list):
                     for phase in action_plan_phases:
-                        print(f"\n[PHASE] {phase.get('Phase', 'N/A')}")
-                        print(f"[GOAL] {phase.get('Goal', 'N/A')}")
-                        
-                        if phase.get('Actions'):
-                            print("\n[ACTIONS]")
-                            for action in phase['Actions']:
+                        print(f"  > PHASE: {phase.get('Phase', 'N/A')}")
+                        print(f"    - Goal: {phase.get('Goal', 'N/A')}")
+                        actions = phase.get('Actions', [])
+                        if actions:
+                            for action in actions:
                                 stmt_id = action.get('Statement_ID', 'N/A')
                                 failed_lvl = action.get('Failed_Level', 'N/A')
-                                
                                 print(f"  - Statement: {stmt_id} (L{failed_lvl})") 
                                 print(f"    - Recommendation: {action.get('Recommendation', 'N/A')}")
                                 print(f"    - Target Evidence: {action.get('Target_Evidence_Type', 'N/A')}")
@@ -753,14 +730,16 @@ if __name__ == "__main__":
                     
         print("\n=====================================================")
         print(f"Total Execution Time: {final_results.get('Execution_Time', {}).get('total', 0.0):.2f} seconds.")
-        if args.export and 'export_path_used' in final_results:
-            print(f"Report exported to: {final_results['export_path_used']}")
-            print(f"Raw evaluation data exported to: {final_results['raw_export_path_used']}")
+        # Use safe .get() for raw_export_path_used
+        if args.export and final_results.get('export_path_used'):
+            print(f"Report exported to: {final_results.get('export_path_used')}")
+            if final_results.get('raw_export_path_used'):
+                print(f"Raw evaluation data exported to: {final_results.get('raw_export_path_used')}")
         print("=====================================================")
 
         # -------------------- Detailed Results Display --------------------
         if 'raw_llm_results' in final_results:
-             print_detailed_results(final_results['raw_llm_results'], args.sub)
+             print_detailed_results(final_results['raw_llm_results'], args.sub, enabler_abbr) 
              
     except Exception as e:
         logger.error(f"FATAL ERROR in CLI execution: {e}", exc_info=True)

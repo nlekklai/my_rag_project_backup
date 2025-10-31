@@ -1,0 +1,39 @@
+{
+    "Overall": {
+        "enabler": "KM",
+        "total_weighted_score": 4.0,
+        "total_possible_weight": 4.0,
+        "overall_progress_percent": 100.0,
+        "overall_maturity_score": 1.0
+    },
+    "SubCriteria_Breakdown": {
+        "1.1": {
+            "name": "วิสัยทัศน์/ทิศทาง/นโยบายด้านการจัดการความรู้",
+            "score": 4.0,
+            "weight": 4.0,
+            "highest_full_level": 5,
+            "pass_ratios": {
+                "1": 1.0,
+                "2": 1.0,
+                "3": 1.0,
+                "4": 1.0,
+                "5": 1.0
+            },
+            "development_gap": false,
+            "action_item": "",
+            "evidence_summary_L5": {
+                "summary": "การดำเนินงานด้านการจัดการความรู้ของกฟภ. มีความต่อเนื่องและสร้างองค์ความรู้ใหม่ๆ ที่ตอบสนองนโยบายพลังงานทางเลือกของรัฐ นอกจากนี้ยังมีการบูรณาการระบบ KMS และ E-learning เพื่อเพิ่มประสิทธิภาพในการจัดการความรู้",
+                "suggestion_for_next_level": "ควรเน้นการปรับปรุงและพัฒนาระบบเทคโนโลยี KM ที่ใช้งานง่ายและสามารถนำความรู้สู่นวัตกรรมได้อย่างรวดเร็ว"
+            }
+        }
+    },
+    "Action_Plans": {
+        "1.1": [
+            {
+                "Phase": "No Action Needed",
+                "Goal": "Sub-Criteria 1.1 ผ่านครบถึง Level 5",
+                "Actions": []
+            }
+        ]
+    }
+}
