@@ -1,0 +1,71 @@
+{
+    "Overall": {
+        "enabler": "KM",
+        "total_weighted_score": 0.44,
+        "total_possible_weight": 8.0,
+        "overall_progress_percent": 5.5,
+        "overall_maturity_score": 0.06
+    },
+    "SubCriteria_Breakdown": {
+        "6.1": {
+            "name": "ผลการดำเนินการด้านต่างๆที่เกี่ยวข้องหรือเกิดจากการจัดการเรียนรู้",
+            "score": 0.44,
+            "weight": 8.0,
+            "highest_full_level": 0,
+            "pass_ratios": {
+                "1": 0.333,
+                "2": 0.0,
+                "3": 0.0,
+                "4": 0.0,
+                "5": 0.0
+            },
+            "development_gap": true,
+            "action_item": "ดำเนินการเพื่อบรรลุหลักฐานทั้งหมดใน Level 1 โดยเฉพาะรายการที่ยังไม่สอดคล้อง (Pass Ratio: 0.333)",
+            "evidence_summary_L5": {
+                "summary": "ไม่พบหลักฐานที่เกี่ยวข้องใน Vector Store สำหรับเกณฑ์ 6.1 Level 5",
+                "suggestion_for_next_level": "N/A"
+            },
+            "evidence_summary_L0": {
+                "summary": "N/A (Level 0 or Error)",
+                "suggestion_for_next_level": "N/A"
+            }
+        }
+    },
+    "Action_Plans": {
+        "6.1": [
+            {
+                "Phase": "1. Foundational Gap Closure",
+                "Goal": "ปิด Gap ที่ Level 1 ก่อน",
+                "Actions": [
+                    {
+                        "Statement_ID": "L1 S1",
+                        "Failed_Level": 1,
+                        "Recommendation": "จัดทำ Policy Document ที่ระบุวิสัยทัศน์/ทิศทางการดำเนินงาน และนโยบายการจัดการความรู้",
+                        "Target_Evidence_Type": "Policy Document",
+                        "Key_Metric": "Document approved by CXO"
+                    },
+                    {
+                        "Statement_ID": "L1 S3",
+                        "Failed_Level": 1,
+                        "Recommendation": "จัดทำ Signed Meeting Minutes ที่แสดงให้เห็นการติดตามกำกับประเมินผลปรับปรุงแก้ไขปัญหาและสนับสนุน",
+                        "Target_Evidence_Type": "Signed Meeting Minutes",
+                        "Key_Metric": "90% staff trained"
+                    }
+                ]
+            },
+            {
+                "Phase": "2. AI Validation & Maintenance",
+                "Goal": "ยืนยัน Level-Up และรักษาความต่อเนื่องของหลักฐานใน L1",
+                "Actions": [
+                    {
+                        "Statement_ID": "ALL_L1",
+                        "Failed_Level": 1,
+                        "Recommendation": "รวบรวมหลักฐานใหม่สำหรับ Level 1 และนำเข้า Vector Store จากนั้นรัน AI Assessment อีกครั้งเพื่อยืนยันผล",
+                        "Target_Evidence_Type": "Rerunning Assessment & New Evidence",
+                        "Key_Metric": "Overall Score ของ 6.1 ต้องเพิ่มขึ้นและ Highest Full Level เป็น L1"
+                    }
+                ]
+            }
+        ]
+    }
+}

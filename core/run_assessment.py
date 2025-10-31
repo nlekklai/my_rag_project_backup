@@ -1,4 +1,3 @@
-# core/run_assessment.py
 import os
 import json
 import logging
@@ -322,7 +321,6 @@ def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: 
     return action_plan
 
 # -------------------- L5 SUMMARY --------------------
-# -------------------- L5 SUMMARY --------------------
 def generate_and_integrate_l5_summary(assessor, results):
     """
     Generate L5 Summary และ Highest Full Level Summary 
@@ -478,12 +476,14 @@ def run_assessment_process(
     mode: str = "real",
     filter_mode: bool = False,
     export: bool = False,
-    disable_semantic_filter: bool = False
+    disable_semantic_filter: bool = False,
+    allow_fallback: bool = False,
+    external_retriever: Optional[Any] = None # 🟢 [REVISED] เพิ่ม Argument สำหรับ FastAPI
 ) -> Dict[str, Any]:
     start_time_global = time.perf_counter()
-    retriever = None
     summary: Dict[str, Any] = {'raw_export_path_used': None}
     original_mode = mode
+    retriever = external_retriever # 🟢 [REVISED] ใช้ external_retriever ที่ส่งเข้ามา
 
     # -------------------- Mock Setup --------------------
     set_mock_control_mode(original_mode == "mock")
@@ -493,17 +493,19 @@ def run_assessment_process(
 
     # -------------------- Load Vectorstore --------------------
     try:
-        if mode == "real":
+        if mode == "real" and external_retriever is None:
+            # 💡 [FALLBACK] โหลด Vector Store เองเมื่อรันผ่าน CLI/Local (ถ้า external_retriever เป็น None)
+            logger.warning("⚠️ Running in REAL mode without external retriever. Loading vector store inside function (slow).")
+            
             temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
-            evidence_mapping = temp_loader.evidence_mapping
-
-            # 🟢 Collection สำหรับ enabler
-            target_collection_names = [f"evidence_{enabler.lower()}"]
+            evidence_mapping_data = temp_loader.evidence_mapping_data
+            if evidence_mapping_data is None:
+                evidence_mapping_data = {}
 
             # Apply filter_mode doc_ids if requested
             file_ids_to_load = []
             if filter_mode and sub_criteria_id != "all":
-                for key, data in evidence_mapping.items():
+                for key, data in evidence_mapping_data.items():
                     if key.startswith(f"{sub_criteria_id}_L"):
                         for ev in data.get('evidences', []):
                             doc_id = ev.get('doc_id')
@@ -518,8 +520,15 @@ def run_assessment_process(
                 doc_ids=file_ids_to_load if file_ids_to_load else None
             )
 
-
+            target_collection_names = [f"evidence_{enabler.lower()}"]
             logger.info(f"✅ Vectorstore loaded for enabler {enabler}. Collections: {target_collection_names}")
+        
+        elif mode == "real" and external_retriever is not None:
+             logger.info("✅ Using external retriever provided by API/Caller.")
+             # retriever ถูกกำหนดไว้แล้วจาก external_retriever
+        
+        elif mode != "real":
+             retriever = None
 
     except Exception as e:
         logger.error(f"❌ ERROR: Failed to load Vectorstores in REAL mode: {e}", exc_info=True)
@@ -528,7 +537,8 @@ def run_assessment_process(
 
     # -------------------- Load & Filter Evidence --------------------
     try:
-        if 'temp_loader' in locals() and mode=="real":
+        # 💡 [REVISED] ใช้ temp_loader ที่สร้างมาใน Fallback หรือสร้าง EnablerAssessment ใหม่
+        if 'temp_loader' in locals() and mode=="real" and external_retriever is None:
             enabler_loader = temp_loader
         else:
             enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever)
@@ -539,8 +549,8 @@ def run_assessment_process(
 
         # Strict Filter Mode: remove statements without mapped evidence
         if filter_mode and sub_criteria_id != "all":
-            evidence_mapping = enabler_loader.evidence_mapping
-            valid_level_keys = {k for k, v in evidence_mapping.items() if k.startswith(sub_criteria_id) and v.get('evidences')}
+            evidence_mapping_data = enabler_loader.evidence_mapping_data
+            valid_level_keys = {k for k, v in evidence_mapping_data.items() if k.startswith(sub_criteria_id) and v.get('evidences')}
             statements_to_assess = []
             skipped_statements = 0
 
@@ -571,9 +581,9 @@ def run_assessment_process(
         evidence_data=filtered_evidence,
         rubric_data=enabler_loader.rubric_data,
         level_fractions=enabler_loader.level_fractions,
-        evidence_mapping_data=enabler_loader.evidence_mapping,
+        evidence_mapping_data=enabler_loader.evidence_mapping_data,
         vectorstore_retriever=retriever,
-        use_retrieval_filter=filter_mode,
+        use_mapping_filter=filter_mode, # 🟢 [FIXED] แก้ชื่อ Argument แล้ว
         target_sub_id=sub_criteria_id if sub_criteria_id!="all" else None,
         mock_llm_eval_func=llm_eval_func,
         mock_llm_summarize_func=llm_summarize_func,
@@ -610,15 +620,21 @@ def run_assessment_process(
         summary['Error_Details'] = str(e)
 
     if export:
-        export_paths = _export_results_to_json(summary, enabler, sub_id)
+        export_paths = _export_results_to_json(summary, enabler, sub_criteria_id)
         # 🛑 อัปเดต Dict summary ด้วยพาธที่ได้จากการ Export
         summary.update(export_paths)
 
     return summary
 
 # -------------------- CLI Entry Point (Adapter) --------------------
+# core/run_assessment.py
+
+# ... (โค้ด import และฟังก์ชันต่างๆ ข้างบน) ...
+
+# -------------------- CLI Entry Point (Adapter) --------------------
 if __name__ == "__main__":  
     try:
+        # 1. ⚙️ การตั้งค่า Argument Parser
         parser = argparse.ArgumentParser(description="Automated Enabler Maturity Assessment System.")
         parser.add_argument("--mode", 
                             choices=["mock", "random", "real"], 
@@ -648,98 +664,92 @@ if __name__ == "__main__":
                             action="store_true",
                             help="Disable semantic reranking / semantic filter in RAG (for debugging retrieval).")
         
+        # 🟢 [FIX 1] เพิ่ม Argument --allow-fallback เข้าไปใน argparse
+        parser.add_argument("--allow-fallback",
+                            action="store_true",
+                            help="Allow assessment to fallback to a random/mock mode if a fatal error occurs during RAG/LLM.")
+        
         args = parser.parse_args()
         
         
-        # CLI Call: เรียกใช้ฟังก์ชัน run_assessment_process
+        # 2. 🚀 CLI Call: เรียกใช้ฟังก์ชัน run_assessment_process
         final_results = run_assessment_process(
             enabler=args.enabler,
             sub_criteria_id=args.sub,
             mode=args.mode, 
             filter_mode=args.filter,
             export=args.export,
-            disable_semantic_filter=args.disable_semantic_filter
+            disable_semantic_filter=args.disable_semantic_filter,
+            # 🟢 [FIX 2] ส่ง allow_fallback โดยตรง
+            allow_fallback=args.allow_fallback, 
+            external_retriever=None
         )
-        
+
         enabler_abbr = args.enabler
-        
+        target_sub_id_for_print = args.sub
         mode_used_for_report = final_results.get('mode_used', args.mode)
-        
+
         # -------------------- Output Summary for CLI --------------------
-        if "Error_Details" in final_results:
-            print(f"\n❌ FATAL ERROR: Assessment failed during execution: {final_results['Error_Details']}", file=sys.stderr)
+        error_details = final_results.get('Error_Details')
+        
+        if error_details:
+            # ❌ แสดง Error Details ก่อน Summary
+            print(f"\n❌ FATAL ERROR: Assessment failed during execution: {error_details}", file=sys.stderr)
             
         
         summary = final_results
         overall_data = summary.get('Overall', {})
         sub_breakdown = summary.get('SubCriteria_Breakdown', {})
-        
+
+        # (โค้ดการแสดงผล Summary)
         print("\n=====================================================")
         print(f"      SUMMARY OF SCORING RESULTS ({mode_used_for_report.upper()} MODE) ")
-        print(f"      ENABLER: {args.enabler.upper()} ")
+        print(f"      ENABLER: {enabler_abbr.upper()}")
+        print(f"      SCOPE: {target_sub_id_for_print.upper()}")
         print("=====================================================")
-        
-        if overall_data:
-            # use .get with fallback for safe formatting
+            
+        if overall_data or sub_breakdown: 
             avg_score = overall_data.get('overall_maturity_score')
-            avg_score_text = f"{avg_score:.3f}" if isinstance(avg_score, (int, float)) else "N/A"
+            avg_score_text = f"{avg_score:.3f}" if isinstance(avg_score, (int, float)) else "0.000"
+            
             print(f"Overall Maturity Score (Avg.): {avg_score_text}")
             print(f"Overall Maturity Level (Weighted): {overall_data.get('overall_maturity_level', 'N/A')}")
-            print(f"Number of Sub-Criteria Assessed: {overall_data.get('num_sub_criteria', 'N/A')}")
+            print(f"Number of Sub-Criteria Assessed: {overall_data.get('num_sub_criteria', len(sub_breakdown) if sub_breakdown else 'N/A')}")
             
-        
         print("\n--- Sub-Criteria Breakdown ---")
-        for sub_id, data in sub_breakdown.items():
-            highest_full = data.get('highest_full_level', 0)
-            score = data.get('weighted_score', 0.0)
+        if sub_breakdown:
+            for sub_id, data in sub_breakdown.items():
+                highest_full = data.get('highest_full_level', 0)
+                score = data.get('weighted_score', 0.0)
+                print(f"  {sub_id} (Score: {score:.3f}, Highest Full Lvl: L{highest_full}) - {data.get('name', 'N/A')}")
+        else:
+            # 🟢 แสดงผลในกรณีที่ Sub-Criteria Breakdown ไม่มีข้อมูล
+            print("No Sub-Criteria results available.")
             
-            # 🛑 NOTE: ใช้ evidence_summary_L[highest_full_level] เพื่อแสดงสรุปของระดับที่ผ่าน
-            summary_key = f"evidence_summary_L{highest_full}"
-            summary_data = data.get(summary_key, {})
-            summary_text = summary_data.get('summary', 'No summary available.')
-            
-            print(f"\n[ID: {sub_id}] {data.get('name', 'N/A')}")
-            print(f"  - Highest Full Level: L{highest_full}")
-            print(f"  - Weighted Score: {score:.3f}")
-            print(f"  - Pass Ratios (L1-L5): {json.dumps(data.get('pass_ratios', {}))}")
-            print(f"  - Evidence Summary (L{highest_full}): {summary_text[:120]}...")
+        # -------------------- Print Detailed Results --------------------
+        if args.sub != "all" and final_results.get('raw_llm_results'):
+            print_detailed_results(
+                raw_llm_results=add_pass_status_to_raw_results(final_results['raw_llm_results']), 
+                target_sub_id=target_sub_id_for_print,
+                enabler_abbr=args.enabler
+            )
 
-        # -------------------- Action Plan Output --------------------
-        print("\n--- Consolidated Action Plans (Next Steps) ---")
-        action_plans = summary.get('Action_Plans', {})
-        if action_plans:
-            for sub_id, action_plan_phases in action_plans.items():
-                print(f"\n[ACTION PLAN] Sub-Criteria {sub_id}")
-                if isinstance(action_plan_phases, list):
-                    for phase in action_plan_phases:
-                        print(f"  > PHASE: {phase.get('Phase', 'N/A')}")
-                        print(f"    - Goal: {phase.get('Goal', 'N/A')}")
-                        actions = phase.get('Actions', [])
-                        if actions:
-                            for action in actions:
-                                stmt_id = action.get('Statement_ID', 'N/A')
-                                failed_lvl = action.get('Failed_Level', 'N/A')
-                                print(f"  - Statement: {stmt_id} (L{failed_lvl})") 
-                                print(f"    - Recommendation: {action.get('Recommendation', 'N/A')}")
-                                print(f"    - Target Evidence: {action.get('Target_Evidence_Type', 'N/A')}")
-                                print(f"    - Key Metric: {action.get('Key_Metric', 'N/A')}")
-                        else:
-                            print("[ACTIONS] No specific actions listed.")
-                else:
-                    print(f"[ACTION PLAN ERROR] Unexpected format for action plans: {type(action_plan_phases)}")
-                    
-        print("\n=====================================================")
-        print(f"Total Execution Time: {final_results.get('Execution_Time', {}).get('total', 0.0):.2f} seconds.")
-        # Use safe .get() for raw_export_path_used
-        if args.export and final_results.get('export_path_used'):
-            print(f"Report exported to: {final_results.get('export_path_used')}")
-            if final_results.get('raw_export_path_used'):
-                print(f"Raw evaluation data exported to: {final_results.get('raw_export_path_used')}")
-        print("=====================================================")
+        # -------------------- Print Export Path --------------------
+        export_path = final_results.get('export_path_used')
+        raw_export_path = final_results.get('raw_export_path_used')
 
-        # -------------------- Detailed Results Display --------------------
-        if 'raw_llm_results' in final_results:
-             print_detailed_results(final_results['raw_llm_results'], args.sub, enabler_abbr) 
-             
+        if args.export and export_path:
+            print(f"\n✨ Assessment Report Saved: {export_path}")
+            if raw_export_path:
+                print(f"✨ Raw Details Saved: {raw_export_path}")
+
+        # -------------------- Exit on Fatal Error --------------------
+        # 🚨 FIX: ถ้าเกิด Fatal Error ต้อง Exit(1)
+        if error_details:
+            print("\n(Script exiting due to Fatal Error.)")
+            sys.exit(1)
+
+        
     except Exception as e:
         logger.error(f"FATAL ERROR in CLI execution: {e}", exc_info=True)
+        sys.exit(1)

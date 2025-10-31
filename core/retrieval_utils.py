@@ -120,24 +120,24 @@ def retrieve_context_by_doc_ids(
 # --------------------
 # RETRIEVER FUNCTION (RAG Search)
 # --------------------
-
-# core/retrieval_utils.py (แทนที่ฟังก์ชัน retrieve_context_with_filter ทั้งหมด)
-
 # --------------------
 # RETRIEVER FUNCTION (RAG Search)
 # --------------------
-
 def retrieve_context_with_filter(
     query: str, 
-    doc_type: str, # 🟢 ADDED: ต้องมี doc_type (e.g., 'evidence')
-    enabler: str, # 🟢 ADDED: ต้องมี enabler (e.g., 'km')
-    stable_doc_ids: Optional[List[str]] = None, # 🛑 RENAMED & USED: ใช้เป็น stable_doc_ids แทน metadata_filter
-    # 🟢 FIX: เพิ่ม keyword argument ที่หายไป
-    disable_semantic_filter: bool = False 
+    doc_type: str, 
+    enabler: str, 
+    stable_doc_ids: Optional[List[str]] = None, 
+    disable_semantic_filter: bool = False,
+    # 🟢 NEW PARAMETER: ควบคุม Fallback Logic
+    allow_fallback: bool = False 
 ) -> Dict[str, Any]:
     """
     Retrieves documents for a given query, creates the appropriate retriever 
     (MultiDocRetriever with Reranker or not) and filters results based on stable_doc_ids.
+    
+    In strict filter mode (allow_fallback=False), if stable_doc_ids is provided, 
+    it strictly enforces the hard filter and prevents any fallback to full search.
     """
     if VectorStoreManager is None or 'get_vectorstore_manager' not in globals():
         logger.error("❌ VectorStoreManager or required components are not available. Skipping RAG retrieval.")
@@ -148,34 +148,49 @@ def retrieve_context_with_filter(
         manager = get_vectorstore_manager()
         collection_name = _get_collection_name(doc_type, enabler)
 
+        # 🟢 NEW: Logic สำหรับ Strict Filter (โหมดที่ต้องห้าม Fallback)
+        is_strict_mode = not allow_fallback
+        
+        # 🟢 NEW: ใน Strict Mode ถ้าไม่มีการ Map ID เลย ให้คืนค่าว่างทันที (ห้ามค้นหา)
+        if is_strict_mode and (stable_doc_ids is None or not stable_doc_ids):
+             logger.info("🛑 Strict Filter Mode: No mapped stable_doc_ids. Returning empty context to enforce manual mapping check.")
+             return {"top_evidences": []}
+
+
         # 2. เลือก Final K ที่เหมาะสมตาม flag
-        # ถ้า disable_semantic_filter เป็น True จะใช้ FINAL_K_NON_RERANKED (K=10)
-        # ถ้าเป็น False จะใช้ FINAL_K_RERANKED (K=7 พร้อม Reranker/Semantic Filter)
         final_k = FINAL_K_NON_RERANKED if disable_semantic_filter else FINAL_K_RERANKED
         
         # 3. สร้าง NamedRetriever spec
         retriever_spec = NamedRetriever(
             doc_id=f"{doc_type}_{enabler}",
             doc_type=collection_name,
-            # NOTE: INITIAL_TOP_K ต้องถูก Import จาก core.vectorstore
             top_k=INITIAL_TOP_K, 
-            final_k=final_k # 🟢 ใช้ final_k ที่ถูกเลือก
+            final_k=final_k 
         )
         
-        # 4. ใช้ MultiDocRetriever (ซึ่งจะสร้าง ContextualCompressionRetriever ภายใน)
-        # NOTE: MultiDocRetriever ต้องถูก Import จาก core.vectorstore
+        # 4. ใช้ MultiDocRetriever
+        # 🚨 KEY CHANGE: MultiDocRetriever มี doc_ids_filter 
+        # ถ้า stable_doc_ids ถูกส่งมา มันจะทำ Hard Filter 
+        # เราต้องมั่นใจว่า MultiDocRetriever ไม่มี Fallback Logic ภายใน (ซึ่งโดยทั่วไป LangChain จะไม่ทำ Fallback อัตโนมัติ)
         multi_retriever = MultiDocRetriever(
             retrievers_list=[retriever_spec],
             k_per_doc=INITIAL_TOP_K, 
-            doc_ids_filter=stable_doc_ids # ใช้ Hard Filter จาก Mapping
+            doc_ids_filter=stable_doc_ids 
         )
         
         # 5. ดำเนินการค้นหา
         documents = multi_retriever.get_relevant_documents(query)
         
-        logger.info(f"RAG Retrieval for query='{query[:30]}...' found {len(documents)} evidences (Filtered: {bool(stable_doc_ids)}, Semantic Filter: {'Disabled' if disable_semantic_filter else 'Enabled'})")
+        # 🟢 NEW: Logic สำหรับการจัดการผลลัพธ์ใน Strict Mode
+        if is_strict_mode and stable_doc_ids:
+            if not documents:
+                # 🛑 ใน Strict Mode ถ้า Map ID มาแล้ว แต่ค้นหาไม่พบ (เพราะไม่ใกล้เคียงทางความหมาย)
+                # เราถือว่าหลักฐานที่ Map ไว้ "ไม่เพียงพอ" หรือ "ไม่ตรง"
+                logger.info(f"🛑 Strict Filter Mode: Found 0 documents despite stable_doc_ids being provided. Returning empty context.")
+                return {"top_evidences": []}
         
         # 6. Format result
+        # ... (ส่วนนี้ใช้โค้ดเดิม) ...
         top_evidences = []
         for d in documents:
             meta = d.metadata
@@ -186,6 +201,8 @@ def retrieve_context_with_filter(
                 "source": meta.get("source") or meta.get("doc_source"),
                 "content": d.page_content.strip()
             })
+            
+        logger.info(f"RAG Retrieval for query='{query[:30]}...' found {len(documents)} evidences (Strict Mode: {is_strict_mode}, Filtered by ID: {bool(stable_doc_ids)})")
             
         return {"top_evidences": top_evidences}
 
