@@ -626,10 +626,6 @@ def run_assessment_process(
 
     return summary
 
-# -------------------- CLI Entry Point (Adapter) --------------------
-# core/run_assessment.py
-
-# ... (โค้ด import และฟังก์ชันต่างๆ ข้างบน) ...
 
 # -------------------- CLI Entry Point (Adapter) --------------------
 if __name__ == "__main__":  

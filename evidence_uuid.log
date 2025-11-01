@@ -1,0 +1,306 @@
+
+Found 296/314 supported documents for type 'evidence' (Filter: INGESTED (Successful / Unique Doc IDs)):
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+DOC ID (Stable/Temp)                   | FILENAME                            | EXT   | TYPE       | ENB   | SIZE(MB)  | STATUS     | CHUNKS   | REF ID (Old Key)
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+456a50b8047820644fa849578f7a0dca2d074b | 3.3-5 จำนวนคณะทำงานจัดการความรู้แ   | PNG   | evidence   | KM    | 0.06      | Ingested   | 7        | 33525670000000000000
+13dbc874c78ec05f5843c8f5faa53d50d4c927 | KM1.1L101 นโยบาย ในระบบ KM-Si       | JPG   | evidence   | KM    | 0.29      | Ingested   | 23       | km11l101kmsi00000000
+c6bf768f040eea54f4a468f807ce6c6d6851bc | KM1.1L102 แผนแม่บท ในระบบ KM-Si     | JPG   | evidence   | KM    | 0.19      | Ingested   | 39       | km11l102kmsi00000000
+bde52a6aa9f387d3f173e4431e3190346786d2 | KM1.1L103 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 8.51      | Ingested   | 261      | km11l1034pdf10000000
+5053c7b5ebbb4e94a4e1dae3c142937f767ab3 | KM1.1L104 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 8.51      | Ingested   | 181      | km11l104400000000000
+fa9fa2b10e219169aabebc5ad003659fc006a5 | KM1.1L105 นโยบาย KM 2567            | PDF   | evidence   | KM    | 0.91      | Ingested   | 5        | km11l105km2567000000
+e38efdfb47d82293dcc83ef15557a5a88824bf | KM1.1L106 มติบอร์ด ทบทวนแผนครั้งท   | PDF   | evidence   | KM    | 0.09      | Ingested   | 12       | km11l106400000000000
+7c6cf0466dbd4ca1cf0e2ab2f271f4b8cb6b21 | KM1.1L201 ตัวอย่าง Skill Matrix     | JPG   | evidence   | KM    | 0.17      | Ingested   | 8        | km11l201skillmatrix0
+c8a5740b331629ab5825a86fd8b088dd5e5af6 | KM1.1L202 ประเมิน Skill Matrix      | PNG   | evidence   | KM    | 0.09      | Ingested   | 4        | km11l202skillmatrix0
+bd17f89224708f4abcc89fa3d367310a1037be | KM1.1L203 ตัวอย่างคำสั่งแต่งตั้งร   | PDF   | evidence   | KM    | 0.48      | Ingested   | 9        | km11l203000000000000
+1bb6fafe17d66c80af9405a070be1d5f0675c6 | KM1.1L204 อนุมัติหลักการแต่งตั้งค   | PDF   | evidence   | KM    | 0.18      | Ingested   | 43       | km11l20419922566pdf1
+23bd5e885aa02141bbe662071449e6af16113d | KM1.1L205 ตัวอย่างคำสั่งแต่งตั้ง    | PDF   | evidence   | KM    | 5.60      | Ingested   | 257      | km11l205000000000000
+61a1f21191bf6facb74355eee5e7326550f8de | KM1.1L206 ตัวอย่างคำสั่งแต่งตั้ง    | PDF   | evidence   | KM    | 1.07      | Ingested   | 23       | km11l206000000000000
+e5046edfb46de8ccac6649a1dc566c1aa72525 | KM1.1L207 กพค.(จค) 2073 ทบทวนคณะก   | PDF   | evidence   | KM    | 0.16      | Ingested   | 2        | km11l207207300000000
+6d30d0a3523c73c921f6d0798da621a9d6268b | KM1.1L208 PEA KM Model.pdf (2)      | PDF   | evidence   | KM    | 8.04      | Ingested   | 3        | km11l208peakmmodelpd
+3b14ad05a9e0e2792003a133b891a4cf490add | KM1.1L209 PEA KM Model.pdf (1)      | PDF   | evidence   | KM    | 8.04      | Ingested   | 3        | km11l209peakmmodelpd
+26bf1f3af49e020a4129967a537fc133a18e99 | KM1.1L210 PEA KM Model              | PDF   | evidence   | KM    | 8.04      | Ingested   | 3        | km11l210peakmmodel00
+ad1e9d76797909dc51eaeb2622d8500a5fb147 | KM1.1L211 อนุมัติหลักการแต่งตั้งค   | PDF   | evidence   | KM    | 0.18      | Ingested   | 43       | km11l211199225660000
+c601c9786172c1e873b688244896218a9168ef | KM1.1L305 การรับรู้และเข้าใจ ผู้บ   | PDF   | evidence   | KM    | 0.02      | Ingested   | 2        | km11l305000000000000
+9180c09ef9497c2fbae72fe861579d82c1ff16 | KM1.1L306 นโยบาย KM 2567            | PDF   | evidence   | KM    | 0.91      | Ingested   | 5        | km11l306km2567000000
+e260f2e9e9d22972b2e52e44974f5053c0164c | KM1.1L307 Skill Matrix              | PDF   | evidence   | KM    | 1.04      | Ingested   | 6        | km11l307skillmatrix0
+46e44b1e113db549dfdf05425d5b45f5f934e5 | KM1.1L308 คำจำกัดความและเกณฑ์ Ena   | PDF   | evidence   | KM    | 0.16      | Ingested   | 19       | km11l308enablers2567
+f8e9d25c4818675f3973c509b6b99654c8f45f | KM1.1L309 ผลการประเมินผู้บริหาร     | PDF   | evidence   | KM    | 0.06      | Ingested   | 4        | km11l309000000000000
+e3c4087a3ccdea0c5ff58ddd791fcad4ac0bee | KM1.1L401 Mapping แผนแม่บท          | XLSX  | evidence   | KM    | 1.65      | Ingested   | 40       | km11l401mapping00000
+46c471c73f3b228d623bec79a4435e4d87e59e | KM1.1L402 แผนใหม่                   | PDF   | evidence   | KM    | 0.62      | Ingested   | 18       | km11l402000000000000
+5a299e4b7b38b36bba1a779e27c0ec846c4379 | KM1.1L501 Learning Form ทำแผนฯ      | PDF   | evidence   | KM    | 0.57      | Ingested   | 28       | km11l501learningform
+0a7b0a58d1d892c9192b5efb7a630383c4266d | KM1.1L502 Learning Form กระบวนการ   | PDF   | evidence   | KM    | 0.34      | Ingested   | 29       | km11l502learningform
+7dc125a095319053ebbd8b3941277a2f4779b6 | KM1.1L503 KM-WI-01 คู่มือการปฏิบั   | PDF   | evidence   | KM    | 2.83      | Ingested   | 39       | km11l503kmwi01000000
+4512d5039acfd7b21a54a909f697317a1c7b86 | KM1.1L504 กิจกรรมสื่อสารแผนฯ        | PDF   | evidence   | KM    | 0.71      | Ingested   | 1        | km11l504000000000000
+1dc5a9620b7e79cafadca79b409bb52a58618c | KM1.1L505 Sipoc กระบวนการจัดทำแผน   | PDF   | evidence   | KM    | 1.45      | Ingested   | 4        | km11l505sipoc0000000
+40e2821f59b9115195db6554300d7adc80a491 | KM1.2L10 KM1.2L103 ตัวอย่าง Skill   | JPG   | evidence   | KM    | 0.17      | Ingested   | 8        | km12l10km12l103skill
+e9b9528601323fdbb73ad40d9111fe793732a0 | KM1.2L101 อนุมัติหลักการแต่งตั้งค   | PDF   | evidence   | KM    | 0.18      | Ingested   | 43       | km12l101199225660000
+f822e2f852c8b7427a6959126d0df91262c9d5 | KM1.2L102 เกณฑ์และพฤติกรรมที่คาดห   | PDF   | evidence   | KM    | 1.04      | Ingested   | 6        | km12l102000000000000
+963a332c4cf71af9c345991087e894d4aa2bf1 | KM1.2L103 กพค.(จค) 370 จัดทำ Skil   | PDF   | evidence   | KM    | 0.25      | Ingested   | 3        | km12l103370skillmatr
+a2d2c110a0a20e7dca2e8e0ec4b1132b901387 | KM1.2L201 เกณฑ์และพฤติกรรมที่คาดห   | PDF   | evidence   | KM    | 1.04      | Ingested   | 6        | km12l201000000000000
+9f207c88cd18931674b568c797073909c9f9b2 | KM1.2L202 นโยบาย KM 2567            | PDF   | evidence   | KM    | 0.91      | Ingested   | 5        | km12l202km2567000000
+aaa7c7dfb78e30ecf2a2ad1da5fd281830318a | KM1.2L203 กพค.(จค) 370 จัดทำ Skil   | PDF   | evidence   | KM    | 0.25      | Ingested   | 3        | km12l203370skillmatr
+000ff197115c406d30894b6a9f9991ebaeb899 | KM1.2L204 ประเมิน Skill Matrix      | PNG   | evidence   | KM    | 0.09      | Ingested   | 4        | km12l204skillmatrix0
+0fa53f62afd6d0fe1564ec29a7405ad1c504fd | KM1.2L301 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 4.71      | Ingested   | 281      | km12l301400000000000
+555c53dc9bce489269b7ec83d637b9fa34a8a6 | KM1.2L302 ตัวอย่างจัดกิจกรรม ของท   | PDF   | evidence   | KM    | 2.61      | Ingested   | 4        | km12l302000000000000
+644ba2c1e1ecbb3179531767ace7acf4bd3530 | KM1.2L303 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 3.21      | Ingested   | 104      | km12l303400000000000
+096e7c66478d515dcddef4cfc90f63b0241d92 | KM1.2L304 แผนแม่บท ในระบบ KM-Si     | JPG   | evidence   | KM    | 0.19      | Ingested   | 39       | km12l304kmsi00000000
+fa9b9e385af5a59aec826cf2310eda7337231d | KM1.2L305 LINE_ALBUM_งาน peacon20   | JPG   | evidence   | KM    | 0.39      | Ingested   | 35       | km12l305linealbumpea
+520d061b25dcf451f6fe4f05324f8a4a86c8cc | KM1.2L401 ตัวอย่าง K Landscape สต   | PDF   | evidence   | KM    | 0.17      | Ingested   | 27       | km12l401klandscape00
+99947b2dbc73225898848844dca5e931fca77e | KM1.2L402 ตัวอย่าง K Landscape สา   | PDF   | evidence   | KM    | 0.28      | Ingested   | 24       | km12l402klandscape00
+243d15ddc16f96df9565b06bc7595d399248ee | KM1.2L403 ผลประเมินผู้บริหาร        | PDF   | evidence   | KM    | 0.08      | Ingested   | 7        | km12l403000000000000
+d1bae31659e4083a4adb8d813c82e8f7c87355 | KM1.2L404 ตัวอย่างจัดกิจกรรม ของท   | PDF   | evidence   | KM    | 2.61      | Ingested   | 4        | km12l404000000000000
+2e399d8dc133441ff443b3bbadb19db6d3eb8c | KM1.2L501 Skill Matrix              | PDF   | evidence   | KM    | 1.04      | Ingested   | 6        | km12l501skillmatrix0
+0118b74bb157bccab23c04e6505d5d23682e4b | KM1.2L502 ผลประเมินผู้บริหาร นำมา   | PDF   | evidence   | KM    | 0.18      | Ingested   | 10       | km12l502000000000000
+c4303b733a347fd43d17f27175ad92ecdd35ae | KM1.2L506 ดูงาน egat 2              | PNG   | evidence   | KM    | 0.95      | Ingested   | 30       | km12l506egat20000000
+05564448cca71c448af77e78cdb562b4ebccb6 | KM1.2L507 ดูงาน egat                | PNG   | evidence   | KM    | 0.82      | Ingested   | 37       | km12l507egat00000000
+667bbfaa7fa2e19a38b2c8fa7c23a0e99e2bee | KM1.2L508 ดูงาน ptt (1)             | JPG   | evidence   | KM    | 0.18      | Ingested   | 16       | km12l508ptt100000000
+fce957e3edefd7728bcfbee96b0f97df8f8842 | KM1.2L509 ดูงาน ptt (2)             | JPG   | evidence   | KM    | 0.15      | Ingested   | 20       | km12l509ptt200000000
+77973d4d692f62d2e9c683a6a0ae84d7c0bc24 | KM1.2L510 ดูงาน ptt (3)             | JPG   | evidence   | KM    | 0.15      | Ingested   | 18       | km12l510ptt300000000
+e1c3c53db674f69791526ff18152ccd65ad946 | KM2.1L101 Sipoc ทำแผน               | PDF   | evidence   | KM    | 1.02      | Ingested   | 5        | km21l101sipoc0000000
+b26d1453ea81dbf09848ac1903c91548a4f9a4 | KM2.1L102 รายงานการประชุม คณะ Cor   | PDF   | evidence   | KM    | 0.22      | Ingested   | 3        | km21l102corebusiness
+ddcad92841dbde43c23cbbf6f121e25cb93b0d | KM2.1L103 ภาพประชุม                 | PDF   | evidence   | KM    | 0.53      | Ingested   | 4        | km21l103000000000000
+0cf5e7c08eb49878ec97359eb92b46192d8e1a | KM2.1L104 ตัวอย่างรายงานผลการดำเน   | PDF   | evidence   | KM    | 0.16      | Ingested   | 28       | km21l104300000000000
+e6419b9fc9f2d65f5ae06ef5f5ab63c13c889f | KM2.1L201 แผนยุทธศาสตร์             | PDF   | evidence   | KM    | 2.18      | Ingested   | 42       | km21l201000000000000
+3941ceabe159fb500c7550dd97d5c5ffb67449 | KM2.1L202 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 3.21      | Ingested   | 104      | km21l202400000000000
+54b3102de86fabe1bba8caa1cbc75c83f11660 | KM2.1L203 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 8.51      | Ingested   | 166      | km21l2034pdf10000000
+526b96842a704621521c056ba93d7d2b216d88 | KM2.1L204 Sipoc ทำแผน               | PDF   | evidence   | KM    | 1.02      | Ingested   | 5        | km21l204sipoc0000000
+0591707c21aefbd6f4ca130d1a573b909bff14 | KM2.1L301 ผลประเมิน                 | PDF   | evidence   | KM    | 0.03      | Ingested   | 1        | km21l301000000000000
+60a8b7e8f74ba5157f1d4f064c781d76d5d1c8 | KM2.1L302 การวางแผนการดำเนินงาน K   | PDF   | evidence   | KM    | 0.06      | Ingested   | 2        | km21l302kmactionplan
+6a6755478d87b57ca45710f742fcf5350f065f | KM2.1L303 แผนแม่บท ในระบบ KM-Si     | JPG   | evidence   | KM    | 0.19      | Ingested   | 39       | km21l303kmsi00000000
+efd3cdaec73d59bd2f5dacfac0c9081b0e91f5 | KM2.1L304 ตัวอย่างจัดกิจกรรม ของท   | PDF   | evidence   | KM    | 2.61      | Ingested   | 4        | km21l304000000000000
+8e25b290574f6d65ef0c479d2406e46991a72d | KM2.1L401 Sipoc ทำแผน               | PDF   | evidence   | KM    | 1.02      | Ingested   | 5        | km21l401sipoc0000000
+8f9849f128b8e883a444ac2b4e0022c2d1f591 | KM2.1L402 กพค.(จค) 1866             | PDF   | evidence   | KM    | 0.15      | Ingested   | 25       | km21l402186600000000
+f20fb2d4080ec699916d29696b3de35ffc9392 | KM2.1L403 มติประชุม ไตรมาส 3        | PDF   | evidence   | KM    | 0.14      | Ingested   | 1        | km21l403300000000000
+724946f0c21db7a038d8e0ac8ace520339e3ae | KM2.1L404 การวางแผนการดำเนินงาน K   | PDF   | evidence   | KM    | 0.06      | Ingested   | 2        | km21l404kmactionplan
+1fa19915eaeb2e53debd4746974fbb3e5b3413 | KM2.1L405 PEA KM Master Plan_สำหร   | PDF   | evidence   | KM    | 4.10      | Ingested   | 86       | km21l405peakmmasterp
+9ed191417ef414822b227d22f0d06d908cc8fa | KM2.1L406 ติดตามผลผ่านระบบ km-sur   | PNG   | evidence   | KM    | 0.17      | Ingested   | 6        | km21l406kmsurvey0000
+f6883fd775613ea2c905c70c25376790864b67 | KM2.1L407 ติดตามผลผ่านระบบ km-sur   | PNG   | evidence   | KM    | 0.17      | Ingested   | 6        | km21l407kmsurveypng1
+7ad98bfcbe86bb76b5bc16a535ce1323338552 | KM2.1L501 Learning Form ทำแผนฯ      | PDF   | evidence   | KM    | 0.57      | Ingested   | 28       | km21l501learningform
+0ca7bfc799ff01204ef97ad44b871d55371c18 | KM2.1L502 PEA KM Master Plan_สำหร   | PDF   | evidence   | KM    | 1.42      | Ingested   | 64       | km21l502peakmmasterp
+7a427692d847a6af05ce1865a7e9f074a1b670 | KM2.1L503 Sipoc หลังปรับ            | PDF   | evidence   | KM    | 1.45      | Ingested   | 4        | km21l503sipoc0000000
+78d81b985f4a1ea9c87052b7d21af7e0742401 | KM2.2L101 เกณฑ์การจัดสรรร           | PDF   | evidence   | KM    | 0.12      | Ingested   | 4        | km22l101000000000000
+38c6861c3b3c3de972f18c3ac1cdcbea8ad86a | KM2.2L102 ขอบเขตงาน                 | PDF   | evidence   | KM    | 0.05      | Ingested   | 1        | km22l102000000000000
+d8765cb95076f25111c0e595eaa96e5c46f0a6 | KM2.2L103 ใบสั่งจ้าง                | PDF   | evidence   | KM    | 5.24      | Ingested   | 75       | km22l103000000000000
+c28c061a582cd8198cd0bc74b74e2f7be208d4 | KM2.2L104 อนุมัติหลักการ KM Imple   | PDF   | evidence   | KM    | 1.00      | Ingested   | 5        | km22l104kmimplementa
+1f307213da78e4c160f3f4dcb395934c2766f4 | KM2.2L105 อนุมัติ Implementation    | PDF   | evidence   | KM    | 4.51      | Ingested   | 81       | km22l105implementati
+73dc2beeee6725bc45c8ffa272d2abaff94fab | KM2.2L201 เกณฑ์การจัดสรรร           | PDF   | evidence   | KM    | 0.12      | Ingested   | 4        | km22l201000000000000
+bfc4d48cf4c1b7b11e69c54b1de8c9b3418ff8 | KM2.2L202 ตัวอย่างการดำเนินการจัด   | PDF   | evidence   | KM    | 0.45      | Ingested   | 8        | km22l202000000000000
+63e64550df89f1eefac95cec6ff2739c551cfb | KM2.2L203 ตัวอย่างการดำเนินการจัด   | PDF   | evidence   | KM    | 1.00      | Ingested   | 11       | km22l203300000000000
+985f469f95067e070e47820a96be3da52cd6b0 | KM2.2L204 ตัวอย่างการดำเนินการจัด   | PDF   | evidence   | KM    | 1.23      | Ingested   | 49       | km22l204200000000000
+4b2d0a8101b4e64dcbcdf0ddaddb497f760999 | KM2.2L301 แผนแม่บท ปรับปรุงครั้งท   | PDF   | evidence   | KM    | 3.21      | Ingested   | 104      | km22l301400000000000
+4bec1c05231e1a85a2866eac3fd6756e895b8c | KM2.2L302 งบประมาณในแผนแม่บท        | PDF   | evidence   | KM    | 1.08      | Ingested   | 68       | km22l302000000000000
+759cd5850f1e610a3d2207a41c5ec191af2e03 | KM2.2L303 ตัวอย่างการดำเนินการจัด   | PDF   | evidence   | KM    | 0.45      | Ingested   | 8        | km22l303000000000000
+4c83c99fb7e3e85a3aa6a90c8f8d0d16fbf2f5 | KM2.2L304 แจ้งการจัดสรรงบ           | PDF   | evidence   | KM    | 0.24      | Ingested   | 3        | km22l304000000000000
+290af46bb95b74b1fb5886985d3980ac378349 | KM2.2L305 ตัวอย่างหนังสือให้ดำเนิ   | PDF   | evidence   | KM    | 0.16      | Ingested   | 2        | km22l305000000000000
+cb2de4c730cb95ec684e27fbd8d5deeb35a55c | KM2.2L306 การวางแผนการดำเนินงาน K   | PDF   | evidence   | KM    | 0.06      | Ingested   | 2        | km22l306kmactionplan
+c6e8cb81b053d27689bf98e9d4deaf1053e0ff | KM2.2L401 process การดำเนินงาน 10   | PDF   | evidence   | KM    | 0.04      | Ingested   | 1        | km22l401process10000
+03d96c2ecbced99b2d7851057cc25f52704935 | KM2.2L402 ผลการดำเนนิงาน รายงานบอ   | PDF   | evidence   | KM    | 0.06      | Ingested   | 3        | km22l402300000000000
+263349ed313571d9666e3202cb6bb0d1c61dca | KM2.2L403 km-survey 3               | JPG   | evidence   | KM    | 0.07      | Ingested   | 11       | km22l403kmsurvey3000
+369f9e62ec3128244cc7635d2abdae546b032c | KM2.2L404 km-survey 2               | JPG   | evidence   | KM    | 0.09      | Ingested   | 4        | km22l404kmsurvey2000
+a14e25d804f32711612599d8bc237dffcc9789 | KM2.2L405 km-survey                 | JPG   | evidence   | KM    | 0.11      | Ingested   | 3        | km22l405kmsurvey0000
+ac1b7077ab33e2dd44062e4750cd4e8df3b4fe | KM2.2L406 ตัวอย่างผลการดำเนินงาน    | PDF   | evidence   | KM    | 1.79      | Ingested   | 1        | km22l406300000000000
+04de84c99f7103dddbbe45c6eeea76541bb308 | KM2.2L501 ให้ประเมินผลการดำเนินงา   | PDF   | evidence   | KM    | 0.16      | Ingested   | 2        | km22l501km2567000000
+6269988bd2ddaccf57d02515e36bc2d2f556c2 | KM2.2L502 ขอ user canva             | PDF   | evidence   | KM    | 0.24      | Ingested   | 9        | km22l502usercanva000
+7c42011da8139897abcc6573ec3a5eae4d6d27 | KM2.2L503 ขอ user canva 2           | PDF   | evidence   | KM    | 0.21      | Ingested   | 9        | km22l503usercanva200
+33bff3fdf69a216d825e625b1e316279375fd3 | KM2.2L504 ความพึงพอใจ จัดสรรงบ IT   | PDF   | evidence   | KM    | 0.04      | Ingested   | 2        | km22l504it0000000000
+c59a8112a6c393f09db4ce3334ee09b6011781 | KM3.1L101 3.1-1 แผนการสื่อสารด้าน   | PDF   | evidence   | KM    | 0.23      | Ingested   | 3        | km31l101311256710000
+e6a3d89054d8904dcf0bef82e9f33e76e426a3 | KM3.1L102 3.1-1 รูปภาพกิจกรรม Onb   | PDF   | evidence   | KM    | 0.97      | Ingested   | 1        | km31l102311onboardin
+42ef068bd480655a1168bd443cf08658715ce6 | KM3.1L103 3.1-1 รูปภาพการเสวนาในห   | PDF   | evidence   | KM    | 1.04      | Ingested   | 1        | km31l103311peakmiso3
+bace49574bcad9eabf13ed03c99895c57d07b9 | KM3.1L104 3.1-1 นโยบายการจัดการคว   | PDF   | evidence   | KM    | 2.31      | Ingested   | 6        | km31l104311km2567000
+45722f356e7d99e593a86c4214729248ea4a1b | KM3.1L201 รายงานการจัดฝึกอบรม ด้า   | PDF   | evidence   | KM    | 0.13      | Ingested   | 19       | km31l201256700000000
+f467c008814b71db684e761872414ffcb384d4 | KM3.1L202 แผนพัฒนารายบุคคล (IDP)    | PDF   | evidence   | KM    | 0.22      | Ingested   | 1        | km31l202idp000000000
+8c4f1620997a6fcf5a079ebbd56bb6bcaab42d | KM3.1L203 3.1-2 ระบบประเมินผลการป   | PDF   | evidence   | KM    | 0.59      | Ingested   | 1        | km31l203312peata0000
+ee74c75fb8a4f88d23d6b8f35b7414d7acae85 | KM3.1L204 3.1-2 แผนฝึกอบรมด้านการ   | PDF   | evidence   | KM    | 1.29      | Ingested   | 73       | km31l204312256700000
+b174a1010dc88eb92711cc8ac9c28555089f01 | KM3.1L205 แผนที่การจัดกิจกรรมการจ   | PDF   | evidence   | KM    | 2.64      | Ingested   | 15       | km31l205256700000000
+2fb56612cc2e0eaca8f69160d9ddb275f620a8 | KM3.1L301 แผนที่การจัดกิจกรรมการจ   | PDF   | evidence   | KM    | 2.64      | Ingested   | 15       | km31l301256700000000
+57a0584c0a313ea9dc4c607acf7a15a6217815 | KM3.1L302 ภาพงานประชุมวิชาการและน   | PDF   | evidence   | KM    | 4.23      | Ingested   | 1        | km31l3022567peaconin
+e407814b97f1724f29d3ae547dc7bc137db55d | KM3.1L303 อนุมัติการจัดสรรงบประมา   | PDF   | evidence   | KM    | 4.51      | Ingested   | 81       | km31l303implementati
+b6ebfb8da32709d9eda2787f72710f4e45c69d | KM3.1L304 ภาพการจัดงาน Innovation   | PDF   | evidence   | KM    | 2.28      | Ingested   | 1        | km31l304innovationkm
+f5dd09fa2d784e2a25fbe18f976f30c7a4f6fd | KM3.1L305 รูปการจัดกิจกรรม KM Tra   | PDF   | evidence   | KM    | 2.10      | Ingested   | 1        | km31l305kmtrainingda
+3b2f99ce7448c178e6d69cc230c79f7057af54 | KM3.1L306 การจัดกิจกรรม PEANE3 KM   | PDF   | evidence   | KM    | 1.98      | Ingested   | 26       | km31l306peane3kmshow
+bfad32691a6144f79393d40271710ccf3f3133 | KM3.1L307 การจัดกิจกรรม KM Day ขอ   | PDF   | evidence   | KM    | 1.82      | Ingested   | 46       | km31l307kmday3000000
+9c4abf15bc98c547f93637e68596d8bfc09ed8 | KM3.1L308 PEA C2 KM Sharing Day 2   | PDF   | evidence   | KM    | 1.13      | Ingested   | 55       | km31l308peac2kmshari
+e4b1f9fe998f878a31717123314f4aedfb546b | KM3.1L309 ระบบรายงานผลการดำเนินงา   | PDF   | evidence   | KM    | 0.26      | Ingested   | 1        | km31l309000000000000
+95088474c75b197f1080213f16b39a84ee5465 | KM3.1L401 กิจกรรมการจัดการความรู้   | PDF   | evidence   | KM    | 2.64      | Ingested   | 15       | km31l401256700000000
+791436ead6b87ac9662409e9b3eba9162f6d9c | KM3.1L402 3.1-4การยกย่องชมเชยต่อส   | PDF   | evidence   | KM    | 1.77      | Ingested   | 1        | km31l402314buildingt
+6ae60e497673eb86524d30e8625347f6a78723 | KM3.1L403 3.1-4 การมอบรางวัล ในกา   | PDF   | evidence   | KM    | 0.84      | Ingested   | 1        | km31l4033142567p0000
+7315c1170e4e989448657a3f0f4d632f730716 | KM3.1L404 3.1-4 การยกย่องชมเชยต่อ   | PDF   | evidence   | KM    | 0.39      | Ingested   | 1        | km31l404314km0000000
+34924208d8023bd86201c8b1ce086d61a9a0bf | KM3.1L405 3.1-4การมอบรางวัลการจัด   | PDF   | evidence   | KM    | 10.26     | Ingested   | 1        | km31l405314112567000
+66b8fcac0b1d7a64958d1febb8d82dd5043ec8 | KM3.1L406 3.1-4 การยกย่องชมเชยต่อ   | PDF   | evidence   | KM    | 3.79      | Ingested   | 1        | km31l406314kmpeacon2
+e38bae5e4d1e9a6ff61bba5441632611357826 | KM3.1L501 3.1-5 ผลประเมินความความ   | PNG   | evidence   | KM    | 0.17      | Ingested   | 18       | km31l501315256700000
+403ab242e083a4dd1f161f5a2547337a29c6cd | KM3.1L502 3.1-5 Line Openchat ในช   | PDF   | evidence   | KM    | 0.60      | Ingested   | 1        | km31l502315lineopenc
+359a28cfd6f6214a010c8009a1c4488bb50401 | KM3.1L503 ตัวอย่างการปรับเปลี่ยนว   | PDF   | evidence   | KM    | 1.11      | Ingested   | 1        | km31l503000000000000
+f89ea5a977e5fa8e51d02c7ad41d1d7c883e98 | KM3.1L504 หลักสูตร Organizational   | PDF   | evidence   | KM    | 1.44      | Ingested   | 1        | km31l504organization
+14ad2b392c664fd2b752eacdac542ee3efb3e3 | KM3.1L505 3.1-5 ตัวอย่างการมอบราง   | PDF   | evidence   | KM    | 0.53      | Ingested   | 1        | km31l505315peacon202
+81f578b00b181226255c21ea22405f704cbf9c | KM3.2L101 การปรับปรุงพื้นที่ Cowo   | PDF   | evidence   | KM    | 2.16      | Ingested   | 1        | km32l101coworkingspa
+87df26db7f7e856733d02fcb5fd53ed44c5d3a | KM3.2L102 รูปการจัดหลักสูตร อบรมเ   | PDF   | evidence   | KM    | 2.64      | Ingested   | 10       | km32l102jenkinspipel
+d2fae6c6adbd3d4ab2bbb2fe2f7db1310cc13a | KM3.2L103 ภาพงานประชุมวิชาการและน   | PDF   | evidence   | KM    | 4.23      | Ingested   | 1        | km32l1032567peaconin
+9c50adc6a054f7ffde3e69c2251f69bfe9a9ab | KM3.2L104 3.2-1การตอบรับการเข้าร่   | PDF   | evidence   | KM    | 5.95      | Ingested   | 6        | km32l1043212567peaco
+20d8f6c75a6225296a9f9c83ee972f2c4ea681 | KM3.2L105 ชุมชนนักปฏิบัติ (KM PEA   | PDF   | evidence   | KM    | 0.72      | Ingested   | 1        | km32l105kmpeacop0000
+f033a29414734c824424ecdd5af91e6789df1e | KM3.2L106 3.2-1 Line Openchat ในช   | PDF   | evidence   | KM    | 0.60      | Ingested   | 1        | km32l106321lineopenc
+7682d9c624226437eb390106dce46eaf5fe6ca | KM3.2L107 3.2-1 ผลประเมินความพึงพ   | PNG   | evidence   | KM    | 0.13      | Ingested   | 18       | km32l107321kmsi00000
+444933e7b3eeb7ddae8709d25580a40cb1ee38 | KM3.2L201 3.2-2 นโยบายการจัดการคว   | PDF   | evidence   | KM    | 2.31      | Ingested   | 6        | km32l201322km2567000
+d38cb051963feb1caa262e28dda36b68bba3c6 | KM3.2L202 3.2-2 ผลวัฒนธรรมองค์กรแ   | PNG   | evidence   | KM    | 0.16      | Ingested   | 20       | km32l202322000000000
+6ad4b8352ab2e54c1c3c7c89b1a64966ed7844 | KM3.2L203 3.2-2 ร้อยละการแสดงพฤติ   | PDF   | evidence   | KM    | 0.10      | Ingested   | 1        | km32l203322trusted25
+798dbdeb4af86f88c213d6c8c8bcae38f1321b | KM3.2L301 3.2-3 โครงการพัฒนาบุคลา   | PDF   | evidence   | KM    | 5.01      | Ingested   | 1        | km32l301323artificia
+cee68f2adbfb4f1a7953e581b949953703d48f | KM3.2L302 3.2-3 การจัดงาน PEA Biz   | PDF   | evidence   | KM    | 2.55      | Ingested   | 123      | km32l302323peabiztec
+b6efb175e7654788bba856824d9354089bbd18 | KM3.2L303 3.2-3 รูปภาพโครงการ Sho   | PDF   | evidence   | KM    | 0.96      | Ingested   | 1        | km32l303323showandsh
+de3bf7f19cfa60f1414c48ea758eaa2f256306 | KM3.2L304 3.2-3หลักสูตร Critical    | PDF   | evidence   | KM    | 0.91      | Ingested   | 1        | km32l304323criticalk
+2660d90421bd4f72159b62c40d741e4767782b | KM3.2L305 3.2-3 สรุป Show and Sha   | PDF   | evidence   | KM    | 0.04      | Ingested   | 2        | km32l305323showandsh
+7a3bfce3026f5c5d6e98efbaaf4616cac20549 | KM3.2L401 ผลประเมินความพึงพอใจของ   | PDF   | evidence   | KM    | 0.06      | Ingested   | 7        | km32l401000000000000
+355b2402f5aebac9decb23739ab70ea20cb1c9 | KM3.2L402 3.2-4 ร้อยละการแสดงพฤติ   | PDF   | evidence   | KM    | 0.10      | Ingested   | 1        | km32l402324trusted25
+438ae2f681f2868c8d1ecc41a3bf74e732971f | KM3.2L403 3.2-4หลักสูตร Critical    | PDF   | evidence   | KM    | 0.91      | Ingested   | 1        | km32l403324criticalk
+eaae546cb6d5f8400b30f7bef19d3a27f6d926 | KM3.2L405 3.2-4 การศึกษาดูงานกับก   | PDF   | evidence   | KM    | 1.17      | Ingested   | 1        | km32l405324egat00000
+2ede3f86a8d179d3ea64203686a9ecb666beae | KM3.2L501 การประเมินทักษะการทำงาน   | PDF   | evidence   | KM    | 1.37      | Ingested   | 1        | km32l501skillmatrix0
+db517e6529fec7c0034bed2d11ca8bd8924ca2 | KM3.2L502 3.2-5 รูปภาพโครงการ Sho   | PDF   | evidence   | KM    | 0.96      | Ingested   | 1        | km32l502325showandsh
+6a2a68089319a2a9020e028ad9b1e24240a577 | KM3.2L503 3.2-5 สรุป Show and Sha   | PDF   | evidence   | KM    | 0.04      | Ingested   | 2        | km32l503325showandsh
+6cf4e2b02c6ac4d182399d7bd3d8799d2bdd01 | KM3.2L504 3.2-5 การปรับปรุงพื้นที   | PDF   | evidence   | KM    | 2.16      | Ingested   | 1        | km32l504325coworking
+472d483bd53297f9120fcf8e5c4c0c40f088c1 | KM3.3L102 3.3-1 แผนพัฒนารายบุคคล    | PDF   | evidence   | KM    | 0.50      | Ingested   | 1        | km33l102331idpskillm
+ef95e366bba892877b2eacc57e1b2af8c10226 | KM3.3L103 การจัดหลักสูตร Knowledg   | PDF   | evidence   | KM    | 8.23      | Ingested   | 1        | km33l103knowledgecap
+40a1cdb10b64a93dda93062f532a84c15f7346 | KM3.3L201 โครงสร้างคณะกรรมการจัดก   | PDF   | evidence   | KM    | 0.04      | Ingested   | 3        | km33l201km0000000000
+881bd5ec5a15743e44653207b05bbcaad6e0dc | KM3.3L202 การตรวจติดตามภายใน ตามก   | PDF   | evidence   | KM    | 0.29      | Ingested   | 13       | km33l202iso304010000
+dc99d3541e5eff0c0ee1b47f75ec4f0d0fdb78 | KM3.3L203 แผนการตรวจติดตามภายในปร   | PDF   | evidence   | KM    | 0.27      | Ingested   | 2        | km33l203304010000000
+780d9ac434a8bd14113f70c3e725ef67c5915b | KM3.3L301 3.3-3 แผนฝึกอบรมด้านการ   | PDF   | evidence   | KM    | 1.29      | Ingested   | 73       | km33l301333256700000
+e8c76b5b0f4ee02d082619631593a31058abc4 | KM3.3L302 3.3-3 การศึกษาดูงานกับก   | PDF   | evidence   | KM    | 1.17      | Ingested   | 1        | km33l302333egat00000
+3fecd4c76ca16b1a41279f80569a3ffda45f97 | KM3.3L303 การศึกษาดูงานร่วมกับ ธ.   | PDF   | evidence   | KM    | 0.92      | Ingested   | 1        | km33l303000000000000
+67c17c2a337f29184f264e31a48417c77973f9 | KM3.3L304 การศึกษาดูงานร่วมกับท่า   | PDF   | evidence   | KM    | 0.80      | Ingested   | 1        | km33l304000000000000
+104b6f5bf1d3c7c1cf56eb42724b91398036bd | KM3.3L305 รายงานการจัดฝึกอบรม ด้า   | PDF   | evidence   | KM    | 0.13      | Ingested   | 19       | km33l305256700000000
+a6c16dedef91b0765e337df8f03a45d4356204 | KM3.3L306 แนวทางปฏิบัติที่ดีด้านก   | PDF   | evidence   | KM    | 1.60      | Ingested   | 1        | km33l306000000000000
+295ecd4039ce5cab9bb88b2cb18b274020b907 | KM3.3L401 3.3-4 แผนพัฒนารายบุคคล    | PDF   | evidence   | KM    | 0.50      | Ingested   | 1        | km33l401334idpskillm
+ad5fc8b27f7d5890c26e9a1ab196279b5a516f | KM3.3L402 3.3-4 แผนฝึกอบรมด้านการ   | PDF   | evidence   | KM    | 1.29      | Ingested   | 24       | km33l402334256700000
+56e4fe1a96aaff45f88b81096b2ec336519de7 | KM3.3L403 การประเมินทักษะการทำงาน   | PDF   | evidence   | KM    | 1.37      | Ingested   | 1        | km33l403skillmatrix0
+ad625bdb976fba64b7847dfbbd0b2ca80b24bd | KM3.3L404 การจัดหลักสูตร Knowledg   | PDF   | evidence   | KM    | 8.23      | Ingested   | 1        | km33l404knowledgecap
+6ef507067dc744b52fa04a0c0691995ecec32b | KM3.3L405 3.3-4 แผนแม่บทการจัดการ   | PDF   | evidence   | KM    | 0.35      | Ingested   | 7        | km33l405334p41000000
+69577190f8a0b793923a342dc4550a7538a0ee | KM3.3L406 ตัวอย่างใบประกาศการผ่าน   | PDF   | evidence   | KM    | 0.36      | Ingested   | 1        | km33l406000000000000
+9f453400919cf08778137ecc6843720a86642a | KM3.3L501 3.3-5 แผนฝึกอบรมด้านการ   | PDF   | evidence   | KM    | 1.29      | Ingested   | 71       | km33l501335256700000
+1070c41e1ebd173dd95e8b8f4def5cf77c5fab | KM3.3L502 3.3-5เล่มแผนยุทธศาสตร์    | PDF   | evidence   | KM    | 0.91      | Ingested   | 2        | km33l502335256725710
+f611fd492fabb38413723dc8eb063ca379d29f | KM3.3L503 3.3 -5 หลักสูตร Critica   | PDF   | evidence   | KM    | 0.91      | Ingested   | 1        | km33l503335criticalk
+738e0f7436df595e4dca369caa53ce918b1cd3 | KM3.3L504 รายงานการจัดฝึกอบรม ISO   | PDF   | evidence   | KM    | 0.10      | Ingested   | 5        | km33l504iso304010000
+8485c326266f9bc1efe020ab7b69813f3f148c | KM3.3L505 การจัดหลักสูตร Knowledg   | PDF   | evidence   | KM    | 8.23      | Ingested   | 1        | km33l505knowledgecap
+da942c18cee4366fba05e0a5ebf8fc5259d89b | KM4.1L101 KM-WI-01 คู่มือการปฏิบั   | PDF   | evidence   | KM    | 2.83      | Ingested   | 39       | km41l101kmwi01100000
+fc301359c0e83c07f22452997d8066005cfed7 | KM4.1L102 KM-QM-01_คู่มือระบบการจ   | PDF   | evidence   | KM    | 0.94      | Ingested   | 17       | km41l102kmqm01pea200
+0d88c19d31d41cacdb4675dbf3b15e8766a009 | KM4.1L103 KM-FW-01-07 แบบฟอร์มควา   | PDF   | evidence   | KM    | 0.50      | Ingested   | 3        | km41l103kmfw0107onep
+d44e82cf1a5b0e4aff3f1180330aa50f642380 | KM4.1L104 KM-QP-04 ประชุมทบทวนฝ่า   | PDF   | evidence   | KM    | 0.46      | Ingested   | 7        | km41l104kmqp04000000
+56b05513db3ff601e6c710fd9312f36ffdcac0 | KM4.1L105 KM-FP-03-01 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 15       | km41l105kmfp03010000
+781301c75efda4a8f14ad1fa2da71ff4fb4877 | KM4.1L106 KM-FP-03-03 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 6        | km41l106kmfp03030000
+49f3d052b90e42fd1703843e1658f2d6e451df | KM4.1L107 KM-FW-01-06 แบบฟอร์มควา   | PDF   | evidence   | KM    | 0.40      | Ingested   | 3        | km41l107kmfw0106onep
+97bacc8a4caa040dee6439442281939b83cb49 | KM4.1L108 KM-FP-01-01 แผนการตรวจต   | PDF   | evidence   | KM    | 0.39      | Ingested   | 4        | km41l108kmfp01010000
+c52c0de1760dcfdf64e10d79b0d03eac32ff13 | KM4.1L109 KM-FP-03-02 การวิเคราะห   | PDF   | evidence   | KM    | 0.37      | Ingested   | 6        | km41l109kmfp0302stak
+78d951d7e207258ca97122e183494a7a7918d8 | KM4.1L110 KM-FW-01-01 รายการเอกสา   | PDF   | evidence   | KM    | 0.36      | Ingested   | 5        | km41l110kmfw01012000
+9d676b3413c84bda89ce7ee990c3be5eaf5f48 | KM4.1L111 KM-QP-02 การปฏิบัติการแ   | PDF   | evidence   | KM    | 0.33      | Ingested   | 8        | km41l111kmqp02000000
+77a5335bc05a2c051b9f5539d61379d24f0b07 | KM4.1L112 KM-QP-01 การตรวจติดตามภ   | PDF   | evidence   | KM    | 0.29      | Ingested   | 13       | km41l112kmqp01000000
+62f984151d3a21288fb0575fa86c63ca0fb36c | KM4.1L113 KM-QP-05 การควบคุมเอกสา   | PDF   | evidence   | KM    | 0.29      | Ingested   | 19       | km41l113kmqp05000000
+dbfe7dbd4f7e42339860030699c4a69bb07067 | KM4.1L114 KM-FW-01-05 แบบฟอร์มทบท   | PDF   | evidence   | KM    | 0.27      | Ingested   | 2        | km41l114kmfw0105acti
+6a11d0c75c1d9d674c006742d7b07c725c6216 | KM4.1L115 KM-SD-02 แผน KM Impleme   | PDF   | evidence   | KM    | 0.26      | Ingested   | 5        | km41l115kmsd02kmimpl
+06440f6083604f5787bcc9d048dbce9fdade66 | KM4.1L116 KM-FW-01-04 แบบฟอร์ม Kn   | PDF   | evidence   | KM    | 0.23      | Ingested   | 3        | km41l116kmfw0104know
+16df65cbd5657e85042e66e0ff8bd636bc6165 | KM4.1L117 KM-QP-03_การประเมินความ   | PDF   | evidence   | KM    | 0.23      | Ingested   | 13       | km41l117kmqp03000000
+9c727a94e48a93e359f5bb71ba49c8f69c877b | KM4.1L118 KM-SD-01 แผนการสื่อสารด   | PDF   | evidence   | KM    | 0.22      | Ingested   | 3        | km41l118kmsd01256710
+186d8c0cb76a6d64bf4b6d97845721008fba31 | KM4.1L119 KM-FP-03-04 Action Plan   | PDF   | evidence   | KM    | 0.18      | Ingested   | 2        | km41l119kmfp0304acti
+fd86a09fa5a0519ab3e6c883a05ed4a688025b | KM4.1L120 KM-FP-02-01 แบบฟอร์มการ   | PDF   | evidence   | KM    | 0.15      | Ingested   | 1        | km41l120kmfp02010000
+e2fd33082724b3bd5a0bf19d68afd8f9fd4550 | KM4.1L121 KM-FW-01-02 แบบฟอร์ม KM   | PDF   | evidence   | KM    | 0.10      | Ingested   | 1        | km41l121kmfw0102kmac
+57daf31bdb0870bfd6f8b3d36e270803eeff60 | KM4.1L122 KM-FW-01-03 แบบฟอร์ม KM   | PDF   | evidence   | KM    | 0.10      | Ingested   | 2        | km41l122kmfw0103kmim
+55dc77558678fbc8d68607945d38e82b89358e | KM4.1L123 KM-FW-01-08_แบบฟอร์มการ   | PDF   | evidence   | KM    | 0.06      | Ingested   | 4        | km41l123kmfw01080000
+c5c95cdacf75b4ed4b22a417f6d398c2f04410 | KM4.1L201 KM-SD-01 แผนการสื่อสารด   | PDF   | evidence   | KM    | 0.22      | Ingested   | 3        | km41l201kmsd01256700
+2c3845bbdfdeb676589cc33ce111198139b186 | KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (   | PDF   | evidence   | KM    | 0.14      | Ingested   | 17       | km41l301712567100000
+5c17f117a11bd44dc2ab7cc3457a630a03c008 | KM4.1L302 KM-FW-01-02 แบบฟอร์ม KM   | PDF   | evidence   | KM    | 0.12      | Ingested   | 4        | km41l302kmfw0102kmac
+4aa76ca1b1383094f865215bfad78fc2936800 | KM4.1L303 KM-SD-04 แผนการตรวจติดต   | PDF   | evidence   | KM    | 0.10      | Ingested   | 4        | km41l303kmsd04000000
+2a77669387ed04dd9750bf02783747e33be253 | KM4.1L304 KM-FP-03-01 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 15       | km41l304kmfp03011000
+e0d8a127c2d3b70cd1e690d4a3e9463b665ca9 | KM4.1L305 KM-FP-03-03 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 6        | km41l305kmfp03032000
+b02be5d2dbc7224b01b14d29da581a7ba8bc8d | KM4.1L306 KM-QP-04 ประชุมทบทวนฝ่า   | PDF   | evidence   | KM    | 0.44      | Ingested   | 7        | km41l306kmqp04100000
+66ad33dd30538f8fe0db74eb63f4edd4d22725 | KM4.1L307 KM-FP-03-02 การวิเคราะห   | PDF   | evidence   | KM    | 0.38      | Ingested   | 5        | km41l307kmfp0302stak
+e8102495a01479099e168a53eee59c07561161 | KM4.1L308 KM-FW-01-01 รายการเอกสา   | PDF   | evidence   | KM    | 0.36      | Ingested   | 5        | km41l308kmfw01012000
+6d3f79c5667462be3e17b53e8fb562ed74edf8 | KM4.1L309 KM-SD-03 รายงานการประชุ   | PDF   | evidence   | KM    | 0.36      | Ingested   | 14       | km41l309kmsd03000000
+cc8eb1e0b029b8691a623fbb179d4d30042c9f | KM4.1L310 KM-QP-02 การปฏิบัติการแ   | PDF   | evidence   | KM    | 0.33      | Ingested   | 8        | km41l310kmqp02000000
+7d145bf51e3e669d50f0c42be30309314d69f9 | KM4.1L311 KM-QP-01 การตรวจติดตามภ   | PDF   | evidence   | KM    | 0.29      | Ingested   | 13       | km41l311kmqp01100000
+79babfcc946779003635a5f8dc9c674e66e50a | KM4.1L312 KM-QP-05 การควบคุมเอกสา   | PDF   | evidence   | KM    | 0.27      | Ingested   | 19       | km41l312kmqp05100000
+5cfe9f2840ad028e198ed92f1018bab3a84d03 | KM4.1L313 KM-SD-02 แผน KM Impleme   | PDF   | evidence   | KM    | 0.26      | Ingested   | 5        | km41l313kmsd02kmimpl
+25d13ffd039b5ff73630ee97d7495e699ad6e4 | KM4.1L314 KM-QP-03_การประเมินความ   | PDF   | evidence   | KM    | 0.23      | Ingested   | 13       | km41l314kmqp03000000
+d2e9472014347da5165f41bdc9faf8f1aa1b08 | KM4.1L401 KM-SD-05 ระบบสารสนเทศ.p   | PDF   | evidence   | KM    | 4.31      | Ingested   | 3        | km41l401kmsd05pptx00
+8d2cd71647110deab3db977e5e0134c9cc9d54 | KM4.1L402 Artificial Intelligence   | PDF   | evidence   | KM    | 3.90      | Ingested   | 11       | km41l402artificialin
+003781fa58ecde4ece1acdd7a2f323db9fe778 | KM4.1L403 KM-อนุมัติหลักสูตรKMCap   | PDF   | evidence   | KM    | 3.60      | Ingested   | 50       | km41l403kmkmcapturin
+a5b81ef29a59a417f20778afd9de47531be020 | KM4.1L404 KM-4_1_อนุมัติหลักสูตรอ   | PDF   | evidence   | KM    | 1.44      | Ingested   | 26       | km41l404km41kmsi0000
+bbb5ed0faecf068a308937ade2056744b188f9 | KM4.1L405 KM-4_1_5_A1_1_แผนการพัฒ   | PDF   | evidence   | KM    | 0.70      | Ingested   | 3        | km41l405km415a110000
+d1bb23d34d92e2fe4fcad6ab0ec38bdd6975af | KM4.1L406 KM_4_1_4_KM-Si            | PDF   | evidence   | KM    | 0.12      | Ingested   | 4        | km41l406km414kmsi000
+a76b359913b5aa1ce8f953a7f0529a886bb631 | KM4.1L407 KM-4_1_รายงานจัดฝึกอบรม   | PDF   | evidence   | KM    | 0.06      | Ingested   | 2        | km41l407km41kmsi0000
+606e0dcb78f2d513494371971ad19dcedf3114 | KM4.1L501 KM-ผลประเมินสารสนเทศKMS   | PDF   | evidence   | KM    | 0.09      | Ingested   | 2        | km41l501kmkms0000000
+1c00938ede70ecb82cdd952704aea33da45b3e | KM4.2L101 KM-FP-03-01 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 15       | km42l101kmfp03010000
+2dba2de62f0a43e589e5fed80d81de00a778fc | KM4.2L102 KM-FP-03-03 การวิเคราะห   | PDF   | evidence   | KM    | 0.45      | Ingested   | 6        | km42l102kmfp03030000
+24011bd6eed28f60d2a18148c7ab09e26bd93e | KM4.2L103 KM-FP-03-02 การวิเคราะห   | PDF   | evidence   | KM    | 0.37      | Ingested   | 6        | km42l103kmfp0302stak
+1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd | KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด   | PDF   | evidence   | KM    | 0.14      | Ingested   | 17       | km42l104km7100000000
+31af4a5139b123bfa5678e115e5e4ae683ea31 | KM4.2L201 KM_4_2_2_channel          | PDF   | evidence   | KM    | 6.02      | Ingested   | 4        | km42l201km422channel
+9fb0d3b03c18d43be1c40b2a5e5dfe948912c8 | KM4.2L301 Knowledge Management (1   | PDF   | evidence   | KM    | 6.02      | Ingested   | 4        | km42l301knowledgeman
+e417dd5ae21b1b7fb7bd054d46aee560ee4ba2 | KM4.2L401 KM_4_2_BMTA               | PDF   | evidence   | KM    | 0.10      | Ingested   | 14       | km42l401km42bmta0000
+36331af122b81b68ff9d743c548bf3ee21a237 | KM4.2L402 ดูงาน_NT                  | PDF   | evidence   | KM    | 0.10      | Ingested   | 22       | km42l402nt0000000000
+3aac8daee0fd0b09e68fd3de67c11298ee3dc8 | KM4.2L403 ดูงาน_ธกส                 | PDF   | evidence   | KM    | 0.10      | Ingested   | 22       | km42l403000000000000
+8102be713deb49ca662243689293a40c6b8a21 | KM4.2L404 KM_4_2_PPT.docx           | DOCX  | evidence   | KM    | 0.08      | Ingested   | 2        | km42l404km42pptdocx0
+970762a88e3018aadef510531d65a23ed4d32a | KM4.2L405 KM_4_2_Egat               | PDF   | evidence   | KM    | 0.02      | Ingested   | 10       | km42l405km42egat0000
+2e3b482ac6c15ded260e3e0931ad1b1f03b4d2 | KM4.2L406 KM_4_2_Good_Practice      | PDF   | evidence   | KM    | 1.71      | Ingested   | 4        | km42l406km42goodprac
+f67edd1c96b73924ab498c5759a9ce23920f31 | KM4.2L407 แนบ1_หนังสือสคร._กฟภ      | PDF   | evidence   | KM    | 0.83      | Ingested   | 1        | km42l407100000000000
+cbc08da81ed570153617e09a883556d0b92dd7 | KM4.2L501 KM-FM-02-แบบฟอร์มการวิเ   | PDF   | evidence   | KM    | 0.09      | Ingested   | 3        | km42l501kmfm02stakeh
+3fa3dae49258bbfdd5e74f6c4d2898dff54c99 | KM5.1L101 5.1 ระดับ 1 (2)_ระดับ 2   | PDF   | evidence   | KM    | 0.73      | Ingested   | 30       | km51l101511222000000
+102c57b561df5069f4eb12360aa95eb3758001 | KM5.1L102 5.1 ระดับ 1 (3)_ระดับ 2   | PDF   | evidence   | KM    | 0.29      | Ingested   | 22       | km51l102511323000000
+7dbc8104024fd4336cc97a62fa68f0674e25b0 | KM5.1L103 5.1 ระดับ 1 (1) _ระดับ    | PDF   | evidence   | KM    | 0.26      | Ingested   | 8        | km51l103511121sipoc0
+955cd47cc78105ee6792d34ab98b703986bd58 | KM5.1L104 5.1 ระดับ 1 (4)_ระดับ 2   | PDF   | evidence   | KM    | 0.20      | Ingested   | 51       | km51l104511424000000
+812140984bb2e86ada598691ce056a96816cd6 | KM5.1L105 5.1 ระดับ 1 (6) อนุมัติ   | PDF   | evidence   | KM    | 0.16      | Ingested   | 41       | km51l105511600000000
+120ebb9e513f494ab03b0f0bac25a36be7c377 | KM5.1L201 5.1 ระดับ 1 (2)_ระดับ 2   | PDF   | evidence   | KM    | 0.73      | Ingested   | 30       | km51l201511222000000
+a51f3d0aba63a5e96bdbc92dc718172b6e3fff | KM5.1L202 5.1 ระดับ 2 (6) _ระดับ    | PDF   | evidence   | KM    | 0.30      | Ingested   | 31       | km51l202512634510000
+d0c247ed535eecc63be766c6fc0b192bf6fd83 | KM5.1L203 5.1 ระดับ 2 (5)_ระดับ 3   | PDF   | evidence   | KM    | 0.29      | Ingested   | 4        | km51l203512533000000
+58d3cab34ae80a0d5d58322b3e002e72cc16e5 | KM5.1L204 5.1 ระดับ 1 (3)_ระดับ 2   | PDF   | evidence   | KM    | 0.29      | Ingested   | 22       | km51l204511323000000
+af2f18a9f5d214fb8468658fa6f37e1d4d6a6e | KM5.1L205 5.1 ระดับ 1 (1) _ระดับ    | PDF   | evidence   | KM    | 0.26      | Ingested   | 8        | km51l205511121sipoc0
+0a22851102e2bf128bb52910123e3707a5e7b6 | KM5.1L206 5.1 ระดับ 1 (4)_ระดับ 2   | PDF   | evidence   | KM    | 0.20      | Ingested   | 65       | km51l206511424000000
+b4d4b4236e954a4594e9b0659cde435d2dc177 | KM5.1L301 5.1 ระดับ 2 (6) _ระดับ    | PDF   | evidence   | KM    | 0.30      | Ingested   | 31       | km51l30151263451pdf1
+d2950753d89c65fe07fb004fd7fdc206179863 | KM5.1L302 5.1 ระดับ 2 (6) _ระดับ    | PDF   | evidence   | KM    | 0.30      | Ingested   | 31       | km51l302512634510000
+2ca16f94d4915983dad98899b5d2c96f8ecae1 | KM5.1L303 5.1 ระดับ 2 (5)_ระดับ 3   | PDF   | evidence   | KM    | 0.29      | Ingested   | 4        | km51l303512533000000
+7bb60a7862c1865dbf30d15d9bc43761f0fd48 | KM5.1L304 5.1 ระดับ 3 (1) อนุมัติ   | PDF   | evidence   | KM    | 0.22      | Ingested   | 3        | km51l304513100000000
+6fbea6147f6cbc61c469e0befa95fb882e2e39 | KM5.1L305 5.1 ระดับ 3 (2) เชิญรับ   | PDF   | evidence   | KM    | 0.04      | Ingested   | 8        | km51l3055132pdf10000
+b924432262eaf653e4213537d93c7ef772ee46 | KM5.1L306 5.1 ระดับ 3 (2) เชิญรับ   | PDF   | evidence   | KM    | 0.04      | Ingested   | 8        | km51l306513200000000
+861b67b1e764b8c2629b090bbefeae58f85e28 | KM5.1L401 KM_5_1_4_อนุมัติอบรมเชิ   | PDF   | evidence   | KM    | 0.72      | Ingested   | 36       | km51l401km514iso3040
+5e7a3414a9959cc51a28b551400b5f9809552e | KM5.1L402 5.1 ระดับ 1 (4)_ระดับ 2   | PDF   | evidence   | KM    | 0.20      | Ingested   | 65       | km51l402511424000000
+c0276d3d8656280b3338849e0550aad4215d52 | KM5.1L403 KM_5_1_4_การจัดหมวดหมู่   | PDF   | evidence   | KM    | 0.18      | Ingested   | 1        | km51l403km514km00000
+2c4a99769aaa842456482e297801bbc95da578 | KM5.1L404 KM_5_1_4_กระบวนการทำสำค   | DOCX  | evidence   | KM    | 0.13      | Ingested   | 4        | km51l404km514enabler
+a815bbb15a87a2febbcdb444a1c1f52918b2f9 | KM5.1L501 5.1 ระดับ 2 (6) _ระดับ    | PDF   | evidence   | KM    | 0.30      | Ingested   | 31       | km51l501512634510000
+0dab357a50c202dce229455cc8d881c2a0d785 | KM5.1L502 5.1 ระดับ 3 (5) _ระดับ    | PDF   | evidence   | KM    | 0.32      | Ingested   | 7        | km51l502513552000000
+11cfc9b4d724d612a7656d69d1e19acd888833 | KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด   | PDF   | evidence   | KM    | 0.14      | Ingested   | 17       | km52l101km7100000000
+52ca55431714af838c5b0baec3dc422ec4fb38 | KM5.2L201 KM_4_2_2_ระเบียบวิธีปฏิ   | PDF   | evidence   | KM    | 6.03      | Ingested   | 134      | km52l201km4220000000
+a8e98d94e1c687ce8debc02a18ff90ef2bb96a | KM5.2L202 KM_4_2_2_คู่มือการจัดกา   | PDF   | evidence   | KM    | 5.91      | Ingested   | 6        | km52l202km4220000000
+12916ee25d2f074a5cec4cdfcd5ecaff54e2c8 | KM5.2L203 KM_4_2_2_ระเบียบวิธีปฏิ   | PDF   | evidence   | KM    | 4.14      | Ingested   | 123      | km52l203km4220000000
+373bd68bff747dcdfd6d03520c8b206f317248 | KM5.2L204 KM_4_2_2_ระเบียบวิธีปฏิ   | PDF   | evidence   | KM    | 3.27      | Ingested   | 99       | km52l204km4220000000
+87915345fd996cb755d5db85b6c0b144cb5330 | KM5.2L205 KM_4_2_2_สื่อสารคู่มือก   | PDF   | evidence   | KM    | 1.55      | Ingested   | 45       | km52l205km4220000000
+a074456eda9437e18a5246fffb7e40cf0f8ff1 | KM5.2L206 KM_4_2_2_คู่มือระเบียบว   | PDF   | evidence   | KM    | 0.10      | Ingested   | 1        | km52l206km422kmsi000
+c92709aab8ececb3596df9c652bac2e26e028c | KM5.2L207 KM_4_2_2_หนังสืออนุมัติ   | PDF   | evidence   | KM    | 0.05      | Ingested   | 21       | km52l207km4220000000
+f7fd565f70c2bbc19713fc999d28c3f18a0755 | KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (   | PDF   | evidence   | KM    | 0.14      | Ingested   | 17       | km52l208712567100000
+07bcf27b88ca34107711427faf021934d9de4b | KM5.2L301 1.รายงานการจัดอบรม        | PDF   | evidence   | KM    | 0.07      | Ingested   | 5        | km52l301100000000000
+90b5ff8f9503bb487096df1c42b115ad6de54e | KM5.2L302 1.รายงานการจัดอบรมISO     | PDF   | evidence   | KM    | 0.07      | Ingested   | 5        | km52l3021iso00000000
+011ce10b893958a06e8f61f90b93ae095d71bc | KM5.2L303 อนุมัติอบรม_ISO30401_67   | PDF   | evidence   | KM    | 5.26      | Ingested   | 50       | km52l303iso304016710
+7a8f8971019dd8414323b145de98eaaa1b3d39 | KM5.2L401 อนุมัติ KM for New busi   | PDF   | evidence   | KM    | 2.88      | Ingested   | 94       | km52l401kmfornewbusi
+cca83161325c3bb93572abf405649deac4fc3f | KM5.2L402 อนุมัติ sales skills (1   | PDF   | evidence   | KM    | 9.28      | Ingested   | 53       | km52l402salesskills1
+c25c59e496e753f78ab65dc9fb148df9ee1178 | KM5.2L403 เอกสารแนบรายได้ ธก. เกี   | PDF   | evidence   | KM    | 0.54      | Ingested   | 15       | km52l403100000000000
+f608d08ad3cf0b29c9b730136fdd8231e6442d | KM5.2L404 คู่มือการขาย_RF7          | PDF   | evidence   | KM    | 22.04     | Ingested   | 439      | km52l404rf7000000000
+630c3ad2fc3b31d44a9c16f1a0bf8652fe9169 | KM5.2L501 KM_5_2_5_workmanual_sel   | PDF   | evidence   | KM    | 0.51      | Ingested   | 59       | km52l501km525workman
+69fe7cf046de424be47e2a6e67d5df34567e33 | KM5.2L502 KM_5_2_5_ผลประเมินความเ   | JPG   | evidence   | KM    | 0.13      | Ingested   | 10       | km52l502km5250000000
+ee5cd15f60977bcb0528e60ff8a30080ab9aaa | KM6.1L101 KM_6_1_รายงานผลการดำเนิ   | PDF   | evidence   | KM    | 0.32      | Ingested   | 11       | km61l101km6100000000
+77e04aa4b67d1bcbda8435e6bf347b05d3c542 | KM6.1L102 KM_6_1_รายงานผลประเมินด   | PDF   | evidence   | KM    | 0.14      | Ingested   | 8        | km61l102km6100000000
+f133e42354c0439962886d767ecae1467aa540 | KM6.1L201 1.รายงานการจัดอบรม        | PDF   | evidence   | KM    | 0.07      | Ingested   | 5        | km61l201100000000000
+3bf862da78f82dfbebac982a61e33211a230f0 | KM6.1L301 KM_6_3_PEA_Assessment R   | PDF   | evidence   | KM    | 0.28      | Ingested   | 47       | km61l301km63peaasses
+fbbbf971f96a74461cdacbeac2813e23a7cbfe | KM6.1L302 KM_4_1_4_KM-Si            | PDF   | evidence   | KM    | 0.12      | Ingested   | 4        | km61l302km414kmsi000
+52365ea48089c8f438fb867dde17c96e3721ff | KM6.1L401 อนุมัติ การจัดการความรู   | PDF   | evidence   | KM    | 1.50      | Ingested   | 58       | km61l401672000000000
+1c17ebc49a56503d1e2d558dc130768ec4946c | KM6.1L402 ส่งกพค-ThaiSkill 1_Know   | PDF   | evidence   | KM    | 0.13      | Ingested   | 3        | km61l402thaiskill1kn
+56b484907dc9ee0a86fb95a70c053a0a3f8bd5 | KM6.1L403 บันทึก ตัวชี้วัด          | PDF   | evidence   | KM    | 0.67      | Ingested   | 34       | km61l403000000000000
+e2d01144afc78999ce90c7a679dffd29853795 | KM6.1L404 ตัวชี้วัดที่สำคัญประจำป   | PDF   | evidence   | KM    | 0.33      | Ingested   | 8        | km61l4042567edit2301
+28c2ced6af45c3869de117f72acab480eafaae | KM6.1L405 รวม กวช. Critical Knowl   | PDF   | evidence   | KM    | 0.53      | Ingested   | 15       | km61l405criticalknow
+8fad6265ffb20adaceaedaf62ea90740d20e60 | KM6.1L406 กธน. Action Review        | PDF   | evidence   | KM    | 0.49      | Ingested   | 4        | km61l406actionreview
+1a88175058d915c79f13744a2eed4e37245693 | KM6.1L407 กธน Knowledge Landscape   | PDF   | evidence   | KM    | 0.08      | Ingested   | 2        | km61l407knowledgelan
+c9799f406987ba7b1c8abdf59c06d2757cf09e | KM6.1L408 กธน Action Plan           | PDF   | evidence   | KM    | 0.04      | Ingested   | 1        | km61l408actionplan00
+461d320fe5efb14333a44cba218ea908dd906c | KM6.1L501 KM_6_5_T3CC               | PDF   | evidence   | KM    | 0.26      | Ingested   | 9        | km61l501km65t3cc0000
+264934f2df4d290f094836bada615e6398b8a3 | KM6.1L502 KM_6_5_ตัวชี้วัดที่สำคั   | PDF   | evidence   | KM    | 0.33      | Ingested   | 8        | km61l502km6500000000
+d6285bd01b45a42fa2ab48ec073d43f3343408 | KM6.1L503 KM_6_5_Thaiskill          | PDF   | evidence   | KM    | 0.89      | Ingested   | 12       | km61l503km65thaiskil
+a5e384ab9425c1d247d026dc028047fab19174 | KM6.1L504 KM_6_5_ESS                | PDF   | evidence   | KM    | 2.82      | Ingested   | 40       | km61l504km65ess00000
+b9182f35da0dcbaee65a59be201f27a6ad8ea3 | KM6.1L505 KM_6_5_GreenTech          | PDF   | evidence   | KM    | 0.40      | Ingested   | 7        | km61l505km65greentec
+b1d0cfa1b5a84df1b7566f6cd4e3ce55bdd697 | KM_4_2_2_การประกาศจัดซื้อจัดจ้างใ   | JPG   | evidence   | KM    | 0.19      | Ingested   | 24       | km422website00000000
+8594ad672c6387c4a42e95204306260162745d | KM_4_2_2_หลักฐานประกาศจัดซื้อจัดจ   | JPG   | evidence   | KM    | 0.23      | Ingested   | 5        | km422egp000000000000
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Found 296/314 supported documents for type 'evidence' (Filter: INGESTED (Successful / Unique Doc IDs)):
+

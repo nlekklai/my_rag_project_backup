@@ -310,40 +310,77 @@ class EnablerAssessment:
         ดึง Context โดยใช้ Filter จาก evidence mapping และ Level Constraint Query
         """
         
-        # 1. ดึง Filter IDs (Hard Filter - อาจจะว่างเปล่า)
-        filter_ids: List[str] = []
+        # 1. ดึง Filter IDs (64-char Stable UUIDs)
+        filter_ids_64_char: List[str] = []
 
         if self.use_mapping_filter: 
-            filter_ids = self._get_doc_uuid_filter(sub_criteria_id, level) or []
+            # self._get_doc_uuid_filter ดึง 64-char UUIDs จาก JSON Mapping
+            filter_ids_64_char = self._get_doc_uuid_filter(sub_criteria_id, level) or []
+        
+        # 🎯 FIX: แปลง 64-char Stable UUIDs ให้เป็น 34-char Ref IDs สำหรับ Hard Filter
+        filter_ids: List[str] = []
+        if filter_ids_64_char:
+            filter_ids = self._map_64_to_34_ids(filter_ids_64_char) # ⬅️ เรียกใช้ฟังก์ชันใหม่
         
         # 2. สร้าง Constrained Query เสมอ
         constraint_instruction = self._get_level_constraint_prompt(level)
         effective_query = f"{query}. {constraint_instruction}"
         
         semantic_filter_status = "Disabled" if self.disable_semantic_filter else "Enabled"
-        hard_filter_status = "Enabled" if filter_ids else "Disabled (Flexible Search)"
+        hard_filter_status = "Enabled" if filter_ids else "Disabled (Flexible Search)" # ใช้ filter_ids ที่ถูกแปลงแล้ว
         logger.info(f"🔑 Constrained Query (L{level}, Hard Filter {hard_filter_status}, Semantic Filter {semantic_filter_status}): {effective_query}")
         
         # --- LOGIC สำหรับ REAL MODE (mapping_data is None) ---
         if mapping_data is None: 
-            # 3. เรียกใช้ RAG Retrieval ด้วยลายเซ็นใหม่
-            # NOTE: retrieve_context_with_filter ต้องถูก Import
-            # สมมติว่า vectorstore_retriever เป็น None เมื่อเรียกจาก run_assessment.py
+            # 3. เรียกใช้ RAG Retrieval ด้วยรายการ ID 34-char
             result = retrieve_context_with_filter(
                 query=effective_query, 
                 doc_type="evidence", 
                 enabler=self.enabler_abbr, 
-                stable_doc_ids=filter_ids, 
+                stable_doc_ids=filter_ids, # ⬅️ ส่ง ID 34-char ที่ถูกต้อง
                 disable_semantic_filter=self.disable_semantic_filter,
                 allow_fallback=self.allow_fallback,
-                # retriever_instance=self.vectorstore_retriever # ⚠️ หากใช้ External/Internal Retriever
+                # retriever_instance=self.vectorstore_retriever 
             )
             return result
 
         # --- LOGIC สำหรับ MOCK MODE ---
         return {"top_evidences": []}
 
-
+    
+    def _map_64_to_34_ids(self, uuids_64: List[str]) -> List[str]:
+        """
+        [FIX] แปลง 64-char Stable UUIDs (จาก mapping file) ให้เป็น 34-char Ref IDs 
+        โดยใช้ VectorStoreManager.get_id_mapping_from_vectorstore
+        """
+        if not uuids_64:
+            return []
+            
+        try:
+            manager = get_vectorstore_manager() # สมมติว่า Import แล้ว
+            
+            mapping_dict: Dict[str, str] = manager.get_id_mapping_from_vectorstore(
+                uuids_64, 
+                doc_type="evidence", 
+                enabler=self.enabler_abbr
+            )
+            
+            ref_ids_34 = [
+                # ค้นหา 34-char Ref ID จาก 64-char UUID ที่ได้จาก JSON 
+                mapping_dict.get(uuid_64, "").lower() 
+                for uuid_64 in uuids_64
+            ]
+            
+            # กรองค่าว่าง
+            valid_ref_ids = [ref_id for ref_id in ref_ids_34 if ref_id]
+            
+            logger.info(f"✅ Mapped {len(valid_ref_ids)}/{len(uuids_64)} Stable UUIDs to Ref IDs for Hard Filter.")
+            return valid_ref_ids
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to map 64-char UUIDs to 34-char Ref IDs. Error: {e}", exc_info=True)
+            return []
+        
     def _process_subcriteria_results(self):
         """
         จัดกลุ่มผลลัพธ์ LLM ตาม Sub-Criteria และคำนวณคะแนนสุดท้าย 
@@ -448,6 +485,15 @@ class EnablerAssessment:
                     if isinstance(retrieval_result, dict):
                         top_evidence = retrieval_result.get("top_evidences", [])
                         
+                        logger.info(f"DEBUG RAG: {sub_criteria_id}_L{level}_S{i+1} Retrieved {len(top_evidence)} raw evidences. Filter: {self.use_mapping_filter}")
+                        
+                        # <<< ตรวจสอบว่าโค้ด 3 บรรทัดนี้ถูกเพิ่มแล้ว
+                        for doc in top_evidence[:3]: 
+                            doc_id = doc.get('doc_id', 'N/A')
+                            source_name = doc.get('source', 'N/A')
+                            logger.info(f"DEBUG RAG Evidence (Top {top_evidence.index(doc) + 1}): UUID={doc_id[:8]}... Source={source_name[:30]}...")
+                        # >>>
+
                         k_to_use = self.FINAL_K_RERANKED
                         if self.disable_semantic_filter:
                             k_to_use = self.FINAL_K_NON_RERANKED

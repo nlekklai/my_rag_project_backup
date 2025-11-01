@@ -5,32 +5,17 @@ import sys
 from typing import Dict, List, Any
 
 # ----------------------------------------------------------------------
-# 1. Configuration
+# 1. Configuration (Path Corrected)
 # ----------------------------------------------------------------------
 
-# Path Setup: Assumes log file is in the same or defined subdirectory
-# ใช้ os.path.join() เพื่อให้รองรับระบบปฏิบัติการต่างๆ ได้ดีกว่า
-LOG_FILE_PATH = os.path.join("evidence_checklist", "evidence_uuid.log")
-OUTPUT_FILE_PATH = os.path.join("evidence_checklist", "km_evidence_mapping_new.json")
+# Path Setup
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Regular Expression Pattern for Log Parsing:
-# 1. (\S+)             -> doc_id (UUID)
-# 2. \s*\|\s* -> Separator
-# 3. (.*?)             -> full_filename (Non-greedy match, สำคัญมากสำหรับคอลัมน์ชื่อไฟล์)
-# 4. \s*\|\s* -> Separator
-# 5. (\S+)             -> EXT (Non-whitespace characters)
-# 6. .*$               -> Consumes the rest of the line
-LINE_PARSE_PATTERN = re.compile(
-    r'^\s*(\S+)\s*\|\s*(.*?)\s*\|\s*(\S+).*$'
-)
+# ✅ FINAL FIX: Path ชี้ไปที่ data/ ภายใน project root
+DOC_ID_MAPPING_FILE = os.path.abspath(os.path.join(BASE_DIR, "data", "doc_id_mapping.json"))
+OUTPUT_FILE_PATH = os.path.join("evidence_checklist", "km_evidence_mapping_new.json")
 
 # Regular Expression Pattern for KM Evidence Extraction from filename:
-# **แก้ไขแล้ว:**
-# 1. KM                     -> Literal match "KM"
-# 2. (\d+\.\d+)             -> sub_id (e.g., "1.1", "3.3") -> Group 1
-# 3. L(\d)                  -> level (e.g., "1", "5") -> Group 2 (จับแค่ตัวเลขแรก)
-# 4. \d* -> อนุญาตให้มีตัวเลขลำดับ (Sequence Number) ตามมาได้อีกกี่ตัวก็ได้
+# KM(\d+\.\d+)L(\d)\d* เช่น KM3.1L101 จะได้เป็น 3.1_L1
 FILENAME_KM_PATTERN = re.compile(r'KM(\d+\.\d+)L(\d)\d*') 
 
 
@@ -38,117 +23,76 @@ FILENAME_KM_PATTERN = re.compile(r'KM(\d+\.\d+)L(\d)\d*')
 # 2. Core Functions
 # ----------------------------------------------------------------------
 
-def _get_log_filepath() -> str:
-    """Resolve the log file path relative to the script's location."""
-    if not os.path.isabs(LOG_FILE_PATH):
-        # Assumes LOG_FILE_PATH is relative to the directory where this script resides
-        return os.path.join(BASE_DIR, LOG_FILE_PATH)
-    return LOG_FILE_PATH
-
-def _read_and_clean_log(filepath: str) -> List[str]:
-    """Reads the log file, removes header/footer lines, and returns clean lines."""
+def _load_full_doc_mapping(filepath: str) -> Dict[str, Any]:
+    """
+    Loads the internal doc_id_mapping.json which stores the full 64-char Stable UUID 
+    as the top-level key. This is the reliable source of truth.
+    """
+    print(f"อ่านไฟล์ต้นฉบับ (doc_id_mapping.json): {filepath}")
     try:
         # Tries to handle different encodings if the default utf-8 fails
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        except UnicodeDecodeError:
-             # ลองใช้ cp874 (Thai standard encoding) เป็น fallback
-             with open(filepath, 'r', encoding='cp874') as f: 
-                lines = f.readlines()
-
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
     except FileNotFoundError:
         print(f"ERROR: File not found: {filepath}", file=sys.stderr)
-        return []
-    
-    # 1. Remove Header/Footer/Separator lines
-    clean_lines = []
-    separator_pattern = re.compile(r'^-+$')
-    
-    # ตัวแปรสำหรับระบุว่าเราเข้าสู่ส่วนข้อมูลหลักแล้ว
-    in_data_section = False
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # ตรวจสอบบรรทัดคอลัมน์หัวตารางเพื่อเริ่มต้นการเก็บข้อมูล
-        if line.startswith('DOC ID (Stable/Temp)'):
-             in_data_section = True 
-             continue # ข้ามบรรทัดหัวตาราง
-
-        # ตรวจสอบบรรทัดคั่น (ถ้ายังไม่เจอหัวตาราง)
-        if separator_pattern.match(line):
-            in_data_section = True
-            continue # ข้ามบรรทัดคั่น
-        
-        # เมื่อเข้าสู่ส่วนข้อมูลหลักแล้ว (in_data_section == True)
-        if in_data_section:
-            # ตรวจสอบว่าบรรทัดนี้มีตัวคั่น '|' หรือไม่ เพื่อกรองบรรทัดข้อมูลจริง
-            if '|' in line and not line.startswith('DOC ID'): 
-                clean_lines.append(line)
-        
-    
-    return clean_lines
+        return {}
+    except Exception as e:
+        # ในกรณีที่ไฟล์มีขนาด 2 ไบต์ หรือมีข้อมูลไม่สมบูรณ์
+        print(f"FATAL: ไม่สามารถโหลด doc_id_mapping.json ได้ (อาจต้องรัน Ingest ก่อน)", file=sys.stderr)
+        return {}
 
 def generate_mapping():
-    """Main function to parse the log and generate the JSON mapping file."""
+    """Main function to load doc mapping and generate the JSON mapping file."""
     
-    log_filepath = _get_log_filepath()
-    print("--- เริ่มต้นการสร้างไฟล์ Mapping จาก Evidence List (ปรับแก้ Regex แล้ว) ---")
-    print(f"อ่านไฟล์ต้นฉบับ (ตาราง Log): {log_filepath}")
+    print("--- เริ่มต้นการสร้างไฟล์ Mapping จาก doc_id_mapping.json (ใช้ Full UUID) ---")
 
-    log_content_clean = _read_and_clean_log(log_filepath)
-    
-    if not log_content_clean:
+    # 1. Load the reliable source of truth: doc_id_mapping.json
+    full_mapping = _load_full_doc_mapping(DOC_ID_MAPPING_FILE)
+
+    if not full_mapping:
         print("------------------------------------------------------------------")
-        print("ERROR: ไม่พบข้อมูลที่สะอาดในไฟล์ Log (ไฟล์อาจว่างเปล่าหรือรูปแบบผิดพลาด)")
+        # ข้อความนี้จะแสดงก็ต่อเมื่อ _load_full_doc_mapping พิมพ์ ERROR/FATAL ออกมาแล้ว
         print("------------------------------------------------------------------")
         return
-
+        
     # Dictionary to store the final grouped mapping
     mapping_results: Dict[str, Any] = {}
-    
-    parsed_count = 0
     km_evidence_count = 0
     
     # ------------------------------------------------------
-    # 3. Parsing and Grouping Logic
+    # 3. Parsing and Grouping Logic (Iterate over the FULL UUID keys)
     # ------------------------------------------------------
-    for line in log_content_clean:
-        # 1. Attempt to parse the main log line (Doc ID, Filename, etc.)
-        match_log = LINE_PARSE_PATTERN.match(line)
+    
+    # doc_id_64 คือ Full 64-char Stable UUID
+    for doc_id_64, info in full_mapping.items():
         
-        if not match_log:
-            # ไม่แสดง DEBUG หากบรรทัดที่ Parse ไม่สำเร็จมีจำนวนมาก
-            if parsed_count % 100 == 0 and parsed_count > 0:
-                 print(f"⚠️ DEBUG: บรรทัดที่ {parsed_count+1} Parse ไม่สำเร็จ (รูปแบบไม่ตรง): {line[:80]}...")
-            parsed_count += 1
+        # 🎯 FINAL ROBUST FIX: ตรวจสอบจาก chunk_uuids แทน status
+        # กรองเฉพาะเอกสาร 'evidence' สำหรับ 'KM' ที่มี chunk_uuids (บ่งชี้ว่าถูก Ingest สำเร็จแล้ว)
+        if (info.get('doc_type') != 'evidence' or 
+            info.get('enabler') != 'KM' or
+            # 🟢 NEW CONDITION: ต้องมี 'chunk_uuids' และต้องมีสมาชิก (array ไม่ว่างเปล่า)
+            not info.get('chunk_uuids') or 
+            len(info.get('chunk_uuids', [])) == 0):
             continue
-        
-        # The new pattern captures 3 groups: (1) UUID, (2) FILENAME, (3) EXT
-        captures = match_log.groups()
-        
-        # เราใช้แค่ Doc ID และ Full Filename
-        doc_id = captures[0].strip()
-        full_filename = captures[1].strip()
+
+        # ✅ FIX: ใช้ 'file_name' ตามตัวอย่าง JSON ล่าสุด
+        full_filename = info.get('file_name', '') 
         
         # 2. Attempt to extract KM, Sub-ID, and Level from the FILENAME
         match_km = FILENAME_KM_PATTERN.search(full_filename)
         
         if match_km:
-            sub_id_raw = match_km.group(1) # e.g., "1.1"
-            level_raw = match_km.group(2)  # e.g., "1" หรือ "5" (แก้ไขแล้ว)
+            sub_id_raw = match_km.group(1) 
+            level_raw = match_km.group(2)  
             
-            # Combine to form the unique mapping key (e.g., "1.1_L5")
+            # Combine to form the unique mapping key (e.g., "1.1_L1")
             mapping_key = f"{sub_id_raw}_L{level_raw}"
             
             # Create the evidence dictionary
             evidence_data = {
-                "doc_id": doc_id,
+                "doc_id": doc_id_64, # <-- ใช้ FULL 64-char UUID โดยตรง
                 "file_name": full_filename,
-                "notes": "Generated from FILENAME prefix. Please review and refine."
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
             }
             
             # Initialize the key if it doesn't exist
@@ -162,14 +106,12 @@ def generate_mapping():
             mapping_results[mapping_key]['evidences'].append(evidence_data)
             km_evidence_count += 1
         
-        parsed_count += 1
-
     # ------------------------------------------------------
     # 4. Output Generation
     # ------------------------------------------------------
     if not mapping_results:
         print("------------------------------------------------------------------")
-        print("⚠️ WARNING: ไม่พบ KM Evidence ที่มีรูปแบบ KMX.XLX ในชื่อไฟล์เลย (อาจจะต้องปรับ FILENAME_KM_PATTERN)")
+        print("⚠️ WARNING: ไม่พบ KM Evidence ที่มีรูปแบบ KMX.XLX ที่ถูก Ingest แล้ว")
         print("------------------------------------------------------------------")
     else:
         # Write to JSON file
@@ -184,7 +126,7 @@ def generate_mapping():
             
             print("------------------------------------------------------------------")
             print(f"✅ สร้างไฟล์ Mapping สำเร็จที่: {output_filepath}")
-            print(f"สรุป: ประมวลผลไป {parsed_count} บรรทัด | พบ KM Evidence ที่จับคู่ได้: {km_evidence_count} รายการ")
+            print(f"สรุป: พบ KM Evidence ที่จับคู่ได้: {km_evidence_count} รายการ (ใช้ Full 64-char UUID)")
             print("------------------------------------------------------------------")
 
         except Exception as e:
@@ -192,7 +134,4 @@ def generate_mapping():
 
 
 if __name__ == "__main__":
-    # ----------------------------------------------------------
-    # 5. Execution
-    # ----------------------------------------------------------
     generate_mapping()

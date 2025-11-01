@@ -6,7 +6,8 @@ from typing import List, Dict, Any, Optional
 
 # -------------------- Logging --------------------
 logging.basicConfig(
-    level=logging.INFO,
+    # filename="ingest.log",
+    level=logging.DEBUG, # ตั้งค่าเป็น DEBUG
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -23,6 +24,8 @@ try:
         get_vectorstore,
         SUPPORTED_DOC_TYPES,
         SUPPORTED_ENABLERS, 
+        # 🟢 FIX: เพิ่ม get_target_dir เพื่อใช้ในการคำนวณชื่อ Collection ที่ถูกต้อง
+        get_target_dir, 
     )
 except ImportError as e:
     logger.critical(f"Cannot import core.ingest: {e}")
@@ -130,9 +133,6 @@ if args.command == "list":
     
     logger.info(f"--- Listing documents for type '{args.doc_type}' (Enabler: {args.enabler or 'ALL'}) (Show: {args.show_results.upper()}) ---")
     
-    # 📌 การแก้ไข: list_documents ถูกแก้ไขให้คืนค่าเป็น Dict[str, Any] 
-    # แต่เนื่องจากฟังก์ชันนี้ยังคงทำหน้าที่พิมพ์ผลลัพธ์ออกทาง Console เอง 
-    # เราจึงสามารถเรียกใช้และละเลยค่าที่ส่งคืนได้ (return value is ignored).
     list_documents(
         doc_types=doc_types, 
         enabler=args.enabler,
@@ -191,14 +191,37 @@ elif args.command == "ingest":
     doc_type = args.doc_type.lower()
     enabler = args.enabler
     
+    # 🟢 FIX 1: บังคับให้ระบุ --enabler หาก doc_type เป็น 'evidence'
+    if doc_type == 'evidence' and not enabler:
+        logger.error(f"❌ Cannot ingest 'evidence' without specifying an enabler. Please use --enabler argument (e.g., --enabler KM).")
+        logger.error(f"   Supported enablers: {SUPPORTED_ENABLERS}")
+        sys.exit(1)
+        
+    # 🟢 FIX 2: ตรวจสอบความถูกต้องของ enabler ที่ป้อนมา (เผื่อไว้)
+    if enabler and enabler.upper() not in SUPPORTED_ENABLERS:
+         logger.error(f"❌ Invalid enabler code '{enabler}'. Supported enablers: {SUPPORTED_ENABLERS}")
+         sys.exit(1)
+    
     logger.info(f"--- Starting ingestion for '{doc_type}' (Enabler: {enabler or 'ALL'}) ---")
+    
+    # 🔹 กำหนดชื่อ Collection ที่ถูกต้องสำหรับการ Pre-load
+    target_coll_name = "default"
+    if doc_type != "all" and doc_type in SUPPORTED_DOC_TYPES:
+        try:
+            # 🟢 FIX 3: ใช้ get_target_dir เพื่อหาชื่อ Collection ที่ถูกต้อง (e.g., evidence_km)
+            # ต้องมั่นใจว่า get_target_dir ถูก import และทำงานถูกต้องตามที่เราแก้ไขไปก่อนหน้า
+            target_coll_name = get_target_dir(doc_type, enabler) 
+        except ValueError as e:
+            logger.error(f"❌ Cannot determine target collection name for pre-load: {e}")
+            sys.exit(1) 
 
     # 🔹 Pre-load vectorstore (embedding model/service)
     try:
-        # Pre-load a default vectorstore (e.g., 'document' or 'default') for setup
-        target_coll = get_vectorstore(doc_type if doc_type in SUPPORTED_DOC_TYPES else "default")
+        # 🟢 FIX 4: ใช้ชื่อ Collection ที่คำนวณแล้วสำหรับ Pre-load
+        target_coll = get_vectorstore(target_coll_name) 
     except Exception as e:
-        logger.warning(f"Cannot preload vectorstore service: {e}")
+        # Log แสดงว่ากำลังโหลด 'evidence' แทนที่จะเป็น 'evidence_km' (Log ก่อนหน้า) จะหายไป
+        logger.warning(f"Cannot preload vectorstore service for '{target_coll_name}': {e}")
         # Continue even if pre-load fails, as it will be loaded later
 
     # 🔹 Ingest
@@ -211,5 +234,4 @@ elif args.command == "ingest":
         log_every=args.log_every
     )
     
-    # ... (Ingestion results log omitted for brevity)
     logger.info("Ingestion process completed. Check ingest.log for details.")

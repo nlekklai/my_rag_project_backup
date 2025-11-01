@@ -46,8 +46,11 @@ except Exception:
 INITIAL_TOP_K = 15
 FINAL_K_RERANKED = 7
 FINAL_K_NON_RERANKED = 10 # ใช้เป็นค่าเริ่มต้นสำหรับ k เมื่อไม่มี reranker (e.g., เมื่อ disable_semantic_filter)
-VECTORSTORE_DIR = "vectorstore"
-MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# VECTORSTORE_DIR = "vectorstore"
+VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore") # ⬅️ ใช้ Absolute Path
+# MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
+MAPPING_FILE_PATH = os.path.join(PROJECT_ROOT, "data/doc_id_mapping.json") # ⬅️ ใช้ Absolute Path
 
 # 🟢 CONFIG: Enabler Configuration (MUST be added for evidence logic)
 DEFAULT_ENABLER = "KM"
@@ -222,18 +225,24 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
 
 def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
     """
-    🟢 NEW: Calculates the Chroma collection name and directory name based on doc_type and enabler.
+    Calculates the Chroma collection name and directory name based on doc_type and enabler.
     For doc_type='evidence', it returns 'evidence_<ENABLER>'.
     Otherwise, it returns the doc_type string (e.g., 'document').
     """
     doc_type_norm = doc_type.strip().lower()
 
     if doc_type_norm == "evidence":
-        # Apply default enabler if None, or use the provided one
-        enabler_norm = (enabler or DEFAULT_ENABLER).strip().lower() 
-        return f"{doc_type_norm}_{enabler_norm}"
+        # Apply default enabler if None, หรือใช้ enabler ที่ส่งมา
+        # NOTE: การใช้ DEFAULT_ENABLER ต้องมั่นใจว่ามีการ import มาแล้ว
+        enabler_norm = (enabler or "km").strip().lower() # 🟢 ใช้ "km" เป็นค่า default ชั่วคราว ถ้า DEFAULT_ENABLER ยังไม่ถูกกำหนด
+        collection_name = f"{doc_type_norm}_{enabler_norm}"
+    else:
+        collection_name = doc_type_norm
         
-    return doc_type_norm
+    # ✅ เพิ่ม Log ที่ต้องการ
+    logger.critical(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
+    
+    return collection_name
 
 def get_vectorstore_path(doc_type: Optional[str] = None, enabler: Optional[str] = None) -> str:
     """
@@ -346,27 +355,33 @@ class VectorStoreManager:
             VectorStoreManager._is_initialized = True
 
     def _load_doc_id_mapping(self):
-        """Loads doc_id_mapping.json into memory."""
-        self._doc_id_mapping = {}
-        self._uuid_to_doc_id = {}
-        try:
-            # Load mapping data (doc_id -> DocInfo structure)
-            with open(MAPPING_FILE_PATH, 'r', encoding='utf-8') as f:
-                mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
-                self._doc_id_mapping = mapping_data
-                
-                # Create reverse mapping for quick lookup UUID -> Doc ID
-                for doc_id, doc_entry in mapping_data.items():
-                    # Ensure doc_entry is a dict and contains the 'chunk_uuids' key
-                    if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry['chunk_uuids'], list):
-                        for uid in doc_entry['chunk_uuids']:
-                            self._uuid_to_doc_id[uid] = doc_id
-                        
-            logger.info(f"✅ Loaded Doc ID Mapping: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
-        except FileNotFoundError:
-            logger.warning(f"⚠️ Doc ID Mapping file not found at {MAPPING_FILE_PATH}. This is expected if no documents have been ingested yet.")
-        except Exception as e:
-            logger.error(f"❌ Failed to load Doc ID Mapping: {e}")
+            """Loads doc_id_mapping.json into memory."""
+            self._doc_id_mapping = {}
+            self._uuid_to_doc_id = {}
+            try:
+                # Load mapping data (doc_id -> DocInfo structure)
+                with open(MAPPING_FILE_PATH, 'r', encoding='utf-8') as f:
+                    mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
+                    
+                    # 🎯 FIX: ทำความสะอาด (strip) คีย์ทั้งหมดของ Dictionary ทันทีที่โหลด
+                    # เพื่อป้องกันอักขระที่ไม่คาดคิดที่อาจติดมาจากไฟล์ JSON
+                    cleaned_mapping = {k.strip(): v for k, v in mapping_data.items()}
+                    
+                    self._doc_id_mapping = cleaned_mapping
+                    
+                    # Create reverse mapping for quick lookup UUID -> Doc ID
+                    # ใชั cleaned_mapping ในการวนซ้ำ
+                    for doc_id, doc_entry in cleaned_mapping.items(): 
+                        # Ensure doc_entry is a dict and contains the 'chunk_uuids' key
+                        if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry['chunk_uuids'], list):
+                            for uid in doc_entry['chunk_uuids']:
+                                self._uuid_to_doc_id[uid] = doc_id
+                            
+                logger.info(f"✅ Loaded Doc ID Mapping: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
+            except FileNotFoundError:
+                logger.warning(f"⚠️ Doc ID Mapping file not found at {MAPPING_FILE_PATH}. This is expected if no documents have been ingested yet.")
+            except Exception as e:
+                logger.error(f"❌ Failed to load Doc ID Mapping: {e}")
 
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         """Helper to safely re-parse collection name back to doc_type and enabler."""
@@ -505,91 +520,149 @@ class VectorStoreManager:
         return list_vectorstore_folders(base_path=self._base_path)
     
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
-        """
-        Retrieves chunks (Documents) for a list of Stable Document IDs from a specific collection.
-        This retrieves ALL chunks belonging to the specified Stable Document IDs.
-        """
-        if isinstance(stable_doc_ids, str):
-            stable_doc_ids = [stable_doc_ids]
-            
-        stable_doc_ids = [uid for uid in stable_doc_ids if uid]
-        if not stable_doc_ids:
-            return []
-            
-        # Get the correct Collection Name
-        collection_name = _get_collection_name(doc_type, enabler)
-
-        all_chunk_uuids = []
-        skipped_docs = []
-        found_stable_ids = []
-
-        # 1. ค้นหา Chunk UUIDs ทั้งหมดจาก Mapping
-        for stable_id in stable_doc_ids:
-            if stable_id in self._doc_id_mapping:
-                doc_entry = self._doc_id_mapping[stable_id] 
+            """
+            Retrieves chunks (Documents) for a list of Stable Document IDs from a specific collection.
+            This retrieves ALL chunks belonging to the specified Stable Document IDs.
+            """
+            if isinstance(stable_doc_ids, str):
+                stable_doc_ids = [stable_doc_ids]
                 
-                # ตรวจสอบโครงสร้าง: {"stable_id": {"chunk_uuids": ["uuid1", "uuid2", ...]}}
-                if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry.get('chunk_uuids'), list):
-                    chunk_uuids = doc_entry['chunk_uuids']
-                    if chunk_uuids:
-                        all_chunk_uuids.extend(chunk_uuids)
-                        found_stable_ids.append(stable_id)
-                    else:
-                        logger.warning(f"Mapping found for Stable ID '{stable_id}' but 'chunk_uuids' list is empty.")
-                else:
-                    logger.warning(f"Mapping entry for Stable ID '{stable_id}' is malformed or missing 'chunk_uuids'.")
-            else:
-                skipped_docs.append(stable_id)
-                
-        if skipped_docs:
-            logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
-
-        if not all_chunk_uuids:
-            logger.warning(f"No valid chunk UUIDs found for provided Stable Document IDs: {stable_doc_ids}. Check doc_id_mapping.json.")
-            return []
-            
-        # 2. โหลด Chroma Instance
-        chroma_instance = self._load_chroma_instance(collection_name) 
-
-        if not chroma_instance:
-            logger.error(f"Collection '{collection_name}' is not loaded.")
-            return []
-
-        # 3. Fetch data by Chunk IDs (Chroma UUIDs)
-        try:
-            collection = chroma_instance._collection
-            result = collection.get(
-                ids=all_chunk_uuids,
-                include=['documents', 'metadatas'] 
-            )
-            
-            # 4. Process results into LangChain Documents
-            documents: List[LcDocument] = []
-            
-            if not result.get('documents'):
-                logger.warning(f"ChromaDB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
+            stable_doc_ids = [uid for uid in stable_doc_ids if uid]
+            if not stable_doc_ids:
                 return []
                 
-            for i, text in enumerate(result.get('documents', [])):
-                if text:
-                    metadata = result.get('metadatas', [{}])[i]
-                    chunk_uuid_from_result = result.get('ids', [''])[i]
-                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
+            # Get the correct Collection Name
+            collection_name = _get_collection_name(doc_type, enabler)
+
+            all_chunk_uuids = []
+            skipped_docs = []
+            found_stable_ids = []
+
+            # 1. ค้นหา Chunk UUIDs ทั้งหมดจาก Mapping
+            for stable_id in stable_doc_ids:
+                # 🟢 FIX: ทำความสะอาด ID โดยการ strip() ก่อนการเปรียบเทียบ
+                stable_id_clean = stable_id.strip()
+
+                if stable_id_clean in self._doc_id_mapping:
+                    doc_entry = self._doc_id_mapping[stable_id_clean] 
                     
-                    # Ensure metadata contains necessary keys
-                    metadata["chunk_uuid"] = chunk_uuid_from_result
-                    metadata["doc_id"] = doc_id
-                    metadata["doc_type"] = doc_type # Use input doc_type
+                    # ตรวจสอบโครงสร้าง: {"stable_id": {"chunk_uuids": ["uuid1", "uuid2", ...]}}
+                    if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry.get('chunk_uuids'), list):
+                        chunk_uuids = doc_entry['chunk_uuids']
+                        if chunk_uuids:
+                            all_chunk_uuids.extend(chunk_uuids)
+                            found_stable_ids.append(stable_id_clean) # ใช้ ID ที่สะอาดในการบันทึก
+                        else:
+                            logger.warning(f"Mapping found for Stable ID '{stable_id_clean}' but 'chunk_uuids' list is empty.")
+                    else:
+                        logger.warning(f"Mapping entry for Stable ID '{stable_id_clean}' is malformed or missing 'chunk_uuids'.")
+                else:
+                    skipped_docs.append(stable_id_clean) # ใช้ ID ที่สะอาดในการบันทึกว่าถูก skip
                     
-                    documents.append(LcDocument(page_content=text, metadata=metadata))
+            if skipped_docs:
+                logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
+
+            if not all_chunk_uuids:
+                logger.warning(f"No valid chunk UUIDs found for provided Stable Document IDs: {skipped_docs}. Check doc_id_mapping.json.")
+                return []
+                
+            # 2. โหลด Chroma Instance
+            chroma_instance = self._load_chroma_instance(collection_name) 
+
+            if not chroma_instance:
+                logger.error(f"Collection '{collection_name}' is not loaded.")
+                return []
+
+            # 3. Fetch data by Chunk IDs (Chroma UUIDs)
+            try:
+                collection = chroma_instance._collection
+                result = collection.get(
+                    ids=all_chunk_uuids,
+                    include=['documents', 'metadatas'] 
+                )
+                
+                # 4. Process results into LangChain Documents
+                documents: List[LcDocument] = []
+                
+                if not result.get('documents'):
+                    logger.warning(f"ChromaDB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
+                    return []
+                    
+                for i, text in enumerate(result.get('documents', [])):
+                    if text:
+                        metadata = result.get('metadatas', [{}])[i]
+                        chunk_uuid_from_result = result.get('ids', [''])[i]
+                        doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
+                        
+                        # Ensure metadata contains necessary keys
+                        metadata["chunk_uuid"] = chunk_uuid_from_result
+                        metadata["doc_id"] = doc_id
+                        metadata["doc_type"] = doc_type # Use input doc_type
+                        
+                        documents.append(LcDocument(page_content=text, metadata=metadata))
+                
+                logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{collection_name}'.")
+                return documents
+                
+            except Exception as e:
+                logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
+                return []
+
+    def get_id_mapping_from_vectorstore(self, uuids_64: List[str], doc_type: str, enabler: Optional[str] = None) -> Dict[str, str]:
+        """
+        Retrieves the mapping from 64-char Stable UUIDs (doc_id) to 34-char Ref IDs (assessment_filter_id) 
+        by querying the Chroma metadata. This is used for the Hard Filter Fix.
+        
+        Returns: Dict[64-char UUID, 34-char Ref ID]
+        """
+        if not uuids_64:
+            return {}
+        
+        collection_name = _get_collection_name(doc_type, enabler)
+        chroma_instance = self._load_chroma_instance(collection_name)
+
+        if not chroma_instance:
+            logger.warning(f"Cannot retrieve ID mapping: Collection '{collection_name}' is not loaded.")
+            return {}
+
+        try:
+            collection = chroma_instance._collection
             
-            logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{collection_name}'.")
-            return documents
+            # 1. สร้าง Hard Filter เพื่อค้นหา Chunks ที่มี doc_id เป็น 64-char UUID ที่เราต้องการ
+            filter_query = {
+                "$or": [
+                    {"doc_id": {"$in": uuids_64}}, 
+                    {"stable_doc_uuid": {"$in": uuids_64}}
+                ]
+            }
+                        
+            # 2. Fetch data: เราต้องการแค่ metadatas และ IDs (documents ไม่จำเป็น)
+            result = collection.get(
+                where=filter_query,
+                include=['metadatas'] 
+            )
+            
+            id_mapping: Dict[str, str] = {}
+            metadatas = result.get('metadatas', [])
+            
+            for metadata in metadatas:
+                # doc_id = 64-char Stable UUID (Key)
+                doc_id_64 = metadata.get("doc_id") 
+                
+                # assessment_filter_id = 34-char Ref ID (Value)
+                ref_id_34 = metadata.get("assessment_filter_id")
+                
+                if doc_id_64 and ref_id_34:
+                    # เก็บ mapping โดยใช้ 64-char UUID เป็นคีย์ และ 34-char Ref ID เป็นค่า
+                    id_mapping[doc_id_64] = ref_id_34
+            
+            logger.info(f"✅ Successfully retrieved ID mapping for {len(id_mapping)} documents from '{collection_name}'.")
+            return id_mapping
             
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
-            return []
-
+            logger.error(f"❌ Error retrieving ID mapping from collection '{collection_name}': {e}", exc_info=True)
+            return {}
+        
 # Helper function to get the manager instance
 def get_vectorstore_manager() -> VectorStoreManager:
     """Returns the singleton instance of VectorStoreManager."""

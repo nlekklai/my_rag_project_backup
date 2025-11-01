@@ -31,7 +31,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Test RAG Retrieval from Vector Stores.")
     
     parser.add_argument(
-        "doc_type",
+        "--doc_type",
         nargs='?', 
         default="document", 
         help=f"Document type to test (default: document, supported: {SUPPORTED_DOC_TYPES})",
@@ -227,24 +227,34 @@ def test_vectorstore_retrieval(
     count_source_files(collection_to_load)
 
     # ------------------ D. ทดสอบดึงเอกสารด้วย Stable ID โดยตรง ------------------
+    # ในไฟล์ test_retrieval.py 
+# ในฟังก์ชัน test_vectorstore_retrieval
+
+    # ------------------ D. ทดสอบดึงเอกสารด้วย Stable ID โดยตรง ------------------
     if doc_id:
+        # 🟢 FIX 1: ทำความสะอาด doc_id ที่รับจาก CLI ทันที (Defensive Strip)
+        clean_doc_id = doc_id.strip() 
+
         print("\n" + "-" * 50)
-        print(f"--- 4. ทดสอบดึงเอกสารด้วย Stable ID '{doc_id}' โดยตรง ---")
+        # ใช้ clean_doc_id ในการแสดงผล Log และส่งเข้าฟังก์ชัน
+        print(f"--- 4. ทดสอบดึงเอกสารด้วย Stable ID '{clean_doc_id}' โดยตรง ---")
         print("-" * 50)
         
         manager = VectorStoreManager() # โหลด Singleton Manager
         try:
             documents = manager.get_chunks_from_doc_ids( 
-                stable_doc_ids=[doc_id], 
+                # 🟢 ใช้ ID ที่สะอาดในการเรียกเมธอด
+                stable_doc_ids=[clean_doc_id], 
                 doc_type=doc_type_lower,
                 enabler=enabler 
             )
             
             if documents:
-                print(f"✅ สำเร็จ! ดึง {len(documents)} Chunk ด้วย Stable ID '{doc_id}'")
+                print(f"✅ สำเร็จ! ดึง {len(documents)} Chunk ด้วย Stable ID '{clean_doc_id}'")
                 print(f"   - เนื้อหาเริ่มต้น: '{documents[0].page_content[:150]}...'")
             else:
-                print(f"❌ ล้มเหลว: ดึงเอกสารด้วย Stable ID '{doc_id}' ได้ 0 ผลลัพธ์")
+                # ใช้ clean_doc_id ในการแสดงผล Log
+                print(f"❌ ล้มเหลว: ดึงเอกสารด้วย Stable ID '{clean_doc_id}' ได้ 0 ผลลัพธ์")
             
         except Exception as e:
             print(f"❌ ข้อผิดพลาดร้ายแรงระหว่างการดึงด้วย Stable ID: {e}")

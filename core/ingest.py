@@ -89,9 +89,10 @@ SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", 
 
 # Logging
 logging.basicConfig(
-    # filename="ingest.log",
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    filename="ingest.log",
+    level=logging.DEBUG, # ✅ แก้ไขจาก INFO เป็น DEBUG
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -106,9 +107,22 @@ def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
     doc_type_norm = doc_type.strip().lower()
 
     if doc_type_norm == "evidence":
-        # Apply default enabler if None, or use the provided one
-        enabler_norm = (enabler or DEFAULT_ENABLER).strip().lower()
-        # We use lowercase for folder names for consistency
+        # 1. กำหนดค่า enabler สุดท้าย (ใช้ enabler ที่ให้มา หรือ DEFAULT_ENABLER)
+        # Note: ต้องกำหนด DEFAULT_ENABLER ใน core/ingest.py
+        final_enabler = (enabler or DEFAULT_ENABLER) 
+        
+        # 🟢 FIX: ตรวจสอบความสมบูรณ์ของ enabler ขั้นสุดท้าย
+        if not final_enabler or not final_enabler.strip():
+             # หากมาถึงจุดนี้โดยที่ enabler เป็น None, Empty String, หรือ Whitespace เท่านั้น
+             # ให้ยกเลิกการทำงานทันที เพราะจะทำให้ชื่อ Collection ผิดพลาด
+             raise ValueError(
+                 "CRITICAL: Evidence document chunk cannot be indexed: Final enabler is empty or missing. "
+                 "Check DEFAULT_ENABLER definition or ensure enabler is provided."
+             )
+
+        # 2. จัดรูปแบบชื่อ Collection
+        enabler_norm = final_enabler.strip().lower()
+        # คืนค่าเป็น evidence_km
         return f"{doc_type_norm}_{enabler_norm}"
         
     # Default logic (for document, faq, policy, etc.)
@@ -220,21 +234,16 @@ def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
     return clean
 
 # -------------------- Normalization utility --------------------
-def _normalize_doc_id(text: str) -> str:
-    """
-    Normalizes a filename/text into a safe ID key.
-    """
-    if not text: return "default_doc"
-    doc_id = text.strip() 
-    if not doc_id: return "default_doc"
-    
-    # Remove file extensions if present
-    doc_id = os.path.splitext(doc_id)[0] 
-    
-    doc_id = unicodedata.normalize('NFKD', doc_id).encode('ascii', 'ignore').decode('utf-8')
-    doc_id = re.sub(r'[^\w\s-]', '', doc_id).strip().lower()
-    doc_id = re.sub(r'[-\s]+', '-', doc_id)
-    return doc_id or "default_doc"
+def _normalize_doc_id(raw_id: str, file_content: bytes = None) -> str:
+    normalized = re.sub(r'[^a-zA-Z0-9]', '', raw_id).lower()
+    if len(normalized) > 28:
+        normalized = normalized[:28]
+    hash_suffix = '000000'
+    if file_content:
+        hash_suffix = hashlib.sha1(file_content).hexdigest()[:6]
+    final_id = (normalized + hash_suffix).ljust(34, '0')
+    return final_id
+
 
 # -------------------- Text Cleaning --------------------
 def clean_text(text: str) -> str:
@@ -365,6 +374,7 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
 def load_and_chunk_document(
     file_path: str,
     doc_id_key: str, 
+    stable_doc_uuid: str, # ⬅️ เพิ่ม Stable UUID เข้ามา
     year: Optional[int] = None,
     version: str = "v1",
     metadata: Optional[Dict[str, Any]] = None,
@@ -420,7 +430,7 @@ def load_and_chunk_document(
         
         if year: d.metadata["year"] = year
         d.metadata["version"] = version
-        d.metadata["doc_id"] = doc_id_key 
+        d.metadata["doc_id"] = stable_doc_uuid 
         d.metadata["source"] = d.metadata.get("source_file", os.path.basename(file_path))
         d.metadata = _safe_filter_complex_metadata(d.metadata) # Final filter
 
@@ -444,10 +454,10 @@ def load_and_chunk_document(
 def process_document(
     file_path: str,
     file_name: str,
-    stable_doc_uuid: str, 
+    stable_doc_uuid: str, # ⬅️ (Warning: This is the 64-char SHA256 Hash)
     doc_type: Optional[str] = None,
     enabler: Optional[str] = None, 
-    base_path: str = VECTORSTORE_DIR, 
+    base_path: str = "vectorstore_data", # Assuming default value
     year: Optional[int] = None,
     version: str = "v1",
     metadata: dict = None,
@@ -456,23 +466,33 @@ def process_document(
 ) -> Tuple[List[Document], str, str]: 
     
     raw_doc_id_input = os.path.splitext(file_name)[0]
-    filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) 
+    filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) # ⬅️ นี่คือ ID 34-char ที่เราต้องการ!
             
     doc_type = doc_type or "document"
     
     # 📌 Determine resolved enabler
     resolved_enabler = None
     if doc_type.lower() == "evidence":
+        # Ensure DEFAULT_ENABLER is defined or handle its absence
+        DEFAULT_ENABLER = "KM" # Mocking if not defined
         resolved_enabler = (enabler or DEFAULT_ENABLER).upper()
 
     # 📌 Inject enabler into metadata if it exists
     injected_metadata = metadata or {}
     if resolved_enabler:
         injected_metadata["enabler"] = resolved_enabler
+        
+    # --- DEBUG LOGS เพื่อยืนยัน ID ---
+    filter_id_value = filename_doc_id_key # ค่า 34-char ที่จะถูกเก็บ
+    logger.critical(f"================== START DEBUG INGESTION: {file_name} ==================")
+    logger.critical(f"🔍 DEBUG ID (stable_doc_uuid, 64-char Hash): {len(stable_doc_uuid)}-char: {stable_doc_uuid[:34]}...")
+    logger.critical(f"✅ FINAL ID TO STORE (34-char Ref ID): {len(filter_id_value)}-char: {filter_id_value[:34]}...")
+    # ---------------------------------
 
     chunks = load_and_chunk_document(
         file_path=file_path,
         doc_id_key=filename_doc_id_key, 
+        stable_doc_uuid=stable_doc_uuid,
         year=year,
         version=version,
         metadata=injected_metadata, 
@@ -480,12 +500,22 @@ def process_document(
     )
     
     for c in chunks:
+        # [2] เก็บ ID 64-char (ที่ใช้ใน Ingestion เดิม)
+        c.metadata["doc_id"] = stable_doc_uuid          
         c.metadata["stable_doc_uuid"] = stable_doc_uuid 
+        
+        # ✅ การแก้ไขที่สำคัญ: เพิ่มคีย์สำหรับ ID 32-char (ใช้สำหรับกรองเดิม)
+        c.metadata["original_stable_id"] = filename_doc_id_key[:32].lower()  
+        
         c.metadata["doc_type"] = doc_type 
         if resolved_enabler:
-             c.metadata["enabler"] = resolved_enabler # Ensure enabler is in final chunk
+             c.metadata["enabler"] = resolved_enabler
+
+        # 🎯 FINAL FIX: ใช้ filename_doc_id_key (34-char) สำหรับ Hard Filter
+        c.metadata["assessment_filter_id"] = filter_id_value # <--- ถูกต้องแล้ว
         
         c.metadata = _safe_filter_complex_metadata(c.metadata)
+        logger.debug(f"Chunk metadata preview: {c.metadata}")
         
     return chunks, stable_doc_uuid, doc_type
 
