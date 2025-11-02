@@ -500,10 +500,20 @@ class EnablerAssessment:
 
                         for doc in top_evidence[:k_to_use]: 
                             doc_content = doc.get("content", "")
-                            source_name = doc.get("source", "N/A (No Source Tag)")
-                            location = doc.get("metadata", {}).get("page_number", doc.get("doc_id", "N/A"))
-                            location_str = f"Page {location}" if isinstance(location, int) else location
-                            doc_id = doc.get("doc_id", "N/A")
+                            metadata = doc.get("metadata", {}) # ดึง metadata ออกมา
+                            
+                            # 🟢 FIX 1: ดึง source_name จาก metadata['source'] (ชื่อไฟล์)
+                            # ใช้ doc.get("source") เป็น fallback (สมมติว่า retriever ตั้งค่าไว้)
+                            source_name = metadata.get("source", metadata.get("filename", "N/A (No Source Tag)"))
+                            
+                            # 🟢 FIX 2: ดึง Doc ID ตัวเต็มจาก metadata['doc_id'] (Stable UUID)
+                            # ใช้ doc_id เป็น fallback (สมมติว่า retriever ตั้งค่าไว้)
+                            doc_id = metadata.get("doc_id", doc.get("doc_id", "N/A"))
+                            
+                            # ดึง Page Number
+                            location = metadata.get("page_number", "N/A")
+                            location_str = f"Page {location}" if isinstance(location, int) else "N/A"
+                            
                             retrieved_sources_list.append({
                                 "source_name": source_name,
                                 "doc_id": doc_id,

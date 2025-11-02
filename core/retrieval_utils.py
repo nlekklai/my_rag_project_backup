@@ -3,7 +3,7 @@ import logging
 import random
 import json
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union, TypeVar, Type, Tuple
 from langchain.schema import SystemMessage, HumanMessage, Document as LcDocument
 from pydantic import ValidationError
 import regex as re
@@ -39,10 +39,14 @@ except Exception:
     VectorStoreManager = None
     load_all_vectorstores = None
 
+from pydantic import ValidationError, BaseModel
+T = TypeVar('T', bound=BaseModel)
+
 try:
     from models.llm import llm as llm_instance
 except Exception:
     llm_instance = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,42 @@ def _robust_extract_json(text: str) -> Optional[Any]:
         except Exception:
             pass
     return None
+
+def parse_llm_json_response(llm_response_text: str, pydantic_schema: Type[T]) -> Union[T, List[T]]:
+    """
+    ดึง JSON จากข้อความ LLM และตรวจสอบความถูกต้องด้วย Pydantic Schema.
+    """
+    raw_data = _robust_extract_json(llm_response_text)
+    
+    if raw_data is None:
+        raise ValueError("Could not robustly extract valid JSON from LLM response.")
+        
+    try:
+        if hasattr(pydantic_schema, '__origin__') and pydantic_schema.__origin__ is list:
+            item_schema = pydantic_schema.__args__[0]
+            if not isinstance(raw_data, list):
+                raw_data = [raw_data]
+            
+            validated_list = [item_schema.model_validate(item) for item in raw_data]
+            return validated_list
+        else:
+            validated_model = pydantic_schema.model_validate(raw_data)
+            return validated_model
+            
+    except ValidationError as e:
+        logger.error(f"Pydantic Validation Error for {pydantic_schema.__name__}: {e}")
+        raise ValueError(f"Pydantic validation failed for schema {pydantic_schema.__name__}. Details: {e}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during Pydantic validation: {e}")
+        raise ValueError(f"An unexpected error occurred during JSON validation: {e}")
+
+def extract_uuids_from_llm_response(text: str) -> List[str]:
+    """
+    ดึง UUIDs ที่ถูกต้องตามรูปแบบมาตรฐาน
+    """
+    uuid_pattern = r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})"
+    uuids = re.findall(uuid_pattern, text)
+    return list(set(uuids))
 
 # =================================================================
 # LLM Evaluation
