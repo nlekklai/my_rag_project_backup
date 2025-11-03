@@ -285,10 +285,10 @@ def _is_pdf_image_only(file_path: str) -> bool:
 def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Document]:
     """
     Helper function to load a document using a specific LangChain loader class.
-    - CSV → CSVLoader
-    - PDF → auto detect text layer
-    - Image → OCR with UnstructuredFileLoader
+    - PDF/Image/Unstructured -> handles OCR
+    - 🟢 FIX: เพิ่มการกรองที่เข้มงวดเพื่อให้มั่นใจว่าส่งคืนเฉพาะ Document objects
     """
+    raw_docs: List[Any] = [] # Initialize raw_docs
     try:
         ext = file_path.lower().split('.')[-1]
         
@@ -310,12 +310,24 @@ def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Docume
         else:
             loader = loader_class(file_path)
         
-        return loader.load()
-    
+        raw_docs = loader.load() # ⬅️ โหลดเอกสาร
+
     except Exception as e:
-        # 📌 [FIXED: Detailed Loader Failure Logging] บันทึก Exception ที่เกิดขึ้นในการโหลด
         logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} - {loader_class.__name__} raised: {type(e).__name__} ({e})")
-        return []    
+        return []
+    
+    # ---------------------------------------------------------------------
+    # 🟢 CRITICAL FIX: กรองให้มั่นใจว่ามีแต่ Document object เท่านั้น
+    # ---------------------------------------------------------------------
+    cleaned_docs: List[Document] = []
+    for item in raw_docs:
+        if isinstance(item, Document): # ⬅️ ตรวจสอบประเภทที่เข้มงวด
+            cleaned_docs.append(item)
+        else:
+            doc_type_str = str(type(item)).split("'")[-2]
+            logger.warning(f"⚠️ Loader for '{os.path.basename(file_path)}' returned non-Document object (Type: {doc_type_str}). Skipping to prevent metadata error.")
+            
+    return cleaned_docs # ⬅️ ส่งคืนรายการที่สะอาดแล้ว  
 
 # -------------------- Loaders --------------------
 
@@ -392,31 +404,39 @@ def load_and_chunk_document(
         
     raw_docs = [] # <-- ตั้งค่าเริ่มต้น
     try:
-        # 🟢 [Step 1] เรียกใช้ Loader เพื่อโหลดเอกสาร
+        # 🟢 [Step 1] เรียกใช้ Loader เพื่อโหลดเอกสาร (ซึ่งตอนนี้มีการกรองแล้ว)
         raw_docs = loader_func(file_path)
         
     except ValidationError as e:
-        # 📌 [FIX] ดักจับ Pydantic Crash จาก Unstructured Loader/OCR ทันที (สาเหตุหลัก 65%)
-        # Error นี้เกิดก่อนที่โค้ดจะส่งค่าไป normalize_loaded_documents
         loader_name = str(loader_func)
         if 'Unstructured' in loader_name or 'Unstructured' in str(loader_func):
              logger.warning(f"⚠️ OCR Crash Handled: {os.path.basename(file_path)} - Loader raised Pydantic ValidationError. Treating as 0 documents loaded.")
-             raw_docs = [] # ให้ถือว่าไม่มีเอกสารถูกโหลด แต่ไม่ Crash ทั้งไฟล์
+             raw_docs = [] 
         else:
-             # ถ้าไม่ใช่ Unstructured Loader ให้โยน Error ไปต่อ (เพื่อตรวจสอบ)
              raise e 
              
     except Exception as e:
-        # ดักจับ Error อื่นๆ ที่อาจเกิดขึ้นระหว่างการโหลดไฟล์
         logger.error(f"❌ Critical error during file loading: {file_path}. Error: {e}")
         raw_docs = []
 
     if not raw_docs:
         logger.warning(f"Loader returned 0 documents for {os.path.basename(file_path)}. Skipping chunking.")
         return []
-        
-    # 2. Normalize และทำความสะอาด (ใช้ normalize_loaded_documents ที่เราแก้ไขแล้ว)
-    docs = normalize_loaded_documents(raw_docs, source_path=file_path)
+
+    # ---------------------------------------------------------------------
+    # 🟢 CRITICAL FIX: กรองเอาเฉพาะ Document object ออกจาก raw_docs (สำรอง)
+    #    ขั้นตอนนี้ควรทำงานใน _load_document_with_loader แล้ว แต่ทำซ้ำเพื่อความปลอดภัย
+    # ---------------------------------------------------------------------
+    pre_cleaned_raw_docs = []
+    for doc in raw_docs:
+        if isinstance(doc, Document):
+            pre_cleaned_raw_docs.append(doc)
+        else:
+            doc_type_str = str(type(doc)).split("'")[-2]
+            logger.warning(f"⚠️ Loader for '{os.path.basename(file_path)}' returned non-Document object (Type: {doc_type_str}). Skipping normalization.")
+
+    # 2. Normalize และทำความสะอาด
+    docs = normalize_loaded_documents(pre_cleaned_raw_docs, source_path=file_path)
 
     # Inject metadata before splitting
     for d in docs:
@@ -441,8 +461,23 @@ def load_and_chunk_document(
         logger.error(f"Error during document splitting for {os.path.basename(file_path)}: {e}")
         chunks = docs # Fallback to using raw docs as chunks
 
+    # ---------------------------------------------------------------------
+    # 🟢 FINAL CRITICAL CLEANUP (NEW): กรองรายการ CHUNKS อีกครั้งก่อนเข้าสู่ Log/Index
+    #    ขั้นตอนนี้จะหยุด Log Noise จาก LangChain Cleaner ได้ 100%
+    # ---------------------------------------------------------------------
+    final_cleaned_chunks = []
+    for c in chunks:
+        if isinstance(c, Document):
+             # ทำความสะอาดเนื้อหาและเพิ่ม metadata ที่จำเป็นในขั้นตอนนี้
+             c.page_content = clean_text(c.page_content) 
+             final_cleaned_chunks.append(c)
+        else:
+             logger.error(f"FATAL: Non-Document object found in 'chunks' list after splitting! Type: {type(c)}. Skipping.")
+             
+    chunks = final_cleaned_chunks # ใช้รายการที่สะอาดแล้ว
+
     for idx, c in enumerate(chunks, start=1):
-        c.page_content = clean_text(c.page_content)
+        # c.page_content = clean_text(c.page_content) # 🚨 บรรทัดนี้ถูกย้ายไปทำใน loop ด้านบนแล้ว
         c.metadata["chunk_index"] = idx
         c.metadata = _safe_filter_complex_metadata(c.metadata) 
         
@@ -512,7 +547,7 @@ def process_document(
              c.metadata["enabler"] = resolved_enabler
 
         # 🎯 FINAL FIX: ใช้ filename_doc_id_key (34-char) สำหรับ Hard Filter
-        c.metadata["assessment_filter_id"] = filter_id_value # <--- ถูกต้องแล้ว
+        # c.metadata["assessment_filter_id"] = filter_id_value # <--- ถูกต้องแล้ว
         
         c.metadata = _safe_filter_complex_metadata(c.metadata)
         logger.debug(f"Chunk metadata preview: {c.metadata}")

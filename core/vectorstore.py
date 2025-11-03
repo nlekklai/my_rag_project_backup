@@ -27,7 +27,7 @@ from langchain_chroma import Chroma
 
 # NOTE: Since flashrank requires torch, we put the import inside the function to avoid errors 
 # if the environment does not have it, but for a standard RAG environment, it should be here.
-from flashrank import Ranker 
+from flashrank import Ranker
 
 import chromadb
 from chromadb.config import Settings
@@ -44,8 +44,8 @@ except Exception:
 
 # -------------------- CONFIG --------------------
 INITIAL_TOP_K = 15
-FINAL_K_RERANKED = 7
-FINAL_K_NON_RERANKED = 10 # ใช้เป็นค่าเริ่มต้นสำหรับ k เมื่อไม่มี reranker (e.g., เมื่อ disable_semantic_filter)
+FINAL_K_RERANKED =  5
+FINAL_K_NON_RERANKED = 7
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # VECTORSTORE_DIR = "vectorstore"
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore") # ⬅️ ใช้ Absolute Path
@@ -65,11 +65,8 @@ ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or
 # Logging
 logger = logging.getLogger(__name__)
 
-# 🟢 FIX: บังคับ Logger Level ให้แสดงผล INFO และ DEBUG
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO) 
 logger.handlers = logging.root.handlers # ทำให้ Logger ใช้ Handler ของ Root Logger (ซึ่งคือ Console)
-# Assume logging is configured externally, if not, use basicConfig
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
 
 # Global caches (per process)
 _CACHED_RANKER = None
@@ -80,6 +77,64 @@ _MPS_WARNING_SHOWN = False
 # Flashrank cache dir
 CUSTOM_CACHE_DIR = os.path.expanduser("~/.hf_cache_dir/flashrank_models")
 
+class FlashrankRequestWrapper:
+    """Mimics the expected object structure for flashrank's internal logic (request.query)."""
+    def __init__(self, query: str, passages: List[Dict[str, Any]]):
+        self.query = query
+        self.passages = passages
+
+# ⚠️ ท่านต้องมี Reranker ที่สืบทอดมาจาก BaseDocumentCompressor ของ LangChain
+class FlashrankCompressor(BaseDocumentCompressor):
+    # ... (Implementation ของ Flashrank) ...
+    # เนื่องจากผมไม่มีโค้ด FlashrankCompressor ของท่าน ผมจะใช้ Flashrank โดยตรง
+    
+    # 🟢 เพิ่มโค้ดนี้ใน core/vectorstore.py
+    def __init__(self, top_n: int):
+        self._top_n = top_n
+        # ❗️ NOTE: Flashrank Ranker ต้องถูกโหลดเพียงครั้งเดียว (Singleton/Cache)
+        # ผมขอสมมติว่า ranker ถูกโหลดไว้แล้ว หรือจะโหลดใหม่ทุกครั้งก็ได้
+        self._ranker = Ranker(model_name='ms-marco-MiniLM-L-12-v2') 
+
+    def compress_documents(
+        self, documents: Sequence[LcDocument], query: str, **kwargs: Any
+    ) -> Sequence[LcDocument]:
+        if not documents:
+            return []
+        
+        # 1. แปลงเอกสาร LangChain เป็นรูปแบบที่ Flashrank รับ (passages)
+        candidates = [
+            {"id": i, "text": doc.page_content, "meta": doc.metadata}
+            for i, doc in enumerate(documents)
+        ]
+        
+        # 2. สร้าง Wrapper Object
+        rerank_request_object = FlashrankRequestWrapper(
+            query=query,
+            passages=candidates 
+        )
+        
+        # 3. จัดอันดับ (ตอนนี้ทำงานได้แล้ว)
+        results = self._ranker.rerank(rerank_request_object) 
+        
+        # 4. แปลงกลับเป็นเอกสาร LangChain ตามลำดับใหม่
+        reranked_docs = []
+        for res in results:
+            original_doc = documents[res['id']] 
+            original_doc.metadata['rerank_score'] = res['score'] 
+            reranked_docs.append(original_doc)
+            
+        logger.warning(f"⚠️ Flashrank returned {len(results)} results (expected max: {self._top_n}).") 
+        
+        # 5. 🟢 FIX: ตัดทอนเอกสารที่ถูกจัดเรียงแล้วให้เหลือเพียง self._top_n
+        final_docs = reranked_docs[:self._top_n]
+        logger.warning(f"✅ Truncated {len(reranked_docs)} results down to {len(final_docs)} documents.")
+        
+        return final_docs # ⬅️ ส่ง list ที่ถูก Truncate แล้วกลับไป
+
+# 🟢 ฟังก์ชันที่ core/retrieval_utils.py ต้องการเรียก
+def get_reranking_compressor(top_n: int = FINAL_K_RERANKED) -> FlashrankCompressor:
+    """Returns the configured Flashrank compressor instance."""
+    return FlashrankCompressor(top_n=top_n)
 
 # -------------------- Helper: detect environment & device --------------------
 def _detect_system():
@@ -207,9 +262,22 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
             # ใช้ Flashrank rerank
             ranked_results = self.ranker.rerank(run_input)
         except Exception as e:
-            logger.warning(f"⚠️ Flashrank.rerank failed: {e}. Returning original docs.")
-            # Fallback to original documents
-            ranked_results = [{"id": i, "score": 0.0} for i in range(len(doc_list_for_rerank))]
+            # ❌ CRITICAL FIX: เปลี่ยน Logic Fallback
+            
+            # 1. Log การล้มเหลวแบบ CRITICAL
+            logger.error(f"❌ CRITICAL RERANKER FAILURE: Flashrank.rerank failed: {e}. Falling back to unranked TOP-{self.top_n}.")
+            
+            # 2. คำนวณจำนวนเอกสารที่ต้อง Fallback (min(15, 7) = 7)
+            num_fallback = min(len(doc_list_for_rerank), self.top_n)
+            
+            # 3. สร้าง ranked_results เพียงแค่ 'num_fallback' รายการแรก (ID 0 ถึง 6)
+            #    สิ่งนี้จะบังคับให้ Loop ข้างล่างวนแค่ 7 ครั้งเท่านั้น
+            ranked_results = [{"id": i, "score": 0.0} for i in range(num_fallback)] 
+
+        # 🟢 NEW CRITICAL FIX: Ensure the output list is truncated to self.top_n (7)
+        if len(ranked_results) > self.top_n:
+            logger.warning(f"⚠️ Flashrank returned {len(ranked_results)} results despite top_n={self.top_n}. Truncating output.")
+            ranked_results = ranked_results[:self.top_n] # ⬅️ บังคับตัดตรงนี้
 
         reranked_docs = []
         for res in ranked_results:
@@ -218,6 +286,13 @@ class CustomFlashrankCompressor(BaseDocumentCompressor):
             original_doc = documents[idx]
             # เพิ่ม relevance_score ใน metadata
             reranked_docs.append(LcDocument(page_content=original_doc.page_content, metadata={**original_doc.metadata, "relevance_score": score}))
+        
+        # 🟢 เพิ่ม Log ยืนยันผลลัพธ์
+        if not reranked_docs or len(reranked_docs) == 0:
+            logger.warning("Compressor returned 0 documents.")
+        else:
+            logger.info(f"📝 Compressor finished, returning {len(reranked_docs)} documents.")
+
         return reranked_docs
 
 
@@ -512,7 +587,7 @@ class VectorStoreManager:
                 return base_retriever
         else:
             logger.warning("⚙️ Reranker model not available. Using base retriever only.")
-            return base_retriever
+            return chroma_instance.as_retriever(search_kwargs={"k": final_k}) # ✅ แก้ไข: ใช้ final_k
 
     def get_all_collection_names(self) -> List[str]:
         """Returns a list of all available collection names (folders in VECTORSTORE_DIR)."""
@@ -608,61 +683,6 @@ class VectorStoreManager:
                 logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
                 return []
 
-    def get_id_mapping_from_vectorstore(self, uuids_64: List[str], doc_type: str, enabler: Optional[str] = None) -> Dict[str, str]:
-        """
-        Retrieves the mapping from 64-char Stable UUIDs (doc_id) to 34-char Ref IDs (assessment_filter_id) 
-        by querying the Chroma metadata. This is used for the Hard Filter Fix.
-        
-        Returns: Dict[64-char UUID, 34-char Ref ID]
-        """
-        if not uuids_64:
-            return {}
-        
-        collection_name = _get_collection_name(doc_type, enabler)
-        chroma_instance = self._load_chroma_instance(collection_name)
-
-        if not chroma_instance:
-            logger.warning(f"Cannot retrieve ID mapping: Collection '{collection_name}' is not loaded.")
-            return {}
-
-        try:
-            collection = chroma_instance._collection
-            
-            # 1. สร้าง Hard Filter เพื่อค้นหา Chunks ที่มี doc_id เป็น 64-char UUID ที่เราต้องการ
-            filter_query = {
-                "$or": [
-                    {"doc_id": {"$in": uuids_64}}, 
-                    {"stable_doc_uuid": {"$in": uuids_64}}
-                ]
-            }
-                        
-            # 2. Fetch data: เราต้องการแค่ metadatas และ IDs (documents ไม่จำเป็น)
-            result = collection.get(
-                where=filter_query,
-                include=['metadatas'] 
-            )
-            
-            id_mapping: Dict[str, str] = {}
-            metadatas = result.get('metadatas', [])
-            
-            for metadata in metadatas:
-                # doc_id = 64-char Stable UUID (Key)
-                doc_id_64 = metadata.get("doc_id") 
-                
-                # assessment_filter_id = 34-char Ref ID (Value)
-                ref_id_34 = metadata.get("assessment_filter_id")
-                
-                if doc_id_64 and ref_id_34:
-                    # เก็บ mapping โดยใช้ 64-char UUID เป็นคีย์ และ 34-char Ref ID เป็นค่า
-                    id_mapping[doc_id_64] = ref_id_34
-            
-            logger.info(f"✅ Successfully retrieved ID mapping for {len(id_mapping)} documents from '{collection_name}'.")
-            return id_mapping
-            
-        except Exception as e:
-            logger.error(f"❌ Error retrieving ID mapping from collection '{collection_name}': {e}", exc_info=True)
-            return {}
-        
 # Helper function to get the manager instance
 def get_vectorstore_manager() -> VectorStoreManager:
     """Returns the singleton instance of VectorStoreManager."""
@@ -735,6 +755,7 @@ class NamedRetriever(BaseModel):
              raise ValueError(f"Retriever not found for collection '{self.doc_type}' at path '{self.base_path}'")
         return retriever
 
+
 class MultiDocRetriever(BaseRetriever):
     """
     Combine multiple NamedRetriever sources. Choose executor automatically (thread vs process).
@@ -758,10 +779,13 @@ class MultiDocRetriever(BaseRetriever):
         if doc_ids_filter:
             # สร้าง Chroma DB Metadata Filter: ค้นหาเฉพาะเอกสารที่มี 'doc_id' อยู่ในลิสต์
             self._chroma_filter = {
-                "doc_id": {"$in": doc_ids_filter}
+                # 🟢 FIX: เปลี่ยนคีย์เป็น "doc_id" ซึ่งเป็นคีย์ที่ใช้เก็บ Stable Document ID ใน Metadata
+                "doc_id": {"$in": doc_ids_filter} 
             }
+
             logger.info(f"✅ MultiDocRetriever initialized with doc_ids filter for {len(doc_ids_filter)} Stable IDs.")
 
+    # ... (omitted code - ส่วนที่เหลือของคลาส MultiDocRetriever ไม่ต้องแก้ไข) ...
     # 🟢 FIX: เมธอด _choose_executor ที่หายไป
     def _choose_executor(self):
         """
@@ -811,6 +835,9 @@ class MultiDocRetriever(BaseRetriever):
             retriever_instance = named_r.load_instance()
             # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
             search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
+            # 🎯 เพิ่ม Log ตรงนี้:
+            # logger.info(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Static): Filter is {bool(chroma_filter)}")
+            print(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Static): Filter is {bool(chroma_filter)}")
             return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
         except Exception as e:
             print(f"❌ Child retrieval error for {named_r.doc_id} ({named_r.doc_type}): {e}")
@@ -825,6 +852,9 @@ class MultiDocRetriever(BaseRetriever):
             retriever_instance = named_r.load_instance()
             # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
             search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
+            # 🎯 เพิ่ม Log ตรงนี้:
+            # logger.info(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Thread): Filter is {bool(chroma_filter)}")
+            print(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Thread): Filter is {bool(chroma_filter)}")
             return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
         except Exception as e:
             logger.warning(f"⚠️ Thread retrieval error for {named_r.doc_id}: {e}")
@@ -896,7 +926,7 @@ class MultiDocRetriever(BaseRetriever):
                 score = d.metadata.get("relevance_score")
                 logger.debug(f" - [Reranked] Source={d.metadata.get('doc_source')}, Score={score:.4f}, Type={d.metadata.get('doc_type')}, Content='{d.page_content[:80]}...'")
         return unique_docs
-    
+     
 # -------------------- Load single vectorstore retriever (REVISED) --------------------
 def load_vectorstore(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR, enabler: Optional[str] = None):
     """
@@ -926,19 +956,18 @@ def load_vectorstore(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FIN
         raise ValueError(f"❌ Vectorstore for collection '{collection_name}' (derived from doc_type='{target_doc_type}' and enabler='{enabler}') not found.")
     return retriever
 
-# -------------------- load_all_vectorstores (FINAL REVISED) --------------------
+
+# -------------------- load_all_vectorstores (FINAL REVISED WITH CONDITIONAL ENABLER FIX) --------------------
 def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
                           top_k: int = INITIAL_TOP_K,
                           final_k: int = FINAL_K_RERANKED,
                           base_path: str = VECTORSTORE_DIR,
                           evidence_enabler: Optional[str] = None,
-                          doc_ids: Optional[List[str]] = None) -> MultiDocRetriever: # ⬅️ เพิ่ม doc_ids ที่นี่
+                          doc_ids: Optional[List[str]] = None) -> MultiDocRetriever:
+    
     """
     Load multiple vectorstore collections as MultiDocRetriever.
-    doc_types = list of document types (e.g., ['document', 'evidence'])
-    doc_ids = list of specific Stable Document IDs to filter for (if supported by MultiDocRetriever).
-    evidence_enabler = specific enabler to load for 'evidence' (e.g., 'KM'), 
-                       if None and 'evidence' is requested, loads all evidence_* collections.
+    ... (Docstring เดิม) ...
     """
     doc_types = [doc_types] if isinstance(doc_types, str) else doc_types or []
     doc_type_filter = {dt.strip().lower() for dt in doc_types}
@@ -946,7 +975,7 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
     manager = VectorStoreManager(base_path=base_path)
     all_retrievers: List[NamedRetriever] = []
     
-    # 1. กำหนดรายการ Collection ที่ต้องการโหลดจริง ๆ (Collection Name)
+    # 1. กำหนดรายการ Collection ที่ต้องการโหลดจริง ๆ (Collection Name) - (เหมือนเดิม)
     target_collection_names: Set[str] = set()
     
     if not doc_type_filter:
@@ -959,15 +988,17 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
                     target_collection_names.add(collection_name)
                     logger.info(f"🔍 Added specific evidence collection: {collection_name}")
                 else:
+                    # โหลดทุก Evidence Collection (ถ้าไม่มี Enabler ระบุ)
                     evidence_collections = list_vectorstore_folders(base_path=base_path, doc_type="evidence")
                     target_collection_names.update(evidence_collections)
                     logger.info(f"🔍 Added all evidence collections found: {evidence_collections}")
             else:
+                # สำหรับ document, faq (ใช้ None เป็น Enabler)
                 collection_name = _get_collection_name(dt_norm, None)
                 target_collection_names.add(collection_name)
                 logger.info(f"🔍 Added standard collection: {collection_name}")
                 
-    # 2. ทำการโหลดทีละ Collection
+    # 2. ทำการโหลดทีละ Collection - (เหมือนเดิม)
     logger.info(f"🔍 DEBUG: Attempting to load {len(target_collection_names)} total target collections: {target_collection_names}")
     
     for collection_name in target_collection_names:
@@ -987,16 +1018,23 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
         all_retrievers.append(nr)
         logger.info(f"🔍 DEBUG: Successfully added retriever for collection '{collection_name}'.")
 
-    # 🟢 DEBUG 3: สรุปผลลัพธ์
+    # 3. จัดการ Hard Filter ID (ใช้ 64-char ID ดั้งเดิมโดยตรง)
+    final_filter_ids = doc_ids # ⬅️ ใช้ doc_ids (64-char UUIDs) ที่ส่งมาโดยตรง
+    
+    if doc_ids:
+        # ⚠️ ไม่จำเป็นต้องวนลูปหรือ Map อีกต่อไป
+        # เพียงแค่ใช้ ID 64-char ที่ส่งมาจาก Evidence Mapping
+        logger.info(f"✅ Hard Filter Enabled: Using {len(doc_ids)} original 64-char UUIDs for filtering.")
+        
+    # 4. ส่ง doc_ids ที่เป็น 64-char UUIDs ไปให้ MultiDocRetriever กรองต่อ
     logger.info(f"🔍 DEBUG: Final count of all_retrievers = {len(all_retrievers)}")
     if not all_retrievers:
         raise ValueError(f"No vectorstore collections found matching doc_types={doc_types} and evidence_enabler={evidence_enabler}")
 
-    # 4. ส่ง doc_ids ไปให้ MultiDocRetriever กรองต่อ (ถ้ามี)
     return MultiDocRetriever(
             retrievers_list=all_retrievers, 
             k_per_doc=top_k,
-            doc_ids_filter=doc_ids # ⬅️ ถูกต้อง
+            doc_ids_filter=final_filter_ids 
         )
 
 # -------------------- VECTORSTORE EXECUTOR SINGLETON (RETAINED) --------------------

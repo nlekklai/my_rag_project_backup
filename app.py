@@ -2,21 +2,29 @@
 
 from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, Path
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any, Tuple, Union
+from typing import List, Dict, Optional, Any, Union
 import os
 from datetime import datetime, timezone
-import time
 import logging
 import json
-from langchain.schema import Document, SystemMessage, HumanMessage 
+from langchain.schema import Document as LcDocument, SystemMessage, HumanMessage 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 from typing import Tuple
-from core.retrieval_utils import retrieve_context_by_doc_ids, extract_uuids_from_llm_response, parse_llm_json_response
+from core.retrieval_utils import (
+        retrieve_context_by_doc_ids, 
+        parse_llm_json_response,
+        load_all_vectorstores,
+        retrieve_context_with_filter
+    )
 
-# --- Core Imports (ต้องมีไฟล์เหล่านี้ในโครงสร้างโปรเจกต์) ---
+# 🟢 เพิ่ม Imports ที่จำเป็นสำหรับ RAG Core Logic และ Reranker
+
+# ต้องมีคลาส Ranker สำหรับ Final Rerank
+from flashrank import Ranker 
+
 try:
     from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT, SYSTEM_QA_INSTRUCTION, SYSTEM_COMPARE_INSTRUCTION 
     
@@ -28,7 +36,6 @@ try:
         DATA_DIR, 
         SUPPORTED_TYPES, 
         DocInfo, 
-        SUPPORTED_ENABLERS,
         SUPPORTED_DOC_TYPES # <--- นำเข้าจาก ingest อย่างถูกต้อง
     )
     
@@ -73,6 +80,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # -----------------------------
 VECTORSTORE_DIR = "vectorstore"
 REF_DATA_DIR = "ref_data" 
+DEFAULT_ENABLER = "KM"
+SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
 # (Add this near other Pydantic model definitions in app.py)
 from langchain_core.pydantic_v1 import BaseModel as LangchainBaseModel # Import Langchain Pydantic v1
@@ -215,74 +224,9 @@ class AssessmentRecord(BaseModel):
 class RefDataPayload(BaseModel):
     data: Dict | List 
 
-class QueryResponse(BaseModel):
-    answer: str
-    conversation_id: Optional[str] = None
     
 # Global List of Assessment Records (in-memory for demo/simple environment)
 ASSESSMENT_HISTORY: List[AssessmentRecord] = []
-
-# -----------------------------
-# --- Helper: Setup MultiDocRetriever ---
-# -----------------------------
-def _setup_multi_retriever(doc_type_list: List[str], enabler: Optional[str] = None, filter_doc_ids: Optional[List[str]] = None) -> MultiDocRetriever:
-    """
-    สร้างและตั้งค่า MultiDocRetriever โดยรองรับ Enabler และ Doc Type หลายชนิด
-    """
-    # VectorStoreManager ถูกใช้สำหรับ path/config แต่ Retriver ถูกสร้างใหม่เสมอ
-    manager = VectorStoreManager()
-    retrievers_list: List[NamedRetriever] = []
-    
-    for doc_type in doc_type_list:
-        doc_type_lower = doc_type.lower()
-        
-        # Logic สำหรับ Evidence (ต้องใช้ Enabler)
-        if doc_type_lower == "evidence":
-            if not enabler:
-                logger.warning("⚠️ Skipping 'evidence': No enabler specified.")
-                continue
-            collection_name = _get_collection_name(doc_type_lower, enabler)
-        
-        # Logic สำหรับ Doc Type ทั่วไป
-        elif doc_type_lower in SUPPORTED_DOC_TYPES: # ใช้ SUPPORTED_DOC_TYPES จาก core.ingest
-            collection_name = _get_collection_name(doc_type_lower, None)
-        else:
-             logger.warning(f"⚠️ Skipping unsupported doc_type: {doc_type_lower}")
-             continue
-             
-        # ตรวจสอบว่า Collection มีอยู่จริงก่อนเพิ่ม
-        # NOTE: การเรียก vectorstore_exists ต้องระบุ enabler สำหรับ evidence
-        if doc_type_lower == "evidence":
-             exists = vectorstore_exists(doc_id="N/A", doc_type=doc_type_lower, enabler=enabler, base_path=VECTORSTORE_DIR)
-        else:
-             exists = vectorstore_exists(doc_id="N/A", doc_type=doc_type_lower, enabler=None, base_path=VECTORSTORE_DIR)
-             
-        if not exists:
-             logger.warning(f"⚠️ Vectorstore collection '{collection_name}' not found on disk. Skipping.")
-             continue
-             
-        retrievers_list.append(
-            NamedRetriever(
-                doc_id=doc_type_lower, 
-                doc_type=collection_name, 
-                top_k=INITIAL_TOP_K,
-                final_k=FINAL_K_RERANKED
-            )
-        )
-        logger.info(f"Adding RAG source: {collection_name}")
-
-
-    if not retrievers_list:
-        raise ValueError("No valid document sources configured for RAG based on input types/enabler.")
-
-    # 2. สร้าง MultiDocRetriever
-    multidoc_retriever = MultiDocRetriever(
-        retrievers_list=retrievers_list,
-        k_per_doc=INITIAL_TOP_K,
-        doc_ids_filter=filter_doc_ids 
-    )
-    return multidoc_retriever
-
 
 # -----------------------------
 # --- Assessment Endpoints ---
@@ -857,100 +801,168 @@ async def ingest_documents(request: IngestRequest):
     return {"status": "completed", "results": results}
 
 
+# --- โมเดล (เหมือนเดิม) ---
+class QuerySource(BaseModel):
+    source_id: str = Field(..., description="UUID of the source document.")
+    file_name: str = Field(..., description="Original file name.")
+    chunk_text: str = Field(..., description="The content of the retrieved chunk.")
+    chunk_id: str = Field(..., description="The internal ID of the chunk.")
+    score: float = Field(..., description="Relevance score of the chunk.")
 
-# -----------------------------
-# --- Query Endpoint (Full Multi Doc/Type Support) ---
-# -----------------------------
-class QueryRequest(BaseModel):
-    query: str
-    doc_ids: List[str]
-    
-@app.post("/query")
-async def query_llm(query: QueryRequest):
-    """
-    รับ Query จากผู้ใช้และใช้ RAG เพื่อดึงข้อมูลและสร้างคำตอบ
-    """
-    
-    # 1. Input validation
-    if not query.query or not query.doc_ids:
-        raise HTTPException(status_code=400, detail="Query and document IDs are required.")
+class QueryResponse(BaseModel):
+    answer: str = Field(..., description="The final answer generated by the LLM based on the query and retrieved context.")
+    sources: List[QuerySource] = Field(..., description="List of document chunks used as context.")
 
-    # 2. Check if documents were selected
-    selected_doc_ids = query.doc_ids
-    if not selected_doc_ids:
-        # Handle case where no documents are selected
-        return {"result": {"answer": "กรุณาเลือกเอกสารที่ต้องการค้นหาข้อมูลก่อน"}, "sources": []}
+# --- Endpoint ที่ถูกปรับปรุง ---
+# --- Endpoint ที่ถูกปรับปรุง (Final Version) ---
+@app.post("/query", response_model=QueryResponse)
+async def query_llm(
+    background_tasks: BackgroundTasks,
+    question: str = Form(...),
+    conversation_id: Optional[str] = Form(None),
+    doc_ids: Optional[List[str]] = Form(None),
+    doc_types: Optional[List[str]] = Form(None)
+):
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing required field: question")
 
-    # 3. Retrieve context for the query from the selected documents
-    logger.info(f"Retrieving context for query: {query.query} from documents: {selected_doc_ids}")
-    
-    # 🟢 FIX: ใช้ document_ids เพื่อแก้ไข TypeError จากการเรียก retrieve_context_by_doc_ids
-    context_docs = await run_in_threadpool(lambda: retrieve_context_by_doc_ids(
-        query=query.query,
-        document_ids=selected_doc_ids, 
-        top_k=INITIAL_TOP_K 
-    ))
+    doc_ids = doc_ids or []
+    doc_types = doc_types or []
 
-    # 4. Format context for LLM
-    context_text = "\n\n---\n\n".join([doc.page_content for doc in context_docs])
+    # 🟢 กำหนด Enabler (ใช้ KM)
+    evidence_enabler = DEFAULT_ENABLER
     
-    # 5. Construct the final prompt
-    final_prompt = QA_PROMPT.format(context=context_text, question=query.query)
+    logger.info(
+    f"🧠 /query received: question='{question[:60]}...', doc_ids={doc_ids}, doc_types={doc_types}"
+    )
+
+    if llm_instance is None:
+        raise HTTPException(status_code=503, detail="LLM service is not available.")
+
+    # 1️⃣ Retrieve documents (ใช้ retrieve_context_with_filter วนซ้ำ)
     
+    # 1. เตรียม Reranker (ใช้ Flashrank) สำหรับการจัดอันดับสุดท้ายข้าม Collection
+    try:
+        FINAL_K_VALUE = FINAL_K_RERANKED
+        ranker = Ranker()
+    except Exception as e:
+        logger.error(f"Failed to initialize Flashrank: {e}. Cannot perform final rerank.")
+        # หาก Reranker ล้มเหลว ถือเป็น Critical error
+        raise HTTPException(status_code=500, detail="Reranking service initialization failed.")
+    
+    all_chunks_raw: List[LcDocument] = []
+    
+    # 2. วนซ้ำ (Iterate) ค้นหาในทุก doc_types ที่ผู้ใช้ส่งมา
+    valid_doc_types = doc_types if doc_types else ["document"] # ใช้ "document" เป็น default
+    
+    for d_type in valid_doc_types:
+        try:
+            # กำหนด Enabler (ใช้ KM สำหรับ 'evidence' เท่านั้น)
+            current_enabler = evidence_enabler if d_type.lower() == "evidence" else None
+            
+            # 🚨 FIX: ใช้ d_type และส่ง doc_ids เป็น Hard Filter
+            retrieved_result = await run_in_threadpool(
+                lambda: retrieve_context_with_filter(
+                    query=question,
+                    doc_type=d_type,
+                    enabler=current_enabler,
+                    stable_doc_ids=doc_ids, # Hard Filter
+                    top_k_reranked=100 # ดึงจำนวนมากพอสำหรับ Final Rerank
+                )
+            )
+            
+            # เก็บผลลัพธ์ทั้งหมด
+            if isinstance(retrieved_result, list):
+                all_chunks_raw.extend(retrieved_result)
+            elif isinstance(retrieved_result, dict) and 'documents' in retrieved_result:
+                 all_chunks_raw.extend(retrieved_result.get('documents', []))
+            
+            logger.info(f"Retrieved {len(all_chunks_raw)} raw chunks (current type: {d_type}).")
+
+
+        except Exception as e:
+            logger.error(f"Retrieval error for doc_type='{d_type}': {e}", exc_info=True)
+            # Log error และดำเนินการต่อไป
+
+    logger.info(f"Total raw chunks retrieved across all types: {len(all_chunks_raw)}")
+    
+    # 3. Final Rerank และ Truncate ข้าม Collections
+    if not all_chunks_raw:
+        retrieved_docs_lc = []
+    else:
+        # แปลง LcDocument เป็น dict format ที่ Flashrank ต้องการ
+        flashrank_docs = [{
+            "id": i,
+            "text": doc.page_content, 
+            "meta": doc.metadata
+        } for i, doc in enumerate(all_chunks_raw)]
+        
+        # Rerank ด้วย Flashrank
+        reranked_results = ranker.rank(question, flashrank_docs)
+
+        # เลือก Top K และแปลงกลับเป็น LcDocument
+        top_reranked_results = reranked_results[:FINAL_K_VALUE]
+        retrieved_docs_lc: List[LcDocument] = []
+
+        for result in top_reranked_results:
+            original_doc = all_chunks_raw[result['id']]
+            # Inject relevance score จาก Flashrank
+            original_doc.metadata["score"] = result['relevance_score']
+            retrieved_docs_lc.append(original_doc)
+            
+    logger.info(f"Final retrieved documents after cross-collection Reranking: {len(retrieved_docs_lc)}")
+    
+    # 4. Handle Empty Result (ป้องกัน Error 500)
+    if not retrieved_docs_lc:
+        return QueryResponse(
+            answer="ไม่พบข้อมูลที่เกี่ยวข้องในเอกสารที่เลือก โปรดลองเลือกเอกสารอื่นหรือปรับปรุงคำถามของคุณ",
+            sources=[]
+        )
+    
+    # 🟢 DEBUG: ตรวจสอบเนื้อหาของ Top K Chunks
+    for i, doc in enumerate(retrieved_docs_lc):
+        file_name = doc.metadata.get('file_name', doc.metadata.get('source', 'N/A'))
+        logger.critical(f"🔍 CHUNK {i+1} SOURCE: {file_name} | Doc ID: {doc.metadata.get('doc_id', 'N/A')} | Score: {doc.metadata.get('score', 0.0):.4f}")
+        logger.critical(f"   CONTENT SNIPPET: {doc.page_content[:500].replace('\n', ' ')}...")
+        
+    # --------------
+
+    # 2️⃣ สร้าง context สำหรับ LLM
+    context_chunks = []
+    for i, doc in enumerate(retrieved_docs_lc):
+        source_name = doc.metadata.get('file_name', doc.metadata.get('source', 'N/A'))
+        context_chunks.append(
+            f"**Source {i+1} (Doc: {source_name}):**\n{doc.page_content}"
+        )
+    context_text = "\n\n---\n\n".join(context_chunks)
+
+    human_message_content = QA_PROMPT.format(context=context_text, question=question)
     messages = [
         SystemMessage(content=SYSTEM_QA_INSTRUCTION),
-        HumanMessage(content=final_prompt)
+        HumanMessage(content=human_message_content)
     ]
-    
-    # Define LLM call helper (assumes llm_instance is available globally)
-    def call_llm_safe(messages_list: List[Any]) -> str:
-        """Helper to invoke LLM and return raw content."""
-        if 'llm_instance' not in globals():
-             # MOCK LLM (Temporary until global llm_instance is properly defined/imported)
-             return "Error: LLM model instance is not initialized."
-             
-        # Add basic try/except for LLM invocation
-        try:
-            # Assumes llm_instance is an object with an invoke method
-            res = llm_instance.invoke(messages_list) 
-            if hasattr(res, 'content'): 
-                return res.content.strip()
-            return str(res).strip()
-        except Exception as e:
-            logger.error(f"LLM invocation failed: {e}")
-            return f"Error: Failed to generate response from the model. Details: {e}"
 
+    # 3️⃣ เรียก LLM จริง
+    try:
+        llm_answer = await run_in_threadpool(lambda: llm_instance.invoke(messages))
+        llm_answer = llm_answer.content if hasattr(llm_answer, 'content') else str(llm_answer)
+    except Exception as e:
+        logger.error(f"LLM generation error: {e}", exc_info=True)
+        llm_answer = "เกิดข้อผิดพลาดในการสร้างคำตอบโดย AI"
 
-    # 6. Call LLM to get the answer
-    logger.info(f"Calling LLM for query: {query.query}")
-    answer_text = await run_in_threadpool(lambda: call_llm_safe(messages))
-    
-    # 7. Format sources for response
-    sources = []
-    for doc in context_docs:
-        doc_id = doc.metadata.get('doc_id')
-        filename = doc.metadata.get('filename')
-        page = doc.metadata.get('page')
-        
-        source_entry = {}
-        if doc_id: source_entry['doc_id'] = doc_id
-        if filename: source_entry['filename'] = filename
-        if page is not None: source_entry['page'] = page
-        
-        if source_entry:
-            sources.append(source_entry)
-            
-    # Remove duplicate sources (based on the combination of fields)
-    unique_sources = list({json.dumps(d, sort_keys=True): d for d in sources}.values())
-            
+    # 4️⃣ สร้าง sources สำหรับ response
+    final_sources = []
+    for doc in retrieved_docs_lc:
+        final_sources.append(QuerySource(
+            source_id=doc.metadata.get('doc_id', 'N/A'),
+            file_name=doc.metadata.get('file_name', doc.metadata.get('source', 'N/A')), 
+            chunk_text=doc.page_content,
+            chunk_id=doc.metadata.get('chunk_uuid', 'N/A'), 
+            score=doc.metadata.get('score', 0.0) # score มาจาก Reranker
+        ))
 
-    # 8. Final response structure
-    return {
-        "result": {
-            "answer": answer_text
-        },
-        "sources": unique_sources
-    }
+    return QueryResponse(answer=llm_answer, sources=final_sources)
+
 
 # ----------------------------------------------------
 # --- Compare Endpoint ---

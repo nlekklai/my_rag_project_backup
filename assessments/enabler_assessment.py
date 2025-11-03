@@ -1,5 +1,4 @@
 # enabler_assessment.py (Full Script)
-# enabler_assessment.py (Full Revised Script)
 import os
 import json
 import logging
@@ -15,13 +14,8 @@ try:
         sys.path.append(project_root)
     
     # 🟢 FIX: บรรทัดนี้จะดึง FINAL_K_NON_RERANKED จาก core.vectorstore
-    from core.vectorstore import (
-        load_all_vectorstores, 
-        FINAL_K_RERANKED,
-        FINAL_K_NON_RERANKED,
-        # 🟢 FIX: เพิ่ม get_vectorstore_manager เพื่อให้ฟังก์ชันนี้ถูกรู้จัก
-        get_vectorstore_manager 
-    )
+    from core.vectorstore import FINAL_K_RERANKED
+
     
     from core.retrieval_utils import (
         evaluate_with_llm, 
@@ -69,18 +63,6 @@ DEFAULT_RUBRIC_STRUCTURE = {
     }
 }
 
-import os
-import json
-import logging
-from typing import List, Dict, Any, Optional, Union, Tuple
-import re
-
-# NOTE: ต้อง Import ตัวแปรภายนอกเหล่านี้! (สมมติว่าถูก Import ไว้ในส่วนบนของไฟล์)
-# from core.assessment_schema import EvidenceSummary, StatementAssessment, DEFAULT_RUBRIC_STRUCTURE
-# from core.retrieval_utils import retrieve_context_with_filter
-# from core.llm_utils import summarize_context_with_llm, evaluate_with_llm
-
-# หากไม่ได้ Import จะต้องประกาศ Default ไว้:
 DEFAULT_LEVEL_FRACTIONS = {"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6, "4": 0.85, "5": 1.0}
 
 # -------------------- EnablerAssessment Class --------------------
@@ -104,8 +86,9 @@ class EnablerAssessment:
         
         # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
         self.MAX_CONTEXT_LENGTH = 35000 
-        self.FINAL_K_RERANKED = 3 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
-        self.FINAL_K_NON_RERANKED = 5 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
+        self.MAX_SNIPPET_LENGTH = 300
+        self.FINAL_K_RERANKED = 7 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
+        self.FINAL_K_NON_RERANKED = 10 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
         self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" # ใช้เพื่อหาคีย์ใน Rubric
 
         # --- การกำหนดค่า Attributes (สำคัญมาก) ---
@@ -305,81 +288,62 @@ class EnablerAssessment:
             return "กรุณาหาหลักฐานที่สอดคล้องกับเกณฑ์ที่ต้องการ"
 
 
-    def _retrieve_context(self, query: str, sub_criteria_id: str, level: int, mapping_data: Optional[Dict] = None, statement_number: int = 0) -> Dict[str, Any]:
-        """
-        ดึง Context โดยใช้ Filter จาก evidence mapping และ Level Constraint Query
-        """
-        
-        # 1. ดึง Filter IDs (64-char Stable UUIDs)
-        filter_ids_64_char: List[str] = []
+    def _retrieve_context(
+                self, 
+                query: str, 
+                sub_criteria_id: str, 
+                level: int, 
+                mapping_data: Optional[Dict[str, Any]] = None,
+                statement_number: int = 1 # พารามิเตอร์นี้จะไม่ถูกใช้ในการสร้าง Key สำหรับ Mapping
+            ) -> Union[Dict[str, Any], List[str]]:
+                """
+                Retrieves relevant context based on the query and current sub-criteria/level.
+                """
+                # 🟢 กำหนด Doc IDs สำหรับ Hard Filter
+                doc_ids_to_filter = []
+                final_mapping_key = None 
+                data_found = None
+                
+                if self.use_mapping_filter:
+                    mapping_data_to_use = self.evidence_mapping_data
+                    
+                    if mapping_data is not None:
+                        mapping_data_to_use = mapping_data 
+                    
+                    # --- LOGIC การเลือก KEY (FIXED: ใช้ Level-only Key เท่านั้น) ---
+                    
+                    # 1. 🟢 FIX: สร้างและใช้ Key แบบ Level-only เท่านั้น เช่น "1.1_L1"
+                    key_level = f"{sub_criteria_id}_L{level}"
+                    data_found = mapping_data_to_use.get(key_level)
+                    final_mapping_key = key_level
+                    
+                    if data_found:
+                        logger.info(f"RAG Filter Check: Found data using Level-only key: {key_level}")
+                    else:
+                        logger.info(f"RAG Filter Check: Level-only key {key_level} not found.")
 
-        if self.use_mapping_filter: 
-            # self._get_doc_uuid_filter ดึง 64-char UUIDs จาก JSON Mapping
-            filter_ids_64_char = self._get_doc_uuid_filter(sub_criteria_id, level) or []
-        
-        # 🎯 FIX: แปลง 64-char Stable UUIDs ให้เป็น 34-char Ref IDs สำหรับ Hard Filter
-        filter_ids: List[str] = []
-        if filter_ids_64_char:
-            filter_ids = self._map_64_to_34_ids(filter_ids_64_char) # ⬅️ เรียกใช้ฟังก์ชันใหม่
-        
-        # 2. สร้าง Constrained Query เสมอ
-        constraint_instruction = self._get_level_constraint_prompt(level)
-        effective_query = f"{query}. {constraint_instruction}"
-        
-        semantic_filter_status = "Disabled" if self.disable_semantic_filter else "Enabled"
-        hard_filter_status = "Enabled" if filter_ids else "Disabled (Flexible Search)" # ใช้ filter_ids ที่ถูกแปลงแล้ว
-        logger.info(f"🔑 Constrained Query (L{level}, Hard Filter {hard_filter_status}, Semantic Filter {semantic_filter_status}): {effective_query}")
-        
-        # --- LOGIC สำหรับ REAL MODE (mapping_data is None) ---
-        if mapping_data is None: 
-            # 3. เรียกใช้ RAG Retrieval ด้วยรายการ ID 34-char
-            result = retrieve_context_with_filter(
-                query=effective_query, 
-                doc_type="evidence", 
-                enabler=self.enabler_abbr, 
-                stable_doc_ids=filter_ids, # ⬅️ ส่ง ID 34-char ที่ถูกต้อง
-                disable_semantic_filter=self.disable_semantic_filter,
-                allow_fallback=self.allow_fallback,
-                # retriever_instance=self.vectorstore_retriever 
-            )
-            return result
+                    # --- END OF LOGIC การเลือก KEY ---
 
-        # --- LOGIC สำหรับ MOCK MODE ---
-        return {"top_evidences": []}
-
-    
-    def _map_64_to_34_ids(self, uuids_64: List[str]) -> List[str]:
-        """
-        [FIX] แปลง 64-char Stable UUIDs (จาก mapping file) ให้เป็น 34-char Ref IDs 
-        โดยใช้ VectorStoreManager.get_id_mapping_from_vectorstore
-        """
-        if not uuids_64:
-            return []
-            
-        try:
-            manager = get_vectorstore_manager() # สมมติว่า Import แล้ว
-            
-            mapping_dict: Dict[str, str] = manager.get_id_mapping_from_vectorstore(
-                uuids_64, 
-                doc_type="evidence", 
-                enabler=self.enabler_abbr
-            )
-            
-            ref_ids_34 = [
-                # ค้นหา 34-char Ref ID จาก 64-char UUID ที่ได้จาก JSON 
-                mapping_dict.get(uuid_64, "").lower() 
-                for uuid_64 in uuids_64
-            ]
-            
-            # กรองค่าว่าง
-            valid_ref_ids = [ref_id for ref_id in ref_ids_34 if ref_id]
-            
-            logger.info(f"✅ Mapped {len(valid_ref_ids)}/{len(uuids_64)} Stable UUIDs to Ref IDs for Hard Filter.")
-            return valid_ref_ids
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to map 64-char UUIDs to 34-char Ref IDs. Error: {e}", exc_info=True)
-            return []
+                    # 2. ดึง Doc IDs จาก Structure ที่พบ
+                    if data_found and isinstance(data_found, dict):
+                        evidences = data_found.get("evidences", [])
+                        # Extract the list of doc_id strings
+                        doc_ids_to_filter = [d['doc_id'] for d in evidences if isinstance(d, dict) and 'doc_id' in d]
+                    
+                    # 💡 Debug Log เพื่อยืนยันว่า Hard Filter ทำงาน
+                    logger.info(f"RAG Filter Check: Final Key used: {final_mapping_key} - Found {len(doc_ids_to_filter)} doc_ids for Hard Filter.")
+                
+                # 🟢 เรียกใช้ retrieve_context_with_filter
+                result = retrieve_context_with_filter(
+                    query=query,
+                    doc_type="evidence",
+                    enabler=self.enabler_abbr,
+                    stable_doc_ids=doc_ids_to_filter, 
+                    top_k_reranked=self.FINAL_K_RERANKED,
+                    disable_semantic_filter=self.disable_semantic_filter
+                )
+                
+                return result
         
     def _process_subcriteria_results(self):
         """
@@ -431,6 +395,19 @@ class EnablerAssessment:
             data.update(scoring_results)
             self.final_subcriteria_results.append(data)
 
+    def _get_source_name_for_display(self, doc_id: str, metadata: Dict[str, Any]) -> str:
+        """Helper to determine the source name for display, prioritizing source_file/source keys."""
+        # 1. ลองดึงจาก source_name_for_display (ถ้ามีการกำหนดใน Ingestion)
+        display_name = metadata.get("source_name_for_display")
+        if display_name:
+            return display_name
+        
+        # 2. ดึงจาก source_file หรือ source (ซึ่งคือ Filename)
+        source_name = metadata.get("source_file") or metadata.get("source", "N/A")
+        
+        # 3. คืนค่า
+        return source_name
+
 
     def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
@@ -440,7 +417,7 @@ class EnablerAssessment:
         self.final_subcriteria_results = []
         
         is_mock_mode = self.mock_llm_eval_func is not None
-        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None # 🟢 FIX 9: ใช้ชื่อ Attribute ใหม่
+        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None 
         
         # NOTE: evaluate_with_llm ต้องถูก Import
         llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
@@ -479,7 +456,8 @@ class EnablerAssessment:
                     
                     context_list = []
                     context_length = 0
-                    retrieved_sources_list = [] 
+                    retrieved_sources_list = [] # สำหรับเก็บข้อมูลแหล่งที่มาที่จะแสดงใน final JSON (เป็น Dictionary)
+                    all_evidence_list = [] # List นี้อาจทำให้เกิด Pydantic Error จึงถูกคอมเมนต์การใช้งานหลัก
                     context = "" 
                     
                     if isinstance(retrieval_result, dict):
@@ -487,7 +465,7 @@ class EnablerAssessment:
                         
                         logger.info(f"DEBUG RAG: {sub_criteria_id}_L{level}_S{i+1} Retrieved {len(top_evidence)} raw evidences. Filter: {self.use_mapping_filter}")
                         
-                        # <<< ตรวจสอบว่าโค้ด 3 บรรทัดนี้ถูกเพิ่มแล้ว
+                        # <<< Debug Log ที่ท่านเคยส่งมา >>>
                         for doc in top_evidence[:3]: 
                             doc_id = doc.get('doc_id', 'N/A')
                             source_name = doc.get('source', 'N/A')
@@ -498,27 +476,47 @@ class EnablerAssessment:
                         if self.disable_semantic_filter:
                             k_to_use = self.FINAL_K_NON_RERANKED
 
-                        for doc in top_evidence[:k_to_use]: 
+                        for idx, doc in enumerate(top_evidence[:k_to_use]): 
                             doc_content = doc.get("content", "")
                             metadata = doc.get("metadata", {}) # ดึง metadata ออกมา
                             
-                            # 🟢 FIX 1: ดึง source_name จาก metadata['source'] (ชื่อไฟล์)
-                            # ใช้ doc.get("source") เป็น fallback (สมมติว่า retriever ตั้งค่าไว้)
-                            source_name = metadata.get("source", metadata.get("filename", "N/A (No Source Tag)"))
+                            # 🟢 FIX 1 (doc_id): ดึง Stable UUID จาก stable_doc_uuid เป็นหลัก
+                            doc_id = metadata.get("stable_doc_uuid", metadata.get("doc_id", "N/A")) 
                             
-                            # 🟢 FIX 2: ดึง Doc ID ตัวเต็มจาก metadata['doc_id'] (Stable UUID)
-                            # ใช้ doc_id เป็น fallback (สมมติว่า retriever ตั้งค่าไว้)
-                            doc_id = metadata.get("doc_id", doc.get("doc_id", "N/A"))
+                            # 🟢 FIX 2 (source_name): ใช้ helper function
+                            source_name = self._get_source_name_for_display(doc_id, metadata)
+
+                            # 🟢 FIX 3 (location): ปรับปรุง Logic การดึง Location ให้ยืดหยุ่นขึ้น
+                            location_value = str(metadata.get("page_label") or metadata.get("page", "N/A"))
                             
-                            # ดึง Page Number
-                            location = metadata.get("page_number", "N/A")
-                            location_str = f"Page {location}" if isinstance(location, int) else "N/A"
-                            
+                            # หากยังเป็น "N/A" ให้ใช้ Chunk Index เป็น Fallback
+                            if location_value in ("N/A", "None") and doc_id != "N/A":
+                                chunk_idx = metadata.get("chunk_index")
+                                location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
+                                
+                            # 🟢 DEBUG LOGS (ปรับปรุงเพื่อแสดง Location)
+                            logger.info(f"DEBUG RAG Evidence (Top {idx + 1}): UUID={doc_id[:7]}... Source={source_name[:35]}... Location={location_value}")
+                
+                            # 🟢 FIX 5: คำนวณ Snippet
+                            snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
+
+                            # เพิ่มข้อมูลแหล่งที่มาในรูปแบบ Dictionary สำหรับ Final JSON Output
                             retrieved_sources_list.append({
                                 "source_name": source_name,
                                 "doc_id": doc_id,
-                                "location": location_str
+                                "location": location_value, 
+                                "snippet_for_display": snippet, # ✅ เพิ่ม Snippet กลับเข้าไป
                             })
+                            
+                            # ❌ FIX 4 (สำคัญ): คอมเมนต์ส่วนนี้เพื่อหลีกเลี่ยง EvidenceSummary Pydantic Validation Error 
+                            # evidence_summary = EvidenceSummary(
+                            #     source_name=source_name,
+                            #     doc_id=doc_id,
+                            #     location=location_value, 
+                            #     snippet_for_display=doc_content[:self.MAX_SNIPPET_LENGTH],
+                            # )
+                            # all_evidence_list.append(evidence_summary)
+                            
                             
                             if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
                                 context_list.append(doc_content)
@@ -577,7 +575,9 @@ class EnablerAssessment:
                         final_pass_status = llm_result_dict.get("pass_status", False)
                         final_status_th = llm_result_dict.get("status_th", "ไม่ผ่าน")
                     else:
+                        # 🟢 ใช้ unique_sources ที่มี location
                         for src in retrieved_sources_list:
+                            # ใช้ doc_id และ location ในการตรวจสอบความเป็น unique
                             key = (src['doc_id'], src['location']) 
                             if key not in seen:
                                 seen.add(key)
@@ -617,11 +617,10 @@ class EnablerAssessment:
         action_plan = {} 
         
         return {"summary": final_summary, "action_plan": action_plan}, {f"{r['statement_id']}": r for r in self.raw_llm_results}
-
-
     # ----------------------------------------------------
     # 🌟 NEW FEATURE: Generate Evidence Summary
     # ----------------------------------------------------
+    
     def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Union[str, Dict]: 
         """
         รวมบริบทจากทุก Statement ใน Sub-Criteria/Level ที่กำหนด และให้ LLM สร้างคำอธิบาย
@@ -666,6 +665,7 @@ class EnablerAssessment:
                 
                 for doc in top_evidence[:k_to_use]: 
                     doc_content = doc.get("content", "")
+                    logger.error(f"DEBUG RAW DOC STRUCTURE: {doc}")
                     
                     if total_context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
                         aggregated_context_list.append(doc_content)
