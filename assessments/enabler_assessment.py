@@ -1,22 +1,36 @@
 # enabler_assessment.py (Full Script)
+# enabler_assessment.py (Refactored with global_vars)
 import os
+import sys
 import json
 import logging
-import sys
-import re 
+import re
+import time
 from typing import List, Dict, Any, Optional, Union, Tuple
-import time 
 
-# --- PATH SETUP (Must be executed first for imports to work) ---
+# -------------------- PATH SETUP --------------------
 try:
+    # Ensure project root is in sys.path
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
-    
-    # 🟢 FIX: บรรทัดนี้จะดึง FINAL_K_NON_RERANKED จาก core.vectorstore
-    from core.vectorstore import FINAL_K_RERANKED
 
-    
+    # -------------------- IMPORT CONFIG --------------------
+    from config.global_vars import (
+        FINAL_K_RERANKED,
+        FINAL_K_NON_RERANKED,
+        INITIAL_TOP_K,
+        DATA_DIR,
+        VECTORSTORE_DIR,
+        MAPPING_FILE_PATH,
+        SUPPORTED_DOC_TYPES,
+        DEFAULT_ENABLER,
+        SUPPORTED_ENABLERS,
+        SEAM_DOC_ID_MAP,
+        DEFAULT_SEAM_REFERENCE_DOC_ID,
+    )
+
+    # -------------------- IMPORT CORE LOGIC --------------------
     from core.retrieval_utils import (
         evaluate_with_llm, 
         retrieve_context_with_filter, 
@@ -29,6 +43,23 @@ try:
 except ImportError as e:
     print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
     sys.exit(1)
+
+# -------------------- LOGGING --------------------
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+# -------------------- YOUR SCRIPT LOGIC --------------------
+# ตัวอย่าง: ใช้ FINAL_K_RERANKED จาก global_vars
+logger.info(f"Using FINAL_K_RERANKED={FINAL_K_RERANKED} and FINAL_K_NON_RERANKED={FINAL_K_NON_RERANKED}")
+logger.info(f"Default enabler: {DEFAULT_ENABLER}")
+
+# เพิ่ม logic ของ assessment / retrieval / summarization ตามที่ต้องการ
 
 
 logger = logging.getLogger(__name__)
@@ -507,16 +538,6 @@ class EnablerAssessment:
                                 "location": location_value, 
                                 "snippet_for_display": snippet, # ✅ เพิ่ม Snippet กลับเข้าไป
                             })
-                            
-                            # ❌ FIX 4 (สำคัญ): คอมเมนต์ส่วนนี้เพื่อหลีกเลี่ยง EvidenceSummary Pydantic Validation Error 
-                            # evidence_summary = EvidenceSummary(
-                            #     source_name=source_name,
-                            #     doc_id=doc_id,
-                            #     location=location_value, 
-                            #     snippet_for_display=doc_content[:self.MAX_SNIPPET_LENGTH],
-                            # )
-                            # all_evidence_list.append(evidence_summary)
-                            
                             
                             if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
                                 context_list.append(doc_content)

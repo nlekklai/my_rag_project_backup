@@ -1,18 +1,19 @@
+#core/ingest.py
+# core/ingest.py
 import os
 import re
 import logging
-import unicodedata 
-import json 
-import uuid 
+import unicodedata
+import json
+import uuid
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Set, Iterable, Dict, Any, Union, Tuple, TypedDict
 import pandas as pd
-import shutil 
-import numpy as np 
-import glob 
+import shutil
+import numpy as np
+import glob
 from pydantic import ValidationError
-
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -27,8 +28,34 @@ from langchain_community.document_loaders import (
 # For PDF inspection
 import fitz  # PyMuPDF
 
-# [NEW] เพิ่มส่วนนี้ไว้ในส่วน Helper: Normalization utility
+# [NEW] Helper: Normalization utility
 import hashlib
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+
+# Optional OCR (Omitted for brevity)
+_HAS_PDF2IMAGE = False
+
+# Try to import helper for filtering metadata
+try:
+    from langchain_community.vectorstores.utils import filter_complex_metadata as _imported_filter_complex_metadata
+except Exception:
+    _imported_filter_complex_metadata = None
+
+# -------------------- Global Config --------------------
+from config.global_vars import (
+    DATA_DIR,
+    VECTORSTORE_DIR,
+    MAPPING_FILE_PATH,
+    SUPPORTED_TYPES,
+    SUPPORTED_DOC_TYPES,
+    DEFAULT_ENABLER,
+    SUPPORTED_ENABLERS
+)
 
 # --- Document Info Model ---
 class DocInfo(TypedDict):
@@ -46,46 +73,15 @@ class DocInfo(TypedDict):
     status: str             # "Ingested" | "Pending" | "Error"
     size: int               # File size in bytes
 
-# แก้ไข: ลอง Import UnstructuredLoader ใหม่ก่อน (ตาม Deprecation Warning)
+# -------------------- Unstructured Loader --------------------
 try:
     from langchain_unstructured.document_loaders import UnstructuredLoader as UnstructuredFileLoader
 except ImportError:
     try:
         from langchain_community.document_loaders import UnstructuredFileLoader
     except ImportError:
-        # Fallback to base UnstructuredFileLoader if necessary
-        from langchain.document_loaders import UnstructuredFileLoader 
-    
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter 
+        from langchain.document_loaders import UnstructuredFileLoader
 
-# 🟢 Import Chroma และ Embeddings
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-
-# Optional OCR (Omitted for brevity)
-_HAS_PDF2IMAGE = False 
-
-# Try to import helper for filtering metadata
-try:
-    from langchain_community.vectorstores.utils import filter_complex_metadata as _imported_filter_complex_metadata
-except Exception:
-    _imported_filter_complex_metadata = None
-
-
-# -------------------- Config --------------------
-DATA_DIR = "data"
-VECTORSTORE_DIR = "vectorstore"
-MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
-SUPPORTED_TYPES = [".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv", ".jpg", ".jpeg", ".png"]
-
-# 🔴 แก้ไข: ใช้ 'statement' ตามที่ผู้ใช้แจ้งมา
-SUPPORTED_DOC_TYPES = ["document", "policy", "report", "statement", "evidence", "feedback", "faq"] 
-
-# 📌 [NEW] Enabler Configuration
-DEFAULT_ENABLER = "KM"
-SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
 # Logging
 logging.basicConfig(

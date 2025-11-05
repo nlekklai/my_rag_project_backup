@@ -1,45 +1,65 @@
+#core/run_assessment.py
+# core/run_assessment.py
 import os
-import json
-import logging
 import sys
+import logging
 import argparse
 import random
-from typing import List, Dict, Any, Optional, Union
+import json
 import time
+from typing import List, Dict, Any, Optional, Union
 from unittest.mock import patch
 
-# --- PATH SETUP (Must be executed first for imports to work) ---
+# -------------------- PATH SETUP --------------------
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# -------------------- Global Vars --------------------
 try:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if project_root not in sys.path:
-        sys.path.append(project_root)
-    
-    from assessments.enabler_assessment import EnablerAssessment 
-    import core.retrieval_utils 
-    from core.retrieval_utils import set_mock_control_mode
-    from core.vectorstore import load_all_vectorstores 
+    from config.global_vars import (
+        DATA_DIR,
+        VECTORSTORE_DIR,
+        SUPPORTED_DOC_TYPES,
+        DEFAULT_ENABLER,
+        INITIAL_TOP_K,
+        FINAL_K_RERANKED,
+        FINAL_K_NON_RERANKED,
+    )
+except ImportError as e:
+    print(f"FATAL ERROR: Cannot import global_vars: {e}", file=sys.stderr)
+    sys.exit(1)
 
-    # 🟢 NEW IMPORT: Import UUID extraction and retrieval by ID
+# -------------------- Core & Assessment Imports --------------------
+try:
+    from assessments.enabler_assessment import EnablerAssessment
+    import core.retrieval_utils
+    from core.retrieval_utils import set_mock_control_mode, retrieve_context_by_doc_ids
+    from core.vectorstore import load_all_vectorstores
     from core.llm_utils import extract_uuids_from_llm_response
-    from core.retrieval_utils import retrieve_context_by_doc_ids
 
-    # 🛑 FIX: Import Mock Functions ทั้งหมด
+    # --- Mocking functions ---
     from assessments.mocking_assessment import (
         summarize_context_with_llm_MOCK,
         generate_action_plan_MOCK,
         retrieve_context_MOCK,
         evaluate_with_llm_CONTROLLED_MOCK,
     )
+
+    # --- Schemas ---
     from core.assessment_schema import EvidenceSummary, StatementAssessment
-    from core.action_plan_schema import ActionPlanActions 
-    
+    from core.action_plan_schema import ActionPlanActions
+
 except ImportError as e:
-    print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
+    print(f"FATAL ERROR: Failed to import required modules: {e}", file=sys.stderr)
     sys.exit(1)
 
-# 1. Setup Logging
+# -------------------- Logging --------------------
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # -------------------- MOCK COUNTER --------------------
 _MOCK_EVALUATION_COUNTER = 0
@@ -222,7 +242,7 @@ def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
             pass
     return all_failed
 
-def generate_action_plan_for_sub(sub_id: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
+def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
     """Generate Action Plan per Sub-Criteria. (จะใช้ generate_action_plan_via_llm ซึ่งจะถูก Patch)"""
 
     highest_full_level = summary_data.get('highest_full_level', 0)
@@ -611,7 +631,7 @@ def run_assessment_process(
         # 🟢 NEW: 2. Generate & Integrate Action Plans
         action_plans: Dict[str, Any] = {}
         for sub_id, sub_data in summary.get('SubCriteria_Breakdown', {}).items():
-            action_plan = generate_action_plan_for_sub(sub_id, sub_data, summary)
+            action_plan = generate_action_plan_for_sub(sub_id, enabler, sub_data, summary)
             action_plans[sub_id] = action_plan
         summary['Action_Plans'] = action_plans # <--- 3. ตามด้วย Action Plan
     except Exception as e:

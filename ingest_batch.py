@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#ingest_batch.py
 import argparse
 import logging
 import sys
@@ -6,30 +6,41 @@ from typing import List, Dict, Any, Optional
 
 # -------------------- Logging --------------------
 logging.basicConfig(
-    # filename="ingest.log",
-    level=logging.DEBUG, # ตั้งค่าเป็น DEBUG
+    level=logging.DEBUG,
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
-# -------------------- Import core functions --------------------
+# -------------------- Import global vars and core functions --------------------
 try:
+    # Path fix
+    import os
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if project_root not in sys.path:
+        sys.path.append(project_root)
+
+    # -------------------- Config --------------------
+    from config.global_vars import (
+        VECTORSTORE_DIR,
+        SUPPORTED_DOC_TYPES,
+        SUPPORTED_ENABLERS
+    )
+
+    # -------------------- Core logic --------------------
     from core.ingest import (
         ingest_all_files,
         list_documents,
         wipe_vectorstore,
         delete_document_by_uuid,
-        VECTORSTORE_DIR,
         get_vectorstore,
-        SUPPORTED_DOC_TYPES,
-        SUPPORTED_ENABLERS, 
-        # 🟢 FIX: เพิ่ม get_target_dir เพื่อใช้ในการคำนวณชื่อ Collection ที่ถูกต้อง
-        get_target_dir, 
+        get_target_dir
     )
+
 except ImportError as e:
-    logger.critical(f"Cannot import core.ingest: {e}")
+    logger.critical(f"Cannot import core modules: {e}")
     sys.exit(1)
+
 
 # -------------------- Argument Parsing --------------------
 parser = argparse.ArgumentParser(description="RAG Batch Ingestion & Vectorstore Management")

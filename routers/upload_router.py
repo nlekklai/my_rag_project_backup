@@ -1,7 +1,6 @@
 # routers/upload_router.py
-from fastapi import (
-    APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Path, Query
-)
+# routers/upload_router.py (Refactored)
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Path, Query
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -14,31 +13,36 @@ from pathlib import Path as SysPath
 # -----------------------------
 # --- Import Project Modules ---
 # -----------------------------
-
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
 
-    # ✅ แก้จาก from ingest → from core.ingest
-    from core.ingest import (
-        process_document, 
-        list_documents, 
-        delete_document_by_uuid, 
-        DATA_DIR, 
-        SUPPORTED_TYPES, 
-        SUPPORTED_DOC_TYPES,
-        DocInfo,
-        DEFAULT_ENABLER,
+    # --- Global vars ---
+    from config.global_vars import (
+        DATA_DIR,
         VECTORSTORE_DIR,
+        SUPPORTED_TYPES,
+        SUPPORTED_DOC_TYPES,
+        DEFAULT_ENABLER,
     )
-    
+
+    # --- Core logic functions ---
+    from core.ingest import (
+        process_document,
+        list_documents,
+        delete_document_by_uuid,
+        DocInfo,   # Type for document metadata
+    )
+
+    # --- Vectorstore & Prompts ---
     from core.vectorstore import vectorstore_exists, FINAL_K_RERANKED
     from core.rag_prompts import QA_PROMPT, COMPARE_PROMPT
 
 except ImportError as e:
     print(f"❌ CRITICAL IMPORT ERROR: {e}")
     raise
+
 
 # -----------------------------
 # --- Setup Router & Logger ---

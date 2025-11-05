@@ -1,11 +1,12 @@
 #core/vectorstore.py
+# core/vectorstore.py
 import os
 import platform
 import logging
 import threading
 import multiprocessing
-import json 
-import shutil # เพิ่ม shutil สำหรับ wipe_collection
+import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 
@@ -13,25 +14,22 @@ from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 try:
     import psutil
 except Exception:
-    psutil = None  # optional; we'll fallback gracefully
+    psutil = None  # optional; fallback gracefully
 
 # LangChain and Core Imports
 from langchain.schema import Document as LcDocument, BaseRetriever
 from langchain.retrievers.document_compressors.base import BaseDocumentCompressor
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 
-# External Libraries (assume installed in environment)
+# External Libraries
 from pydantic import PrivateAttr, ConfigDict, BaseModel
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-# NOTE: Since flashrank requires torch, we put the import inside the function to avoid errors 
-# if the environment does not have it, but for a standard RAG environment, it should be here.
 from flashrank import Ranker
-
 import chromadb
 from chromadb.config import Settings
-import glob # เพิ่ม glob สำหรับ path
+import glob
 
 # Configure chromadb telemetry if available
 try:
@@ -42,31 +40,31 @@ except Exception:
     except Exception:
         pass
 
-# -------------------- CONFIG --------------------
-INITIAL_TOP_K = 15
-FINAL_K_RERANKED =  5
-FINAL_K_NON_RERANKED = 7
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# VECTORSTORE_DIR = "vectorstore"
-VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore") # ⬅️ ใช้ Absolute Path
-# MAPPING_FILE_PATH = "data/doc_id_mapping.json" 
-MAPPING_FILE_PATH = os.path.join(PROJECT_ROOT, "data/doc_id_mapping.json") # ⬅️ ใช้ Absolute Path
+# -------------------- Global Config --------------------
+from config.global_vars import (
+    PROJECT_ROOT,
+    DATA_DIR,
+    VECTORSTORE_DIR,
+    MAPPING_FILE_PATH,
+    DEFAULT_ENABLER,
+    SUPPORTED_ENABLERS,
+    SUPPORTED_TYPES,
+    SUPPORTED_DOC_TYPES,
+    DEFAULT_SEAM_REFERENCE_DOC_ID,
+    SEAM_DOC_ID_MAP,
+    FINAL_K_RERANKED,
+    FINAL_K_NON_RERANKED,
+    INITIAL_TOP_K,
+)
 
-# 🟢 CONFIG: Enabler Configuration (MUST be added for evidence logic)
-DEFAULT_ENABLER = "KM"
-SUPPORTED_ENABLERS = ["CG", "L", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
-
-# Safety: don't spawn too many processes by default
+# -------------------- Vectorstore Constants --------------------
 MAX_PARALLEL_WORKERS = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
-
-# Env override to force mode: "thread" or "process"
 ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or ""
 
 # Logging
 logger = logging.getLogger(__name__)
-
-logger.setLevel(logging.INFO) 
-logger.handlers = logging.root.handlers # ทำให้ Logger ใช้ Handler ของ Root Logger (ซึ่งคือ Console)
+logger.setLevel(logging.INFO)
+logger.handlers = logging.root.handlers
 
 # Global caches (per process)
 _CACHED_RANKER = None
@@ -76,6 +74,7 @@ _MPS_WARNING_SHOWN = False
 
 # Flashrank cache dir
 CUSTOM_CACHE_DIR = os.path.expanduser("~/.hf_cache_dir/flashrank_models")
+
 
 class FlashrankRequestWrapper:
     """Mimics the expected object structure for flashrank's internal logic (request.query)."""

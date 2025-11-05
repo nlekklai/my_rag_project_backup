@@ -1,16 +1,16 @@
 # core/retrieval_utils.py
+# core/retrieval_utils.py
 import logging
 import random
 import json
 import time
 from typing import List, Dict, Any, Optional, Union, TypeVar, Type, Tuple
 from langchain.schema import SystemMessage, HumanMessage, Document as LcDocument
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 import regex as re
 import hashlib
 
-from langchain.schema import SystemMessage, HumanMessage, Document as LcDocument
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever # 🟢 ต้องเพิ่ม
+from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 
 # --------------------
 # Imports from your project schemas & prompts
@@ -28,17 +28,12 @@ from core.rag_prompts import (
 
 from core.vectorstore import (
     VectorStoreManager,
-    INITIAL_TOP_K,
     load_all_vectorstores, 
-    INITIAL_TOP_K, 
     get_reranking_compressor,
-    FINAL_K_RERANKED,
-    FINAL_K_NON_RERANKED,
     NamedRetriever,
     MultiDocRetriever,
 )
 
-from pydantic import ValidationError, BaseModel
 T = TypeVar('T', bound=BaseModel)
 
 try:
@@ -46,15 +41,27 @@ try:
 except Exception:
     llm_instance = None
 
-# -------------------- Config --------------------
-DEFAULT_ENABLER ="KM"
+# -------------------- Config from global_vars --------------------
+try:
+    from config.global_vars import (
+        DEFAULT_ENABLER,
+        SUPPORTED_ENABLERS,
+        DEFAULT_SEAM_REFERENCE_DOC_ID,
+        SEAM_DOC_ID_MAP,
+        SEAM_ENABLER_MAP,
+        INITIAL_TOP_K,
+        FINAL_K_RERANKED,
+        FINAL_K_NON_RERANKED,
+    )
+except ImportError as e:
+    print(f"FATAL ERROR: Cannot import global_vars: {e}")
+    raise
 
 logger = logging.getLogger(__name__)
 
 # =================================================================
 # MOCKING LOGIC AND GLOBAL FLAGS
 # =================================================================
-
 _MOCK_CONTROL_FLAG = False
 _MOCK_COUNTER = 0
 
@@ -66,6 +73,7 @@ def set_mock_control_mode(enable: bool):
         logger.info("🔑 CONTROLLED MOCK Mode ENABLED.")
     else:
         logger.info("❌ CONTROLLED MOCK Mode DISABLED.")
+
 
 # ------------------------------------------------------------------
 # ID Normalization and Hashing
@@ -312,6 +320,80 @@ def extract_uuids_from_llm_response(text: str) -> List[str]:
 # LLM Evaluation
 # =================================================================
 MAX_LLM_RETRIES = 3
+# =================================================================
+# Retrieve SEAM Reference Context (Helper)
+# =================================================================
+
+def include_seam_reference_context(sub_id: str, enabler: str = None, top_k_reranked: int = 5) -> str:
+    """
+    ดึง SEAM Reference Context โดยใช้ Enabler ที่ส่งมาจาก script
+    - ถ้า enabler ไม่ถูกส่งหรือไม่ถูกต้อง → fallback เป็น DEFAULT_SEAM_REFERENCE_DOC_ID
+    """
+    seam_reference_snippet = ""
+    try:
+        enabler_upper = enabler.upper() if enabler else None
+        if enabler_upper not in SUPPORTED_ENABLERS:
+            logger.warning(f"⚠️ Enabler '{enabler}' ไม่อยู่ใน SUPPORTED_ENABLERS. ใช้ default SEAM reference.")
+            enabler_upper = None
+
+        # ใช้ข้อความไทยจาก mapping ถ้า sub_id มี prefix ที่ตรง
+        # sub_prefix = sub_id.split("-")[0].upper()
+        seam_topic = SEAM_ENABLER_MAP.get(enabler_upper)
+
+        if seam_topic:
+            seam_query = (
+                f"หลักเกณฑ์การประเมิน SEAM สำหรับหมวด {seam_topic} "
+                f"(รหัส {sub_id}) "
+                f"โดยเน้นระดับความก้าวหน้าจากระดับล่างสู่ระดับสูง"
+            )
+        else:
+            seam_query = f"หลักเกณฑ์การประเมิน SEAM ที่เกี่ยวข้องกับรหัส {sub_id}"
+
+        logger.info(f"🔍 SEAM reference search query (TH): {seam_query}")
+
+        seam_ctx = retrieve_reference_context(query=seam_query, enabler=enabler_upper, top_k_reranked=top_k_reranked)
+        top_chunks = [d["content"] for d in seam_ctx.get("top_evidences", [])][:3]
+
+        if top_chunks:
+            seam_reference_snippet = "\n\n--- SEAM REFERENCE CONTEXT ---\n" + "\n\n".join(top_chunks)
+            logger.info(f"✅ Included SEAM reference context ({len(top_chunks)} chunks).")
+        else:
+            logger.warning("⚠️ No SEAM reference chunks found.")
+
+    except Exception as e:
+        logger.warning(f"⚠️ Could not include SEAM reference context: {e}")
+
+    return seam_reference_snippet
+
+def retrieve_reference_context(
+    query: str,
+    enabler: str = None,
+    top_k_reranked: int = 5,
+    disable_semantic_filter: bool = False
+) -> Dict[str, Any]:
+    """
+    ดึง context จากเอกสาร SEAM Reference โดยอัตโนมัติ
+    - ใช้ UUID ของ SEAM Reference เฉพาะ Enabler
+    - Fallback เป็น DEFAULT_SEAM_REFERENCE_DOC_ID ถ้า enabler ไม่พบ
+    """
+    try:
+        logger.info("📘 Retrieving SEAM reference context...")
+
+        doc_id_to_use = SEAM_DOC_ID_MAP.get(enabler.upper(), DEFAULT_SEAM_REFERENCE_DOC_ID) if enabler else DEFAULT_SEAM_REFERENCE_DOC_ID
+
+        return retrieve_context_with_filter(
+            query=query,
+            doc_type="seam",
+            enabler=enabler,
+            stable_doc_ids=[doc_id_to_use],
+            top_k_reranked=top_k_reranked,
+            disable_semantic_filter=disable_semantic_filter,
+            allow_fallback=True
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to retrieve SEAM reference context: {e}", exc_info=True)
+        return {"top_evidences": []}
+
 
 def evaluate_with_llm(statement: str, context: str, standard: str, **kwargs) -> Dict[str, Any]:
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
@@ -431,41 +513,55 @@ def _call_llm_for_json_output(prompt: str, system_prompt: str, max_retries: int 
             time.sleep(1)
     raise Exception("LLM call failed after max retries for raw JSON generation.")
 
-def generate_action_plan_via_llm(failed_statements_data: List[Dict[str, Any]], sub_id: str, target_level: int, max_retries: int = 2, retry_delay: float = 1.0) -> Dict[str, Any]:
+def generate_action_plan_via_llm(
+    failed_statements_data: List[Dict[str, Any]],
+    sub_id: str,
+    enabler: str,
+    target_level: int,
+    max_retries: int = 2,
+    retry_delay: float = 1.0,
+    include_seam_reference: bool = True  # 🟢 เปิด/ปิดการแนบ SEAM Reference Context
+) -> Dict[str, Any]:
+    """
+    🧩 สร้าง Action Plan โดยใช้ LLM จากผลการประเมิน (Assessment Result)
+    - รวม Context จาก Evidence ที่ล้มเหลว
+    - (Option) รวม SEAM Reference Context เพื่อช่วย LLM เข้าใจเกณฑ์ที่เกี่ยวข้อง
+    """
     global _MOCK_CONTROL_FLAG
+
+    # ============================================================
+    # 1️⃣ MOCK MODE (ใช้โหมดจำลองสำหรับทดสอบ)
+    # ============================================================
     if _MOCK_CONTROL_FLAG:
         actions = []
         try:
             ActionItemType = ActionPlanActions.model_fields['Actions'].annotation.__args__[0]
         except Exception:
             ActionItemType = None
+
         for i, data in enumerate(failed_statements_data):
             statement_id = f"L{data.get('level', target_level)} S{data.get('statement_number', i+1)}"
             failed_level = data.get('level', target_level)
-            stmt_text = data.get('statement_text', 'N/A')[:50]
-            reason_text = data.get('llm_reasoning', 'No reason')[:50]
-            if ActionItemType:
-                actions.append(ActionItemType(
-                    Statement_ID=statement_id,
-                    Failed_Level=failed_level,
-                    Recommendation=f"MOCK: [Action] '{stmt_text}...' เพื่อแก้ GAP: {reason_text}...",
-                    Target_Evidence_Type="MOCK: Policy Document (Guideline)",
-                    Key_Metric="Policy Approved and Published"
-                ).model_dump())
-            else:
-                actions.append({
-                    "Statement_ID": statement_id,
-                    "Failed_Level": failed_level,
-                    "Recommendation": f"MOCK: [Action] '{stmt_text}...' เพื่อแก้ GAP: {reason_text}...",
-                    "Target_Evidence_Type": "MOCK: Policy Document (Guideline)",
-                    "Key_Metric": "Policy Approved and Published"
-                })
+            stmt_text = data.get('statement_text', 'N/A')[:60]
+            reason_text = data.get('llm_reasoning', 'No reason provided')[:60]
+            mock_action = {
+                "Statement_ID": statement_id,
+                "Failed_Level": failed_level,
+                "Recommendation": f"MOCK: ดำเนินการ '{stmt_text}...' เพื่อปิด GAP: {reason_text}...",
+                "Target_Evidence_Type": "Policy Document (Guideline)",
+                "Key_Metric": "Policy Approved and Published"
+            }
+            actions.append(mock_action if not ActionItemType else ActionItemType(**mock_action).model_dump())
+
         return ActionPlanActions(
             Phase=f"1. Strategic Gap Closure (Target L{target_level})",
-            Goal=f"บรรลุหลักฐานที่จำเป็นทั้งหมดใน Level {target_level} ของ {sub_id}",
+            Goal=f"บรรลุหลักฐานที่จำเป็นใน Level {target_level} ของ {sub_id}",
             Actions=actions
         ).model_dump()
 
+    # ============================================================
+    # 2️⃣ รวม Statement ที่ล้มเหลว (ใช้เป็น input ให้ LLM)
+    # ============================================================
     failed_statements_text = []
     for data in failed_statements_data:
         stmt_num = data.get('statement_number', 'N/A')
@@ -479,35 +575,76 @@ Reason for Failure: {data.get('llm_reasoning', 'N/A')}
 RAG Context Found: {data.get('retrieved_context', 'No context found')}
 **IMPORTANT: The Action Plan must use '{statement_id}' for 'Statement_ID'.**
 """)
+
     statements_list_str = "\n".join(failed_statements_text)
-    llm_prompt_content = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list=statements_list_str)
+
+    # ============================================================
+    # 3️⃣ รวม SEAM Reference Context (optional)
+    # ============================================================
+    seam_reference_snippet = ""
+    if include_seam_reference:
+        try:
+            seam_reference_snippet = include_seam_reference_context(sub_id=sub_id, enabler=enabler, top_k_reranked = FINAL_K_RERANKED)
+            if seam_reference_snippet:
+                logger.info(f"✅ Included SEAM reference context for {sub_id}.")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not include SEAM reference context: {e}")
+
+    # ============================================================
+    # 4️⃣ สร้าง Prompt สำหรับ LLM
+    # ============================================================
+    llm_prompt_content = ACTION_PLAN_PROMPT.format(
+        sub_id=sub_id,
+        target_level=target_level,
+        failed_statements_list=statements_list_str
+    ) + seam_reference_snippet  # ✅ ต่อท้าย SEAM context ถ้ามี
+
+    # ============================================================
+    # 5️⃣ สร้าง System Prompt (แนบ Schema)
+    # ============================================================
     try:
         schema_dict = ActionPlanActions.model_json_schema()
         schema_json = json.dumps(schema_dict, indent=2, ensure_ascii=False)
     except Exception:
         schema_json = "{}"
+
     system_prompt_content = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- REQUIRED JSON SCHEMA ---\n" + schema_json
+
+    # ============================================================
+    # 6️⃣ เรียก LLM เพื่อสร้าง Action Plan
+    # ============================================================
     final_error = None
     for attempt in range(max_retries + 1):
         try:
-            llm_full_response = _call_llm_for_json_output(prompt=llm_prompt_content, system_prompt=system_prompt_content)
+            llm_full_response = _call_llm_for_json_output(
+                prompt=llm_prompt_content,
+                system_prompt=system_prompt_content
+            )
+
             llm_result = _robust_extract_json(llm_full_response)
             if not llm_result:
-                raise ValueError("Failed to extract JSON for Action Plan.")
+                raise ValueError("Failed to extract valid JSON from LLM output.")
+
+            # Normalize key names
             if isinstance(llm_result, dict):
-                if 'actions' in llm_result and 'Actions' not in llm_result:
-                    llm_result['Actions'] = llm_result.pop('actions')
-                if 'phase' in llm_result and 'Phase' not in llm_result:
-                    llm_result['Phase'] = llm_result.pop('phase')
-                if 'goal' in llm_result and 'Goal' not in llm_result:
-                    llm_result['Goal'] = llm_result.pop('goal')
+                key_map = {"actions": "Actions", "phase": "Phase", "goal": "Goal"}
+                for old_key, new_key in key_map.items():
+                    if old_key in llm_result and new_key not in llm_result:
+                        llm_result[new_key] = llm_result.pop(old_key)
+
+            # ✅ Validate JSON ด้วย Pydantic Model
             validated_plan_model = ActionPlanActions.model_validate(llm_result)
             return validated_plan_model.model_dump()
+
         except Exception as e:
             final_error = str(e)
+            logger.warning(f"⚠️ Attempt {attempt+1}/{max_retries} failed: {e}")
             if attempt < max_retries:
                 time.sleep(retry_delay)
                 continue
-            else:
-                break
-    raise Exception(final_error if final_error else "Unknown Error during LLM Action Plan generation.")
+            break
+
+    # ============================================================
+    # 7️⃣ หาก LLM ล้มเหลวทุกครั้ง → Raise Error
+    # ============================================================
+    raise Exception(final_error or "Unknown error during Action Plan generation.")
