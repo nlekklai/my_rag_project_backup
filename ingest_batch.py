@@ -205,7 +205,7 @@ elif args.command == "ingest":
     logger.info(f"--- Starting ingestion for '{doc_type}' (Enabler: {enabler or 'ALL'}) ---")
     
     # 🔹 กำหนดชื่อ Collection ที่ถูกต้องสำหรับการ Pre-load
-    target_coll_name = "default"
+    target_coll_name = "document"
     if doc_type != "all" and doc_type in SUPPORTED_DOC_TYPES:
         try:
             # 🟢 FIX 3: ใช้ get_target_dir เพื่อหาชื่อ Collection ที่ถูกต้อง (e.g., evidence_km)

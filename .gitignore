@@ -6,6 +6,7 @@ env/
 venv/
 .venv/
 *.env
+*.log
 .DS_Store
 *.sqlite3
 # Ignore folders
@@ -16,6 +17,7 @@ results/
 reports/
 asessment_data/
 results/
+exports/
 output/
 ref_data
 ingest.log

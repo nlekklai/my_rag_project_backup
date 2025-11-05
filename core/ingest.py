@@ -492,7 +492,7 @@ def process_document(
     stable_doc_uuid: str, # ⬅️ (Warning: This is the 64-char SHA256 Hash)
     doc_type: Optional[str] = None,
     enabler: Optional[str] = None, 
-    base_path: str = "vectorstore_data", # Assuming default value
+    base_path: str = VECTORSTORE_DIR, # Assuming default value
     year: Optional[int] = None,
     version: str = "v1",
     metadata: dict = None,
@@ -509,7 +509,7 @@ def process_document(
     resolved_enabler = None
     if doc_type.lower() == "evidence":
         # Ensure DEFAULT_ENABLER is defined or handle its absence
-        DEFAULT_ENABLER = "KM" # Mocking if not defined
+        # DEFAULT_ENABLER = "KM" # Mocking if not defined
         resolved_enabler = (enabler or DEFAULT_ENABLER).upper()
 
     # 📌 Inject enabler into metadata if it exists
@@ -1072,12 +1072,10 @@ def list_documents(
     doc_types: Optional[List[str]] = None,
     enabler: Optional[str] = None, 
     show_results: str = "ingested" 
-# ) -> List[Any]: # <--- [OLD] คืนค่าเป็น List
-) -> Dict[str, Any]: # <--- [NEW] คืนค่าเป็น Dict
+) -> Dict[str, Any]: 
     
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    # all_docs: List[Any] = [] # <--- [OLD]
-    all_docs: Dict[str, Any] = {} # <--- [NEW] ใช้ Dictionary
+    all_docs: Dict[str, Any] = {}
     
     # 🟢 [FIX: ใช้ Filepath ที่เป็น Unique ในการค้นหา Stable UUID แทน doc_id_key]
     filepath_to_stable_uuid: Dict[str, str] = {
@@ -1094,7 +1092,7 @@ def list_documents(
     source_dirs_to_scan: List[str] = []
 
     if not doc_type_reqs: # 'all'
-        # ... (ส่วนนี้เหมือนเดิม) ...
+        # Include all supported doc types and enablers
         for dt in SUPPORTED_DOC_TYPES:
             if dt == "evidence":
                 if enabler_req:
@@ -1105,7 +1103,7 @@ def list_documents(
             else:
                 source_dirs_to_scan.append(_get_source_dir(dt, None))
     else:
-        # ... (ส่วนนี้เหมือนเดิม) ...
+        # Include only requested doc types and enablers
         for dt in doc_type_reqs:
             if dt == "evidence":
                 if enabler_req:
@@ -1146,6 +1144,7 @@ def list_documents(
                 chunk_count = len(chunk_uuids)
                 is_ingested = chunk_count > 0
                 
+                # ถ้าไม่พบ Stable UUID ใน mapping (อาจจะเป็นไฟล์ใหม่) ให้ใช้ TEMP_ID
                 final_doc_id = stable_doc_uuid or f"TEMP_ID__{filename_doc_id_key}"
                 
                 try:
@@ -1167,28 +1166,24 @@ def list_documents(
                     "status": "Ingested" if is_ingested else "Failed", 
                     "size": file_size,
                 }
-                # all_docs.append(doc_info) # <--- [OLD]
-                all_docs[final_doc_id] = doc_info # <--- [NEW] เพิ่มลงใน Dictionary ด้วย doc_id เป็น Key
+                all_docs[final_doc_id] = doc_info
 
     # NEW DEBUG LOG: ตรวจสอบจำนวนไฟล์ทั้งหมดที่พบหลังจาก Initial Filter
     logger.info(f"DEBUG: Total physical files found (len(all_docs)): {len(all_docs)}")
 
     # START OF COUNTING LOGIC 
-    # Y: Total number of supported files found after doc_type/enabler filter
     total_supported_files = len(all_docs) 
     
     # 2. Apply show_results filtering and calculate X
     show_results_lower = show_results.lower()
     
-    # 📌 [NEW] ใช้ Dictionary เพื่อเก็บผลลัพธ์ที่ถูกกรอง
     filtered_docs_dict: Dict[str, Any] = {}
     
     if total_supported_files == 0:
         doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
         logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}).")
-        return filtered_docs_dict # คืนค่า Dictionary ว่าง
+        return filtered_docs_dict 
     
-    # 📌 [NEW] ปรับ Logic การกรองให้ทำงานกับ Dictionary
     if show_results_lower == "ingested":
         filtered_docs_dict = {
             k: d for k, d in all_docs.items() 
@@ -1223,7 +1218,6 @@ def list_documents(
     # 3. Format for console output and printing
     
     display_list = []
-    # 📌 [NEW] ดึง values() จาก Dictionary เพื่อใช้ในการแสดงผล
     for doc_info in filtered_docs_dict.values(): 
         file_size_mb = doc_info['size'] / (1024 * 1024)
         enabler_display = doc_info['enabler'] if doc_info['enabler'] is not None else '-'
@@ -1241,21 +1235,25 @@ def list_documents(
         
     display_list.sort(key=lambda x: (x["doc_type"], x["file_name"]))
     
-    # ... (ส่วนการ Print Output เหมือนเดิม) ...
     doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
     
     print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Filter: {filter_name}):\n")
 
     if not display_list:
         print("--- No documents found matching the filter criteria to display ---")
-        return filtered_docs_dict # คืนค่า Dictionary ว่าง
+        return filtered_docs_dict 
 
-    print("-" * 155)
-    print(f"{'DOC ID (Stable/Temp)':<38} | {'FILENAME':<35} | {'EXT':<5} | {'TYPE':<10} | {'ENB':<5} | {'SIZE(MB)':<9} | {'STATUS':<10} | {'CHUNKS':<8} | {'REF ID (Old Key)'}")
-    print("-" * 155)
+    # 🟢 FIX: ปรับความกว้างคอลัมน์ UUID เป็น 65 และความกว้างรวมของตารางเป็น 182
+    UUID_COL_WIDTH = 65
+    NEW_TABLE_WIDTH = 182 
+    
+    print("-" * NEW_TABLE_WIDTH)
+    print(f"{'DOC ID (Stable/Temp)':<{UUID_COL_WIDTH}} | {'FILENAME':<35} | {'EXT':<5} | {'TYPE':<10} | {'ENB':<5} | {'SIZE(MB)':<9} | {'STATUS':<10} | {'CHUNKS':<8} | {'REF ID (Old Key)'}")
+    print("-" * NEW_TABLE_WIDTH)
     
     for info in display_list:
-        short_doc_id = info['doc_id'][:38] 
+        # 🟢 FIX: ใช้ UUID เต็ม ไม่มีการตัดทอน
+        full_doc_id = info['doc_id'] 
         file_name, file_ext = os.path.splitext(info['file_name'])
         short_filename = file_name[:33] if len(file_name) > 33 else file_name 
         file_ext = file_ext[1:].upper() if file_ext else '-' 
@@ -1264,7 +1262,7 @@ def list_documents(
         enabler_display = info['enabler'] 
         
         print(
-            f"{short_doc_id:<38} | "
+            f"{full_doc_id:<{UUID_COL_WIDTH}} | " # 🟢 FIX: ใช้ full_doc_id และความกว้าง 65
             f"{short_filename:<35} | " 
             f"{file_ext:<5} | "
             f"{info['doc_type']:<10} | "
@@ -1274,10 +1272,9 @@ def list_documents(
             f"{info['chunk_count']:<8} | "
             f"{short_ref_doc_id}"
         )
-    print("-" * 155)
+    print("-" * NEW_TABLE_WIDTH)
     print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Filter: {filter_name}):\n")
 
     
     # 4. Return the filtered list
-    # return filtered_docs # <--- [OLD]
-    return filtered_docs_dict # <--- [NEW] คืนค่า Dictionary ที่ถูกกรอง
+    return filtered_docs_dict

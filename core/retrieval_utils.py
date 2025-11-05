@@ -46,6 +46,8 @@ try:
 except Exception:
     llm_instance = None
 
+# -------------------- Config --------------------
+DEFAULT_ENABLER ="KM"
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +152,16 @@ def retrieve_context_with_filter(
     
     try:
         manager = VectorStoreManager()
-        collection_name = f"{doc_type}_{enabler.lower()}"
+        # collection_name = f"{doc_type}_{enabler.lower()}"
+        try:
+            if doc_type.lower() == "evidence":
+                collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}"
+            else:
+                collection_name = doc_type.lower()
+        except Exception as e:
+            logger.error(f"⚠️ Error generating collection name for doc_type={doc_type}, enabler={enabler}: {e}")
+            collection_name = doc_type.lower()
+
         
         # 1. โหลด Vector Store (ใช้ _load_chroma_instance เพื่อเข้าถึงโดยตรง)
         vectorstore = manager._load_chroma_instance(collection_name)
@@ -213,7 +224,7 @@ def retrieve_context_with_filter(
             )
             
             # 5. Invoke Compressed Retriever (ทำการ Rerank และ Truncate เป็น top_k_reranked)
-            documents = compressed_retriever.get_relevant_documents(query)
+            documents = compressed_retriever.invoke(query)
             logger.info(f"RAG Retrieval (Reranked) found {len(documents)} evidences (k={INITIAL_TOP_K}->{top_k_reranked}).")
 
         # 6. จัดรูปแบบผลลัพธ์
