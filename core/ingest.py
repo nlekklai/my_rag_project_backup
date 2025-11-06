@@ -54,7 +54,11 @@ from config.global_vars import (
     SUPPORTED_TYPES,
     SUPPORTED_DOC_TYPES,
     DEFAULT_ENABLER,
-    SUPPORTED_ENABLERS
+    SUPPORTED_ENABLERS,
+    EVIDENCE_DOC_TYPES,
+    DEFAULT_DOC_TYPES,
+    CHUNK_OVERLAP,
+    CHUNK_SIZE
 )
 
 # --- Document Info Model ---
@@ -102,7 +106,7 @@ def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
     """
     doc_type_norm = doc_type.strip().lower()
 
-    if doc_type_norm == "evidence":
+    if doc_type_norm == EVIDENCE_DOC_TYPES:
         # 1. กำหนดค่า enabler สุดท้าย (ใช้ enabler ที่ให้มา หรือ DEFAULT_ENABLER)
         # Note: ต้องกำหนด DEFAULT_ENABLER ใน core/ingest.py
         final_enabler = (enabler or DEFAULT_ENABLER) 
@@ -132,10 +136,10 @@ def _parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
     """
     collection_name_lower = collection_name.lower()
     
-    if collection_name_lower.startswith("evidence_"):
+    if collection_name_lower.startswith(f"{EVIDENCE_DOC_TYPES}_"):
         parts = collection_name_lower.split("_", 1)
         if len(parts) == 2:
-            return "evidence", parts[1].upper()
+            return EVIDENCE_DOC_TYPES, parts[1].upper()
     
     # Check if the collection name is a simple doc_type
     if collection_name_lower in SUPPORTED_DOC_TYPES:
@@ -373,9 +377,19 @@ def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] =
 
 # 📌 Global Text Splitter Configuration (สำหรับใช้ใน Load & Chunk)
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(
-    chunk_size=1000, 
-    chunk_overlap=200, 
-    separators=["\n\n", "\n", " ", ""]
+    chunk_size=CHUNK_SIZE,
+    chunk_overlap=CHUNK_OVERLAP,
+    separators=[
+        "\n\n",                   # แบ่งตาม paragraph
+        "\n- ",                   # แบ่งตาม bullet
+        "\n• ",                   # แบ่งตาม bullet symbol
+        "\n",                     # บรรทัดใหม่
+        ". ",                     # แบ่งตามประโยค (เฉพาะที่มี space)
+        " ",                      # space ปกติ
+        ""                        # fallback
+    ],
+    length_function=len,
+    is_separator_regex=False
 )
 
 # -------------------- Load & Chunk Document --------------------
@@ -499,11 +513,11 @@ def process_document(
     raw_doc_id_input = os.path.splitext(file_name)[0]
     filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) # ⬅️ นี่คือ ID 34-char ที่เราต้องการ!
             
-    doc_type = doc_type or "document"
+    doc_type = doc_type or DEFAULT_DOC_TYPES
     
     # 📌 Determine resolved enabler
     resolved_enabler = None
-    if doc_type.lower() == "evidence":
+    if doc_type.lower() == EVIDENCE_DOC_TYPES:
         # Ensure DEFAULT_ENABLER is defined or handle its absence
         # DEFAULT_ENABLER = "KM" # Mocking if not defined
         resolved_enabler = (enabler or DEFAULT_ENABLER).upper()
@@ -721,7 +735,7 @@ def ingest_all_files(
     files_to_process = []
     
     doc_type_req = (doc_type or "all").lower()
-    enabler_req = (enabler or (DEFAULT_ENABLER if doc_type_req == "evidence" else None))
+    enabler_req = (enabler or (DEFAULT_ENABLER if doc_type_req == EVIDENCE_DOC_TYPES else None))
     if enabler_req:
         enabler_req = enabler_req.upper()
 
@@ -733,14 +747,14 @@ def ingest_all_files(
     if doc_type_req == "all":
         # ถ้าเป็น 'all' ให้สแกนทุกโฟลเดอร์ที่รองรับ
         for dt in SUPPORTED_DOC_TYPES:
-             if dt == "evidence":
+             if dt == EVIDENCE_DOC_TYPES:
                 for ena in SUPPORTED_ENABLERS:
                     scan_roots.append(_get_source_dir(dt, ena, data_dir))
              else:
                 scan_roots.append(_get_source_dir(dt, None, data_dir))
     elif doc_type_req in SUPPORTED_DOC_TYPES:
         # ถ้าเป็น Specific Doc Type ให้คำนวณพาธเฉพาะ
-        if doc_type_req == "evidence" and not enabler_req:
+        if doc_type_req == EVIDENCE_DOC_TYPES and not enabler_req:
              # ถ้าเป็น evidence แต่ไม่ระบุ enabler ให้สแกนทุก enabler
              for ena in SUPPORTED_ENABLERS:
                  scan_roots.append(_get_source_dir(doc_type_req, ena, data_dir))
@@ -953,12 +967,13 @@ def wipe_vectorstore(
     elif doc_type_to_wipe == 'evidence':
         if enabler:
             # Wipe specific evidence enabler
-            collection_name = get_target_dir("evidence", enabler)
+            collection_name = get_target_dir(EVIDENCE_DOC_TYPES, enabler)
             collections_to_delete.append(collection_name)
         else:
             # Wipe ALL evidence enablers
             logger.warning("Wiping ALL evidence_* collections.")
-            evidence_paths = glob.glob(os.path.join(base_path, "evidence_*"))
+            # evidence_paths = glob.glob(os.path.join(base_path, "evidence_*"))
+            evidence_paths = glob.glob(os.path.join(base_path, f"{EVIDENCE_DOC_TYPES}_*"))
             collections_to_delete = [os.path.basename(p) for p in evidence_paths]
     elif doc_type_to_wipe in SUPPORTED_DOC_TYPES:
         collection_name = get_target_dir(doc_type_to_wipe, None)
@@ -1090,7 +1105,7 @@ def list_documents(
     if not doc_type_reqs: # 'all'
         # Include all supported doc types and enablers
         for dt in SUPPORTED_DOC_TYPES:
-            if dt == "evidence":
+            if dt == EVIDENCE_DOC_TYPES:
                 if enabler_req:
                      source_dirs_to_scan.append(_get_source_dir(dt, enabler_req))
                 else:
@@ -1101,7 +1116,7 @@ def list_documents(
     else:
         # Include only requested doc types and enablers
         for dt in doc_type_reqs:
-            if dt == "evidence":
+            if dt == EVIDENCE_DOC_TYPES:
                 if enabler_req:
                     source_dirs_to_scan.append(_get_source_dir(dt, enabler_req))
                 else:

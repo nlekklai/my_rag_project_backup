@@ -25,6 +25,7 @@ try:
         INITIAL_TOP_K,
         FINAL_K_RERANKED,
         FINAL_K_NON_RERANKED,
+        EVIDENCE_DOC_TYPES
     )
 except ImportError as e:
     print(f"FATAL ERROR: Cannot import global_vars: {e}", file=sys.stderr)
@@ -177,7 +178,7 @@ def _retrieve_full_source_info(raw_llm_results: List[Dict[str, Any]], enabler_ab
     logger.info(f"🔎 Attempting to retrieve full source info for {len(all_uuids)} unique chunks...")
     
     # 🛑 CONSTRUCT COLLECTION NAME: evidence_<ENABLER_ABBR_LOWER>
-    collection_name = f"evidence_{enabler_abbr.lower()}"
+    collection_name = f"{EVIDENCE_DOC_TYPES}_{enabler_abbr.lower()}"
     logger.info(f"Retrieving source info from collection: {collection_name}")
     
     # 🛑 Call the new function from retrieval_utils, passing the specific collection name
@@ -293,6 +294,7 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
             llm_action_plan_result = core.retrieval_utils.generate_action_plan_via_llm(
                 failed_statements_data=failed_statements_for_sub,
                 sub_id=sub_id,
+                enabler=enabler,  # 🔑 ใส่ enabler ที่ส่งเข้าฟังก์ชัน
                 target_level=target_level
             )
         except Exception as e:
@@ -534,12 +536,12 @@ def run_assessment_process(
 
             # Load retriever with filter_doc_ids (เฉพาะ doc_ids ที่ต้องการ)
             retriever = load_all_vectorstores(
-                doc_types=["evidence"],
+                doc_types=[EVIDENCE_DOC_TYPES],
                 evidence_enabler=enabler.lower(),
                 doc_ids=file_ids_to_load if file_ids_to_load else None
             )
 
-            target_collection_names = [f"evidence_{enabler.lower()}"]
+            target_collection_names = [f"{EVIDENCE_DOC_TYPES}_{enabler.lower()}"]
             logger.info(f"✅ Vectorstore loaded for enabler {enabler}. Collections: {target_collection_names}")
         
         elif mode == "real" and external_retriever is not None:

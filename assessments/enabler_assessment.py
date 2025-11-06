@@ -28,6 +28,7 @@ try:
         SUPPORTED_ENABLERS,
         SEAM_DOC_ID_MAP,
         DEFAULT_SEAM_REFERENCE_DOC_ID,
+        EVIDENCE_DOC_TYPES
     )
 
     # -------------------- IMPORT CORE LOGIC --------------------
@@ -256,7 +257,7 @@ class EnablerAssessment:
         Constructs the specific collection name based on the enabler abbreviation.
         Format: evidence_<ENABLER_ABBR_UPPER> (e.g., km -> evidence_KM)
         """
-        return f"evidence_{self.enabler_abbr.lower()}" # 🟢 FIX: ใช้ Lowercase ตามที่ใช้ใน retrieval_utils
+        return f"{EVIDENCE_DOC_TYPES}_{self.enabler_abbr.lower()}" # 🟢 FIX: ใช้ Lowercase ตามที่ใช้ใน retrieval_utils
 
     def _get_doc_uuid_filter(self, sub_id: str, level: int) -> Optional[List[str]]:
         """
@@ -367,7 +368,7 @@ class EnablerAssessment:
                 # 🟢 เรียกใช้ retrieve_context_with_filter
                 result = retrieve_context_with_filter(
                     query=query,
-                    doc_type="evidence",
+                    doc_type=EVIDENCE_DOC_TYPES,
                     enabler=self.enabler_abbr,
                     stable_doc_ids=doc_ids_to_filter, 
                     top_k_reranked=self.FINAL_K_RERANKED,
@@ -427,17 +428,26 @@ class EnablerAssessment:
             self.final_subcriteria_results.append(data)
 
     def _get_source_name_for_display(self, doc_id: str, metadata: Dict[str, Any]) -> str:
-        """Helper to determine the source name for display, prioritizing source_file/source keys."""
-        # 1. ลองดึงจาก source_name_for_display (ถ้ามีการกำหนดใน Ingestion)
-        display_name = metadata.get("source_name_for_display")
-        if display_name:
-            return display_name
-        
-        # 2. ดึงจาก source_file หรือ source (ซึ่งคือ Filename)
-        source_name = metadata.get("source_file") or metadata.get("source", "N/A")
-        
-        # 3. คืนค่า
-        return source_name
+        """Helper to determine the source name for display, prioritizing common metadata keys safely."""
+        if not metadata or not isinstance(metadata, dict):
+            return "N/A"
+
+        # 1️⃣ Priority: ใช้ชื่อที่จัดเตรียมไว้เพื่อการแสดงผลโดยเฉพาะ
+        if metadata.get("source_name_for_display"):
+            return metadata["source_name_for_display"]
+
+        # 2️⃣ ถ้าไม่มี ให้ใช้ชื่อไฟล์ต้นทางหรือชื่อเอกสาร
+        for key in ["source_file", "file_name", "source", "document_name", "title"]:
+            val = metadata.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip()
+
+        # 3️⃣ ถ้า metadata มี doc_id แต่ไม่มีชื่อไฟล์ — สร้างชื่ออ้างอิงอัตโนมัติ
+        if doc_id and doc_id != "N/A":
+            return f"Document ({doc_id[:8]}...)"
+
+        # 4️⃣ Fallback สุดท้าย
+        return "N/A"
 
 
     def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -569,8 +579,13 @@ class EnablerAssessment:
                         except:
                             raw_llm_response_content = str(llm_result_dict)
                     else:
+                       
                         llm_output = llm_eval_func(
-                            statement=statement, context=context, standard=standard, **llm_kwargs
+                            statement=statement,
+                            context=context,
+                            standard=standard,
+                            enabler_name=self.enabler_abbr,  # ✅ เพิ่มบรรทัดนี้
+                            **llm_kwargs
                         )
                         if isinstance(llm_output, tuple) and len(llm_output) == 2:
                             llm_result_dict, raw_llm_response_content = llm_output

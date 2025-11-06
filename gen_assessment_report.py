@@ -10,12 +10,12 @@ from docx.enum.table import WD_ALIGN_VERTICAL
 # --- 1. CONFIGURATION ---
 # ไฟล์ Input JSON ทั้งสองไฟล์ (อยู่ใน exports/)
 # 🟢 แก้ไขให้ใช้ไฟล์ 'all' ทั้งคู่ ตามที่ผู้ใช้ยืนยัน
-DATA_FILE_SUMMARY = "exports/KM_summary_all_20251104_031342.json" 
-DATA_FILE_RAW = "exports/KM_raw_details_all_20251104_031342.json" 
+DATA_FILE_SUMMARY = "exports/KM_summary_all_20251106_142132.json" 
+DATA_FILE_RAW = "exports/KM_raw_details_all_20251106_142132.json" 
 
 # การตั้งค่า Output สำหรับทั้งสองรูปแบบ
-OUTPUT_FILE_PATH_DOCX = "exports/KM_Comprehensive_Report.docx" 
-OUTPUT_FILE_PATH_TXT = "exports/KM_Comprehensive_Report.txt"
+OUTPUT_FILE_PATH_DOCX = "reports/KM_Comprehensive_Report.docx" 
+OUTPUT_FILE_PATH_TXT = "reports/KM_Comprehensive_Report.txt"
 
 
 # --- 2. DATA LOADING & UTILITY ---

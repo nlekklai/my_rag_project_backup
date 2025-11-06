@@ -43,3 +43,7 @@ app.include_router(assessment_router)
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/api/status")
+async def api_status():
+    return {"status": "ok", "message": "KM RAG API is running"}

@@ -8,9 +8,10 @@ from datetime import datetime
 # ==========================
 # CONFIG
 # ==========================
-EXPORT_DIR = "exports"
-SUMMARY_FILE = os.path.join(EXPORT_DIR, "KM_summary_all_20251104_031342.json")
-RAW_FILE = os.path.join(EXPORT_DIR, "KM_raw_details_all_20251104_031342.json")
+EXPORT_DIR = "reports"
+SOURCE_DIR = "exports"
+SUMMARY_FILE = os.path.join(SOURCE_DIR, "KM_summary_all_20251106_142132.json")
+RAW_FILE = os.path.join(SOURCE_DIR, "KM_raw_details_all_20251106_142132.json")
 REPORT_DATE = datetime.now().strftime("%Y-%m-%d")
 
 # ==========================

@@ -55,6 +55,7 @@ from config.global_vars import (
     FINAL_K_RERANKED,
     FINAL_K_NON_RERANKED,
     INITIAL_TOP_K,
+    EVIDENCE_DOC_TYPES
 )
 
 # -------------------- Vectorstore Constants --------------------
@@ -305,7 +306,7 @@ def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
     """
     doc_type_norm = doc_type.strip().lower()
 
-    if doc_type_norm == "evidence":
+    if doc_type_norm == EVIDENCE_DOC_TYPES:
         # Apply default enabler if None, หรือใช้ enabler ที่ส่งมา
         # NOTE: การใช้ DEFAULT_ENABLER ต้องมั่นใจว่ามีการ import มาแล้ว
         enabler_norm = (enabler or "km").strip().lower() # 🟢 ใช้ "km" เป็นค่า default ชั่วคราว ถ้า DEFAULT_ENABLER ยังไม่ถูกกำหนด
@@ -344,9 +345,9 @@ def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optiona
     if doc_type:
         doc_type_norm = doc_type.lower().strip()
         
-        if doc_type_norm == "evidence" and not enabler:
+        if doc_type_norm == EVIDENCE_DOC_TYPES and not enabler:
             # 🟢 NEW LOGIC: Special case: 'evidence' without enabler means list ALL evidence_*
-            return [f for f in folders if f.startswith("evidence_")]
+            return [f for f in folders if f.startswith(f"{EVIDENCE_DOC_TYPES}_")]
             
         # Specific collection requested (e.g., 'document' or 'evidence_km')
         collection_name = _get_collection_name(doc_type_norm, enabler)
@@ -460,10 +461,10 @@ class VectorStoreManager:
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         """Helper to safely re-parse collection name back to doc_type and enabler."""
         collection_name_lower = collection_name.strip().lower()
-        if collection_name_lower.startswith("evidence_"):
+        if collection_name_lower.startswith(f"{EVIDENCE_DOC_TYPES}_"):
             parts = collection_name_lower.split("_", 1)
             # Return 'evidence' as doc_type, and the enabler part (uppercase)
-            return "evidence", parts[1].upper() if len(parts) == 2 else None
+            return EVIDENCE_DOC_TYPES, parts[1].upper() if len(parts) == 2 else None
             
         # For non-evidence types (document, faq, etc.)
         return collection_name_lower, None 
@@ -981,14 +982,14 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
         target_collection_names.update(manager.get_all_collection_names())
     else:
         for dt_norm in doc_type_filter:
-            if dt_norm == "evidence":
+            if dt_norm == EVIDENCE_DOC_TYPES:
                 if evidence_enabler:
-                    collection_name = _get_collection_name("evidence", evidence_enabler)
+                    collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, evidence_enabler)
                     target_collection_names.add(collection_name)
                     logger.info(f"🔍 Added specific evidence collection: {collection_name}")
                 else:
                     # โหลดทุก Evidence Collection (ถ้าไม่มี Enabler ระบุ)
-                    evidence_collections = list_vectorstore_folders(base_path=base_path, doc_type="evidence")
+                    evidence_collections = list_vectorstore_folders(base_path=base_path, doc_type=EVIDENCE_DOC_TYPES)
                     target_collection_names.update(evidence_collections)
                     logger.info(f"🔍 Added all evidence collections found: {evidence_collections}")
             else:

@@ -238,14 +238,38 @@ def retrieve_context_with_filter(
         # 6. จัดรูปแบบผลลัพธ์
         top_evidences = []
         for doc in documents:
-            if isinstance(doc, LcDocument):
-                top_evidences.append({
-                    "content": doc.page_content,
-                    "metadata": doc.metadata
-                })
+            if not isinstance(doc, LcDocument):
+                continue
+
+            metadata = doc.metadata or {}
+
+            # 🟢 เพิ่ม fallback ให้ metadata ครบถ้วน
+            # 1. เสริม source/file_name หากหายไป
+            if not metadata.get("source") and not metadata.get("source_file"):
+                # พยายามดึงชื่อไฟล์จาก stable_doc_uuid
+                uuid_ref = metadata.get("stable_doc_uuid", "")[:8]
+                metadata["source"] = f"Unknown_Source_{uuid_ref}" if uuid_ref else "Unknown_Source"
+
+            # 2. เพิ่ม field page_label หากไม่มี
+            if "page_label" not in metadata and "page" in metadata:
+                metadata["page_label"] = str(metadata["page"])
+
+            # 3. เพิ่ม chunk_index ถ้ายังไม่มี
+            if "chunk_index" not in metadata and hasattr(doc, "metadata") and "chunk_id" in metadata:
+                metadata["chunk_index"] = metadata.get("chunk_id")
+
+            # 4. เพิ่ม safety field file_name ให้เท่ากับ source ถ้าไม่มี
+            if not metadata.get("file_name"):
+                metadata["file_name"] = metadata.get("source")
+
+            top_evidences.append({
+                "content": doc.page_content,
+                "metadata": metadata
+            })
 
         logger.info(f"RAG Final Output for query='{query[:30]}...' found {len(top_evidences)} evidences.")
         return {"top_evidences": top_evidences}
+
 
     except Exception as e:
         logger.error(f"Error during RAG retrieval with filter (Combined Logic): {e}", exc_info=True)
@@ -395,35 +419,74 @@ def retrieve_reference_context(
         return {"top_evidences": []}
 
 
-def evaluate_with_llm(statement: str, context: str, standard: str, **kwargs) -> Dict[str, Any]:
+def evaluate_with_llm(
+    statement: str,
+    context: str,
+    standard: str,
+    enabler_name: Optional[str] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    ประเมิน Statement เทียบกับ Standard ของ Enabler ที่กำหนด โดยใช้ Evidence Context ที่ดึงจากระบบ RAG
+    
+    Args:
+        statement (str): ข้อความของ Statement ที่จะประเมิน
+        context (str): หลักฐานจากเอกสาร (retrieved evidence)
+        standard (str): ข้อกำหนดหรือ rubric ของ enabler นั้น ๆ
+        enabler_name (str): ชื่อ enabler (เช่น "KM", "IM", "PM", "HR")
+        **kwargs: ตัวเลือกอื่น ๆ (reserve future use)
+
+    Returns:
+        Dict[str, Any]: ผลการประเมิน เช่น {"score": 1, "reason": "...", "pass_status": True, "status_th": "ผ่าน"}
+    """
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
+
+    # -------------------- MOCK MODE --------------------
     if _MOCK_CONTROL_FLAG:
         _MOCK_COUNTER += 1
         score = 1 if _MOCK_COUNTER <= 9 else 0
         reason_text = f"MOCK: FORCED {'PASS' if score == 1 else 'FAIL'} (Statement {_MOCK_COUNTER})"
         is_pass = score >= 1
         status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
-        return {"score": score, "reason": reason_text, "pass_status": is_pass, "status_th": status_th}
+        return {
+            "score": score,
+            "reason": reason_text,
+            "pass_status": is_pass,
+            "status_th": status_th,
+            "enabler": enabler_name or "N/A"
+        }
 
+    # -------------------- FALLBACK CASE --------------------
     if llm_instance is None:
         score = random.choice([0, 1])
         reason = f"LLM Initialization Failed (Fallback to Random Score {score})"
         is_pass = score >= 1
         status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
-        return {"score": score, "reason": reason, "pass_status": is_pass, "status_th": status_th}
+        return {
+            "score": score,
+            "reason": reason,
+            "pass_status": is_pass,
+            "status_th": status_th,
+            "enabler": enabler_name or "N/A"
+        }
 
+    # -------------------- GENERATE USER PROMPT --------------------
     user_prompt_content = USER_ASSESSMENT_PROMPT.format(
+        enabler_name=enabler_name or DEFAULT_ENABLER,
+        level=f"Level {kwargs.get('level', 'N/A')}",
         statement=statement,
         standard=standard,
         context=context if context else "ไม่พบหลักฐานในเอกสารที่เกี่ยวข้อง"
     )
 
+    # -------------------- CALL LLM --------------------
     for attempt in range(MAX_LLM_RETRIES):
         try:
             response = llm_instance.invoke(
                 [SystemMessage(content=SYSTEM_ASSESSMENT_PROMPT), HumanMessage(content=user_prompt_content)],
                 **({'format': 'json'} if hasattr(llm_instance, 'model_params') and 'format' in llm_instance.model_params else {})
             )
+
             llm_response_content = response.content if hasattr(response, 'content') else str(response)
             llm_output = _robust_extract_json(llm_response_content)
 
@@ -433,25 +496,40 @@ def evaluate_with_llm(statement: str, context: str, standard: str, **kwargs) -> 
             raw_score = llm_output.get("llm_score", llm_output.get("score"))
             reason = llm_output.get("reason")
             score_int = int(str(raw_score)) if raw_score is not None else 0
+
             validated_data = {"score": score_int, "reason": reason}
             try:
                 StatementAssessment.model_validate(validated_data)
             except ValidationError:
                 pass
+
             is_pass = score_int >= 1
             status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
-            validated_data.update({"pass_status": is_pass, "status_th": status_th})
+
+            validated_data.update({
+                "pass_status": is_pass,
+                "status_th": status_th,
+                "enabler": enabler_name or "N/A"
+            })
             return validated_data
+
         except Exception as e:
             if attempt < MAX_LLM_RETRIES - 1:
                 time.sleep(1)
                 continue
-    # fallback
+
+    # -------------------- FALLBACK RESULT --------------------
     score = random.choice([0, 1])
     reason = f"LLM Call Failed (Fallback to Random Score {score})"
     is_pass = score >= 1
     status_th = "ผ่าน" if is_pass else "ไม่ผ่าน"
-    return {"score": score, "reason": reason, "pass_status": is_pass, "status_th": status_th}
+    return {
+        "score": score,
+        "reason": reason,
+        "pass_status": is_pass,
+        "status_th": status_th,
+        "enabler": enabler_name or "N/A"
+    }
 
 # =================================================================
 # Narrative & Evidence Summary
