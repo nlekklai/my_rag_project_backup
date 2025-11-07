@@ -1,4 +1,528 @@
 {
+    "1.1_L1": {
+        "title": "Mapping for Sub-Criteria 1.1 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.1_L2": {
+        "title": "Mapping for Sub-Criteria 1.1 Level L2",
+        "evidences": []
+    },
+    "1.1_L3": {
+        "title": "Mapping for Sub-Criteria 1.1 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.1_L4": {
+        "title": "Mapping for Sub-Criteria 1.1 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.1_L5": {
+        "title": "Mapping for Sub-Criteria 1.1 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.2_L1": {
+        "title": "Mapping for Sub-Criteria 1.2 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.2_L2": {
+        "title": "Mapping for Sub-Criteria 1.2 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.2_L3": {
+        "title": "Mapping for Sub-Criteria 1.2 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.2_L4": {
+        "title": "Mapping for Sub-Criteria 1.2 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "1.2_L5": {
+        "title": "Mapping for Sub-Criteria 1.2 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.1_L1": {
+        "title": "Mapping for Sub-Criteria 2.1 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.1_L2": {
+        "title": "Mapping for Sub-Criteria 2.1 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.1_L3": {
+        "title": "Mapping for Sub-Criteria 2.1 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.1_L4": {
+        "title": "Mapping for Sub-Criteria 2.1 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.1_L5": {
+        "title": "Mapping for Sub-Criteria 2.1 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.2_L1": {
+        "title": "Mapping for Sub-Criteria 2.2 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.2_L2": {
+        "title": "Mapping for Sub-Criteria 2.2 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.2_L3": {
+        "title": "Mapping for Sub-Criteria 2.2 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.2_L4": {
+        "title": "Mapping for Sub-Criteria 2.2 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "2.2_L5": {
+        "title": "Mapping for Sub-Criteria 2.2 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.1_L1": {
+        "title": "Mapping for Sub-Criteria 3.1 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.1_L2": {
+        "title": "Mapping for Sub-Criteria 3.1 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.1_L3": {
+        "title": "Mapping for Sub-Criteria 3.1 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.1_L4": {
+        "title": "Mapping for Sub-Criteria 3.1 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.1_L5": {
+        "title": "Mapping for Sub-Criteria 3.1 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.2_L1": {
+        "title": "Mapping for Sub-Criteria 3.2 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.2_L2": {
+        "title": "Mapping for Sub-Criteria 3.2 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
     "3.2_L3": {
         "title": "Mapping for Sub-Criteria 3.2 Level L3",
         "evidences": [
@@ -16,11 +540,11 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
-    "4.1_L1": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L1",
+    "3.2_L4": {
+        "title": "Mapping for Sub-Criteria 3.2 Level L4",
         "evidences": [
             {
                 "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
@@ -36,7 +560,47 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
+        ]
+    },
+    "3.2_L5": {
+        "title": "Mapping for Sub-Criteria 3.2 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "3.3_L1": {
+        "title": "Mapping for Sub-Criteria 3.3 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
         ]
     },
     "3.3_L2": {
@@ -59,26 +623,6 @@
             }
         ]
     },
-    "1.1_L1": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
     "3.3_L3": {
         "title": "Mapping for Sub-Criteria 3.3 Level L3",
         "evidences": [
@@ -96,287 +640,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "6.1_L5": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.2_L1": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.2_L2": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.1_L3": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.2_L4": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "5.1_L3": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.1_L4": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.2_L1": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.1_L3": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.2_L5": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.1_L3": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.2_L3": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "5.2_L1": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.2_L4": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "3.3_L4": {
@@ -396,27 +660,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.2_L4": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "3.3_L5": {
@@ -436,7 +680,107 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
+        ]
+    },
+    "4.1_L1": {
+        "title": "Mapping for Sub-Criteria 4.1 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "4.1_L2": {
+        "title": "Mapping for Sub-Criteria 4.1 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "4.1_L3": {
+        "title": "Mapping for Sub-Criteria 4.1 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "4.1_L4": {
+        "title": "Mapping for Sub-Criteria 4.1 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "4.1_L5": {
+        "title": "Mapping for Sub-Criteria 4.1 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
         ]
     },
     "4.2_L1": {
@@ -456,11 +800,11 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
-    "1.1_L5": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L5",
+    "4.2_L2": {
+        "title": "Mapping for Sub-Criteria 4.2 Level L2",
         "evidences": [
             {
                 "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
@@ -476,7 +820,111 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
+        ]
+    },
+    "4.2_L3": {
+        "title": "Mapping for Sub-Criteria 4.2 Level L3",
+        "evidences": []
+    },
+    "4.2_L4": {
+        "title": "Mapping for Sub-Criteria 4.2 Level L4",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "4.2_L5": {
+        "title": "Mapping for Sub-Criteria 4.2 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "5.1_L1": {
+        "title": "Mapping for Sub-Criteria 5.1 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "5.1_L2": {
+        "title": "Mapping for Sub-Criteria 5.1 Level L2",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "5.1_L3": {
+        "title": "Mapping for Sub-Criteria 5.1 Level L3",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
         ]
     },
     "5.1_L4": {
@@ -496,200 +944,45 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.2_L5": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.1_L4": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.2_L2": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.1_L1": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "6.1_L4": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.2_L3": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.1_L3": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.1_L1": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.1_L2": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "5.1_L5": {
         "title": "Mapping for Sub-Criteria 5.1 Level L5",
         "evidences": [
             {
-                "doc_id": "0dab357a50c202dce229455cc8d881c2a0d785425dd5d09e2531ea0a69a436d5",
-                "file_name": "KM5.1L502 5.1 ระดับ 3 (5) _ระดับ 5 (2) รายงานการประเมินกระบวนก.pdf",
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
             },
             {
-                "doc_id": "a815bbb15a87a2febbcdb444a1c1f52918b2f9ac8d3be10c54f1381b91f4a18b",
-                "file_name": "KM5.1L501 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
+    },
+    "5.2_L1": {
+        "title": "Mapping for Sub-Criteria 5.2 Level L1",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
             }
         ]
@@ -711,47 +1004,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.2_L4": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.2_L3": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "5.2_L3": {
@@ -771,87 +1024,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.1_L2": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.3_L1": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "5.1_L2": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.1_L5": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "5.2_L4": {
@@ -871,187 +1044,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.1_L4": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.1_L4": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "1.2_L1": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "3.1_L2": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.1_L5": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "6.1_L1": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.1_L2": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "5.1_L1": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.2_L2": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "5.2_L5": {
@@ -1071,11 +1064,11 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
-    "6.1_L3": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L3",
+    "6.1_L1": {
+        "title": "Mapping for Sub-Criteria 6.1 Level L1",
         "evidences": [
             {
                 "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
@@ -1091,67 +1084,7 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "2.2_L2": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.1_L5": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
-        ]
-    },
-    "4.2_L5": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
-                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
-                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
-                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
     "6.1_L2": {
@@ -1171,11 +1104,15 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
         ]
     },
-    "2.2_L5": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L5",
+    "6.1_L3": {
+        "title": "Mapping for Sub-Criteria 6.1 Level L3",
+        "evidences": []
+    },
+    "6.1_L4": {
+        "title": "Mapping for Sub-Criteria 6.1 Level L4",
         "evidences": [
             {
                 "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
@@ -1191,7 +1128,27 @@
                 "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
                 "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
                 "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }      
+            }
+        ]
+    },
+    "6.1_L5": {
+        "title": "Mapping for Sub-Criteria 6.1 Level L5",
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
         ]
     }
 }

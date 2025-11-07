@@ -1,4 +1,3 @@
-# ingest_batch.py
 import argparse
 import logging
 import sys
@@ -188,49 +187,24 @@ elif args.command == "ingest":
     doc_type = args.doc_type.lower()
     enabler = args.enabler
 
+    # 📌 FIX: ตรวจสอบเฉพาะกรณีที่เป็น doc_type 'evidence' และไม่ได้เลือก 'all'
     if doc_type == "evidence" and not enabler:
         logger.error("❌ Must specify --enabler for evidence ingestion")
         sys.exit(1)
 
-    # -------------------- CASE: ALL --------------------
-    if doc_type == "all":
-        folders_to_ingest = []
-        for f in os.listdir(DATA_DIR):
-            path = os.path.join(DATA_DIR, f)
-            if os.path.isdir(path):
-                folders_to_ingest.append(f)
+    logger.info(f"--- Starting Ingestion: doc_type='{doc_type}' (Enabler: {enabler or 'ALL'}) ---")
 
-        for folder in folders_to_ingest:
-            # ตรวจสอบว่าเป็น evidence_* หรือ doc_type ปกติ
-            if folder.startswith("evidence_"):
-                enabler_code = folder.split("_")[1]
-                dt = "evidence"
-            else:
-                dt = folder
-                enabler_code = None
-
-            logger.info(f"--- Ingesting folder '{folder}' (doc_type={dt}, enabler={enabler_code}) ---")
-            ingest_all_files(
-                doc_type=dt,
-                enabler=enabler_code,
-                base_path=os.path.join(DATA_DIR, folder),
-                skip_ext=args.skip_ext,
-                sequential=args.sequential,
-                log_every=args.log_every
-            )
-
-    # -------------------- CASE: SINGLE DOC_TYPE --------------------
-    else:
-        logger.info(f"--- Ingesting doc_type '{doc_type}' (Enabler: {enabler or '-'}) ---")
-        target_path = os.path.join(DATA_DIR, doc_type) if doc_type != "evidence" else get_target_dir(doc_type, enabler)
-        ingest_all_files(
-            doc_type=doc_type,
-            enabler=enabler,
-            base_path=target_path,
-            skip_ext=args.skip_ext,
-            sequential=args.sequential,
-            log_every=args.log_every
-        )
+    # 🟢 FIX: เรียก ingest_all_files เพียงครั้งเดียว 
+    # โดยฟังก์ชันจะจัดการการสแกนโฟลเดอร์ย่อยทั้งหมดภายใน DATA_DIR เอง
+    ingest_all_files(
+        doc_type=doc_type,
+        enabler=enabler,
+        data_dir=DATA_DIR,          # ⬅️ Source Files Base Path
+        base_path=VECTORSTORE_DIR,  # ⬅️ Vector Store Base Path (แก้ไขปัญหา Vector Store Path)
+        skip_ext=args.skip_ext,
+        sequential=args.sequential,
+        log_every=args.log_every
+    )
 
     logger.info("✅ Ingestion process completed. Check ingest.log for details.")
     sys.exit(0)

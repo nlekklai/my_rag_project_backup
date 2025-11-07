@@ -96,6 +96,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# -------------------- Log Noise Suppression (NEW) --------------------
+# 📌 FIX: ปิดกั้น WARNINGs ที่ไม่จำเป็นจากไลบรารีภายนอก
+#    เพื่อกำจัด Warning เช่น "Cannot set gray non-stroke color because..."
+
+import warnings
+
+# 1. ใช้ warnings.filterwarnings เพื่อซ่อน UserWarning ที่เป็น Log Noise
+warnings.filterwarnings(
+    "ignore", 
+    "Cannot set gray non-stroke color because", 
+    category=UserWarning,
+    module='pdfminer' 
+)
+
+# 2. ลดระดับ Log ของไลบรารีภายนอกที่ทำให้เกิด Noise ลงเหลือ ERROR
+logging.getLogger('pdfminer').setLevel(logging.ERROR)
+logging.getLogger('pdfminer.pdfinterp').setLevel(logging.ERROR)
+logging.getLogger('unstructured').setLevel(logging.ERROR)
+logging.getLogger('pypdf').setLevel(logging.ERROR)
+# ---------------------------------------------------------------------
+
 # -------------------- [NEW] Path & Collection Utilities --------------------
 
 def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
@@ -360,16 +381,22 @@ def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] =
             if isinstance(item, Document): doc = item
             else: doc = Document(page_content=str(item), metadata={})
             
-            # 📌 [FIX] ตรวจสอบและจัดการ page_content ที่เป็น None หรือ Empty (แก้ ValidationError จาก OCR/UnstructuredLoader)
-            if not doc.page_content or doc.page_content.strip() == "":
-                logger.warning(f"⚠️ Doc #{idx} from loader has no content (Empty/None). Skipping normalization for this document.")
-                continue # <-- จุดสำคัญ: ข้ามเอกสารที่ไม่มีเนื้อหา
+            # 🟢 CRITICAL FIX: จัดการ None, Normalize (NFKC), และ Strip
+            # (ต้องทำก่อนการตรวจสอบความว่างเปล่า เพื่อป้องกัน AttributeError: 'NoneType' object has no attribute 'strip')
+            doc.page_content = unicodedata.normalize("NFKC", doc.page_content or "").strip() 
             
+            # 📌 REVISED CHECK: ตรวจสอบความว่างเปล่าหลังการทำความสะอาดแล้ว
+            if not doc.page_content:
+                logger.warning(f"⚠️ Doc #{idx} from loader has no content (Empty/None). Skipping normalization for this document.")
+                continue # <-- ข้ามเอกสารที่ไม่มีเนื้อหา
+            
+            # ... (โค้ดส่วนเดิม)
             if not isinstance(doc.metadata, dict): doc.metadata = {"_raw_meta": str(doc.metadata)}
             if source_path: doc.metadata.setdefault("source_file", os.path.basename(source_path))
             try: doc.metadata = _safe_filter_complex_metadata(doc.metadata)
             except Exception: doc.metadata = {"source_file": os.path.basename(source_path)} if source_path else {}
             normalized.append(doc)
+            
         except Exception as e:
             logger.warning(f"normalize_loaded_documents: skipping item #{idx} due to error: {e}")
             continue
@@ -377,17 +404,15 @@ def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] =
 
 # 📌 Global Text Splitter Configuration (สำหรับใช้ใน Load & Chunk)
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(
-    chunk_size=CHUNK_SIZE,
-    chunk_overlap=CHUNK_OVERLAP,
+    chunk_size=CHUNK_SIZE,              # ลดลงจากค่า default (เช่น 1500–2000) เพื่อให้ granular ขึ้น
+    chunk_overlap=CHUNK_OVERLAP,            # overlap ประมาณ 10–15% เหมาะกับเอกสารนโยบาย
     separators=[
-        "\n\n",                   # แบ่งตาม paragraph
-        "\n- ",                   # แบ่งตาม bullet
-        "\n• ",                   # แบ่งตาม bullet symbol
-        "\n",                     # บรรทัดใหม่
-        ". ",                     # แบ่งตามประโยค (เฉพาะที่มี space)
-        " ",                      # space ปกติ
-        ""                        # fallback
-    ],
+        "\n\n",                   # แบ่งย่อหน้าใหญ่
+        "\n- ",                   # แบ่งรายการ
+        "\n• ",                   # แบ่งรายการ
+        " ",                      # ตัวแบ่งสุดท้าย (Space)
+        ""
+    ]   ,
     length_function=len,
     is_separator_regex=False
 )
@@ -460,7 +485,8 @@ def load_and_chunk_document(
         
         if year: d.metadata["year"] = year
         d.metadata["version"] = version
-        d.metadata["doc_id"] = stable_doc_uuid 
+        # d.metadata["doc_id"] = stable_doc_uuid 
+        d.metadata["stable_doc_uuid"] = stable_doc_uuid
         d.metadata["source"] = d.metadata.get("source_file", os.path.basename(file_path))
         d.metadata = _safe_filter_complex_metadata(d.metadata) # Final filter
 
@@ -546,7 +572,7 @@ def process_document(
     
     for c in chunks:
         # [2] เก็บ ID 64-char (ที่ใช้ใน Ingestion เดิม)
-        c.metadata["doc_id"] = stable_doc_uuid          
+        # c.metadata["doc_id"] = stable_doc_uuid          
         c.metadata["stable_doc_uuid"] = stable_doc_uuid 
         
         # ✅ การแก้ไขที่สำคัญ: เพิ่มคีย์สำหรับ ID 32-char (ใช้สำหรับกรองเดิม)

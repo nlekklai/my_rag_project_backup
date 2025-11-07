@@ -1,5 +1,4 @@
 #core/run_assessment.py
-# core/run_assessment.py
 import os
 import sys
 import logging
@@ -42,7 +41,7 @@ try:
     # --- Mocking functions ---
     from assessments.mocking_assessment import (
         summarize_context_with_llm_MOCK,
-        generate_action_plan_MOCK,
+        create_structured_action_plan_MOCK,
         retrieve_context_MOCK,
         evaluate_with_llm_CONTROLLED_MOCK,
     )
@@ -223,32 +222,51 @@ def get_sub_criteria_data(sub_id: str, criteria_list: List[Dict]) -> Dict:
     return {}
 
 def get_all_failed_statements(summary: Dict) -> List[Dict[str, Any]]:
-    """Extracts all statements with a score of 0 (Fail)."""
+    """Extract all failed statements (score == 0) safely."""
     all_failed = []
-    raw_results = summary.get('raw_llm_results', []) 
+    raw_results = summary.get('raw_llm_results', [])
+
     for r in raw_results:
         score_val = r.get('llm_score', r.get('score', 1))
+
         try:
-            # Statements that failed (score 0)
-            if int(score_val) == 0:
-                all_failed.append({
-                    "sub_id": r.get('sub_criteria_id', 'N/A'),
-                    "level": r.get('level', 0),
-                    "statement_number": r.get('statement_number', 0),
-                    "statement_text": r.get('statement', 'N/A'),
-                    "llm_reasoning": r.get('reason', 'No reason saved'),
-                    "retrieved_context": r.get('context_retrieved_snippet', 'No context saved') 
-                })
+            score = int(float(score_val)) if score_val is not None else 1
         except (ValueError, TypeError):
-            pass
+            score = 1  # treat invalid score as pass
+
+        if score == 0:
+            all_failed.append({
+                "sub_id": r.get('sub_criteria_id', 'N/A'),
+                "level": r.get('level', 0),
+                "statement_number": r.get('statement_number', 0),
+                "statement_text": r.get('statement', 'N/A'),
+                "llm_reasoning": (
+                    r.get('reason')
+                    or r.get('llm_result', {}).get('reason')
+                    or 'No reasoning provided'
+                ),
+                "retrieved_context": (
+                    r.get('context_retrieved_snippet')
+                    or r.get('retrieved_text')
+                    or 'No context available'
+                )
+            })
+
     return all_failed
 
-def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
-    """Generate Action Plan per Sub-Criteria. (จะใช้ generate_action_plan_via_llm ซึ่งจะถูก Patch)"""
 
+def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, full_summary: Dict) -> List[Dict]:
+    """
+    Generate Action Plan per Sub-Criteria using LLM.
+    Fallbacks:
+      - No failed statements → generic evidence collection
+      - target_level > 5 → L5 maintenance
+      - LLM error → system error message
+    """
     highest_full_level = summary_data.get('highest_full_level', 0)
     target_level = highest_full_level + 1
 
+    # --- No action needed ---
     if not summary_data.get('development_gap', False):
         return [{
             "Phase": "No Action Needed",
@@ -256,6 +274,7 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
             "Actions": []
         }]
 
+    # --- Level 5 maintenance ---
     if target_level > 5:
         return [{
             "Phase": "L5 Maturity Maintenance",
@@ -263,15 +282,14 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
             "Actions": []
         }]
 
+    # --- Filter failed statements for this sub ---
     all_failed_statements = get_all_failed_statements(full_summary)
+    failed_statements_for_sub = [s for s in all_failed_statements if s['sub_id'] == sub_id]
 
-    failed_statements_for_sub = [
-        s for s in all_failed_statements
-        if s['sub_id'] == sub_id
-    ]
-
+    print(f"🧩 DEBUG failed_statements = {all_failed_statements}")
     action_plan = []
 
+    # --- Phase 1: Generate via LLM or fallback ---
     if not failed_statements_for_sub:
         llm_action_plan_result = {
             "Phase": "1. General Evidence Collection",
@@ -287,11 +305,9 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
                 "Key_Metric": "Pass Rate 100% on Rerunning Assessment"
             }]
         }
-
     else:
         try:
-            # 🛑 ใช้ LLM จริง หรือ Mock (ตามที่ถูก Patch ใน run_assessment_process และ Logic ใน retrieval_utils)
-            llm_action_plan_result = core.retrieval_utils.generate_action_plan_via_llm(
+            llm_action_plan_result = core.retrieval_utils.create_structured_action_plan(
                 failed_statements_data=failed_statements_for_sub,
                 sub_id=sub_id,
                 enabler=enabler,  # 🔑 ใส่ enabler ที่ส่งเข้าฟังก์ชัน
@@ -314,14 +330,12 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
                 }]
             }
 
+    # Append Phase 1
     if llm_action_plan_result and 'Actions' in llm_action_plan_result:
         action_plan.append(llm_action_plan_result)
 
-    failed_levels_with_gap = [
-        lvl for lvl, ratio in summary_data.get('pass_ratios', {}).items() if ratio < 1.0
-    ]
+    # --- Phase 2: AI Validation & Maintenance ---
     recommend_action_text = f"รวบรวมหลักฐานใหม่สำหรับ Level {target_level} และนำเข้า Vector Store"
-
     action_plan.append({
         "Phase": "2. AI Validation & Maintenance",
         "Goal": f"ยืนยัน Level-Up และรักษาความต่อเนื่องของหลักฐานใน L{target_level}",
@@ -340,6 +354,7 @@ def generate_action_plan_for_sub(sub_id: str, enabler: str, summary_data: Dict, 
     )
 
     return action_plan
+
 
 # -------------------- L5 SUMMARY --------------------
 def generate_and_integrate_l5_summary(assessor, results):
@@ -499,76 +514,66 @@ def run_assessment_process(
     export: bool = False,
     disable_semantic_filter: bool = False,
     allow_fallback: bool = False,
-    external_retriever: Optional[Any] = None # 🟢 [REVISED] เพิ่ม Argument สำหรับ FastAPI
+    external_retriever: Optional[Any] = None  # 🟢 ใช้ retriever จากภายนอก (FastAPI)
 ) -> Dict[str, Any]:
     start_time_global = time.perf_counter()
     summary: Dict[str, Any] = {'raw_export_path_used': None}
     original_mode = mode
-    retriever = external_retriever # 🟢 [REVISED] ใช้ external_retriever ที่ส่งเข้ามา
+    retriever = external_retriever
 
     # -------------------- Mock Setup --------------------
     set_mock_control_mode(original_mode == "mock")
-    llm_eval_func = evaluate_with_llm_CONTROLLED_MOCK if original_mode=="mock" else None
-    llm_summarize_func = summarize_context_with_llm_MOCK if original_mode=="mock" else None
-    llm_action_plan_func = generate_action_plan_MOCK if original_mode=="mock" else None
+    llm_eval_func = evaluate_with_llm_CONTROLLED_MOCK if original_mode == "mock" else None
+    llm_summarize_func = summarize_context_with_llm_MOCK if original_mode == "mock" else None
+    llm_action_plan_func = create_structured_action_plan_MOCK if original_mode == "mock" else None
 
     # -------------------- Load Vectorstore --------------------
     try:
         if mode == "real" and external_retriever is None:
-            # 💡 [FALLBACK] โหลด Vector Store เองเมื่อรันผ่าน CLI/Local (ถ้า external_retriever เป็น None)
             logger.warning("⚠️ Running in REAL mode without external retriever. Loading vector store inside function (slow).")
-            
             temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
-            evidence_mapping_data = temp_loader.evidence_mapping_data
-            if evidence_mapping_data is None:
-                evidence_mapping_data = {}
+            evidence_mapping_data = temp_loader.evidence_mapping_data or {}
 
-            # Apply filter_mode doc_ids if requested
+            # Filter document IDs
             file_ids_to_load = []
             if filter_mode and sub_criteria_id != "all":
                 for key, data in evidence_mapping_data.items():
                     if key.startswith(f"{sub_criteria_id}_L"):
-                        for ev in data.get('evidences', []):
-                            doc_id = ev.get('doc_id')
-                            if doc_id:
-                                file_ids_to_load.append(doc_id)
+                        for ev in data.get(EVIDENCE_DOC_TYPES, []):
+                            doc_uuid = ev.get('stable_doc_uuid', ev.get('doc_id'))
+                            if doc_uuid:
+                                file_ids_to_load.append(doc_uuid)
                 logger.info(f"DEBUG: doc_ids to load for {sub_criteria_id}: {file_ids_to_load}")
 
-            # Load retriever with filter_doc_ids (เฉพาะ doc_ids ที่ต้องการ)
             retriever = load_all_vectorstores(
                 doc_types=[EVIDENCE_DOC_TYPES],
                 evidence_enabler=enabler.lower(),
                 doc_ids=file_ids_to_load if file_ids_to_load else None
             )
+            logger.info(f"✅ Vectorstore loaded for enabler {enabler}")
 
-            target_collection_names = [f"{EVIDENCE_DOC_TYPES}_{enabler.lower()}"]
-            logger.info(f"✅ Vectorstore loaded for enabler {enabler}. Collections: {target_collection_names}")
-        
         elif mode == "real" and external_retriever is not None:
-             logger.info("✅ Using external retriever provided by API/Caller.")
-             # retriever ถูกกำหนดไว้แล้วจาก external_retriever
-        
+            logger.info("✅ Using external retriever provided by API/Caller.")
+
         elif mode != "real":
-             retriever = None
+            retriever = None
 
     except Exception as e:
-        logger.error(f"❌ ERROR: Failed to load Vectorstores in REAL mode: {e}", exc_info=True)
+        logger.error(f"❌ ERROR: Failed to load Vectorstores: {e}", exc_info=True)
         mode = "random"
         logger.warning(f"⚠️ MODE CHANGED TO: {mode.upper()} due to Vectorstore Load Failure.")
 
     # -------------------- Load & Filter Evidence --------------------
     try:
-        # 💡 [REVISED] ใช้ temp_loader ที่สร้างมาใน Fallback หรือสร้าง EnablerAssessment ใหม่
-        if 'temp_loader' in locals() and mode=="real" and external_retriever is None:
+        if 'temp_loader' in locals() and mode == "real" and external_retriever is None:
             enabler_loader = temp_loader
         else:
             enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever)
-        
+
         filtered_evidence = enabler_loader.evidence_data
         if sub_criteria_id != "all":
-            filtered_evidence = [e for e in filtered_evidence if e.get("Sub_Criteria_ID")==sub_criteria_id]
+            filtered_evidence = [e for e in filtered_evidence if e.get("Sub_Criteria_ID") == sub_criteria_id]
 
-        # Strict Filter Mode: remove statements without mapped evidence
         if filter_mode and sub_criteria_id != "all":
             evidence_mapping_data = enabler_loader.evidence_mapping_data
             valid_level_keys = {k for k, v in evidence_mapping_data.items() if k.startswith(sub_criteria_id) and v.get('evidences')}
@@ -579,8 +584,7 @@ def run_assessment_process(
                 added = False
                 for lvl in range(1, 6):
                     level_key = f"{statement_dict['Sub_Criteria_ID']}_L{lvl}"
-                    level_statements = statement_dict.get(f"Level_{lvl}_Statements", [])
-                    if level_statements and level_key in valid_level_keys:
+                    if level_key in valid_level_keys and statement_dict.get(f"Level_{lvl}_Statements"):
                         statements_to_assess.append(statement_dict)
                         added = True
                         break
@@ -604,16 +608,15 @@ def run_assessment_process(
         level_fractions=enabler_loader.level_fractions,
         evidence_mapping_data=enabler_loader.evidence_mapping_data,
         vectorstore_retriever=retriever,
-        use_mapping_filter=filter_mode, # 🟢 [FIXED] แก้ชื่อ Argument แล้ว
-        target_sub_id=sub_criteria_id if sub_criteria_id!="all" else None,
+        use_mapping_filter=filter_mode,
+        target_sub_id=sub_criteria_id if sub_criteria_id != "all" else None,
         mock_llm_eval_func=llm_eval_func,
         mock_llm_summarize_func=llm_summarize_func,
         mock_llm_action_plan_func=llm_action_plan_func,
         disable_semantic_filter=disable_semantic_filter
     )
 
-    # -------------------- Override _retrieve_context สำหรับ Mock --------------------
-    if original_mode=="mock":
+    if original_mode == "mock":
         assessment_engine._retrieve_context = lambda **kwargs: retrieve_context_MOCK(
             statement=kwargs.get('query'),
             sub_criteria_id=kwargs['sub_criteria_id'],
@@ -624,28 +627,47 @@ def run_assessment_process(
     # -------------------- Run Assessment --------------------
     try:
         assessment_engine.run_assessment()
-        summary = assessment_engine.summarize_results() # <--- 1. สรุปคะแนนเบื้องต้น
+        summary = assessment_engine.summarize_results()
         summary['raw_llm_results'] = assessment_engine.raw_llm_results
-        
-        # 🟢 NEW: 1. Generate & Integrate L5/Highest Full Level Summary (<< ถูกเรียกใช้ตรงนี้)
-        summary = generate_and_integrate_l5_summary(assessment_engine, summary) # <--- 2. ถูกเรียกใช้ตรงนี้
-        
-        # 🟢 NEW: 2. Generate & Integrate Action Plans
+
+        logger.info(f"[DEBUG] raw_llm_results count = {len(summary.get('raw_llm_results', []))}")
+
+        # 🟢 Generate & Integrate L5 Summary
+        summary = generate_and_integrate_l5_summary(assessment_engine, summary)
+
+        # 🟢 Generate & Integrate Action Plans
         action_plans: Dict[str, Any] = {}
         for sub_id, sub_data in summary.get('SubCriteria_Breakdown', {}).items():
-            action_plan = generate_action_plan_for_sub(sub_id, enabler, sub_data, summary)
-            action_plans[sub_id] = action_plan
-        summary['Action_Plans'] = action_plans # <--- 3. ตามด้วย Action Plan
+            try:
+                action_plan = generate_action_plan_for_sub(sub_id, enabler, sub_data, summary)
+                print(f"🧩 DEBUG {sub_id} → ActionPlan: {action_plan}")
+                if action_plan:
+                    action_plans[sub_id] = action_plan
+            except Exception as e:
+                logger.error(f"[ERROR] Action Plan failed for {sub_id}: {e}", exc_info=True)
+        logger.info(f"[DEBUG] Action Plan Keys: {list(action_plans.keys())}")
+
+        summary['Action_Plans'] = action_plans
+
+        logger.info(f"[ACTION PLAN READY] Generated {len(action_plans)} plans.")
+
     except Exception as e:
+        logger.exception("[ERROR] run_assessment_process failed.")
         summary.update(assessment_engine.summarize_results())
         summary['Error_Details'] = str(e)
 
+    # -------------------- Export Option --------------------
     if export:
         export_paths = _export_results_to_json(summary, enabler, sub_criteria_id)
-        # 🛑 อัปเดต Dict summary ด้วยพาธที่ได้จากการ Export
         summary.update(export_paths)
 
+    end_time = time.perf_counter()
+    summary['runtime_seconds'] = round(end_time - start_time_global, 2)
+    summary['mode_used'] = mode
+
+    logger.info(f"✅ run_assessment_process finished in {summary['runtime_seconds']}s (mode={mode})")
     return summary
+
 
 
 # -------------------- CLI Entry Point (Adapter) --------------------

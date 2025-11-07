@@ -1,5 +1,4 @@
 # enabler_assessment.py (Full Script)
-# enabler_assessment.py (Refactored with global_vars)
 import os
 import sys
 import json
@@ -38,8 +37,10 @@ try:
         set_mock_control_mode, 
         summarize_context_with_llm,
     )
-    from core.assessment_schema import EvidenceSummary
-    from core.action_plan_schema import ActionPlanActions
+    # NOTE: Assuming EvidenceSummary and ActionPlanActions are correctly imported/defined elsewhere,
+    # or used only for type hints/schema validation outside this file.
+    # from core.assessment_schema import EvidenceSummary # ถูกละไว้หากไม่ใช้
+    # from core.action_plan_schema import ActionPlanActions # ถูกละไว้หากไม่ใช้
 
 except ImportError as e:
     print(f"FATAL ERROR: Failed to import required modules. Check sys.path and file structure. Error: {e}", file=sys.stderr)
@@ -48,54 +49,19 @@ except ImportError as e:
 # -------------------- LOGGING --------------------
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+# Standardize logging configuration
 if not logger.handlers:
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-# -------------------- YOUR SCRIPT LOGIC --------------------
-# ตัวอย่าง: ใช้ FINAL_K_RERANKED จาก global_vars
-logger.info(f"Using FINAL_K_RERANKED={FINAL_K_RERANKED} and FINAL_K_NON_RERANKED={FINAL_K_NON_RERANKED}")
-logger.info(f"Default enabler: {DEFAULT_ENABLER}")
-
-# เพิ่ม logic ของ assessment / retrieval / summarization ตามที่ต้องการ
-
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+# -------------------- CONFIG & FALLBACKS --------------------
 
 # Level Fractions สำหรับ Linear Interpolation
-DEFAULT_LEVEL_FRACTIONS = {
-    "1": 0.16667,
-    "2": 0.33333,
-    "3": 0.50000,
-    "4": 0.66667,
-    "5": 0.83333,
-    "MAX_LEVEL_FRACTION": 1.00000, 
-    "0": 0.0 
-}
+DEFAULT_LEVEL_FRACTIONS = {"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6, "4": 0.85, "5": 1.0, "MAX_LEVEL_FRACTION": 1.0}
 
-# Default fallback rubric structure
-DEFAULT_RUBRIC_STRUCTURE = {
-    "Default_Maturity_Rubric": { 
-        "levels": [
-            {
-                "level": i,
-                "name": "Default",
-                "criteria": {
-                    f"subtopic_{j}": f"Default criteria for level {i}, subtopic {j}"
-                    for j in range(1, 4)
-                }
-            }
-            for i in range(1, 6)
-        ]
-    }
-}
-
-DEFAULT_LEVEL_FRACTIONS = {"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6, "4": 0.85, "5": 1.0}
 
 # -------------------- EnablerAssessment Class --------------------
 
@@ -106,7 +72,7 @@ class EnablerAssessment:
                  evidence_data: Optional[List] = None,
                  rubric_data: Optional[Dict] = None,
                  level_fractions: Optional[Dict] = None,
-                 evidence_mapping_data: Optional[Dict] = None, # 🟢 FIX 1: เปลี่ยนชื่อ Argument
+                 evidence_mapping_data: Optional[Dict] = None, 
                  vectorstore_retriever=None,
                  use_mapping_filter: bool = True,
                  target_sub_id: Optional[str] = None,
@@ -119,16 +85,15 @@ class EnablerAssessment:
         # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
         self.MAX_CONTEXT_LENGTH = 35000 
         self.MAX_SNIPPET_LENGTH = 300
-        self.FINAL_K_RERANKED = 7 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
-        self.FINAL_K_NON_RERANKED = 10 # 🟢 FIX 2: ประกาศเป็น Attribute ภายในคลาส
-        self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" # ใช้เพื่อหาคีย์ใน Rubric
+        self.FINAL_K_RERANKED = FINAL_K_RERANKED 
+        self.FINAL_K_NON_RERANKED = FINAL_K_NON_RERANKED 
+        self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" 
 
         # --- การกำหนดค่า Attributes (สำคัญมาก) ---
         
         # 1. Attributes พื้นฐาน
         self.enabler_abbr = enabler_abbr.upper()
         
-        # 🟢 FIX 3: ใช้ self._load_json_fallback ในการโหลดข้อมูลหาก Argument เป็น None
         self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
         self.EVIDENCE_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
         self.RUBRIC_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
@@ -136,10 +101,10 @@ class EnablerAssessment:
         self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
 
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
-        default_rubric = {self.enabler_rubric_key: {"levels": []}} # Placeholder default
+        default_rubric = {self.enabler_rubric_key: {"levels": []}}
         self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
         self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
-        self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={}) # 🟢 FIX 4: ใช้ชื่อ Attribute ใหม่
+        self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={}) 
         
         self.vectorstore_retriever = vectorstore_retriever
         
@@ -164,13 +129,11 @@ class EnablerAssessment:
     def _load_json_fallback(self, path: str, default: Any):
         """Loads JSON หากไฟล์ไม่มี ให้ใช้ default"""
         if not os.path.isfile(path):
-            # logger.warning(f"[Warning] JSON file not found for enabler '{self.enabler_abbr}': {path}, using default fallback.")
             return default
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            # logger.error(f"Failed to load JSON {path}: {e}")
             return default
 
 
@@ -193,10 +156,9 @@ class EnablerAssessment:
         else:
             logger.warning(f"⚠️ Rubric key '{self.enabler_rubric_key}' not found or is invalid in loaded rubric data. Falling back to internal defaults.")
             
-            # ใช้ DEFAULT_LEVEL_FRACTIONS เพื่อสร้างโครงสร้าง Rubric Map สำหรับการรันแบบ Mock/Random
             default_levels = [int(lvl) for lvl in self.level_fractions.keys() if lvl.isdigit()]
             for level in default_levels:
-                rubric_map[level] = {f"subtopic_{i+1}": f"Default standard L{level} S{i+1}" for i in range(5)} # สมมติว่ามี 5 statement ต่อ level
+                rubric_map[level] = {f"subtopic_{i+1}": f"Default standard L{level} S{i+1}" for i in range(5)} 
 
         return rubric_map
 
@@ -219,7 +181,6 @@ class EnablerAssessment:
                 highest_full_level = level 
         
         # 2. คำนวณ Progress Score (Linear Interpolation)
-        # 🟢 FIX 5: ใช้ self.level_fractions ที่โหลดมาแล้ว
         max_fraction = self.level_fractions.get("MAX_LEVEL_FRACTION", 1.0)
         
         if highest_full_level == 5:
@@ -255,45 +216,33 @@ class EnablerAssessment:
     def _get_collection_name(self) -> str:
         """
         Constructs the specific collection name based on the enabler abbreviation.
-        Format: evidence_<ENABLER_ABBR_UPPER> (e.g., km -> evidence_KM)
         """
-        return f"{EVIDENCE_DOC_TYPES}_{self.enabler_abbr.lower()}" # 🟢 FIX: ใช้ Lowercase ตามที่ใช้ใน retrieval_utils
+        return f"{EVIDENCE_DOC_TYPES}_{self.enabler_abbr.lower()}" 
 
     def _get_doc_uuid_filter(self, sub_id: str, level: int) -> Optional[List[str]]:
         """
         Generates a list of document UUIDs to filter the RAG retrieval.
-        Uses the pre-mapped JSON data (self.evidence_mapping_data) based on sub_id and level.
+        NOTE: Logic is mainly executed in _retrieve_context for convenience/debugging
         """
-        if not self.evidence_mapping_data: # 🟢 FIX 6: ใช้ชื่อ Attribute ใหม่
-            logger.warning("Evidence mapping data is not loaded. Returning None filter.")
+        if not self.evidence_mapping_data: 
             return None
 
-        # Key format: "1.1_L1", "2.1_L3"
         key = f"{sub_id}_L{level}"
-
-        if key not in self.evidence_mapping_data: # 🟢 FIX 7: ใช้ชื่อ Attribute ใหม่
-            logger.warning(f"No evidence mapping found for key: {key}. Returning None filter.")
+        if key not in self.evidence_mapping_data: 
             return None
 
         try:
-            key_data = self.evidence_mapping_data[key] # 🟢 FIX 8: ใช้ชื่อ Attribute ใหม่
+            key_data = self.evidence_mapping_data[key]
             
             if 'evidences' in key_data and isinstance(key_data['evidences'], list):
+                # 🟢 FIX: ใช้ stable_doc_uuid เป็นหลัก (ตามการแก้ไขหลัก)
                 doc_uuids = [
-                    evidence.get('doc_id') 
-                    for evidence in key_data['evidences'] 
-                    if isinstance(evidence, dict) and evidence.get('doc_id')
+                    d.get('stable_doc_uuid') or d.get('doc_id')
+                    for d in key_data['evidences'] 
+                    if isinstance(d, dict) and (d.get('stable_doc_uuid') or d.get('doc_id'))
                 ]
-                
-                if doc_uuids:
-                    logger.info(f"Loaded {len(doc_uuids)} UUIDs for RAG filter key: {key}")
-                    return doc_uuids
-                else:
-                    logger.warning(f"Evidence list for {key} is empty or contains no valid doc_id. Returning None filter.")
-                    return None
-            else:
-                logger.warning(f"Mapping data for {key} is missing 'evidences' list. Returning None filter.")
-                return None
+                return doc_uuids
+            return None
 
         except Exception as e:
             logger.error(f"Error parsing evidence mapping for key {key}: {e}", exc_info=True)
@@ -304,8 +253,6 @@ class EnablerAssessment:
         """
         สร้าง Prompt Constraint เพื่อจำกัดขอบเขตของหลักฐานให้เหมาะสมกับระดับวุฒิภาวะที่กำลังประเมิน
         """
-        # ... (โค้ดเหมือนเดิม) ...
-        # หลักการ: ห้ามดึงหลักฐานที่มีระดับสูงกว่าระดับที่กำลังประเมิน
         if level == 1:
             return "ข้อจำกัด: หลักฐานต้องเกี่ยวกับ 'การเริ่มต้น', 'การมีอยู่', หรือ 'การวางแผน' เท่านั้น ห้ามเกี่ยวข้องกับ 'การปรับปรุงอย่างต่อเนื่อง', 'การบูรณาการ', 'นวัตกรรม', หรือ 'การวัดผลลัพธ์ระยะยาว' (L1-Filter)"
         elif level == 2:
@@ -326,12 +273,12 @@ class EnablerAssessment:
                 sub_criteria_id: str, 
                 level: int, 
                 mapping_data: Optional[Dict[str, Any]] = None,
-                statement_number: int = 1 # พารามิเตอร์นี้จะไม่ถูกใช้ในการสร้าง Key สำหรับ Mapping
+                statement_number: int = 1 
             ) -> Union[Dict[str, Any], List[str]]:
                 """
                 Retrieves relevant context based on the query and current sub-criteria/level.
                 """
-                # 🟢 กำหนด Doc IDs สำหรับ Hard Filter
+                
                 doc_ids_to_filter = []
                 final_mapping_key = None 
                 data_found = None
@@ -342,9 +289,7 @@ class EnablerAssessment:
                     if mapping_data is not None:
                         mapping_data_to_use = mapping_data 
                     
-                    # --- LOGIC การเลือก KEY (FIXED: ใช้ Level-only Key เท่านั้น) ---
-                    
-                    # 1. 🟢 FIX: สร้างและใช้ Key แบบ Level-only เท่านั้น เช่น "1.1_L1"
+                    # 1. สร้างและใช้ Key แบบ Level-only เท่านั้น เช่น "1.1_L1"
                     key_level = f"{sub_criteria_id}_L{level}"
                     data_found = mapping_data_to_use.get(key_level)
                     final_mapping_key = key_level
@@ -354,18 +299,20 @@ class EnablerAssessment:
                     else:
                         logger.info(f"RAG Filter Check: Level-only key {key_level} not found.")
 
-                    # --- END OF LOGIC การเลือก KEY ---
-
                     # 2. ดึง Doc IDs จาก Structure ที่พบ
                     if data_found and isinstance(data_found, dict):
                         evidences = data_found.get("evidences", [])
-                        # Extract the list of doc_id strings
-                        doc_ids_to_filter = [d['doc_id'] for d in evidences if isinstance(d, dict) and 'doc_id' in d]
+                        
+                        # 🟢 FIX: ดึง Stable UUID จาก Mapping File โดยมี doc_id เป็น Fallback
+                        doc_ids_to_filter = [
+                            d.get('stable_doc_uuid') or d.get('doc_id')
+                            for d in evidences 
+                            if isinstance(d, dict) and (d.get('stable_doc_uuid') or d.get('doc_id'))
+                        ]
                     
-                    # 💡 Debug Log เพื่อยืนยันว่า Hard Filter ทำงาน
                     logger.info(f"RAG Filter Check: Final Key used: {final_mapping_key} - Found {len(doc_ids_to_filter)} doc_ids for Hard Filter.")
                 
-                # 🟢 เรียกใช้ retrieve_context_with_filter
+                # เรียกใช้ retrieve_context_with_filter
                 result = retrieve_context_with_filter(
                     query=query,
                     doc_type=EVIDENCE_DOC_TYPES,
@@ -381,7 +328,6 @@ class EnablerAssessment:
         """
         จัดกลุ่มผลลัพธ์ LLM ตาม Sub-Criteria และคำนวณคะแนนสุดท้าย 
         """
-        # ... (โค้ดเหมือนเดิม) ...
         grouped_results: Dict[str, Dict] = {}
         for r in self.raw_llm_results:
             key = r['sub_criteria_id'] 
@@ -432,22 +378,61 @@ class EnablerAssessment:
         if not metadata or not isinstance(metadata, dict):
             return "N/A"
 
-        # 1️⃣ Priority: ใช้ชื่อที่จัดเตรียมไว้เพื่อการแสดงผลโดยเฉพาะ
         if metadata.get("source_name_for_display"):
             return metadata["source_name_for_display"]
 
-        # 2️⃣ ถ้าไม่มี ให้ใช้ชื่อไฟล์ต้นทางหรือชื่อเอกสาร
         for key in ["source_file", "file_name", "source", "document_name", "title"]:
             val = metadata.get(key)
             if val and isinstance(val, str) and val.strip():
                 return val.strip()
 
-        # 3️⃣ ถ้า metadata มี doc_id แต่ไม่มีชื่อไฟล์ — สร้างชื่ออ้างอิงอัตโนมัติ
         if doc_id and doc_id != "N/A":
             return f"Document ({doc_id[:8]}...)"
 
-        # 4️⃣ Fallback สุดท้าย
         return "N/A"
+
+    def summarize_results(self) -> Dict[str, Dict]:
+        """
+        สรุปคะแนนรวมจาก final_subcriteria_results (ตามโครงสร้างที่ผู้ใช้กำหนด)
+        """
+        if not self.final_subcriteria_results:
+             return {
+                 "Overall": {
+                    "enabler": self.enabler_abbr.upper(),
+                    "total_weighted_score": 0.0,
+                    "total_possible_weight": 0.0,
+                    "overall_progress_percent": 0.0,
+                    "overall_maturity_score": 0.0
+                 },
+                 "SubCriteria_Breakdown": {}
+             }
+        
+        total_weight = sum(r["weight"] for r in self.final_subcriteria_results)
+        total_score = sum(r["progress_score"] for r in self.final_subcriteria_results)
+        
+        # NOTE: การคำนวณ Overall Maturity Level ตาม Level Fractions ถูกละไว้ในโค้ดนี้ 
+        # เพื่อคงไว้ตามโครงสร้างที่ผู้ใช้ระบุล่าสุด
+        
+        return {
+            "Overall": {
+                "enabler": self.enabler_abbr.upper(),
+                "total_weighted_score": round(total_score, 2),
+                "total_possible_weight": round(total_weight, 2),
+                "overall_progress_percent": round((total_score / total_weight) * 100, 2) if total_weight > 0 else 0.0,
+                "overall_maturity_score": round(total_score / total_weight, 2) if total_weight > 0 else 0.0
+            },
+            "SubCriteria_Breakdown": {
+                r["sub_criteria_id"]: {
+                    "name": r.get("sub_criteria_name", "N/A"),
+                    "score": r["progress_score"],
+                    "weight": r["weight"],
+                    "highest_full_level": r["highest_full_level"],
+                    "pass_ratios": r["level_pass_ratios"], 
+                    "development_gap": r["development_gap"],
+                    "action_item": r["action_item"]
+                } for r in self.final_subcriteria_results
+            }
+        }
 
 
     def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -460,7 +445,6 @@ class EnablerAssessment:
         is_mock_mode = self.mock_llm_eval_func is not None
         mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None 
         
-        # NOTE: evaluate_with_llm ต้องถูก Import
         llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
 
         
@@ -497,8 +481,7 @@ class EnablerAssessment:
                     
                     context_list = []
                     context_length = 0
-                    retrieved_sources_list = [] # สำหรับเก็บข้อมูลแหล่งที่มาที่จะแสดงใน final JSON (เป็น Dictionary)
-                    all_evidence_list = [] # List นี้อาจทำให้เกิด Pydantic Error จึงถูกคอมเมนต์การใช้งานหลัก
+                    retrieved_sources_list = [] 
                     context = "" 
                     
                     if isinstance(retrieval_result, dict):
@@ -506,47 +489,34 @@ class EnablerAssessment:
                         
                         logger.info(f"DEBUG RAG: {sub_criteria_id}_L{level}_S{i+1} Retrieved {len(top_evidence)} raw evidences. Filter: {self.use_mapping_filter}")
                         
-                        # <<< Debug Log ที่ท่านเคยส่งมา >>>
-                        for doc in top_evidence[:3]: 
-                            doc_id = doc.get('doc_id', 'N/A')
-                            source_name = doc.get('source', 'N/A')
-                            logger.info(f"DEBUG RAG Evidence (Top {top_evidence.index(doc) + 1}): UUID={doc_id[:8]}... Source={source_name[:30]}...")
-                        # >>>
-
                         k_to_use = self.FINAL_K_RERANKED
                         if self.disable_semantic_filter:
                             k_to_use = self.FINAL_K_NON_RERANKED
 
                         for idx, doc in enumerate(top_evidence[:k_to_use]): 
                             doc_content = doc.get("content", "")
-                            metadata = doc.get("metadata", {}) # ดึง metadata ออกมา
+                            metadata = doc.get("metadata", {}) 
                             
-                            # 🟢 FIX 1 (doc_id): ดึง Stable UUID จาก stable_doc_uuid เป็นหลัก
+                            # ดึง Stable UUID จาก stable_doc_uuid เป็นหลัก
                             doc_id = metadata.get("stable_doc_uuid", metadata.get("doc_id", "N/A")) 
                             
-                            # 🟢 FIX 2 (source_name): ใช้ helper function
                             source_name = self._get_source_name_for_display(doc_id, metadata)
 
-                            # 🟢 FIX 3 (location): ปรับปรุง Logic การดึง Location ให้ยืดหยุ่นขึ้น
                             location_value = str(metadata.get("page_label") or metadata.get("page", "N/A"))
                             
-                            # หากยังเป็น "N/A" ให้ใช้ Chunk Index เป็น Fallback
                             if location_value in ("N/A", "None") and doc_id != "N/A":
                                 chunk_idx = metadata.get("chunk_index")
                                 location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
                                 
-                            # 🟢 DEBUG LOGS (ปรับปรุงเพื่อแสดง Location)
                             logger.info(f"DEBUG RAG Evidence (Top {idx + 1}): UUID={doc_id[:7]}... Source={source_name[:35]}... Location={location_value}")
                 
-                            # 🟢 FIX 5: คำนวณ Snippet
                             snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
 
-                            # เพิ่มข้อมูลแหล่งที่มาในรูปแบบ Dictionary สำหรับ Final JSON Output
                             retrieved_sources_list.append({
                                 "source_name": source_name,
                                 "doc_id": doc_id,
                                 "location": location_value, 
-                                "snippet_for_display": snippet, # ✅ เพิ่ม Snippet กลับเข้าไป
+                                "snippet_for_display": snippet, 
                             })
                             
                             if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
@@ -584,7 +554,7 @@ class EnablerAssessment:
                             statement=statement,
                             context=context,
                             standard=standard,
-                            enabler_name=self.enabler_abbr,  # ✅ เพิ่มบรรทัดนี้
+                            enabler_name=self.enabler_abbr,  
                             **llm_kwargs
                         )
                         if isinstance(llm_output, tuple) and len(llm_output) == 2:
@@ -611,9 +581,7 @@ class EnablerAssessment:
                         final_pass_status = llm_result_dict.get("pass_status", False)
                         final_status_th = llm_result_dict.get("status_th", "ไม่ผ่าน")
                     else:
-                        # 🟢 ใช้ unique_sources ที่มี location
                         for src in retrieved_sources_list:
-                            # ใช้ doc_id และ location ในการตรวจสอบความเป็น unique
                             key = (src['doc_id'], src['location']) 
                             if key not in seen:
                                 seen.add(key)
@@ -650,11 +618,13 @@ class EnablerAssessment:
         self._process_subcriteria_results()
         
         final_summary = self.summarize_results()
-        action_plan = {} 
+        action_plan = self.generate_action_plan(sub_criteria_id) # เรียกใช้ Action Plan stub
         
         return {"summary": final_summary, "action_plan": action_plan}, {f"{r['statement_id']}": r for r in self.raw_llm_results}
+
+    
     # ----------------------------------------------------
-    # 🌟 NEW FEATURE: Generate Evidence Summary
+    ## 🌟 NEW FEATURE: Generate Evidence Summary
     # ----------------------------------------------------
     
     def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Union[str, Dict]: 
@@ -679,7 +649,7 @@ class EnablerAssessment:
         total_context_length = 0
         
         is_mock_mode = self.mock_llm_summarize_func is not None
-        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None # 🟢 FIX 10: ใช้ชื่อ Attribute ใหม่
+        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None 
         
         k_to_use = self.FINAL_K_RERANKED 
         if self.disable_semantic_filter:
@@ -701,7 +671,7 @@ class EnablerAssessment:
                 
                 for doc in top_evidence[:k_to_use]: 
                     doc_content = doc.get("content", "")
-                    logger.error(f"DEBUG RAW DOC STRUCTURE: {doc}")
+                    logger.debug(f"DEBUG RAW DOC STRUCTURE: {doc}") # เปลี่ยนเป็น DEBUG เพื่อไม่ให้ log รบกวน
                     
                     if total_context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
                         aggregated_context_list.append(doc_content)
@@ -716,18 +686,18 @@ class EnablerAssessment:
         if not aggregated_context_list:
             return {"summary": f"ไม่พบหลักฐานที่เกี่ยวข้องใน Vector Store สำหรับเกณฑ์ {sub_criteria_id} Level {level}", "suggestion_for_next_level": "N/A"}
         
+        # Deduplicate context while preserving order
         final_context = "\n---\n".join(list(dict.fromkeys(aggregated_context_list)))
         
         try:
             summarize_func = self.mock_llm_summarize_func if self.mock_llm_summarize_func else summarize_context_with_llm
             
-            # NOTE: EvidenceSummary ต้องถูก Import
             summary_result = summarize_func(
                 context=final_context,
                 sub_criteria_name=sub_criteria_name,
                 level=level,
                 sub_id=sub_criteria_id,
-                schema=None # สมมติว่า EvidenceSummary ถูก Import
+                schema=None 
             )
             
             if isinstance(summary_result, dict):
@@ -740,61 +710,29 @@ class EnablerAssessment:
             return {"summary": f"เกิดข้อผิดพลาดในการเรียกใช้ LLM เพื่อสรุปข้อมูล: {e}", "suggestion_for_next_level": "Error"}
     
     # ----------------------------------------------------
-    # 🌟 NEW FEATURE: Generate Action Plan (Mock Handler)
+    ## 🌟 NEW FEATURE: Generate Action Plan (Mock Handler)
     # ----------------------------------------------------
     def generate_action_plan(self, sub_criteria_id: str) -> List[Dict]:
         """
         สร้าง Action Plan สำหรับ Sub-Criteria ที่กำหนด (เมธอดนี้ถูกออกแบบมาเพื่อรองรับ Mocking ใน run_assessment.py)
         """
         
+        # ค้นหาส่วนของ raw_llm_results ที่เกี่ยวข้องกับ sub_criteria_id นี้
+        failed_statements_data = [
+            r for r in self.raw_llm_results 
+            if r['sub_criteria_id'] == sub_criteria_id and not r.get('pass_status', False)
+        ]
+
+        # ค้นหา target_level
+        sub_criteria_result = next((r for r in self.final_subcriteria_results if r['sub_criteria_id'] == sub_criteria_id), {})
+        target_level = sub_criteria_result.get('highest_full_level', 0) + 1 
+        
         if self.mock_llm_action_plan_func:
             return self.mock_llm_action_plan_func(
-                failed_statements_data=[],
+                failed_statements_data=failed_statements_data,
                 sub_id=sub_criteria_id,
-                target_level=0 
+                target_level=target_level 
             )
         
-        logger.warning(f"generate_action_plan is stubbed. Action Plan logic is handled via external calls.")
+        logger.warning(f"generate_action_plan is stubbed. Returning empty list for {sub_criteria_id}.")
         return []
-    
-    # ----------------------------------------------------
-    def summarize_results(self) -> Dict[str, Dict]:
-        """
-        สรุปคะแนนรวมจาก final_subcriteria_results
-        """
-        # ... (โค้ดเหมือนเดิม) ...
-        if not self.final_subcriteria_results:
-             return {
-                 "Overall": {
-                    "enabler": self.enabler_abbr.upper(),
-                    "total_weighted_score": 0.0,
-                    "total_possible_weight": 0.0,
-                    "overall_progress_percent": 0.0,
-                    "overall_maturity_score": 0.0
-                 },
-                 "SubCriteria_Breakdown": {}
-             }
-        
-        total_weight = sum(r["weight"] for r in self.final_subcriteria_results)
-        total_score = sum(r["progress_score"] for r in self.final_subcriteria_results)
-        
-        return {
-            "Overall": {
-                "enabler": self.enabler_abbr.upper(),
-                "total_weighted_score": round(total_score, 2),
-                "total_possible_weight": round(total_weight, 2),
-                "overall_progress_percent": round((total_score / total_weight) * 100, 2) if total_weight > 0 else 0.0,
-                "overall_maturity_score": round(total_score / total_weight, 2) if total_weight > 0 else 0.0
-            },
-            "SubCriteria_Breakdown": {
-                r["sub_criteria_id"]: {
-                    "name": r.get("sub_criteria_name", "N/A"),
-                    "score": r["progress_score"],
-                    "weight": r["weight"],
-                    "highest_full_level": r["highest_full_level"],
-                    "pass_ratios": r["level_pass_ratios"], 
-                    "development_gap": r["development_gap"],
-                    "action_item": r["action_item"]
-                } for r in self.final_subcriteria_results
-            }
-        }

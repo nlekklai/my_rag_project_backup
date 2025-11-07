@@ -1,0 +1,44 @@
+[
+  {
+    "Enabler_ID": "KM",
+    "Sub_Criteria_ID": "1.1",
+    "Sub_Criteria_Name_TH": "เกณฑ์ย่อย 1.1",
+    "Weight": 0.5,
+    "Level_1_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 1"
+    ],
+    "Level_2_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 2"
+    ],
+    "Level_3_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 3"
+    ],
+    "Level_4_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 4"
+    ],
+    "Level_5_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 5"
+    ]
+  },
+  {
+    "Enabler_ID": "KM",
+    "Sub_Criteria_ID": "2.1",
+    "Sub_Criteria_Name_TH": "เกณฑ์ย่อย 2.1",
+    "Weight": null,
+    "Level_1_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 1"
+    ],
+    "Level_2_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 2"
+    ],
+    "Level_3_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 3"
+    ],
+    "Level_4_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 4"
+    ],
+    "Level_5_Statements": [
+      "ข้อความเกณฑ์การประเมินย่อยที่สมบูรณ์สำหรับ Level 5"
+    ]
+  }
+]

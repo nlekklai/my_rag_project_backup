@@ -109,7 +109,7 @@ def retrieve_context_MOCK(statement: str, sub_criteria_id: str, level: int, stat
 # -------------------------------------------------------
 # MOCK: Action Plan Generation
 # -------------------------------------------------------
-def generate_action_plan_MOCK(failed_statements_data: List[Dict[str, Any]], sub_id: str, target_level: int) -> List[Dict[str, Any]]:
+def create_structured_action_plan_MOCK(failed_statements_data: List[Dict[str, Any]], sub_id: str, target_level: int) -> List[Dict[str, Any]]:
     """
     Mock LLM Action Plan
     """
