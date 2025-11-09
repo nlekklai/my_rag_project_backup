@@ -289,7 +289,7 @@ def generate_action_plan_report_docx(document: Document, data: Dict[str, Any], g
             add_paragraph(document, ">>> [ข้อมูล]: ไม่มี Action Plan ถูกกำหนดไว้ในส่วน Action_Plans", style='List Bullet')
 
 def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict[str, Any]]): 
-    """สร้างรายงานการตรวจสอบความถูกต้องเชิงลึก (Raw Details) [SECTION 5] ใน DOCX (เพิ่ม Reason และ Source)"""
+    """สร้างรายงานการตรวจสอบความถูกต้องเชิงลึก (Raw Details) [SECTION 5] ใน DOCX (เพิ่ม Reason, Source และรวม Statement/Standard)"""
     
     raw_data_base = raw_data 
     if raw_data is None:
@@ -324,11 +324,12 @@ def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict
     for sub_id, statements in assessment_details.items():
         document.add_heading(f"รายละเอียดการประเมินเกณฑ์ย่อย: {sub_id}", level=2)
         
-        # สร้างตารางสำหรับแต่ละ Sub-criteria (เปลี่ยนจาก 4 คอลัมน์เป็น 6 คอลัมน์)
+        # สร้างตารางสำหรับแต่ละ Sub-criteria (6 คอลัมน์)
         table = document.add_table(rows=1, cols=6, style='Table Grid')
         header_cells = table.rows[0].cells
-        # เพิ่ม 2 คอลัมน์ใหม่: เหตุผล/วิเคราะห์, แหล่งที่มา
-        headers = ["Statement ID (Level)", "ผลการประเมิน", "เกณฑ์มาตรฐาน (Standard)", "เหตุผล/วิเคราะห์", "แหล่งที่มา", "หลักฐาน/บริบท (Snippet)"] 
+        
+        # ปรับชื่อคอลัมน์ 3
+        headers = ["Statement ID (Level)", "ผลการประเมิน", "Statement / Standard", "เหตุผล/วิเคราะห์", "แหล่งที่มา", "หลักฐาน/บริบท (Snippet)"] 
         for i, h in enumerate(headers):
             header_cells[i].text = h
             header_cells[i].paragraphs[0].runs[0].font.bold = True
@@ -347,23 +348,53 @@ def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict
             ]) if sources_list else 'ไม่มีแหล่งที่มา'
             # -------------------
             
+            # --- NEW: จัดการการรวม Statement/Standard ---
+            statement_text = statement.get('statement', 'N/A') # Subtopic / Evidence Statement
+            standard_text = statement.get('standard', 'N/A')   # Full official criterion
+            
+            # 2. Truncate Standard Text for display in the table
+            MAX_LEN_STANDARD = 150 # จำกัดไม่ให้เกิน 150 ตัวอักษรในคอลัมน์
+            if len(standard_text) > MAX_LEN_STANDARD:
+                display_standard = standard_text[:MAX_LEN_STANDARD] + "..."
+            else:
+                display_standard = standard_text
+            
             row_cells = table.add_row().cells
             
             row_cells[0].text = f"{statement.get('statement_id', '-')}\n(L{level})"
             row_cells[1].text = status
-            row_cells[2].text = statement.get('standard', 'N/A')
             
-            # --- ใส่ข้อมูลใหม่ในคอลัมน์ 3 และ 4 ---
+            # 3. Handle Column 3 (Combined Statement/Standard) - ใช้ Run เพื่อแยกสี
+            p = row_cells[2].paragraphs[0]
+            
+            # Run 1: Statement Text (Bold for emphasis)
+            run1 = p.add_run(statement_text)
+            run1.font.name = THAI_FONT_NAME
+            run1.font.size = Pt(11)
+            run1.bold = True
+            
+            # Run 2: Separator
+            run2 = p.add_run(" / ")
+            run2.font.name = THAI_FONT_NAME
+            run2.font.size = Pt(11)
+
+            # Run 3: Standard Text (Red)
+            run3 = p.add_run(display_standard)
+            run3.font.name = THAI_FONT_NAME
+            run3.font.size = Pt(11)
+            run3.font.color.rgb = RGBColor(0xFF, 0x00, 0x00) # Red color
+            # --------------------------------------------------------------------
+            
+            # 5. Set other columns
             row_cells[3].text = reason_text 
             row_cells[4].text = sources_text 
-            # ------------------------------------
-            
             row_cells[5].text = statement.get('context_retrieved_snippet', 'ไม่มีหลักฐานสนับสนุนที่ชัดเจน')
 
-            # กำหนดฟอนต์สำหรับแถวข้อมูล
-            for cell in row_cells:
-                for p in cell.paragraphs:
-                    for run in p.runs:
+            # กำหนดฟอนต์สำหรับแถวข้อมูล (สำหรับคอลัมน์อื่น ๆ ที่ใช้ .text)
+            for i in [0, 1, 3, 4, 5]: # ข้ามคอลัมน์ 2 เพราะจัดการด้วย Run แล้ว
+                cell = row_cells[i]
+                for p_cell in cell.paragraphs:
+                    for run in p_cell.runs:
                         run.font.name = THAI_FONT_NAME
 
             row_cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -376,7 +407,7 @@ def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict
 # 4. REPORT GENERATION FUNCTIONS (TXT) - ปรับปรุง Section 5
 # ==========================
 
-# (ฟังก์ชัน TXT อื่น ๆ เช่น generate_overall_summary_txt, generate_executive_summary_txt, generate_sub_criteria_status_txt, generate_action_plan_report_txt ไม่ได้ถูกแก้ไข)
+# (ฟังก์ชัน TXT อื่น ๆ ที่ไม่ได้ถูกแก้ไข)
 
 def generate_overall_summary_txt(data: Dict[str, Any], report_lines: List[str], enabler_name_full: str): 
     """สร้างส่วนสรุปผลการประเมินโดยรวม (Overall) [SECTION 1] สำหรับ TXT"""
@@ -570,11 +601,16 @@ def generate_raw_details_report_txt(raw_data: Optional[Dict[str, Any]], report_l
             ]) if sources_list else 'ไม่มีแหล่งที่มา'
             # --- END NEW FEATURE ---
             
+            # --- NEW: รวม Statement/Standard ใน TXT ---
+            statement_text = statement.get('statement', 'N/A') # Subtopic
+            standard_text = statement.get('standard', 'N/A')   # Full official criterion
+            # ตัดทอน Standard Text ใน TXT ให้สั้นลง (เช่น 150 ตัวอักษร)
+            display_standard = standard_text[:150] + "..." if len(standard_text) > 150 else standard_text
+            
             report_lines.append(f"\n[Statement ID: {statement.get('statement_id', '-')}] (Level {level}) - {status}")
-            report_lines.append(f"  - เกณฑ์มาตรฐาน (Standard): {statement.get('standard', 'N/A')}")
-            report_lines.append(f"  - เหตุผล/วิเคราะห์ (Reason): {reason}") # NEW
-            report_lines.append(f"  - แหล่งที่มา (Sources): {sources_text}") # NEW
-            # จำกัดความยาว Snippet ใน TXT และเพิ่ม ... หากยาวเกิน
+            report_lines.append(f"  - เกณฑ์ (Statement/Standard): {statement_text} / {display_standard}") # NEW Combined Line
+            report_lines.append(f"  - เหตุผล/วิเคราะห์ (Reason): {reason}") 
+            report_lines.append(f"  - แหล่งที่มา (Sources): {sources_text}") 
             report_lines.append(f"  - หลักฐาน/บริบท (Snippet): {snippet[:150]}{'...' if len(snippet) > 150 else ''}") 
             
     report_lines.append("\n" + "="*80)
@@ -678,7 +714,7 @@ def main():
     detail_doc = Document()
     setup_document(detail_doc) 
     detail_doc.add_heading(f"[SECTION 5] รายงานหลักฐานเชิงลึก (Raw Details) - {enabler_name_full} ({REPORT_DATE})", level=1)
-    # SECTION 5: Raw Details (พร้อม Reason และ Source)
+    # SECTION 5: Raw Details (พร้อม Reason, Source และ Statement/Standard สีแดง)
     generate_raw_details_report_docx(detail_doc, final_raw_data) 
 
     # บันทึกไฟล์ Raw Details
