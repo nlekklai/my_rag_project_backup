@@ -1,14 +1,15 @@
 # core/retrieval_utils.py
-
 import logging
 import random
-import json
+import json,json5
 import time
 from typing import List, Dict, Any, Optional, Union, TypeVar, Type, Tuple
 from langchain.schema import SystemMessage, HumanMessage, Document as LcDocument
 from pydantic import ValidationError, BaseModel
 import regex as re
 import hashlib
+import time # 🟢 ต้อง import time ด้วย
+import re
 
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 
@@ -31,8 +32,6 @@ from core.vectorstore import (
     VectorStoreManager,
     load_all_vectorstores, 
     get_reranking_compressor,
-    NamedRetriever,
-    MultiDocRetriever,
 )
 
 T = TypeVar('T', bound=BaseModel)
@@ -46,10 +45,6 @@ except Exception:
 try:
     from config.global_vars import (
         DEFAULT_ENABLER,
-        SUPPORTED_ENABLERS,
-        DEFAULT_SEAM_REFERENCE_DOC_ID,
-        SEAM_DOC_ID_MAP,
-        SEAM_ENABLER_MAP,
         INITIAL_TOP_K,
         FINAL_K_RERANKED,
         FINAL_K_NON_RERANKED,
@@ -410,88 +405,60 @@ def parse_llm_json_response(llm_response_text: str, pydantic_schema: Type[T]) ->
         logger.error(f"An unexpected error occurred during Pydantic validation: {e}")
         raise ValueError(f"An unexpected error occurred during JSON validation: {e}")
 
-def extract_uuids_from_llm_response(text: str) -> List[str]:
-    """
-    ดึง UUIDs ที่ถูกต้องตามรูปแบบมาตรฐาน
-    """
-    uuid_pattern = r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})"
-    uuids = re.findall(uuid_pattern, text)
-    return list(set(uuids))
 
-# =================================================================
-# LLM Evaluation
+# ------------------------------------------------------------------
+# 🟢 ฟังก์ชันที่แก้ไข: extract_uuids_from_llm_response
+# ------------------------------------------------------------------
+
+# Regex สำหรับค้นหา UUIDs ทั่วไป (รูปแบบ 8-4-4-4-12)
+UUID_PATTERN = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
+
+def extract_uuids_from_llm_response(
+    text: str, 
+    key_hint: Optional[List[str]] = None # 🟢 รับ key_hint
+) -> List[str]:
+    """
+    Attempts to extract UUIDs from text, supporting both plain text search and 
+    JSON key search (when key_hint is provided).
+    """
+    unique_uuids = set()
+    cleaned_text = text.strip()
+
+    # 1. ลอง Deserialize เป็น JSON (เพื่อค้นหาใน Key ที่ระบุ)
+    try:
+        data: Dict[str, Any] = json.loads(cleaned_text)
+        
+        # 2. ค้นหาในคีย์ที่กำหนด (ถ้ามี key_hint)
+        if key_hint:
+            for key in key_hint:
+                if key in data:
+                    uuids_list = data[key]
+                    if isinstance(uuids_list, list):
+                        # ค้นหาใน List ของ String (กรณีที่ LLM ตอบเป็น ["uuid1", "uuid2"])
+                        for item in uuids_list:
+                            if isinstance(item, str) and UUID_PATTERN.fullmatch(item):
+                                unique_uuids.add(item)
+                    elif isinstance(uuids_list, str):
+                         # กรณีที่คีย์นั้นเป็น string ที่มี UUIDs คั่นด้วยอะไรบางอย่าง
+                         found_in_string = UUID_PATTERN.findall(uuids_list)
+                         unique_uuids.update(found_in_string)
+        
+        # 3. ถ้าไม่มี key_hint หรือยังไม่พบ ให้ค้นหา UUIDs ทั้งหมดในข้อความ JSON ทั้งหมด (รวมถึงค่าใน Field ที่ไม่ตรงกับ key_hint)
+        # (ใช้ค้นหาแบบ Fallback Search ในกรณีที่ key_hint ไม่สมบูรณ์ หรือสำหรับงานอื่น)
+        all_text = json.dumps(data)
+        found_in_string = UUID_PATTERN.findall(all_text)
+        unique_uuids.update(found_in_string)
+
+    except json.JSONDecodeError:
+        # 4. ถ้าไม่ใช่ JSON ที่ถูกต้อง หรือแค่ข้อความธรรมดา ให้ค้นหา UUIDs ทั่วไป
+        found_in_string = UUID_PATTERN.findall(cleaned_text)
+        unique_uuids.update(found_in_string)
+        
+    return list(unique_uuids)
+
 # =================================================================
 MAX_LLM_RETRIES = 3
 # =================================================================
-# Retrieve SEAM Reference Context (Helper)
-# =================================================================
-# ... (โค้ด include_seam_reference_context และ retrieve_reference_context เดิม) ...
-
-def include_seam_reference_context(sub_id: str, enabler: str = None, top_k_reranked: int = 5) -> str:
-    """
-    ดึง SEAM Reference Context โดยใช้ Enabler ที่ส่งมาจาก script
-    """
-    seam_reference_snippet = ""
-    try:
-        enabler_upper = enabler.upper() if enabler else None
-        if enabler_upper not in SUPPORTED_ENABLERS:
-            logger.warning(f"⚠️ Enabler '{enabler}' ไม่อยู่ใน SUPPORTED_ENABLERS. ใช้ default SEAM reference.")
-            enabler_upper = None
-
-        seam_topic = SEAM_ENABLER_MAP.get(enabler_upper)
-
-        if seam_topic:
-            seam_query = (
-                f"หลักเกณฑ์การประเมิน SEAM สำหรับหมวด {seam_topic} "
-                f"(รหัส {sub_id}) "
-                f"โดยเน้นระดับความก้าวหน้าจากระดับล่างสู่ระดับสูง"
-            )
-        else:
-            seam_query = f"หลักเกณฑ์การประเมิน SEAM ที่เกี่ยวข้องกับรหัส {sub_id}"
-
-        logger.info(f"🔍 SEAM reference search query (TH): {seam_query}")
-
-        seam_ctx = retrieve_reference_context(query=seam_query, enabler=enabler_upper, top_k_reranked=top_k_reranked)
-        top_chunks = [d["content"] for d in seam_ctx.get("top_evidences", [])][:3]
-
-        if top_chunks:
-            seam_reference_snippet = "\n\n--- SEAM REFERENCE CONTEXT ---\n" + "\n\n".join(top_chunks)
-            logger.info(f"✅ Included SEAM reference context ({len(top_chunks)} chunks).")
-        else:
-            logger.warning("⚠️ No SEAM reference chunks found.")
-
-    except Exception as e:
-        logger.warning(f"⚠️ Could not include SEAM reference context: {e}")
-
-    return seam_reference_snippet
-
-def retrieve_reference_context(
-    query: str,
-    enabler: str = None,
-    top_k_reranked: int = 5,
-    disable_semantic_filter: bool = False
-) -> Dict[str, Any]:
-    """
-    ดึง context จากเอกสาร SEAM Reference โดยอัตโนมัติ
-    """
-    try:
-        logger.info("📘 Retrieving SEAM reference context...")
-
-        doc_id_to_use = SEAM_DOC_ID_MAP.get(enabler.upper(), DEFAULT_SEAM_REFERENCE_DOC_ID) if enabler else DEFAULT_SEAM_REFERENCE_DOC_ID
-
-        return retrieve_context_with_filter(
-            query=query,
-            doc_type="seam",
-            enabler=enabler,
-            stable_doc_ids=[doc_id_to_use],
-            top_k_reranked=top_k_reranked,
-            disable_semantic_filter=disable_semantic_filter,
-            allow_fallback=True
-        )
-    except Exception as e:
-        logger.error(f"❌ Failed to retrieve SEAM reference context: {e}", exc_info=True)
-        return {"top_evidences": []}
-
 
 def evaluate_with_llm(
     statement: str,
@@ -630,40 +597,92 @@ def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction:
     except Exception as e:
         return f"[API ERROR] Failed to generate narrative report: {e}"
 
+
 def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str, schema: Any) -> Dict[str, str]:
     MAX_LLM_SUMMARY_CONTEXT = 5000
-    if llm_instance is None:
-        return {"summary": "เกิดข้อผิดพลาด: LLM Client ไม่พร้อมใช้งาน", "suggestion_for_next_level": "N/A"}
-
+    MAX_RETRIES = 3 
+    
+    # 1️⃣ ตั้งค่าข้อมูลเริ่มต้น
     context_to_use = context[:MAX_LLM_SUMMARY_CONTEXT] if len(context) > MAX_LLM_SUMMARY_CONTEXT else context
+    
+    default_error_response = {
+        "summary": f"ข้อผิดพลาดในการสรุปข้อมูลโดย LLM (Level {level})", 
+        "suggestion_for_next_level": "N/A - โปรดตรวจสอบ Raw LLM Output หรือ LLM Service"
+    }
+
+    # 2️⃣ ตรวจสอบ LLM instance
     try:
-        schema_dict = EvidenceSummary.model_json_schema()
-        system_prompt_content = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- REQUIRED JSON SCHEMA ---\n" + json.dumps(schema_dict, indent=2, ensure_ascii=False)
-        human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
-            standard=sub_criteria_name,
-            level=level,
-            context=context_to_use,
-            sub_id=sub_id
-        )
-        
-        llm_full_response = _fetch_llm_response(prompt=human_prompt, system_prompt=system_prompt_content)
-        
-        # 🟢 ใช้ parse_llm_json_response (รวม Key Normalization)
-        validated_summary_model = parse_llm_json_response(llm_full_response, EvidenceSummary)
-        return validated_summary_model.model_dump()
-        
-    except Exception as e:
-        logger.error(f"Error in summarize_context_with_llm: {e}", exc_info=True)
-        return {"summary": "ข้อผิดพลาดในการสรุปข้อมูลโดย LLM", "suggestion_for_next_level": str(e)}
+        if llm_instance is None:
+            logger.error("LLM instance is None. Cannot run summary generation.")
+            default_error_response["summary"] = "LLM Service ไม่พร้อมใช้งาน"
+            default_error_response["suggestion_for_next_level"] = "ตรวจสอบการเชื่อมต่อ LLM Service."
+            return default_error_response
+    except NameError:
+        logger.error("Global 'llm_instance' variable not defined or accessible.")
+        default_error_response["summary"] = "LLM Instance Error (NameError)"
+        return default_error_response
+
+    # 3️⃣ Retry Loop
+    for attempt in range(MAX_RETRIES):
+        try:
+            # 3.1 เตรียม Schema JSON และ Prompt
+            schema_dict = EvidenceSummary.model_json_schema()
+            system_prompt_content = (
+                SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
+                + "\n\n--- REQUIRED JSON SCHEMA ---\n"
+                + json.dumps(schema_dict, indent=2, ensure_ascii=False)
+                + "\n\n🧠 IMPORTANT: Respond ONLY in valid JSON format following the schema above."
+            )
+            
+            human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
+                standard=sub_criteria_name,
+                level=level,
+                context=context_to_use, 
+                sub_id=sub_id
+            )
+            
+            # 3.2 เรียก LLM 
+            llm_full_response = _fetch_llm_response(
+                prompt=human_prompt, 
+                system_prompt=system_prompt_content, 
+                max_retries=1
+            )
+            
+            # ✅ Debug Raw Output
+            logger.debug(f"🧩 RAW LLM OUTPUT (Attempt {attempt+1}/{MAX_RETRIES}):\n{llm_full_response}")
+
+            # 3.3 พยายาม parse
+            validated_summary_model = parse_llm_json_response(llm_full_response, EvidenceSummary)
+            
+            # ✅ หาก LLM ตอบไม่เป็น JSON หรือ parse ไม่ได้ → fallback
+            if validated_summary_model is None:
+                logger.warning("⚠️ LLM output not parsed correctly. Falling back to raw text summary.")
+                return {
+                    "summary": llm_full_response[:2000],  # ตัดความยาวไม่ให้ log overflow
+                    "suggestion_for_next_level": "LLM ตอบนอก schema โปรดตรวจสอบ prompt หรือ schema definition"
+                }
+
+            # 3.4 สำเร็จ ✅
+            return validated_summary_model.model_dump()
+
+        except Exception as e:
+            logger.warning(f"LLM Summary failed (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(1)
+                continue
+
+            # 3.5 ล้มครบทุกครั้ง
+            logger.error(f"Error in summarize_context_with_llm: Failed after {MAX_RETRIES} attempts. Details: {e}", exc_info=True)
+            default_error_response["suggestion_for_next_level"] = str(e)
+            return default_error_response
+
+    # 4️⃣ fallback สุดท้าย
+    return default_error_response
 
 def generate_evidence_description_via_llm(*args, **kwargs) -> str:
     logger.warning("generate_evidence_description_via_llm is deprecated. Use summarize_context_with_llm instead.")
     return "เกิดข้อผิดพลาด: ฟังก์ชันนี้ถูกยกเลิกการใช้งาน โปรดใช้ summarize_context_with_llm แทน"
 
-# =================================================================
-# LLM Action Plan
-# =================================================================
-# ... (โค้ด _fetch_llm_response เดิม) ...
 
 def _fetch_llm_response(prompt: str, system_prompt: str, max_retries: int = 1) -> str:
     """
@@ -698,129 +717,136 @@ def _fetch_llm_response(prompt: str, system_prompt: str, max_retries: int = 1) -
     return ""
 
 
+def clean_llm_response(raw: str) -> str:
+    """Clean hidden / zero-width chars, strip whitespace"""
+    if not isinstance(raw, str):
+        return ""
+    cleaned = re.sub(r'[\u200b\u200c\u200d\uFEFF]', '', raw)
+    cleaned = cleaned.strip()
+    return cleaned
+
 def create_structured_action_plan(
-    failed_statements_data: List[Dict[str, Any]],
+    failed_statements_data: list,
     sub_id: str,
     enabler: str,
     target_level: int,
-    max_retries: int = 2, # จำนวนครั้งที่ Retry (รวม Attempt แรกเป็น 3 ครั้ง)
-    retry_delay: float = 1.0,
-    include_seam_reference: bool = True
-) -> Dict[str, Any]:
+    max_retries: int = 2,
+) -> list:
     """
-    🧩 สร้าง Action Plan โดยใช้ LLM จากผลการประเมิน (Assessment Result)
-    
-    ✅ FIX: ปรับ Logic Retry เพื่อตัด SEAM Context ออกหาก LLM ล้มเหลวในการสร้าง JSON
+    Robust Action Plan generator from assessment results (LLM)
+    - Cleans hidden characters
+    - Retries LLM calls
+    - Fallback to placeholder if parsing fails
     """
-    global _MOCK_CONTROL_FLAG, FINAL_K_RERANKED 
+    global _MOCK_CONTROL_FLAG
 
-    # ============================================================
-    # 1️⃣ MOCK MODE
-    # ... (โค้ด MOCK MODE ถูกตัดออกเพื่อความกระชับ แต่สมมติว่าอยู่ในโค้ดจริง) ...
     if _MOCK_CONTROL_FLAG:
-        return {"Mock": "Action Plan"}
+        return [{"Mock": "Action Plan"}]
 
-
-    # -------------------- PREP: Failed Statements --------------------
+    # -------------------------
+    # 1. Prepare failed statements text
+    # -------------------------
     failed_statements_text = []
-    # Loop over failed data to create the prompt list
     for data in failed_statements_data:
-        stmt_num = data.get('statement_number', 'N/A')
-        failed_level = data.get('level', 'N/A')
-        statement_id = f"L{failed_level} S{stmt_num}"
-        # ใช้ Logic ดึง Field reason ที่ยืดหยุ่น (แก้ปัญหา reasoning vs. reason)
-        reason_for_failure = data.get('llm_reasoning', data.get('reason', 'N/A'))
-        
+        stmt_num = data.get("statement_number", "N/A")
+        failed_level = data.get("level", "N/A")
+        statement_id = f"L{failed_level}_S{stmt_num}"
+
+        fields = ["evidence_statement_text", "rubric_standard_text", "llm_reasoning", "retrieved_context"]
+        texts = []
+        for f in fields:
+            t = data.get(f, data.get("reason", "N/A") if f=="llm_reasoning" else "N/A")
+            if isinstance(t, str):
+                t = clean_llm_response(t)
+            texts.append(t)
+        evidence_statement_text, rubric_standard_text, reason_for_failure, retrieved_context = texts
+
         failed_statements_text.append(f"""
---- STATEMENT FAILED (Statement ID: {statement_id}) ---
-Statement Text: {data.get('statement_text', 'N/A')}
+--- STATEMENT FAILED (Core Business Enabler: {enabler}) ---
+Statement ID: {statement_id}
+Evidence_statement: {evidence_statement_text}
+Rubric_standard: {rubric_standard_text}
 Failed Level: {failed_level}
 Reason for Failure: {reason_for_failure}
-RAG Context Found: {data.get('retrieved_context', 'No context found')}
-**IMPORTANT: The Action Plan must use '{statement_id}' for 'Statement_ID'.**
+Evidence Snippet: {retrieved_context}
+**IMPORTANT: Use '{statement_id}' for 'Statement_ID' in Action Plan.**
 """)
-
     statements_list_str = "\n".join(failed_statements_text)
-    
-    seam_reference_snippet_cache = ""
 
-    # -------------------- PREP: System Prompt --------------------
+    # -------------------------
+    # 2. Prepare system prompt
+    # -------------------------
     try:
         schema_dict = ActionPlanActions.model_json_schema()
         schema_json = json.dumps(schema_dict, indent=2, ensure_ascii=False)
     except Exception:
         schema_json = "{}"
-
     system_prompt_content = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- REQUIRED JSON SCHEMA ---\n" + schema_json
 
-    # ============================================================
-    # 6️⃣ CALL LLM WITH RETRY LOGIC (The core fix)
-    # ============================================================
+    # -------------------------
+    # 3. Call LLM with retries
+    # -------------------------
     final_error = None
     llm_full_response = ""
-    
-    # max_retries+1 คือจำนวนครั้งที่ลองทั้งหมด (เช่น 2+1 = 3 ครั้ง)
+
     for attempt in range(max_retries + 1):
-        
-        # 1. จัดการ SEAM Reference Context (Conditional Inclusion)
-        current_seam_snippet = ""
-        if attempt == 0 and include_seam_reference:
-            # Attempt 1: Try to retrieve and include SEAM context (for quality)
-            if not seam_reference_snippet_cache:
-                try:
-                    # Assuming include_seam_reference_context is available
-                    seam_reference_snippet_cache = include_seam_reference_context(sub_id=sub_id, enabler=enabler, top_k_reranked = FINAL_K_RERANKED)
-                    if seam_reference_snippet_cache:
-                        logger.info(f"✅ Included SEAM reference context for {sub_id} in Attempt {attempt+1} (Quality Attempt).")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not include SEAM reference context: {e}")
-            
-            current_seam_snippet = seam_reference_snippet_cache
-            
-        elif attempt > 0:
-            # ❌ Attempts 2 and 3: Omit Context (to enforce successful JSON output)
-            logger.warning(f"❌ Attempt {attempt+1}: Omitted SEAM reference context to enforce JSON output (Failed in previous attempt).")
-        
-        # 2. Build the LLM Prompt Content
-        llm_prompt_content = ACTION_PLAN_PROMPT.format(
-            sub_id=sub_id,
-            target_level=target_level,
-            failed_statements_list=statements_list_str
-        ) + current_seam_snippet # Appends the snippet (which is empty in attempt 2, 3)
-
-
-        # 3. Call LLM
         try:
-            # Assuming _fetch_llm_response is available
+            llm_prompt_content = ACTION_PLAN_PROMPT.format(
+                sub_id=sub_id,
+                target_level=target_level,
+                failed_statements_list=statements_list_str
+            )
+
             llm_full_response = _fetch_llm_response(
                 prompt=llm_prompt_content,
                 system_prompt=system_prompt_content,
-                max_retries=1 
+                max_retries=1
             )
+            cleaned_response = clean_llm_response(llm_full_response)
 
-            # 4. Parse JSON (Includes Key Normalization)
-            # Assuming parse_llm_json_response is available
-            validated_plan_model = parse_llm_json_response(llm_full_response, ActionPlanActions)
-            
-            # ✅ Success!
+            # Try normal JSON parse first
+            try:
+                validated_data = parse_llm_json_response(cleaned_response, ActionPlanActions)
+            except Exception:
+                # fallback: use json5 (more tolerant)
+                validated_data = parse_llm_json_response(json5.loads(cleaned_response), ActionPlanActions)
+
+            if validated_data is None:
+                raise ValueError("JSON parsing returned None unexpectedly.")
+
             logger.info(f"🎉 Action Plan created successfully on Attempt {attempt+1}!")
-            return validated_plan_model.model_dump()
+            return validated_data.model_dump()
 
         except Exception as e:
             final_error = str(e)
             logger.warning(f"⚠️ Attempt {attempt+1}/{max_retries+1} failed: {e}")
-            
-            # 🛑 Logging Raw Output
-            if "Could not robustly extract valid JSON" in final_error or "Pydantic validation failed" in final_error:
-                 logger.error(f"--- RAW LLM RESPONSE START (JSON FAILED) ---\n{llm_full_response}\n--- RAW LLM RESPONSE END ---")
-            
-            if attempt < max_retries:
-                # Delay before next attempt
-                time.sleep(retry_delay)
-                continue
-            break
+            logger.error(f"--- RAW LLM RESPONSE START ---\n{llm_full_response}\n--- RAW LLM RESPONSE END ---")
+            if attempt == max_retries:
+                logger.error(f"[ERROR] Failed to generate Action Plan via LLM for {sub_id}: {final_error}")
 
-    # ============================================================
-    # 7️⃣ FINAL ERROR
-    # ============================================================
-    raise Exception(final_error or "Unknown error during Action Plan creation.")
+    # -------------------------
+    # 4. Fallback
+    # -------------------------
+    fallback_plan = {
+        "Phase": f"Action Plan Error - L{target_level}",
+        "Goal": f"ไม่สามารถสร้าง Action Plan สำหรับ {sub_id} ได้",
+        "Actions": [
+            {
+                "Statement_ID": "LLM_ERROR_FALLBACK",
+                "Failed_Level": target_level,
+                "Recommendation": f"LLM Output ไม่ตรง JSON Schema: {final_error}",
+                "Target_Evidence_Type": "System Check",
+                "Key_Metric": "LLM output validation passed",
+                "Steps": [
+                    {
+                        "Step": "1",
+                        "Description": f"ตรวจสอบ Response ที่ผิดพลาด: {llm_full_response[:200]}...",
+                        "Responsible": "System",
+                        "Tools_Templates": "N/A",
+                        "Verification_Outcome": "System review required"
+                    }
+                ]
+            }
+        ]
+    }
+    return [fallback_plan]

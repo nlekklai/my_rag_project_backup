@@ -42,18 +42,9 @@ except Exception:
 
 # -------------------- Global Config --------------------
 from config.global_vars import (
-    PROJECT_ROOT,
-    DATA_DIR,
     VECTORSTORE_DIR,
     MAPPING_FILE_PATH,
-    DEFAULT_ENABLER,
-    SUPPORTED_ENABLERS,
-    SUPPORTED_TYPES,
-    SUPPORTED_DOC_TYPES,
-    DEFAULT_SEAM_REFERENCE_DOC_ID,
-    SEAM_DOC_ID_MAP,
     FINAL_K_RERANKED,
-    FINAL_K_NON_RERANKED,
     INITIAL_TOP_K,
     EVIDENCE_DOC_TYPES
 )

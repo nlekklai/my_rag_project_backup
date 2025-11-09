@@ -1,104 +1,94 @@
+#core/action_plan_schema.py
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Union # ✅ FIX: เพิ่ม Union
+from typing import List, Any
+import re
 
-# -----------------------------------------------------------------------------
-# 📘 Action Plan Schema for Structured LLM Output
-# -----------------------------------------------------------------------------
-# ใช้ในขั้นตอนที่ LLM สร้างแผนปฏิบัติการ (Action Plan) เพื่อตอบสนองต่อผลการประเมิน maturity
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
-# 1. Step Detail (ขั้นตอนย่อย)
-# -----------------------------------------------------------------------------
+# -----------------------------
+# 1️⃣ Step Detail (ขั้นตอนย่อย)
+# -----------------------------
 class StepDetail(BaseModel):
-    # ✅ FIX: เปลี่ยน Type จาก 'str' เป็น 'Union[str, int]'
-    # Pydantic จะยอมรับตัวเลข (1, 2) และแปลงให้เป็น String ("1", "2")
-    Step: Union[str, int] = Field(
-        ...,
-        description="ลำดับของขั้นตอนย่อย เช่น '1', '2', '3'"
-    )
-    Description: str = Field(
-        ...,
-        description="รายละเอียดของสิ่งที่ต้องทำในขั้นตอนนี้"
-    )
-    Responsible: str = Field(
-        ...,
-        description="ชื่อตำแหน่ง หรือหน่วยงานที่รับผิดชอบ"
-    )
-    Tools_Templates: str = Field(
-        ...,
-        description="เครื่องมือ/Template/เอกสารที่ต้องใช้"
-    )
-    Verification_Outcome: str = Field(
-        ...,
-        description="สิ่งที่ต้องตรวจสอบหรือผลลัพธ์ที่ต้องเกิดขึ้นเมื่อเสร็จสิ้น"
-    )
+    Step: str = Field(..., description="ลำดับของขั้นตอนย่อย เช่น '1', '2', '3'")
+    Description: str = Field(..., description="รายละเอียดของสิ่งที่ต้องทำในขั้นตอนนี้")
+    Responsible: str = Field(..., description="ชื่อตำแหน่ง หรือหน่วยงานที่รับผิดชอบ")
+    Tools_Templates: str = Field(..., description="เครื่องมือ/Template/เอกสารที่ต้องใช้")
+    Verification_Outcome: str = Field(..., description="สิ่งที่ต้องตรวจสอบหรือผลลัพธ์ที่ต้องเกิดขึ้นเมื่อเสร็จสิ้น")
 
-# -----------------------------------------------------------------------------
-# 2. Action Item (รายการปฏิบัติการ)
-# -----------------------------------------------------------------------------
+    @field_validator("Step", mode="before")
+    @classmethod
+    def ensure_step_is_str(cls, v: Any) -> str:
+        return str(v).strip() if v is not None else "1"
+
+    @field_validator("Description", "Responsible", "Tools_Templates", "Verification_Outcome", mode="before")
+    @classmethod
+    def sanitize_text(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        # ลบ newline/tab/zero-width char และ trim space
+        v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
+        return v.strip()
+
+# -----------------------------
+# 2️⃣ Action Item (รายการปฏิบัติการ)
+# -----------------------------
 class ActionItem(BaseModel):
-    """📌 Schema สำหรับ Action แต่ละรายการใน Action Plan"""
-    Statement_ID: str = Field(
-        ..., 
-        description="ระบุ ID ของ Statement ที่ล้มเหลวที่ Action นี้มุ่งแก้ไข (เช่น 'L2 S3', 'L1 S1', ฯลฯ)"
-    )
-    Failed_Level: int = Field(
-        ..., 
-        description="Level ที่ Statement นี้ล้มเหลว (เช่น 1, 2, 3)"
-    )
-    Recommendation: str = Field(
-        ..., 
-        description="ข้อแนะนำเฉพาะเจาะจงเพื่อแก้ไข Gap ที่พบใน Statement นี้"
-    )
-    Target_Evidence_Type: str = Field(
-        ..., 
-        description="ประเภทของหลักฐานที่จำเป็นต้องสร้างหรือปรับปรุง (เช่น Policy Document, Signed Meeting Minutes, Training Record, ฯลฯ)"
-    )
-    Key_Metric: str = Field(
-        ..., 
-        description="ตัวชี้วัดความสำเร็จของ Action นี้ (เช่น Document approved by CXO, 90% staff trained)"
-    )
-    # 🆕 NEW FIELD: Steps - ต้องตรงกับ Prompt ที่กำหนด
-    Steps: List[StepDetail] = Field(
-        ...,
-        description="รายการขั้นตอนปฏิบัติย่อยสำหรับการดำเนินการ Action นี้",
-        min_length=1
-    )
+    Statement_ID: str = Field(..., description="ระบุ ID ของ Statement ที่ล้มเหลว เช่น 'L2_S3', 'L1_S1'")
+    Failed_Level: int = Field(..., description="Level ที่ Statement นี้ล้มเหลว (เช่น 1, 2, 3)")
+    Recommendation: str = Field(..., description="ข้อแนะนำเฉพาะเจาะจงเพื่อแก้ไข Gap ที่พบใน Statement นี้")
+    Target_Evidence_Type: str = Field(..., description="ประเภทของหลักฐานที่ต้องสร้างหรือปรับปรุง")
+    Key_Metric: str = Field(..., description="ตัวชี้วัดความสำเร็จของ Action นี้")
+    Steps: List[StepDetail] = Field(default_factory=list, description="รายการขั้นตอนปฏิบัติย่อย")
 
+    @field_validator("Statement_ID", mode="before")
+    @classmethod
+    def normalize_statement_id(cls, v: Any) -> str:
+        if isinstance(v, str):
+            v = v.strip().replace(' ', '_').replace('-', '_').upper()
+            if not v.startswith('L'):
+                v = 'L' + v
+            return v
+        return str(v)
 
-# -----------------------------------------------------------------------------
-# 3. Action Plan Actions (Schema หลัก)
-# -----------------------------------------------------------------------------
+    @field_validator("Recommendation", "Target_Evidence_Type", "Key_Metric", mode="before")
+    @classmethod
+    def sanitize_text(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
+        return v.strip()
+
+    @field_validator("Steps", mode="before")
+    @classmethod
+    def ensure_steps_is_list(cls, v: Any) -> List[Any]:
+        if v is None:
+            return []
+        if isinstance(v, dict):
+            return [v]
+        if not isinstance(v, list):
+            return []
+        return v
+
+# -----------------------------
+# 3️⃣ Action Plan Actions (Schema หลัก)
+# -----------------------------
 class ActionPlanActions(BaseModel):
-    """
-    🎯 Schema หลักสำหรับผลลัพธ์ JSON ของ Action Plan
-    
-    ใช้ validate JSON ที่ได้จาก LLM ให้ตรงตาม format ที่ระบบต้องการ
-    """
-    Phase: str = Field(
-        ..., 
-        description="ชื่อ Phase ของแผนปฏิบัติการ เช่น '1. Foundational Gap Closure'"
-    )
-    Goal: str = Field(
-        ..., 
-        description="เป้าหมายหลักของ Phase นี้"
-    )
-    Actions: List[ActionItem] = Field(
-        ..., 
-        description="รายการ Actions ที่ต้องดำเนินการ",
-        min_length=1
-    )
+    Phase: str = Field(..., description="ชื่อ Phase ของแผนปฏิบัติการ เช่น 'Foundational Gap Closure'")
+    Goal: str = Field(..., description="เป้าหมายหลักของ Phase นี้")
+    Actions: List[ActionItem] = Field(default_factory=list, description="รายการ Actions ที่ต้องดำเนินการ")
 
-    # -------------------------------------------------------------------------
-    # 🧩 Validation Helper: รองรับกรณีที่ LLM คืนค่า 'actions' (ตัวเล็ก)
-    # -------------------------------------------------------------------------
     @field_validator("Actions", mode="before")
     @classmethod
-    def handle_lowercase_key(cls, v):
-        """
-        แก้ปัญหากรณี LLM ส่ง key 'actions' แทน 'Actions'
-        """
-        if isinstance(v, dict) and "actions" in v:
-            return v["actions"]
+    def handle_case_insensitive_actions(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            if "actions" in v:
+                return v["actions"]
+            if "Actions" in v:
+                return v["Actions"]
         return v
+
+    @field_validator("Phase", "Goal", mode="before")
+    @classmethod
+    def sanitize_text(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
+        return v.strip()

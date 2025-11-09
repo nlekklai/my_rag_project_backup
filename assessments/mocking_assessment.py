@@ -165,3 +165,52 @@ def set_mock_control_mode(mode: str = "default"):
     logger.info(f"[MOCK MODE] Using mock control mode = {mode}")
     random.seed(42)
     return True
+
+ # ----------------------------------------------------
+    ## 🌟 NEW FEATURE: Generate Action Plan (Mock Handler)
+    # ----------------------------------------------------
+def generate_action_plan_mock(
+    sub_criteria_id: str,
+    raw_llm_results: List[Dict[str, Any]] = None,
+    final_subcriteria_results: List[Dict[str, Any]] = None,
+) -> List[Dict]:
+    """
+    สร้าง Action Plan สำหรับ Sub-Criteria ที่กำหนด (ฟังก์ชัน Mock แบบไม่ใช้ self)
+    ใช้จำลองการสร้าง Action Plan หลังประเมินผล LLM Mock เสร็จ
+    """
+
+    logger.info(f"[MOCK ACTION PLAN] Generating mock action plan for {sub_criteria_id}")
+
+    # ✅ ตรวจสอบ input
+    if not raw_llm_results:
+        logger.warning("generate_action_plan_mock: raw_llm_results is empty or None")
+        return []
+
+    if not final_subcriteria_results:
+        final_subcriteria_results = []
+
+    # ✅ ดึง statement ที่ไม่ผ่าน
+    failed_statements_data = [
+        r for r in raw_llm_results
+        if r.get("sub_criteria_id") == sub_criteria_id and not r.get("pass_status", False)
+    ]
+
+    # ✅ หา target_level จากผลลัพธ์สรุป
+    sub_criteria_result = next(
+        (r for r in final_subcriteria_results if r.get("sub_criteria_id") == sub_criteria_id),
+        {}
+    )
+    target_level = sub_criteria_result.get("highest_full_level", 0) + 1
+
+    logger.info(f"[MOCK ACTION PLAN] Found {len(failed_statements_data)} failed statements for {sub_criteria_id}, target_level={target_level}")
+
+    # ✅ เรียกใช้ Mock Generator จริง
+    try:
+        return create_structured_action_plan_MOCK(
+            failed_statements_data=failed_statements_data,
+            sub_id=sub_criteria_id,
+            target_level=target_level
+        )
+    except Exception as e:
+        logger.exception(f"[MOCK ACTION PLAN] Error creating action plan for {sub_criteria_id}: {e}")
+        return []
