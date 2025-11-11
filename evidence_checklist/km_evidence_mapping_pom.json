@@ -21,7 +21,23 @@
     },
     "1.1_L2": {
         "title": "Mapping for Sub-Criteria 1.1 Level L2",
-        "evidences": []
+        "evidences": [
+            {
+                "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+                "file_name": "ร่างแผนแม่บทด้านการจัดการความรู้.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "6bdfacb53153890ca53506979115f4c2d825fdc37bd3888ed623513b21e4ca5d",
+                "file_name": "สรุป SWOT SC SA ด้าน KM ประจำปี 2.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            },
+            {
+                "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+                "file_name": "แผนแม่บทการจัดการความรู้ ปี 2568.pdf",
+                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+            }
+        ]
     },
     "1.1_L3": {
         "title": "Mapping for Sub-Criteria 1.1 Level L3",
