@@ -25,6 +25,11 @@ SUPPORTED_DOC_TYPES = [
 EVIDENCE_DOC_TYPES = "evidence"
 DEFAULT_DOC_TYPES = "document"
 
+# ปรับใน future
+# EVIDENCE_DOC_TYPES = ["evidence"]
+# DEFAULT_DOC_TYPES = ["document"]
+
+
 
 # ==================== Enabler Configuration ====================
 DEFAULT_ENABLER = "KM"
