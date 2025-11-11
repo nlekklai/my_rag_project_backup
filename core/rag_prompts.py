@@ -1,5 +1,6 @@
 # core/rag_prompts.py
-from langchain.prompts import PromptTemplate
+# 💡 แก้ไข: ย้าย PromptTemplate ไปที่ langchain_core.prompts
+from langchain_core.prompts import PromptTemplate
 
 SYSTEM_QA_INSTRUCTION = """
 คุณคือผู้ช่วยอัจฉริยะสำหรับเอกสารและข้อมูลขององค์กร

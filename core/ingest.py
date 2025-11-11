@@ -1,4 +1,3 @@
-#core/ingest.py
 # core/ingest.py
 import os
 import re
@@ -15,6 +14,7 @@ import numpy as np
 import glob
 from pydantic import ValidationError
 
+# LangChain loaders
 from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredPDFLoader,
@@ -25,26 +25,25 @@ from langchain_community.document_loaders import (
     UnstructuredPowerPointLoader
 )
 
-# For PDF inspection
 import fitz  # PyMuPDF
-
-# [NEW] Helper: Normalization utility
 import hashlib
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+# 💡 แก้ไข #1: ย้าย Document จาก langchain.schema
+from langchain_core.documents import Document
 
+# 💡 แก้ไข #2: ย้าย Text Splitter จาก langchain.text_splitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter 
+
+# 💡 การ Import ส่วนที่เหลือ (ถ้าคุณติดตั้ง chroma และ huggingface embeddings แล้ว)
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Optional OCR (Omitted for brevity)
-_HAS_PDF2IMAGE = False
-
-# Try to import helper for filtering metadata
 try:
     from langchain_community.vectorstores.utils import filter_complex_metadata as _imported_filter_complex_metadata
-except Exception:
+except ImportError:
     _imported_filter_complex_metadata = None
+
+
 
 # -------------------- Global Config --------------------
 from config.global_vars import (
@@ -78,13 +77,12 @@ class DocInfo(TypedDict):
     size: int               # File size in bytes
 
 # -------------------- Unstructured Loader --------------------
+# ลอง Import จาก Partner Package ใหม่ก่อน
 try:
     from langchain_unstructured.document_loaders import UnstructuredLoader as UnstructuredFileLoader
+# ถ้าไม่พบ ให้ใช้ตัวที่อยู่ใน Community package (มักจะทำงานได้ดีกว่า)
 except ImportError:
-    try:
-        from langchain_community.document_loaders import UnstructuredFileLoader
-    except ImportError:
-        from langchain.document_loaders import UnstructuredFileLoader
+    from langchain_community.document_loaders import UnstructuredFileLoader
 
 
 # Logging

@@ -1,4 +1,3 @@
-#core/vectorstore.py
 # core/vectorstore.py
 import os
 import platform
@@ -10,18 +9,22 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 
+
 # system utils
 try:
     import psutil
-except Exception:
-    psutil = None  # optional; fallback gracefully
+except ImportError:
+    psutil = None
 
-# LangChain and Core Imports
-from langchain.schema import Document as LcDocument, BaseRetriever
-from langchain.retrievers.document_compressors.base import BaseDocumentCompressor
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+# LangChain imports (รุ่นที่ปรับปรุงสำหรับ V1.x)
+from langchain_core.documents import Document as LcDocument
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import BaseDocumentCompressor 
 
-# External Libraries
+
+from langchain_community.document_compressors import FlashrankRerank
+
+# External libraries
 from pydantic import PrivateAttr, ConfigDict, BaseModel
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -29,7 +32,10 @@ from langchain_chroma import Chroma
 from flashrank import Ranker
 import chromadb
 from chromadb.config import Settings
-import glob
+
+from sentence_transformers import SentenceTransformer, util
+
+logger = logging.getLogger(__name__)
 
 # Configure chromadb telemetry if available
 try:
@@ -46,7 +52,7 @@ from config.global_vars import (
     MAPPING_FILE_PATH,
     FINAL_K_RERANKED,
     INITIAL_TOP_K,
-    EVIDENCE_DOC_TYPES
+    EVIDENCE_DOC_TYPES,
 )
 
 # -------------------- Vectorstore Constants --------------------
@@ -66,66 +72,6 @@ _MPS_WARNING_SHOWN = False
 
 # Flashrank cache dir
 CUSTOM_CACHE_DIR = os.path.expanduser("~/.hf_cache_dir/flashrank_models")
-
-
-class FlashrankRequestWrapper:
-    """Mimics the expected object structure for flashrank's internal logic (request.query)."""
-    def __init__(self, query: str, passages: List[Dict[str, Any]]):
-        self.query = query
-        self.passages = passages
-
-# ⚠️ ท่านต้องมี Reranker ที่สืบทอดมาจาก BaseDocumentCompressor ของ LangChain
-class FlashrankCompressor(BaseDocumentCompressor):
-    # ... (Implementation ของ Flashrank) ...
-    # เนื่องจากผมไม่มีโค้ด FlashrankCompressor ของท่าน ผมจะใช้ Flashrank โดยตรง
-    
-    # 🟢 เพิ่มโค้ดนี้ใน core/vectorstore.py
-    def __init__(self, top_n: int):
-        self._top_n = top_n
-        # ❗️ NOTE: Flashrank Ranker ต้องถูกโหลดเพียงครั้งเดียว (Singleton/Cache)
-        # ผมขอสมมติว่า ranker ถูกโหลดไว้แล้ว หรือจะโหลดใหม่ทุกครั้งก็ได้
-        self._ranker = Ranker(model_name='ms-marco-MiniLM-L-12-v2') 
-
-    def compress_documents(
-        self, documents: Sequence[LcDocument], query: str, **kwargs: Any
-    ) -> Sequence[LcDocument]:
-        if not documents:
-            return []
-        
-        # 1. แปลงเอกสาร LangChain เป็นรูปแบบที่ Flashrank รับ (passages)
-        candidates = [
-            {"id": i, "text": doc.page_content, "meta": doc.metadata}
-            for i, doc in enumerate(documents)
-        ]
-        
-        # 2. สร้าง Wrapper Object
-        rerank_request_object = FlashrankRequestWrapper(
-            query=query,
-            passages=candidates 
-        )
-        
-        # 3. จัดอันดับ (ตอนนี้ทำงานได้แล้ว)
-        results = self._ranker.rerank(rerank_request_object) 
-        
-        # 4. แปลงกลับเป็นเอกสาร LangChain ตามลำดับใหม่
-        reranked_docs = []
-        for res in results:
-            original_doc = documents[res['id']] 
-            original_doc.metadata['rerank_score'] = res['score'] 
-            reranked_docs.append(original_doc)
-            
-        logger.warning(f"⚠️ Flashrank returned {len(results)} results (expected max: {self._top_n}).") 
-        
-        # 5. 🟢 FIX: ตัดทอนเอกสารที่ถูกจัดเรียงแล้วให้เหลือเพียง self._top_n
-        final_docs = reranked_docs[:self._top_n]
-        logger.warning(f"✅ Truncated {len(reranked_docs)} results down to {len(final_docs)} documents.")
-        
-        return final_docs # ⬅️ ส่ง list ที่ถูก Truncate แล้วกลับไป
-
-# 🟢 ฟังก์ชันที่ core/retrieval_utils.py ต้องการเรียก
-def get_reranking_compressor(top_n: int = FINAL_K_RERANKED) -> FlashrankCompressor:
-    """Returns the configured Flashrank compressor instance."""
-    return FlashrankCompressor(top_n=top_n)
 
 # -------------------- Helper: detect environment & device --------------------
 def _detect_system():
@@ -153,28 +99,6 @@ def _detect_torch_device():
     except Exception:
         pass
     return "cpu"
-
-
-# -------------------- Flashrank & Embedding preload --------------------
-def preload_reranker_model(model_name: str = "ms-marco-MiniLM-L-12-v2"):
-    """
-    Preload Flashrank Ranker instance and keep it in module-level cache.
-    This cache is per-process. Child processes will need to call this again.
-    """
-    global _CACHED_RANKER
-    if _CACHED_RANKER is not None:
-        return _CACHED_RANKER
-    try:
-        logger.info(f"📦 Preloading Flashrank model '{model_name}' (cache dir: {CUSTOM_CACHE_DIR})")
-        _CACHED_RANKER = Ranker(model_name=model_name, cache_dir=CUSTOM_CACHE_DIR)
-        logger.info(f"✅ Flashrank model '{model_name}' loaded")
-        return _CACHED_RANKER
-    except Exception as e:
-        logger.warning(f"⚠️ Failed to preload Flashrank model '{model_name}': {e}")
-        _CACHED_RANKER = None
-        return None
-
-logger = logging.getLogger(__name__) # สมมติว่า logger ถูกตั้งค่าแล้ว
 
 
 def get_hf_embeddings(device_hint: Optional[str] = None):
@@ -225,66 +149,6 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
                     logger.warning(f"⚠️ Failed to create embeddings on device={device}: {e}. Falling back to CPU.")
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={"device": "cpu"})
     return _CACHED_EMBEDDINGS
-
-
-# -------------------- Flashrank Pydantic Request --------------------
-class FlashrankRequest(BaseModel):
-    query: str
-    passages: list[dict[str, Any]]
-    top_n: int
-
-
-# -------------------- Custom Compressor using Flashrank --------------------
-class CustomFlashrankCompressor(BaseDocumentCompressor):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    ranker: Ranker
-    top_n: int = FINAL_K_RERANKED
-
-    def compress_documents(self, documents: Sequence[LcDocument], query: str, **kwargs) -> Sequence[LcDocument]:
-        if not documents:
-            return []
-
-        # Prepare passages
-        doc_list_for_rerank = [{"id": i, "text": doc.page_content, "meta": doc.metadata} for i, doc in enumerate(documents)]
-        run_input = FlashrankRequest(query=query, passages=doc_list_for_rerank, top_n=self.top_n)
-
-        try:
-            # ใช้ Flashrank rerank
-            ranked_results = self.ranker.rerank(run_input)
-        except Exception as e:
-            # ❌ CRITICAL FIX: เปลี่ยน Logic Fallback
-            
-            # 1. Log การล้มเหลวแบบ CRITICAL
-            logger.error(f"❌ CRITICAL RERANKER FAILURE: Flashrank.rerank failed: {e}. Falling back to unranked TOP-{self.top_n}.")
-            
-            # 2. คำนวณจำนวนเอกสารที่ต้อง Fallback (min(15, 7) = 7)
-            num_fallback = min(len(doc_list_for_rerank), self.top_n)
-            
-            # 3. สร้าง ranked_results เพียงแค่ 'num_fallback' รายการแรก (ID 0 ถึง 6)
-            #    สิ่งนี้จะบังคับให้ Loop ข้างล่างวนแค่ 7 ครั้งเท่านั้น
-            ranked_results = [{"id": i, "score": 0.0} for i in range(num_fallback)] 
-
-        # 🟢 NEW CRITICAL FIX: Ensure the output list is truncated to self.top_n (7)
-        if len(ranked_results) > self.top_n:
-            logger.warning(f"⚠️ Flashrank returned {len(ranked_results)} results despite top_n={self.top_n}. Truncating output.")
-            ranked_results = ranked_results[:self.top_n] # ⬅️ บังคับตัดตรงนี้
-
-        reranked_docs = []
-        for res in ranked_results:
-            idx = res.get("id", 0)
-            score = res.get("score", 0.0)
-            original_doc = documents[idx]
-            # เพิ่ม relevance_score ใน metadata
-            reranked_docs.append(LcDocument(page_content=original_doc.page_content, metadata={**original_doc.metadata, "relevance_score": score}))
-        
-        # 🟢 เพิ่ม Log ยืนยันผลลัพธ์
-        if not reranked_docs or len(reranked_docs) == 0:
-            logger.warning("Compressor returned 0 documents.")
-        else:
-            logger.info(f"📝 Compressor finished, returning {len(reranked_docs)} documents.")
-
-        return reranked_docs
 
 
 # -------------------- Vectorstore helpers (REVISED/CLEANED) --------------------
@@ -550,35 +414,33 @@ class VectorStoreManager:
             logger.error(f"❌ Error retrieving documents by UUIDs from collection '{collection_name}': {e}")
             return []
 
-    # -------------------- Retriever Creation --------------------
+# -------------------- Retriever Creation --------------------
+    def get_retriever(base_retriever, final_k: int = 5, use_rerank: bool = True) -> Any:
+        """
+        base_retriever: retriever object ที่มี invoke(query) -> list docs
+        """
+        if use_rerank:
+            def invoke_with_rerank(query: str):
+                docs = base_retriever.invoke(query)
+                try:
+                    # ใช้ global reranker
+                    return GLOBAL_RERANKER.rerank(query, docs)[:final_k]
+                except Exception as e:
+                    logger.warning(f"⚠️ FlashrankRerank failed: {e}. Returning base docs truncated to final_k")
+                    return docs[:final_k]
 
-    def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED) -> Optional[BaseRetriever]:
-        """
-        Returns a ContextualCompressionRetriever for a given collection_name (doc_type).
-        """
-        chroma_instance = self._load_chroma_instance(collection_name)
-        if not chroma_instance:
-            return None
-        
-        # preload reranker model for main/threads
-        reranker_instance = preload_reranker_model()
-        
-        base_retriever = chroma_instance.as_retriever(search_kwargs={"k": top_k})
-        
-        if reranker_instance:
-            try:
-                # Use the custom compressor with the loaded ranker
-                compressor = CustomFlashrankCompressor(ranker=reranker_instance, top_n=final_k)
-                retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=base_retriever)
-                if multiprocessing.current_process().name == 'MainProcess': 
-                    logger.info(f"✅ Loaded Reranking Retriever for collection={collection_name} with k={top_k}->{final_k}")
-                return retriever
-            except Exception as e:
-                logger.warning(f"⚠️ CustomFlashrankCompressor failed for {collection_name}: {e}. Falling back to base retriever.")
-                return base_retriever
+            # Wrapper เพื่อให้เรียก invoke เหมือน retriever ปกติ
+            class SimpleRetrieverWrapper:
+                def invoke(self, query: str):
+                    return invoke_with_rerank(query)
+
+            return SimpleRetrieverWrapper()
         else:
-            logger.warning("⚙️ Reranker model not available. Using base retriever only.")
-            return chroma_instance.as_retriever(search_kwargs={"k": final_k}) # ✅ แก้ไข: ใช้ final_k
+            class TruncatedRetrieverWrapper:
+                def invoke(self, query: str):
+                    return base_retriever.invoke(query)[:final_k]
+
+            return TruncatedRetrieverWrapper()
 
     def get_all_collection_names(self) -> List[str]:
         """Returns a list of all available collection names (folders in VECTORSTORE_DIR)."""
@@ -685,9 +547,7 @@ def load_vectorstore(doc_type: str, enabler: Optional[str] = None) -> Optional[C
     collection_name = _get_collection_name(doc_type, enabler)
     return get_vectorstore_manager()._load_chroma_instance(collection_name)
 
-# NOTE: VectorStoreExecutorSingleton is not included here but should be defined separately if needed.
-# However, this file is primarily for the VectorStoreManager.
-# I will define a placeholder for it since it was in the snippet and is referenced in app.py context.
+
 class VectorStoreExecutorSingleton:
     _instance = None
     _is_initialized = False
@@ -729,21 +589,23 @@ def get_vectorstore_path(doc_type: str, enabler: Optional[str] = None) -> str:
 
 # -------------------- MultiDoc / Parallel Retriever --------------------
 class NamedRetriever(BaseModel):
-    """Picklable wrapper storing minimal params to load retriever inside child process."""
-    doc_id: str # Stable Doc ID (not used for loading retriever, but for metadata)
-    doc_type: str # Collection Name (e.g., 'document' or 'evidence_km')
+    doc_id: str
+    doc_type: str
     top_k: int
     final_k: int
-    # เพิ่ม Base path เข้าไปเพื่อความปลอดภัย
     base_path: str = VECTORSTORE_DIR
+    enabler: Optional[str] = None
 
     def load_instance(self) -> BaseRetriever:
-        """Load a retriever instance inside the current process using stored params."""
-        # ใช้ Collection Name (doc_type) ในการโหลด
         manager = VectorStoreManager(base_path=self.base_path)
-        retriever = manager.get_retriever(self.doc_type, top_k=self.top_k, final_k=self.final_k)
+        retriever = manager.get_retriever(
+            collection_name=_get_collection_name(self.doc_type, self.enabler),
+            top_k=self.top_k,
+            final_k=self.final_k,
+            use_rerank=True
+        )
         if not retriever:
-             raise ValueError(f"Retriever not found for collection '{self.doc_type}' at path '{self.base_path}'")
+            raise ValueError(f"Retriever not found for collection '{self.doc_type}' at path '{self.base_path}'")
         return retriever
 
 
@@ -1065,3 +927,68 @@ def get_vectorstore() -> VectorStoreExecutorSingleton:
     REQUIRED by ingest_batch.py. Returns the singleton instance managing the executor.
     """
     return VectorStoreExecutorSingleton()
+
+# -------------------------
+# FlashrankRerank class
+# -------------------------
+class FlashrankRerank:
+    def __init__(self, top_n: int = 5, device: str = "mps"):
+        """
+        top_n: จำนวนเอกสารสูงสุดที่จะคืน
+        device: 'cpu', 'cuda', 'mps' ตาม hardware
+        """
+        self.top_n = top_n
+        self.device = device
+        self.model: Optional[SentenceTransformer] = None
+        self.util = None
+        self._load_model()
+
+    def _load_model(self):
+        """โหลด SentenceTransformer model"""
+        try:
+            logger.info(f"📦 Loading SentenceTransformer on device: {self.device}")
+            self.model = SentenceTransformer("intfloat/multilingual-e5-large", device=self.device)
+            self.util = util
+        except Exception as e:
+            logger.error(f"⚠️ Failed to load SentenceTransformer: {e}")
+            self.model = None
+            self.util = None
+
+    def rerank(self, query: str | Any, docs: list) -> list:
+        """
+        Rerank documents ตามความใกล้ query
+        - query: str หรือ embedding tensor
+        - docs: list ของ LcDocument
+        คืน list ของ LcDocument top_n
+        """
+        if not self.model or not docs:
+            logger.warning("⚠️ Model not loaded or docs empty. Returning original docs truncated.")
+            return docs[:self.top_n]
+
+        # embedding query
+        query_emb = self.model.encode(query, convert_to_tensor=True) if isinstance(query, str) else query
+
+        # embedding docs
+        doc_texts = [doc.page_content for doc in docs]
+        doc_embs = self.model.encode(doc_texts, convert_to_tensor=True)
+
+        # cosine similarity
+        scores = self.util.cos_sim(query_emb, doc_embs)[0]  # [1, n] tensor
+        sorted_docs = [doc for _, doc in sorted(zip(scores.tolist(), docs), key=lambda x: x[0], reverse=True)]
+        return sorted_docs[:self.top_n]
+
+
+# -------------------------
+# Global reranker instance
+# -------------------------
+GLOBAL_RERANKER = FlashrankRerank(top_n=5, device="mps")  # ปรับ device ตาม hardware
+
+def get_global_reranker(top_n: int | None = None) -> FlashrankRerank:
+    """
+    คืน reranker instance
+    - top_n ถ้าไม่ระบุหรือเท่ากับ FINAL_K_RERANKED -> ใช้ global instance
+    - top_n ถ้าระบุ -> สร้าง instance ใหม่
+    """
+    if top_n is None or top_n == 5:  # หรือใช้ FINAL_K_RERANKED
+        return GLOBAL_RERANKER
+    return FlashrankRerank(top_n=top_n, device="mps")

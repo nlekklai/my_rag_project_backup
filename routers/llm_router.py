@@ -4,7 +4,10 @@ from typing import List, Optional, Dict
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from langchain.schema import Document as LcDocument, SystemMessage, HumanMessage
+
+# 💡 แก้ไข #1: ย้าย Document และ Messages ไปที่ langchain_core
+from langchain_core.documents import Document as LcDocument
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from core.retrieval_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids
 from core.llm_guardrails import augment_seam_query, detect_intent, build_prompt

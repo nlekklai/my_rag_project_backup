@@ -1,22 +1,17 @@
 # core/retrieval_utils.py
 import logging
 import random
-import json,json5
+import json, json5
 import time
 from typing import List, Dict, Any, Optional, Union, TypeVar, Type, Tuple
-from langchain.schema import SystemMessage, HumanMessage, Document as LcDocument
+# 💡 แก้ไข #1: Messages และ Document ถูกย้ายไปที่ langchain_core
+from langchain_core.messages import SystemMessage, HumanMessage 
+from langchain_core.documents import Document as LcDocument
 from pydantic import ValidationError, BaseModel
 import regex as re
 import hashlib
-import time # 🟢 ต้อง import time ด้วย
-import re
 
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
-
-# --------------------
-# Imports from your project schemas & prompts
-# --------------------
-# 💡 IMPORTANT: สมมติว่า StatementAssessment มี field: score และ reason
+# Project imports
 from core.assessment_schema import StatementAssessment, EvidenceSummary
 from core.action_plan_schema import ActionPlanActions
 from core.rag_prompts import (
@@ -27,12 +22,13 @@ from core.rag_prompts import (
     SYSTEM_EVIDENCE_DESCRIPTION_PROMPT,
     EVIDENCE_DESCRIPTION_PROMPT
 )
-
 from core.vectorstore import (
     VectorStoreManager,
-    load_all_vectorstores, 
-    get_reranking_compressor,
+    load_all_vectorstores,
+    GLOBAL_RERANKER, 
+    get_global_reranker
 )
+
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -130,143 +126,102 @@ def retrieve_context_by_doc_ids(doc_uuids: List[str], collection_name: str) -> D
         logger.error(f"Error during UUID-based retrieval: {e}", exc_info=True)
         return {"top_evidences": []}
 
+
 # ------------------------------------------------------------------
-# RAG Retrieval with optional hard filter (Combined Rerank & Filter)
+# RAG Retrieval with optional hard filter (ปรับปรุง rerank)
 # ------------------------------------------------------------------
 def retrieve_context_with_filter(
     query: str, 
     doc_type: str, 
     enabler: str, 
-    stable_doc_ids: Optional[List[str]] = None, 
+    stable_doc_ids: Optional[list] = None, 
     top_k_reranked: int = FINAL_K_RERANKED, 
     disable_semantic_filter: bool = False,
     allow_fallback: bool = False
-) -> Dict[str, Any]:
-    
-    global INITIAL_TOP_K, FINAL_K_NON_RERANKED 
-    if not isinstance(INITIAL_TOP_K, int):
-        INITIAL_TOP_K = 15 
-    if not isinstance(FINAL_K_NON_RERANKED, int):
-        FINAL_K_NON_RERANKED = 5
+) -> dict:
 
-    if VectorStoreManager is None:
-        logger.error("❌ VectorStoreManager is not available.")
-        return {"top_evidences": []}
-    
     try:
         manager = VectorStoreManager()
-        try:
-            if doc_type.lower() == "evidence":
-                collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}"
-            else:
-                collection_name = doc_type.lower()
-        except Exception as e:
-            logger.error(f"⚠️ Error generating collection name for doc_type={doc_type}, enabler={enabler}: {e}")
-            collection_name = doc_type.lower()
-
-        
-        # 1. โหลด Vector Store (ใช้ _load_chroma_instance เพื่อเข้าถึงโดยตรง)
+        collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}" \
+                          if doc_type.lower() == "evidence" else doc_type.lower()
         vectorstore = manager._load_chroma_instance(collection_name)
-        
-        if vectorstore is None:
-            logger.error(f"❌ Vectorstore '{collection_name}' not found or failed to load.")
+        if not vectorstore:
+            logger.error(f"❌ Vectorstore '{collection_name}' not found.")
             return {"top_evidences": []}
-        
-        # 2. จัดการ Hard Filter (Logic เดิมที่ทำงานได้ดี)
+
+        # Hard filter
         where_clause = None
         if stable_doc_ids:
-            stable_doc_ids_normalized = [doc_id.lower() for doc_id in stable_doc_ids] 
-            correct_filter_key = "stable_doc_uuid" 
-            
-            if not hasattr(vectorstore, "_collection"):
-                 logger.error("❌ Vectorstore instance does not have '_collection' attribute for direct access.")
-                 if not allow_fallback: return {"top_evidences": []}
-                 
-            collection = vectorstore._collection
-            
-            try:
-                test_results = collection.get(
-                    where={correct_filter_key: {"$in": stable_doc_ids_normalized}},
-                    include=["metadatas"]
-                )
-                found_chunks_count = len(test_results.get("ids", []))
-                
-                if found_chunks_count > 0:
-                    logger.critical(f"✅ Hard Filter found {found_chunks_count} chunks!")
-                    where_clause = {correct_filter_key: {"$in": stable_doc_ids_normalized}}
-                else:
-                    logger.error(f"🛑 Hard Filter found 0 chunks with key '{correct_filter_key}'.")
-                    if not allow_fallback: return {"top_evidences": []}
-            except Exception as e:
-                logger.error(f"🛑 Hard Filter failed: {e}", exc_info=True)
-                if not allow_fallback: return {"top_evidences": []}
+            stable_doc_ids_normalized = [doc_id.lower() for doc_id in stable_doc_ids]
+            collection = getattr(vectorstore, "_collection", None)
+            if collection:
+                try:
+                    test_results = collection.get(
+                        where={"stable_doc_uuid": {"$in": stable_doc_ids_normalized}},
+                        include=["metadatas"]
+                    )
+                    if len(test_results.get("ids", [])) > 0:
+                        where_clause = {"stable_doc_uuid": {"$in": stable_doc_ids_normalized}}
+                except Exception as e:
+                    logger.error(f"Hard filter failed: {e}")
+                    if not allow_fallback:
+                        return {"top_evidences": []}
 
-        # 3. สร้าง Base Retriever
+        # Base retriever
         search_kwargs = {"k": INITIAL_TOP_K}
         if where_clause:
             search_kwargs["filter"] = where_clause
-            
         base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
-        
-        # 4. ใช้ Reranker/Compression
-        if disable_semantic_filter:
-            # 4.1 ถ้าปิด Rerank: ใช้ Base Retriever และ Truncate ตาม FINAL_K_NON_RERANKED
-            final_k = top_k_reranked if top_k_reranked > 0 else FINAL_K_NON_RERANKED
-            documents = base_retriever.invoke(query)[:final_k]
-            logger.info(f"RAG Retrieval (Non-Reranked) found {len(documents)} evidences.")
-        else:
-            # 4.2 ถ้าเปิด Rerank: ห่อหุ้ม Base Retriever ด้วย Compressor
-            
-            compressor = get_reranking_compressor(top_n=top_k_reranked) 
-            
-            compressed_retriever = ContextualCompressionRetriever(
-                base_compressor=compressor, 
-                base_retriever=base_retriever
-            )
-            
-            # 5. Invoke Compressed Retriever (ทำการ Rerank และ Truncate เป็น top_k_reranked)
-            documents = compressed_retriever.invoke(query)
-            logger.info(f"RAG Retrieval (Reranked) found {len(documents)} evidences (k={INITIAL_TOP_K}->{top_k_reranked}).")
 
-        # 6. จัดรูปแบบผลลัพธ์
+        # -------------------------
+        # Rerank + truncate
+        # -------------------------
+        documents = base_retriever.invoke(query)
+        if not disable_semantic_filter:
+            # reranker = get_reranking_compressor(top_n=top_k_reranked)
+            reranker = get_global_reranker(top_k_reranked)
+            if reranker and hasattr(reranker, "rerank"):
+                try:
+                    documents = reranker.rerank(query, documents)
+                    logger.info(f"RAG Retrieval (Rerank) truncated to top {top_k_reranked}.")
+                except Exception as e:
+                    logger.warning(f"⚠️ Rerank failed: {e}. Using base retriever + truncate.")
+                    documents = documents[:top_k_reranked]
+            else:
+                logger.warning("⚠️ Rerank unavailable. Using base retriever + truncate.")
+                documents = documents[:top_k_reranked]
+        else:
+            # Non-rerank
+            documents = documents[:top_k_reranked]
+            logger.info(f"RAG Retrieval (Non-Rerank) truncated to top {top_k_reranked}.")
+
+        # Format results
         top_evidences = []
         for doc in documents:
             if not isinstance(doc, LcDocument):
                 continue
-
             metadata = doc.metadata or {}
-
-            # 🟢 เพิ่ม fallback ให้ metadata ครบถ้วน
-            # 1. เสริม source/file_name หากหายไป
-            if not metadata.get("source") and not metadata.get("source_file"):
-                # พยายามดึงชื่อไฟล์จาก stable_doc_uuid
+            if not metadata.get("source"):
                 uuid_ref = metadata.get("stable_doc_uuid", "")[:8]
                 metadata["source"] = f"Unknown_Source_{uuid_ref}" if uuid_ref else "Unknown_Source"
-
-            # 2. เพิ่ม field page_label หากไม่มี
             if "page_label" not in metadata and "page" in metadata:
                 metadata["page_label"] = str(metadata["page"])
-
-            # 3. เพิ่ม chunk_index ถ้ายังไม่มี
-            if "chunk_index" not in metadata and hasattr(doc, "metadata") and "chunk_id" in metadata:
+            if "chunk_index" not in metadata and "chunk_id" in metadata:
                 metadata["chunk_index"] = metadata.get("chunk_id")
-
-            # 4. เพิ่ม safety field file_name ให้เท่ากับ source ถ้าไม่มี
             if not metadata.get("file_name"):
                 metadata["file_name"] = metadata.get("source")
-
             top_evidences.append({
                 "content": doc.page_content,
                 "metadata": metadata
             })
 
-        logger.info(f"RAG Final Output for query='{query[:30]}...' found {len(top_evidences)} evidences.")
         return {"top_evidences": top_evidences}
 
-
     except Exception as e:
-        logger.error(f"Error during RAG retrieval with filter (Combined Logic): {e}", exc_info=True)
+        logger.error(f"Error in retrieve_context_with_filter: {e}", exc_info=True)
         return {"top_evidences": []}
+
+
     
 # ------------------------------------------------------------------
 # Robust JSON Extraction
