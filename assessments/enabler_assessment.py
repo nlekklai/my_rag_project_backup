@@ -7,8 +7,6 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Union, Tuple
 from core.action_plan_schema import ActionPlanActions, ActionItem, StepDetail
-from pydantic import ValidationError
-
 
 # -------------------- PATH SETUP --------------------
 try:
@@ -73,7 +71,12 @@ class EnablerAssessment:
                  mock_llm_summarize_func=None,
                  mock_llm_action_plan_func=None,
                  disable_semantic_filter: bool = False,
-                 allow_fallback: bool = False):
+                 allow_fallback: bool = False,
+                 # 🟢 [FIX 1] เพิ่มพารามิเตอร์สำหรับรับ File Paths
+                 evidence_file_path: Optional[str] = None,
+                 rubric_file_path: Optional[str] = None,
+                 level_fractions_file_path: Optional[str] = None,
+                 mapping_file_path: Optional[str] = None):
         
         # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
         # 🟢 FIX: เพิ่ม Logger Instance
@@ -93,9 +96,8 @@ class EnablerAssessment:
         self.EVIDENCE_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
         self.RUBRIC_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
         self.LEVEL_FRACTIONS_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json")
-        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
-        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
-        self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json")
+        self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
+        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json")
 
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
         default_rubric = {self.enabler_rubric_key: {"levels": []}}
@@ -121,6 +123,245 @@ class EnablerAssessment:
         self.final_subcriteria_results: List[Dict] = []
         
         self.global_rubric_map: Dict[int, Dict[str, str]] = self._prepare_rubric_map()
+
+    # ----------------------------
+    # 1. _retrieve_context
+    # ----------------------------
+    def _retrieve_context(
+        self, 
+        query: str, 
+        sub_criteria_id: str, 
+        level: int, 
+        mapping_data: Optional[Dict[str, Any]] = None,
+        statement_number: int = 1 
+    ) -> Dict[str, Any]:
+        """
+        Retrieves relevant context based on the query and current sub-criteria/level.
+        คืนค่าเป็น dict เสมอ เพื่อให้ run_assessment และ select_best_context_snippet ใช้ได้ตรง
+        """
+        
+        doc_ids_to_filter = []
+        final_mapping_key = None 
+        data_found = None
+
+        if self.use_mapping_filter:
+            mapping_data_to_use = mapping_data or self.evidence_mapping_data
+            key_level = f"{sub_criteria_id}_L{level}"
+            data_found = mapping_data_to_use.get(key_level)
+            final_mapping_key = key_level
+            
+            if data_found:
+                logger.info(f"RAG Filter Check: Found data using Level-only key: {key_level}")
+            else:
+                logger.info(f"RAG Filter Check: Level-only key {key_level} not found.")
+
+            if data_found and isinstance(data_found, dict):
+                evidences = data_found.get("evidences", [])
+                doc_ids_to_filter = [
+                    d.get('stable_doc_uuid') or d.get('doc_id')
+                    for d in evidences 
+                    if isinstance(d, dict) and (d.get('stable_doc_uuid') or d.get('doc_id'))
+                ]
+            
+            logger.info(f"RAG Filter Check: Final Key used: {final_mapping_key} - Found {len(doc_ids_to_filter)} doc_ids for Hard Filter.")
+            if not doc_ids_to_filter:
+                logger.warning("No doc_ids found for filter, RAG retrieval will run without doc_ids filter.")
+
+        result = retrieve_context_with_filter(
+            query=query,
+            doc_type=EVIDENCE_DOC_TYPES,
+            enabler=self.enabler_abbr,
+            stable_doc_ids=doc_ids_to_filter or None,
+            top_k_reranked=self.FINAL_K_RERANKED,
+            disable_semantic_filter=self.disable_semantic_filter
+        )
+        
+        # Debug preview top 3 evidences
+        top_evidences = result.get("top_evidences", [])
+        for idx, ev in enumerate(top_evidences[:3]):
+            logger.info(f"Preview Evidence {idx+1}: uuid={ev['metadata'].get('stable_doc_uuid')} source={ev['metadata'].get('source')} snippet_preview={ev['content'][:50]}...")
+
+        return result if isinstance(result, dict) else {"top_evidences": []}
+
+
+    # ----------------------------
+    # 2. select_best_context_snippet
+    # ----------------------------
+    def select_best_context_snippet(
+        self, 
+        final_reason: str, 
+        top_evidences: list
+    ) -> tuple[dict, str]:
+        """
+        เลือกเอกสารและ snippet ที่ดีที่สุดจาก top_evidences
+        """
+        if not top_evidences:
+            self.logger.warning("No top_evidences found, returning empty fallback")
+            return {"source": "Unknown", "uuid": "N/A", "snippet": "..."}, "..."
+
+        best_doc = top_evidences[0]
+        snippet_keys = ['text', 'content', 'chunk_text', 'snippet']
+        best_snippet = next((best_doc.get(k) for k in snippet_keys if best_doc.get(k)), "...")
+
+        best_doc_uuid = best_doc.get('uuid') or best_doc.get('metadata', {}).get('stable_doc_uuid') or best_doc.get('metadata', {}).get('doc_id', 'N/A')
+        best_doc_source = best_doc.get('source') or best_doc.get('metadata', {}).get('source') or "Unknown"
+
+        best_doc_info = {
+            'source': best_doc_source,
+            'uuid': best_doc_uuid,
+            'snippet': best_snippet
+        }
+
+        self.logger.info(f"✅ Selected Best Doc: {best_doc_info['source']} (UUID={best_doc_info['uuid']})")
+        self.logger.info(f"📝 Selected Snippet Preview: {best_doc_info['snippet'][:150]}...")
+
+        return best_doc_info, best_snippet
+
+
+    # ----------------------------
+    # 3. run_assessment (หลัก)
+    # ----------------------------
+    def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Run assessment across all levels & subtopics, integrate best context snippet based on LLM reason.
+        """
+        self.raw_llm_results = [] 
+        self.final_subcriteria_results = []
+
+        is_mock_mode = self.mock_llm_eval_func is not None
+        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None 
+
+        llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
+
+        for enabler in self.evidence_data:
+            sub_criteria_id = enabler.get("Sub_Criteria_ID")
+            sub_criteria_name = enabler.get("Sub_Criteria_Name_TH", "N/A")
+
+            if self.target_sub_id and self.target_sub_id != sub_criteria_id:
+                continue
+
+            for level in range(1, 6):
+                level_key = f"Level_{level}_Statements"
+                statements: List[str] = enabler.get(level_key, [])
+                if not statements:
+                    continue 
+
+                rubric_criteria = self.global_rubric_map.get(level, {})
+                constraint_prompt = self._get_level_constraint_prompt(level)
+
+                for i, statement in enumerate(statements):
+                    subtopic_key = f"subtopic_{i+1}"
+                    standard = rubric_criteria.get(subtopic_key, f"Default standard L{level} S{i+1}")
+
+                    statement_for_search = (
+                        f"ตามเกณฑ์ {sub_criteria_id} ด้าน {sub_criteria_name} ที่ระดับ {level_key}: "
+                        f"ต้องมีหลักฐานยืนยันว่า {statement}"
+                    )
+
+                    query_string = (
+                        f"หัวข้อ: {sub_criteria_name}\n"
+                        f"ระดับวุฒิภาวะที่ประเมิน: {level}\n"
+                        f"ข้อความเกณฑ์: {statement_for_search}\n\n"
+                        f"{constraint_prompt}\n"
+                        "ให้ค้นหาเฉพาะหลักฐานจากเอกสารจริงขององค์กร เช่น แผนยุทธศาสตร์ รายงานผลการดำเนินงาน หรือบันทึกการประชุม."
+                    )
+                    
+                    logger.info(f"DEBUG QUERY: SubCriteria={sub_criteria_id} Level={level} Statement={i+1}\n{query_string}")
+
+                    retrieval_result = self._retrieve_context(
+                        query=query_string,
+                        sub_criteria_id=sub_criteria_id, 
+                        level=level,
+                        mapping_data=mapping_data_for_mock, 
+                        statement_number=i + 1
+                    )
+
+                    top_evidences = retrieval_result.get("top_evidences", [])
+
+                    # สร้าง context จาก top_evidences
+                    context_list, context_length = [], 0
+                    retrieved_sources_list = []
+
+                    for idx, doc in enumerate(top_evidences[:self.FINAL_K_RERANKED]):
+                        doc_content = doc.get("content", "")
+                        metadata = doc.get("metadata", {}) 
+                        doc_id = metadata.get("stable_doc_uuid", metadata.get("doc_id", "N/A")) 
+                        source_name = metadata.get("source", "Unknown")
+                        location_value = str(metadata.get("page_label") or metadata.get("page", "N/A"))
+                        if location_value in ("N/A", "None") and doc_id != "N/A":
+                            chunk_idx = metadata.get("chunk_index")
+                            location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
+
+                        snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
+                        retrieved_sources_list.append({
+                            "source_name": source_name,
+                            "doc_id": doc_id,
+                            "location": location_value, 
+                            "snippet_for_display": snippet, 
+                            "content": doc_content
+                        })
+
+                        if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
+                            context_list.append(doc_content)
+                            context_length += len(doc_content)
+                        else:
+                            remaining_len = self.MAX_CONTEXT_LENGTH - context_length
+                            if remaining_len > 0:
+                                context_list.append(doc_content[:remaining_len])
+                            context_length = self.MAX_CONTEXT_LENGTH
+                            break
+
+                    context = "\n---\n".join(context_list)
+
+                    # เรียก LLM
+                    llm_kwargs = {"level": level, "sub_criteria_id": sub_criteria_id, "statement_number": i + 1}
+                    if is_mock_mode:
+                        llm_result_dict = llm_eval_func(statement=statement, context=context, standard=standard, **llm_kwargs)
+                    else:
+                        llm_result_dict = llm_eval_func(statement_for_search, context=context, standard=standard, enabler_name=self.enabler_abbr, **llm_kwargs)
+
+                    final_score = llm_result_dict.get("score", 0) if not is_mock_mode else llm_result_dict.get("llm_score", 0)
+                    final_reason = llm_result_dict.get("reason", "")
+                    final_pass_status = final_score == 1
+                    final_status_th = "ผ่าน" if final_pass_status else "ไม่ผ่าน"
+
+                    # เลือก best snippet
+                    best_doc_info, best_snippet = self.select_best_context_snippet(final_reason, top_evidences)
+                    final_context_snippet = best_snippet[:240] + "..." if best_snippet else (context[:240] + "...") if context else ""
+
+                    # Deduplicate sources
+                    unique_sources = []
+                    seen = set()
+                    for src in retrieved_sources_list:
+                        key = (src['doc_id'], src['location'])
+                        if key not in seen:
+                            seen.add(key)
+                            unique_sources.append(src)
+
+                    self.raw_llm_results.append({
+                        "enabler_id": self.enabler_abbr.upper(),
+                        "sub_criteria_id": sub_criteria_id,
+                        "sub_criteria_name": sub_criteria_name, 
+                        "level": level,
+                        "statement_number": i + 1, 
+                        "statement": statement,
+                        "subtopic": subtopic_key,
+                        "standard": standard,
+                        "llm_score": final_score, 
+                        "reason": final_reason,
+                        "retrieved_sources_list": unique_sources, 
+                        "context_retrieved_snippet": final_context_snippet, 
+                        "pass_status": final_pass_status,
+                        "status_th": final_status_th,
+                        "statement_id": f"{sub_criteria_id}_L{level}_S{i+1}",
+                        "llm_result": llm_result_dict
+                    })
+
+        self._process_subcriteria_results()
+        final_summary = self.summarize_results()
+        action_plan = {}
+        return {"summary": final_summary, "action_plan": action_plan}, {f"{r['statement_id']}": r for r in self.raw_llm_results}
+
 
     def _get_all_failed_statements(self) -> List[Dict]:
         """
@@ -292,63 +533,6 @@ class EnablerAssessment:
         else:
             return "กรุณาหาหลักฐานที่สอดคล้องกับเกณฑ์ที่ต้องการ"
 
-
-    def _retrieve_context(
-                self, 
-                query: str, 
-                sub_criteria_id: str, 
-                level: int, 
-                mapping_data: Optional[Dict[str, Any]] = None,
-                statement_number: int = 1 
-            ) -> Union[Dict[str, Any], List[str]]:
-                """
-                Retrieves relevant context based on the query and current sub-criteria/level.
-                """
-                
-                doc_ids_to_filter = []
-                final_mapping_key = None 
-                data_found = None
-                
-                if self.use_mapping_filter:
-                    mapping_data_to_use = self.evidence_mapping_data
-                    
-                    if mapping_data is not None:
-                        mapping_data_to_use = mapping_data 
-                    
-                    # 1. สร้างและใช้ Key แบบ Level-only เท่านั้น เช่น "1.1_L1"
-                    key_level = f"{sub_criteria_id}_L{level}"
-                    data_found = mapping_data_to_use.get(key_level)
-                    final_mapping_key = key_level
-                    
-                    if data_found:
-                        logger.info(f"RAG Filter Check: Found data using Level-only key: {key_level}")
-                    else:
-                        logger.info(f"RAG Filter Check: Level-only key {key_level} not found.")
-
-                    # 2. ดึง Doc IDs จาก Structure ที่พบ
-                    if data_found and isinstance(data_found, dict):
-                        evidences = data_found.get("evidences", [])
-                        
-                        # 🟢 FIX: ดึง Stable UUID จาก Mapping File โดยมี doc_id เป็น Fallback
-                        doc_ids_to_filter = [
-                            d.get('stable_doc_uuid') or d.get('doc_id')
-                            for d in evidences 
-                            if isinstance(d, dict) and (d.get('stable_doc_uuid') or d.get('doc_id'))
-                        ]
-                    
-                    logger.info(f"RAG Filter Check: Final Key used: {final_mapping_key} - Found {len(doc_ids_to_filter)} doc_ids for Hard Filter.")
-                
-                # เรียกใช้ retrieve_context_with_filter
-                result = retrieve_context_with_filter(
-                    query=query,
-                    doc_type=EVIDENCE_DOC_TYPES,
-                    enabler=self.enabler_abbr,
-                    stable_doc_ids=doc_ids_to_filter, 
-                    top_k_reranked=self.FINAL_K_RERANKED,
-                    disable_semantic_filter=self.disable_semantic_filter
-                )
-                
-                return result
         
     def _process_subcriteria_results(self):
         """
@@ -460,206 +644,7 @@ class EnablerAssessment:
             }
         }
 
-
-    def run_assessment(self, target_doc_ids_or_filter_status: Union[List[str], str] = 'none') -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Run assessment across all levels & subtopics
-        """
-        self.raw_llm_results = [] 
-        self.final_subcriteria_results = []
         
-        is_mock_mode = self.mock_llm_eval_func is not None
-        mapping_data_for_mock = self.evidence_mapping_data if is_mock_mode else None 
-        
-        llm_eval_func = self.mock_llm_eval_func if self.mock_llm_eval_func else evaluate_with_llm
-
-        for enabler in self.evidence_data:
-            enabler_id = enabler.get("Enabler_ID")
-            sub_criteria_id = enabler.get("Sub_Criteria_ID")
-            sub_criteria_name = enabler.get("Sub_Criteria_Name_TH", "N/A")
-
-            if self.target_sub_id and self.target_sub_id != sub_criteria_id:
-                continue
-
-            for level in range(1, 6):
-                level_key = f"Level_{level}_Statements"
-                statements: List[str] = enabler.get(level_key, [])
-                
-                # 🟢 NEW: ใช้ Augmented Statements ถ้ามี
-                augmented_statements = enabler.get(f"Augmented_Level_{level}_Statements", [])
-                if augmented_statements:
-                    statements = augmented_statements
-
-                if not statements:
-                    continue 
-                
-                rubric_criteria = self.global_rubric_map.get(level, {})
-
-                # 🟢 NEW: เตรียม constraint สำหรับ level นี้
-                constraint_prompt = self._get_level_constraint_prompt(level)
-                
-                for i, statement in enumerate(statements):
-                    subtopic_key = f"subtopic_{i+1}"
-                    standard = rubric_criteria.get(subtopic_key, f"Default standard L{level} S{i+1}")
-
-                    # 🟢 NEW: รวม sub_criteria_name + constraint_prompt ใน query
-                    query_string = (
-                        f"หัวข้อ: {sub_criteria_name}\n"
-                        f"ระดับวุฒิภาวะที่ประเมิน: {level}\n"
-                        f"ข้อความเกณฑ์: {statement}\n\n"
-                        f"{constraint_prompt}\n"
-                        "ให้ค้นหาเฉพาะหลักฐานจากเอกสารจริงขององค์กร เช่น แผนยุทธศาสตร์ รายงานผลการดำเนินงาน หรือบันทึกการประชุม."
-                    )
-                    
-                    logger.info(
-                        f"DEBUG QUERY: SubCriteria={sub_criteria_id} Level={level} "
-                        f"Statement={i+1} Subtopic={subtopic_key}\nQuery:\n{query_string}"
-                    )
-
-                    retrieval_result = self._retrieve_context(
-                        query=query_string,
-                        sub_criteria_id=sub_criteria_id, 
-                        level=level,
-                        mapping_data=mapping_data_for_mock, 
-                        statement_number=i + 1
-                    )
-
-                    context_list = []
-                    context_length = 0
-                    retrieved_sources_list = [] 
-                    context = "" 
-                    
-                    if isinstance(retrieval_result, dict):
-                        top_evidence = retrieval_result.get("top_evidences", [])
-                        
-                        logger.info(f"DEBUG RAG: {sub_criteria_id}_L{level}_S{i+1} Retrieved {len(top_evidence)} raw evidences. Filter: {self.use_mapping_filter}")
-                        
-                        k_to_use = self.FINAL_K_RERANKED
-                        if self.disable_semantic_filter:
-                            k_to_use = self.FINAL_K_NON_RERANKED
-
-                        for idx, doc in enumerate(top_evidence[:k_to_use]): 
-                            doc_content = doc.get("content", "")
-                            metadata = doc.get("metadata", {}) 
-                            
-                            doc_id = metadata.get("stable_doc_uuid", metadata.get("doc_id", "N/A")) 
-                            source_name = self._get_source_name_for_display(doc_id, metadata)
-                            location_value = str(metadata.get("page_label") or metadata.get("page", "N/A"))
-                            
-                            if location_value in ("N/A", "None") and doc_id != "N/A":
-                                chunk_idx = metadata.get("chunk_index")
-                                location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
-                                
-                            logger.info(f"DEBUG RAG Evidence (Top {idx + 1}): UUID={doc_id[:7]}... Source={source_name[:35]}... Location={location_value}")
-                
-                            snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
-
-                            retrieved_sources_list.append({
-                                "source_name": source_name,
-                                "doc_id": doc_id,
-                                "location": location_value, 
-                                "snippet_for_display": snippet, 
-                            })
-                            
-                            if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:
-                                context_list.append(doc_content)
-                                context_length += len(doc_content)
-                            else:
-                                remaining_len = self.MAX_CONTEXT_LENGTH - context_length
-                                if remaining_len > 0:
-                                    context_list.append(doc_content[:remaining_len])
-                                context_length = self.MAX_CONTEXT_LENGTH
-                                break
-                                
-                        context = "\n---\n".join(context_list)
-                    
-                    llm_kwargs = {
-                        "level": level, 
-                        "sub_criteria_id": sub_criteria_id,
-                        "statement_number": i + 1
-                    }
-                    
-                    raw_llm_response_content = ""
-                    llm_result_dict = {}
-
-                    if is_mock_mode:
-                        llm_result_dict = llm_eval_func(
-                            statement=statement, context=context, standard=standard, **llm_kwargs
-                        )
-                        try:
-                            raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
-                        except:
-                            raw_llm_response_content = str(llm_result_dict)
-                    else:
-                        llm_output = llm_eval_func(
-                            statement=statement,
-                            context=context,
-                            standard=standard,
-                            enabler_name=self.enabler_abbr,  
-                            **llm_kwargs
-                        )
-                        if isinstance(llm_output, tuple) and len(llm_output) == 2:
-                            llm_result_dict, raw_llm_response_content = llm_output
-                        elif isinstance(llm_output, dict):
-                            llm_result_dict = llm_output
-                            try:
-                                raw_llm_response_content = json.dumps(llm_result_dict, ensure_ascii=False, indent=2)
-                            except:
-                                raw_llm_response_content = str(llm_result_dict)
-                        else:
-                            logger.error(f"Unexpected return type from LLM evaluation: {type(llm_output)}")
-                            llm_result_dict = {}
-
-                    unique_sources = []
-                    seen = set()
-                    
-                    if is_mock_mode:
-                        final_score = llm_result_dict.get("llm_score", 0)
-                        final_reason = llm_result_dict.get("reason", "")
-                        final_sources = llm_result_dict.get("retrieved_sources_list", []) 
-                        final_context_snippet = llm_result_dict.get("context_retrieved_snippet", "") 
-                        final_pass_status = llm_result_dict.get("pass_status", False)
-                        final_status_th = llm_result_dict.get("status_th", "ไม่ผ่าน")
-                    else:
-                        for src in retrieved_sources_list:
-                            key = (src['doc_id'], src['location']) 
-                            if key not in seen:
-                                seen.add(key)
-                                unique_sources.append(src)
-
-                        final_score = llm_result_dict.get("score", 0) 
-                        final_reason = llm_result_dict.get("reason", "")
-                        final_sources = unique_sources 
-                        final_context_snippet = context[:240] + "..." if context else ""
-                        final_pass_status = final_score == 1
-                        final_status_th = "ผ่าน" if final_pass_status else "ไม่ผ่าน"
-
-                    self.raw_llm_results.append({
-                        "enabler_id": self.enabler_abbr.upper(),
-                        "sub_criteria_id": sub_criteria_id,
-                        "sub_criteria_name": sub_criteria_name, 
-                        "level": level,
-                        "statement_number": i + 1, 
-                        "statement": statement,
-                        "subtopic": subtopic_key,
-                        "standard": standard,
-                        "llm_score": final_score, 
-                        "reason": final_reason,
-                        "retrieved_sources_list": final_sources, 
-                        "context_retrieved_snippet": final_context_snippet, 
-                        "pass_status": final_pass_status,
-                        "status_th": final_status_th,
-                        "statement_id": f"{sub_criteria_id}_L{level}_S{i+1}",
-                        "llm_result": llm_result_dict, 
-                        "llm_raw_response_content": raw_llm_response_content 
-                    })
-        
-        # 🟢 Post-processing phase
-        self._process_subcriteria_results()
-        final_summary = self.summarize_results()
-        action_plan = {}
-        return {"summary": final_summary, "action_plan": action_plan}, {f"{r['statement_id']}": r for r in self.raw_llm_results}
-
     def generate_evidence_summary_for_level(self, sub_criteria_id: str, level: int) -> Dict[str, Any]: 
         """
         รวมบริบทจากทุก Statement ใน Sub-Criteria/Level ที่กำหนด และให้ LLM สร้างคำอธิบาย

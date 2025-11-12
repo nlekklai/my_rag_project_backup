@@ -14,6 +14,7 @@ import numpy as np
 import glob
 from pydantic import ValidationError
 
+
 # LangChain loaders
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -44,7 +45,6 @@ except ImportError:
     _imported_filter_complex_metadata = None
 
 
-
 # -------------------- Global Config --------------------
 from config.global_vars import (
     DATA_DIR,
@@ -59,6 +59,25 @@ from config.global_vars import (
     CHUNK_OVERLAP,
     CHUNK_SIZE
 )
+
+# Logging
+logging.basicConfig(
+    filename="ingest.log",
+    level=logging.DEBUG, # ✅ แก้ไขจาก INFO เป็น DEBUG
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+try:
+    import pytesseract
+    # Hardcode Tesseract executable path ที่คุณได้ยืนยันแล้ว
+    pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'
+    logger.info("✅ Pytesseract path set successfully for Unstructured.")
+except ImportError:
+    logger.warning("Pytesseract not installed. Tesseract OCR may fail.")
+except Exception as e:
+    logger.error(f"Failed to set pytesseract path: {e}")
 
 # --- Document Info Model ---
 class DocInfo(TypedDict):
@@ -84,15 +103,12 @@ try:
 except ImportError:
     from langchain_community.document_loaders import UnstructuredFileLoader
 
-
-# Logging
-logging.basicConfig(
-    filename="ingest.log",
-    level=logging.DEBUG, # ✅ แก้ไขจาก INFO เป็น DEBUG
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+try:
+    from pythainlp.tokenize import word_tokenize
+    THAI_SEGMENTATION_ENABLED = True
+except ImportError:
+    THAI_SEGMENTATION_ENABLED = False
+    logger.warning("PyThaiNLP not installed. Thai segmentation will be skipped.")
 
 # -------------------- Log Noise Suppression (NEW) --------------------
 # 📌 FIX: ปิดกั้น WARNINGs ที่ไม่จำเป็นจากไลบรารีภายนอก
@@ -265,27 +281,60 @@ def _normalize_doc_id(raw_id: str, file_content: bytes = None) -> str:
 
 
 # -------------------- Text Cleaning --------------------
+def _segment_thai_text(text: str) -> str:
+    """
+    Performs Thai word segmentation and uses a special separator (|) 
+    instead of space to preserve word boundaries without adding excessive space.
+    """
+    if not THAI_SEGMENTATION_ENABLED:
+        return text
+
+    # ตรวจสอบว่ามีอักขระภาษาไทยอย่างน้อย 10 ตัวในข้อความ (เพื่อหลีกเลี่ยงการ Segment ภาษาอังกฤษ)
+    thai_char_count = len(re.findall(r'[ก-๙]', text))
+    if thai_char_count < 10: 
+        return text
+
+    try:
+        # ใช้ 'THAI_SENTIMENT' เป็นค่า default
+        # (หรือจะใช้ 'newmm' ก็ได้ ซึ่ง 'THAI_SENTIMENT' ก็ใช้ 'newmm' เป็นพื้นฐาน)
+        words = word_tokenize(text, engine="newmm") 
+        # ใช้เครื่องหมาย | เป็นตัวแบ่งคำแทน space เพื่อควบคุมการทำ Chunking ในภายหลัง
+        # และทำให้ Text Splitter เห็น 'คำ' แทน 'ประโยคยาวๆ ที่ไม่มีวรรค'
+        return "|".join(words) 
+    except Exception as e:
+        logger.warning(f"PyThaiNLP segmentation failed: {e}")
+        return text
+
 def clean_text(text: str) -> str:
     """
     Basic text cleaning utility.
     """
     if not text: return ""
+    
+    # 📌 NEW: 1. ทำ Word Segmentation ก่อน (ใช้ | เป็นตัวแบ่ง)
+    text = _segment_thai_text(text)
+    
+    # 2. การทำความสะอาดตามปกติ
     text = text.replace('\xa0', ' ').replace('\u200b', '').replace('\u00ad', '')
     text = re.sub(r'[\uFFFD\u2000-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]', '', text)
-    # Remove excessive spaces between Thai characters
-    text = re.sub(r'([ก-๙])\s{1,3}(?=[ก-๙])', r'\1', text)
+    # Remove excessive spaces between Thai characters (อาจจะไม่จำเป็นมากถ้าทำ Segmentation แล้ว)
+    text = re.sub(r'([ก-๙])\s{1,3}(?=[ก-๙])', r'\1', text) 
     ocr_replacements = {"สำนักงน": "สำนักงาน", "คณะกรรมกร": "คณะกรรมการ"}
     for bad, good in ocr_replacements.items(): text = text.replace(bad, good)
     # Filter out non-printable ASCII except standard ones and Thai characters
-    text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F]', '', text)
+    text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F|]', '', text) # ✅ เพิ่ม | ใน Regex
     text = re.sub(r'\(\s+', '(', text); text = re.sub(r'\s+\)', ')', text)
     text = re.sub(r'\r\n', '\n', text); text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]{2,}', ' ', text); text = re.sub(r'\s{2,}', ' ', text)
+    
+    # 📌 NEW: 3. แทนที่ตัวแบ่ง | ด้วย space
+    # (หรือถ้าอยากให้ Chunking ใช้ | เป็นตัวแบ่งก่อน ก็ข้ามขั้นตอนนี้ไป)
+    # ในกรณีนี้ ผมแนะนำให้ใช้ | เป็นตัวแบ่งใน Text Splitter เลย 
     return text.strip()
 
-# -------------------- Loaders Helper --------------------
 
 def _is_pdf_image_only(file_path: str) -> bool:
+# (โค้ดฟังก์ชัน _is_pdf_image_only ... ยังคงเหมือนเดิม)
     """
     ตรวจสอบว่า PDF เป็น image-only หรือมี text layer
     คืนค่า True ถ้าเป็น image-only
@@ -301,53 +350,84 @@ def _is_pdf_image_only(file_path: str) -> bool:
         logger.warning(f"Cannot check PDF text layer for {file_path}: {e}")
         return True  # ป้องกัน fail → treat as image-only
 
+
 def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Document]:
     """
     Helper function to load a document using a specific LangChain loader class.
-    - PDF/Image/Unstructured -> handles OCR
-    - 🟢 FIX: เพิ่มการกรองที่เข้มงวดเพื่อให้มั่นใจว่าส่งคืนเฉพาะ Document objects
+    Includes special handling for PDF (text layer vs. image-only) and image files.
     """
     raw_docs: List[Any] = [] # Initialize raw_docs
     try:
-        ext = file_path.lower().split('.')[-1]
+        # 🟢 FIX: ดึงนามสกุลไฟล์ให้มีจุดนำหน้าเสมอ (e.g., .pdf, .jpg)
+        ext = "." + file_path.lower().split('.')[-1]
         
+        # -------------------- 1. กำหนด Loader ตามประเภทไฟล์ --------------------
         if loader_class is CSVLoader:
             loader = loader_class(file_path, encoding='utf-8')
+            raw_docs = loader.load()
         
-        elif ext == "pdf":
+        elif ext == ".pdf":
+            # Logic สำหรับ PDF: ตรวจสอบ Text Layer
             if _is_pdf_image_only(file_path):
+                # สำหรับ PDF ที่เป็นรูปภาพล้วน (ใช้ Unstructured สำหรับ OCR)
                 logger.info(f"PDF is image-only, using OCR loader: {file_path}")
-                loader = UnstructuredPDFLoader(file_path, mode="elements", languages=['tha','eng'])
+                loader = UnstructuredFileLoader(file_path, mode="elements", languages=['tha','eng'])
             else:
+                # สำหรับ PDF ที่มี Text Layer
                 logger.info(f"PDF has text layer, using PyPDFLoader: {file_path}")
                 loader = PyPDFLoader(file_path)
+            raw_docs = loader.load()
         
-        elif loader_class is UnstructuredFileLoader:
-            # สำหรับไฟล์รูปภาพ
-            loader = loader_class(file_path, mode="elements", languages=['tha','eng'])
-        
-        else:
-            loader = loader_class(file_path)
-        
-        raw_docs = loader.load() # ⬅️ โหลดเอกสาร
-
-    except Exception as e:
-        logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} - {loader_class.__name__} raised: {type(e).__name__} ({e})")
-        return []
-    
-    # ---------------------------------------------------------------------
-    # 🟢 CRITICAL FIX: กรองให้มั่นใจว่ามีแต่ Document object เท่านั้น
-    # ---------------------------------------------------------------------
-    cleaned_docs: List[Document] = []
-    for item in raw_docs:
-        if isinstance(item, Document): # ⬅️ ตรวจสอบประเภทที่เข้มงวด
-            cleaned_docs.append(item)
-        else:
-            doc_type_str = str(type(item)).split("'")[-2]
-            logger.warning(f"⚠️ Loader for '{os.path.basename(file_path)}' returned non-Document object (Type: {doc_type_str}). Skipping to prevent metadata error.")
+        # 🟢 FINAL FIX: ใช้ UnstructuredFileLoader สำหรับไฟล์รูปภาพ
+        elif ext in [".jpg", ".jpeg", ".png"]:
+            logger.info(f"Reading image file using UnstructuredFileLoader for robust OCR: {file_path} ...")
+            # UnstructuredFileLoader จะจัดการเรียกใช้ Tesseract ให้เราเองอย่างถูกต้อง
+            loader = UnstructuredFileLoader(file_path, mode="elements", languages=['tha','eng'])
+            raw_docs = loader.load()
             
-    return cleaned_docs # ⬅️ ส่งคืนรายการที่สะอาดแล้ว  
+        else:
+            # Loader อื่นๆ (Word, Excel, PowerPoint, TextLoader)
+            loader = loader_class(file_path)
+            raw_docs = loader.load()
+        
+        # -------------------- 2. การกรองเอกสารว่างเปล่า --------------------
+        if raw_docs:
+            original_count = len(raw_docs)
+            
+            # 🟢 FIX: เพิ่มการตรวจสอบและกรองเอกสารที่ไม่มีเนื้อหา (None/Empty String)
+            filtered_docs = [
+                doc for doc in raw_docs 
+                if isinstance(doc, Document) and doc.page_content is not None and doc.page_content.strip()
+            ]
+            
+            if len(filtered_docs) < original_count:
+                logger.warning(
+                    f"⚠️ Loader returned {original_count - len(filtered_docs)} empty/None documents "
+                    f"for {os.path.basename(file_path)}. Filtered to {len(filtered_docs)} valid documents."
+                )
+            
+            # 🟢 NEW: ถ้ามีการกรองจนหมด (เหลือ 0) และมี ValidationError เกิดขึ้น
+            if not filtered_docs and original_count > 0:
+                 logger.warning(f"⚠️ Loader returned documents but all were empty/invalid for {os.path.basename(file_path)}. Returning 0 valid documents.")
+                 return []
+                 
+            return filtered_docs
+    
+    # -------------------- 3. การจัดการข้อผิดพลาด (Exception Handling) --------------------
+    except (ValidationError, TypeError) as e:
+        # 🟢 FINAL FIX: ดักจับ ValidationError และ TypeError (สำหรับกรณี page_content=None)
+        # หากเกิดข้อผิดพลาดนี้ ให้ Log และถือว่าไม่มีเอกสารที่ถูกต้องจากไฟล์นี้
+        logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} raised: {type(e).__name__} ({e}). Treating as 0 documents.")
+        return []
+        
+    except Exception as e:
+        loader_name = getattr(loader_class, '__name__', 'UnknownLoader')
+        logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} - {loader_name} raised: {type(e).__name__} ({e})")
+        return []
+        
+    return [] # ในกรณีที่ raw_docs เป็น List ว่างเปล่า
 
+    
 # -------------------- Loaders --------------------
 
 # 📌 [FIXED] Full implementation using imported loaders and helper
@@ -362,10 +442,13 @@ FILE_LOADER_MAP = {
     ".md": lambda p: _load_document_with_loader(p, TextLoader), 
     ".csv": lambda p: _load_document_with_loader(p, CSVLoader),
     
-    # สำหรับรูปภาพ (ใช้ UnstructuredFileLoader ที่ถูกแก้ไขให้เปิด OCR ภาษาไทย/อังกฤษแล้ว)
-    ".jpg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
-    ".jpeg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
-    ".png": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    # # สำหรับรูปภาพ (ใช้ UnstructuredFileLoader ที่ถูกแก้ไขให้เปิด OCR ภาษาไทย/อังกฤษแล้ว)
+    # ".jpg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    # ".jpeg": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    # ".png": lambda p: _load_document_with_loader(p, UnstructuredFileLoader),
+    ".jpg": lambda p: _load_document_with_loader(p, TextLoader), 
+    ".jpeg": lambda p: _load_document_with_loader(p, TextLoader),
+    ".png": lambda p: _load_document_with_loader(p, TextLoader),
 }
 
 # -------------------- Normalization utility --------------------
@@ -922,6 +1005,7 @@ def ingest_all_files(
                 logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
     else:
         max_workers = os.cpu_count() or 4
+        # max_workers = 1
         logger.info(f"Using ThreadPoolExecutor with max_workers={max_workers}")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {executor.submit(_process_file_task, fi): fi for fi in files_to_process}
@@ -1198,7 +1282,7 @@ def list_documents(
                     "enabler": resolved_enabler, 
                     "upload_date": upload_date,
                     "chunk_count": chunk_count,
-                    "status": "Ingested" if is_ingested else "Failed", 
+                    "status": "Ingested" if is_ingested else "Pending", 
                     "size": file_size,
                 }
                 all_docs[final_doc_id] = doc_info

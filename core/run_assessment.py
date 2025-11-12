@@ -1,3 +1,4 @@
+#run_assessment.py
 import os
 import sys
 import logging
@@ -50,6 +51,21 @@ logging.basicConfig(
 
 # -------------------- MOCK COUNTER --------------------
 _MOCK_EVALUATION_COUNTER = 0
+
+def get_default_assessment_file_paths(enabler_abbr: str) -> Dict[str, str]:
+    """สร้างพาธไฟล์ตั้งค่าที่ใช้ในปัจจุบันสำหรับ Enabler."""
+    BASE_DIR = os.path.abspath(os.path.join(project_root, "assessments", "evidence_checklist"))
+    
+    # 🚨 Note: พาธนี้สมมติว่า run_assessment.py อยู่ใน assessments/
+    # และ evidence_checklist อยู่ใน assessments/evidence_checklist
+    
+    return {
+        "evidence_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json"),
+        "rubric_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json"),
+        "level_fractions_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json"),
+        # ใช้ mapping_new.json เป็นค่า default
+        "mapping_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json"), 
+    }
 
 # -------------------- SUB CRITERIA UTILITIES & ACTION PLAN --------------------
 def get_sub_criteria_data(sub_id: str, criteria_list: List[Dict]) -> Dict:
@@ -239,12 +255,19 @@ def run_assessment_process(
     llm_summarize_func = summarize_context_with_llm_MOCK if original_mode == "mock" else None
     llm_action_plan_func = create_structured_action_plan_MOCK if original_mode == "mock" else None
 
+    file_paths = get_default_assessment_file_paths(enabler)
+
     # -------------------- Load Vectorstore --------------------
     try:
         # ... (โค้ด Load Vectorstore เหมือนเดิม) ...
         if mode == "real" and external_retriever is None:
             logger.warning("⚠️ Running in REAL mode without external retriever. Loading vector store inside function (slow).")
-            temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
+            # temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
+            # evidence_mapping_data = temp_loader.evidence_mapping_data or {}
+
+            temp_loader = EnablerAssessment(enabler_abbr=enabler, 
+                                            vectorstore_retriever=None, 
+                                            mapping_file_path=file_paths['mapping_file_path']) 
             evidence_mapping_data = temp_loader.evidence_mapping_data or {}
 
             # Filter document IDs
@@ -285,7 +308,10 @@ def run_assessment_process(
             enabler_loader = temp_loader
         else:
             # 🛑 ถ้าโหลด Vectorstore สำเร็จ ให้สร้าง EnablerAssessment ด้วย retriever ที่โหลดมา
-            enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever) 
+            # enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever) 
+            enabler_loader = EnablerAssessment(enabler_abbr=enabler, 
+                                                vectorstore_retriever=retriever,
+                                                **file_paths)
 
         filtered_evidence = enabler_loader.evidence_data
         if sub_criteria_id != "all":
@@ -334,7 +360,8 @@ def run_assessment_process(
         mock_llm_eval_func=llm_eval_func,
         mock_llm_summarize_func=llm_summarize_func,
         mock_llm_action_plan_func=llm_action_plan_func,
-        disable_semantic_filter=disable_semantic_filter
+        disable_semantic_filter=disable_semantic_filter,
+        **file_paths
     )
 
     if original_mode == "mock":

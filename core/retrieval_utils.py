@@ -137,9 +137,12 @@ def retrieve_context_with_filter(
     stable_doc_ids: Optional[list] = None, 
     top_k_reranked: int = FINAL_K_RERANKED, 
     disable_semantic_filter: bool = False,
-    allow_fallback: bool = False
+    allow_fallback: bool = True
 ) -> dict:
-
+    """
+    Retrieve relevant documents with optional hard filter and rerank.
+    Safe fallback if hard filter or rerank fail.
+    """
     try:
         manager = VectorStoreManager()
         collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}" \
@@ -149,79 +152,87 @@ def retrieve_context_with_filter(
             logger.error(f"❌ Vectorstore '{collection_name}' not found.")
             return {"top_evidences": []}
 
-        # Hard filter
+        # --- Hard filter (without lower()) ---
         where_clause = None
         if stable_doc_ids:
-            stable_doc_ids_normalized = [doc_id.lower() for doc_id in stable_doc_ids]
             collection = getattr(vectorstore, "_collection", None)
             if collection:
                 try:
                     test_results = collection.get(
-                        where={"stable_doc_uuid": {"$in": stable_doc_ids_normalized}},
+                        where={"stable_doc_uuid": {"$in": stable_doc_ids}},
                         include=["metadatas"]
                     )
                     if len(test_results.get("ids", [])) > 0:
-                        where_clause = {"stable_doc_uuid": {"$in": stable_doc_ids_normalized}}
+                        where_clause = {"stable_doc_uuid": {"$in": stable_doc_ids}}
                 except Exception as e:
                     logger.error(f"Hard filter failed: {e}")
                     if not allow_fallback:
                         return {"top_evidences": []}
+                    else:
+                        logger.warning("Allow fallback → ignoring hard filter")
 
-        # Base retriever
+        # --- Base retriever ---
         search_kwargs = {"k": INITIAL_TOP_K}
         if where_clause:
             search_kwargs["filter"] = where_clause
         base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
 
-        # -------------------------
-        # Rerank + truncate
-        # -------------------------
-        documents = base_retriever.invoke(query)
+        # --- Retrieve documents ---
+        try:
+            documents = base_retriever.invoke(query)
+        except Exception as e:
+            logger.error(f"Base retriever failed: {e}")
+            return {"top_evidences": []}
+
+        if not isinstance(documents, list):
+            documents = list(documents) if hasattr(documents, "__iter__") else []
+
+        # --- Rerank if enabled ---
         if not disable_semantic_filter:
-            # reranker = get_reranking_compressor(top_n=top_k_reranked)
             reranker = get_global_reranker(top_k_reranked)
             if reranker and hasattr(reranker, "rerank"):
                 try:
                     documents = reranker.rerank(query, documents)
                     logger.info(f"RAG Retrieval (Rerank) truncated to top {top_k_reranked}.")
                 except Exception as e:
-                    logger.warning(f"⚠️ Rerank failed: {e}. Using base retriever + truncate.")
+                    logger.warning(f"⚠️ Rerank failed: {e} → fallback to base retriever + truncate")
                     documents = documents[:top_k_reranked]
             else:
-                logger.warning("⚠️ Rerank unavailable. Using base retriever + truncate.")
+                logger.warning("⚠️ Rerank unavailable → using base retriever + truncate")
                 documents = documents[:top_k_reranked]
         else:
-            # Non-rerank
             documents = documents[:top_k_reranked]
             logger.info(f"RAG Retrieval (Non-Rerank) truncated to top {top_k_reranked}.")
 
-        # Format results
+        # --- Format top_evidences ---
         top_evidences = []
         for doc in documents:
             if not isinstance(doc, LcDocument):
                 continue
             metadata = doc.metadata or {}
-            if not metadata.get("source"):
-                uuid_ref = metadata.get("stable_doc_uuid", "")[:8]
-                metadata["source"] = f"Unknown_Source_{uuid_ref}" if uuid_ref else "Unknown_Source"
+            # Ensure basic fields
+            metadata["stable_doc_uuid"] = metadata.get("stable_doc_uuid") or getattr(doc, "id", "N/A")
+            metadata["source"] = metadata.get("source") or metadata.get("file_name") or f"Unknown_Source_{metadata['stable_doc_uuid'][:8]}"
+            metadata["file_name"] = metadata.get("file_name") or metadata["source"]
             if "page_label" not in metadata and "page" in metadata:
                 metadata["page_label"] = str(metadata["page"])
             if "chunk_index" not in metadata and "chunk_id" in metadata:
                 metadata["chunk_index"] = metadata.get("chunk_id")
-            if not metadata.get("file_name"):
-                metadata["file_name"] = metadata.get("source")
+
             top_evidences.append({
-                "content": doc.page_content,
+                "content": doc.page_content or "",
                 "metadata": metadata
             })
+
+        logger.info(f"_retrieve_context: top_evidences={len(top_evidences)}")
+        for i, te in enumerate(top_evidences):
+            logger.info(f"  source={te['metadata'].get('source')} uuid={te['metadata'].get('stable_doc_uuid')} snippet_preview={te['content'][:50]}...")
 
         return {"top_evidences": top_evidences}
 
     except Exception as e:
         logger.error(f"Error in retrieve_context_with_filter: {e}", exc_info=True)
         return {"top_evidences": []}
-
-
     
 # ------------------------------------------------------------------
 # Robust JSON Extraction
@@ -536,12 +547,6 @@ def evaluate_with_llm(
         "status_th": status_th,
         "enabler": enabler_name or "N/A"
     }
-
-# =================================================================
-# Narrative & Evidence Summary
-# =================================================================
-# ... (โค้ด generate_narrative_report_via_llm_real เดิม) ...
-# ... (โค้ด generate_evidence_description_via_llm เดิม) ...
 
 def generate_narrative_report_via_llm_real(prompt_text: str, system_instruction: str) -> str:
     if llm_instance is None:
