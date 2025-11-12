@@ -64,7 +64,7 @@ def get_default_assessment_file_paths(enabler_abbr: str) -> Dict[str, str]:
         "rubric_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json"),
         "level_fractions_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json"),
         # ใช้ mapping_new.json เป็นค่า default
-        "mapping_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json"), 
+        "mapping_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json"), 
     }
 
 # -------------------- SUB CRITERIA UTILITIES & ACTION PLAN --------------------

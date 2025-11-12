@@ -238,34 +238,29 @@ def retrieve_context_with_filter(
 # Robust JSON Extraction
 # ------------------------------------------------------------------# 
 
+# ------------------------------------------------------------------
+# Robust JSON Extraction
+# ------------------------------------------------------------------# 
+
 def _robust_extract_json(text: str) -> Optional[Any]:
     """
     Attempts to extract a complete and valid JSON object from text.
+    ✅ FIX: เพิ่มการลองใช้ json5.loads เป็น fallback
     """
     if not text:
         return None
 
     cleaned_text = text.strip()
 
-    # 1. ลบ code fences (```json, ```, ฯลฯ)
+    # 1. ลบ code fences และคำนำหน้า
     cleaned_text = re.sub(r'^\s*```(?:json)?\s*', '', cleaned_text, flags=re.MULTILINE | re.IGNORECASE)
     cleaned_text = re.sub(r'\s*```\s*$', '', cleaned_text, flags=re.MULTILINE)
-    
-    # ลบคำว่า "json" หรือ "output" นำหน้า
     cleaned_text = re.sub(r'^\s*(?:json|output|result)\s*', '', cleaned_text, flags=re.IGNORECASE)
 
-    # 2. ลองโหลดทันที
-    try:
-        return json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        pass # ถ้าโหลดไม่ได้ ให้ทำขั้นตอนต่อไป
+    json_candidate = cleaned_text
     
-    # -----------------------------------------------------------
-    # ✅ FIX: Logic การค้นหา JSON Object ภายในข้อความ Narrative
-    # -----------------------------------------------------------
+    # 2. ลองหา JSON object/array ที่ถูกตัดมา
     try:
-        # 2.1 ค้นหาตำแหน่งของ '{' ตัวแรก และ '}' ตัวสุดท้าย
-        
         # ลองค้นหา Object JSON (Dictionary)
         start_index = cleaned_text.find('{')
         end_index = cleaned_text.rfind('}')
@@ -279,12 +274,22 @@ def _robust_extract_json(text: str) -> Optional[Any]:
             # ตัดเอาเฉพาะส่วนที่อยู่ระหว่างวงเล็บ/วงเล็บเหลี่ยมเปิดตัวแรกและปิดตัวสุดท้าย
             json_candidate = cleaned_text[start_index : end_index + 1]
             
-            # พยายามโหลด JSON ที่ถูกตัดมา
-            return json.loads(json_candidate)
-
-    except (json.JSONDecodeError, Exception) as e:
-        logger.debug(f"JSON extraction failed even with robust search: {e}")
-        return None
+            # พยายามโหลด JSON ที่ถูกตัดมาด้วยมาตรฐาน (json) ก่อน
+            try:
+                return json.loads(json_candidate)
+            except json.JSONDecodeError:
+                pass # ถ้าโหลดไม่ได้ ให้ลองด้วย json5 ในขั้นตอนต่อไป
+    except (Exception):
+        pass 
+    
+    # 3. หากการโหลดมาตรฐานล้มเหลว (ทั้งแบบเต็มและแบบตัด) ให้ลองใช้ json5
+    if json_candidate:
+        try:
+            # 💡 FIX: ใช้ json5.loads ที่ทนทานกว่า
+            return json5.loads(json_candidate)
+        except Exception as e:
+            logger.debug(f"JSON extraction failed even with json5: {e}")
+            pass # หาก json5 ยังล้มเหลว
 
     # หากล้มเหลวทุกอย่าง
     return None
@@ -426,6 +431,10 @@ def extract_uuids_from_llm_response(
 MAX_LLM_RETRIES = 3
 # =================================================================
 
+# ------------------------------------------------------------------
+# LLM Assessment & Summary Functions (with FIXES)
+# ------------------------------------------------------------------
+
 def evaluate_with_llm(
     statement: str,
     context: str,
@@ -436,7 +445,7 @@ def evaluate_with_llm(
     """
     ประเมิน Statement เทียบกับ Standard ของ Enabler ที่กำหนด โดยใช้ Evidence Context ที่ดึงจากระบบ RAG
     
-    ✅ FIX: กลับไปใช้ Logic เดิม (ดึงค่า JSON โดยตรง) พร้อมเพิ่มความยืดหยุ่นในการดึง Field
+    ✅ FIX: ปรับปรุงการเรียก LLM ให้บังคับ JSON Format โดยการใช้ _fetch_llm_response และรวม Schema
     """
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
 
@@ -478,23 +487,47 @@ def evaluate_with_llm(
         context=context if context else "ไม่พบหลักฐานในเอกสารที่เกี่ยวข้อง"
     )
 
-    # -------------------- CALL LLM --------------------
+    # 💡 NEW: เตรียม System Prompt ที่รวม JSON Schema เพื่อบังคับ Format
+    try:
+        # 1. รวม Schema
+        schema_dict = StatementAssessment.model_json_schema() 
+        schema_json = json.dumps(schema_dict, indent=2, ensure_ascii=False)
+    except Exception:
+        # Fallback ในกรณีที่ไม่สามารถดึง Schema ได้
+        schema_json = '{"score": 0, "reason": "Detailed reasoning for the score."}' 
+        
+    system_prompt_with_schema = (
+        SYSTEM_ASSESSMENT_PROMPT
+        + "\n\n--- REQUIRED JSON SCHEMA ---\n"
+        + schema_json
+        + "\n\n🧠 IMPORTANT: Respond ONLY in valid JSON format following the schema above. DO NOT include any narrative text, introduction, or markdown fences (```json, ```) outside the JSON object itself."
+    )
+
+    # -------------------- CALL LLM (with robust retry) --------------------
     for attempt in range(MAX_LLM_RETRIES):
         try:
-            response = llm_instance.invoke(
-                [SystemMessage(content=SYSTEM_ASSESSMENT_PROMPT), HumanMessage(content=user_prompt_content)],
-                **({'format': 'json'} if hasattr(llm_instance, 'model_params') and 'format' in llm_instance.model_params else {})
+            # 🎯 FIX: ใช้ _fetch_llm_response เพื่อเรียก LLM และได้ Raw Response
+            llm_response_content = _fetch_llm_response(
+                prompt=user_prompt_content,
+                system_prompt=system_prompt_with_schema,
+                max_retries=1 # Retry logic ถูกจัดการโดย loop นอกนี้
             )
+            
+            if not llm_response_content:
+                 raise ConnectionError("LLM returned empty response.")
 
-            llm_response_content = response.content if hasattr(response, 'content') else str(response)
+            # 1. พยายามดึง JSON โดยวิธีที่ทนทานต่อ ```json
             llm_output = _robust_extract_json(llm_response_content)
 
             if not llm_output or not isinstance(llm_output, dict):
-                raise ValueError("LLM response did not contain a recognizable JSON block.")
+                 # 2. หากไม่สำเร็จ ลอง parse raw response โดยตรง (กรณีที่ LLM ตอบเป็น JSON เปลือย)
+                try:
+                    llm_output = json.loads(clean_llm_response(llm_response_content))
+                except Exception:
+                    # หากทั้งสองวิธีล้มเหลว ให้โยน Error ออกไปเพื่อทำการ Retry
+                    raise ValueError("LLM response did not contain a recognizable JSON block or failed direct parsing.")
 
             # 🎯 FIX: จัดการ Key Nomalization สำหรับ StatementAssessment โดยตรง 
-            # (เนื่องจาก Logic เดิมทำงานได้ดีและเราไม่ต้องการ Pydantic Error ใหม่)
-            
             # 1. ดึงคะแนน: รับทั้ง 'llm_score' และ 'score'
             raw_score = llm_output.get("llm_score", llm_output.get("score"))
             
@@ -654,16 +687,17 @@ def _fetch_llm_response(prompt: str, system_prompt: str, max_retries: int = 1) -
     config_params = {"temperature": 0.0}
     
     # 🟢 เพิ่มการตั้งค่า JSON format หากเป็นไปได้
+    # (ใช้สำหรับ Langchain LLM ที่รองรับ 'format' ใน model_params)
     if hasattr(llm_instance, 'model_params') and 'format' in llm_instance.model_params:
          config_params.update({'format': 'json'})
          
     # 🎯 FIX 2: สำหรับ Local LLM บางตัว (เช่น Ollama) อาจต้องใส่คำสั่งใน System Prompt เพิ่ม
-    system_prompt_with_json_ins = system_prompt + "\n\n--- IMPORTANT RULE ---\nOutput MUST be a single, valid JSON object that strictly adheres to the schema. DO NOT include any narrative text, introduction, or markdown fences (```json, ```) outside the JSON object itself."
-
+    # คำสั่งนี้ถูกรวมไว้ใน system_prompt ที่เรียกมาจาก evaluate_with_llm หรือ summarize_context_with_llm แล้ว
+    
     for attempt in range(max_retries):
         try:
             response = llm_instance.invoke(
-                [SystemMessage(content=system_prompt_with_json_ins), HumanMessage(content=prompt)], 
+                [SystemMessage(content=system_prompt), HumanMessage(content=prompt)], 
                 config=config_params 
             )
             # Return raw content string
@@ -703,9 +737,7 @@ def create_structured_action_plan(
     if _MOCK_CONTROL_FLAG:
         return [{"Mock": "Action Plan"}]
 
-    # -------------------------
-    # 1. Prepare failed statements text
-    # -------------------------
+    # ... (ส่วนที่ 1 และ 2 เหมือนเดิม) ...
     failed_statements_text = []
     for data in failed_statements_data:
         stmt_num = data.get("statement_number", "N/A")
@@ -741,7 +773,12 @@ Evidence Snippet: {retrieved_context}
         schema_json = json.dumps(schema_dict, indent=2, ensure_ascii=False)
     except Exception:
         schema_json = "{}"
-    system_prompt_content = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- REQUIRED JSON SCHEMA ---\n" + schema_json
+    system_prompt_content = (
+        SYSTEM_ACTION_PLAN_PROMPT 
+        + "\n\n--- REQUIRED JSON SCHEMA ---\n" 
+        + schema_json
+        + "\n\n🧠 IMPORTANT: Respond ONLY in valid JSON format following the schema above. DO NOT include any narrative text, introduction, or markdown fences (```json, ```) outside the JSON object itself."
+    )
 
     # -------------------------
     # 3. Call LLM with retries
@@ -764,15 +801,12 @@ Evidence Snippet: {retrieved_context}
             )
             cleaned_response = clean_llm_response(llm_full_response)
 
-            # Try normal JSON parse first
-            try:
-                validated_data = parse_llm_json_response(cleaned_response, ActionPlanActions)
-            except Exception:
-                # fallback: use json5 (more tolerant)
-                validated_data = parse_llm_json_response(json5.loads(cleaned_response), ActionPlanActions)
-
+            # 💡 FIX: เรียกใช้ parse_llm_json_response เพียงครั้งเดียว
+            # ซึ่งจะจัดการ robust JSON extraction (รวม json5) และ key normalization ให้
+            validated_data = parse_llm_json_response(cleaned_response, ActionPlanActions)
+            
             if validated_data is None:
-                raise ValueError("JSON parsing returned None unexpectedly.")
+                raise ValueError("JSON parsing returned None unexpectedly (after robust extraction).")
 
             logger.info(f"🎉 Action Plan created successfully on Attempt {attempt+1}!")
             return validated_data.model_dump()
@@ -784,6 +818,7 @@ Evidence Snippet: {retrieved_context}
             if attempt == max_retries:
                 logger.error(f"[ERROR] Failed to generate Action Plan via LLM for {sub_id}: {final_error}")
 
+    # ... (ส่วนที่ 4 Fallback เหมือนเดิม) ...
     # -------------------------
     # 4. Fallback
     # -------------------------

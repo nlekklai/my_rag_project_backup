@@ -54,6 +54,30 @@ if not logger.handlers:
 DEFAULT_LEVEL_FRACTIONS = {"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6, "4": 0.85, "5": 1.0, "MAX_LEVEL_FRACTION": 1.0}
 
 
+def clean_for_display(retrieved_text: str) -> str:
+    """
+    Cleans up the segmented text retrieved from the vector store for final display 
+    by removing '|' and cleaning up excessive spaces/artifacts.
+    """
+    if not retrieved_text:
+        return ""
+        
+    # 1. แทนที่ตัวแบ่งคำ '|' ด้วยช่องว่างปกติ
+    text = retrieved_text.replace('|', ' ') 
+
+    # 2. ลบช่องว่างที่เกิดจากการทำความสะอาดมากเกินไป และรวมช่องว่างที่เกินสองช่องให้เหลือช่องว่างเดียว
+    text = re.sub(r'\s{2,}', ' ', text)
+    
+    # 3. ลบอักขระขึ้นบรรทัดใหม่ที่เกินความจำเป็น (เหลือไม่เกิน 2 บรรทัดติดกัน)
+    text = re.sub(r'(\n|\r\n|\r){2,}', '\n\n', text)
+    
+    # 4. ลบช่องว่างก่อน/หลังเครื่องหมายวรรคตอนที่อาจหลงเหลืออยู่จาก Segmentation/OCR
+    text = re.sub(r'\s*([.,:;])\s*', r'\1 ', text) # จัดการกับ . , : ; 
+    text = text.replace(' )', ')').replace('( ', '(')
+    
+    return text.strip()
+
+
 # -------------------- EnablerAssessment Class --------------------
 
 class EnablerAssessment:
@@ -293,12 +317,15 @@ class EnablerAssessment:
                             location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
 
                         snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
+                        cleaned_snippet = clean_for_display(snippet) 
+                        cleaned_full_content = clean_for_display(doc_content) # <<< NEW: ทำความสะอาด Content เต็ม
+
                         retrieved_sources_list.append({
                             "source_name": source_name,
                             "doc_id": doc_id,
                             "location": location_value, 
-                            "snippet_for_display": snippet, 
-                            "content": doc_content
+                            "snippet_for_display": cleaned_snippet, 
+                            "content": cleaned_full_content
                         })
 
                         if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:

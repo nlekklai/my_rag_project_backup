@@ -30,7 +30,6 @@ DEFAULT_DOC_TYPES = "document"
 # DEFAULT_DOC_TYPES = ["document"]
 
 
-
 # ==================== Enabler Configuration ====================
 DEFAULT_ENABLER = "KM"
 SUPPORTED_ENABLERS = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
