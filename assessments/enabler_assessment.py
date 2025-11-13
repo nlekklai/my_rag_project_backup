@@ -79,7 +79,6 @@ def clean_for_display(retrieved_text: str) -> str:
 
 
 # -------------------- EnablerAssessment Class --------------------
-
 class EnablerAssessment:
 
     def __init__(self,
@@ -103,10 +102,10 @@ class EnablerAssessment:
                  mapping_file_path: Optional[str] = None):
         
         # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
-        # 🟢 FIX: เพิ่ม Logger Instance
         self.logger = logging.getLogger(__name__) # 🎯 ต้องเพิ่มบรรทัดนี้
         self.MAX_CONTEXT_LENGTH = 35000 
         self.MAX_SNIPPET_LENGTH = 300
+        # NOTE: FINAL_K_RERANKED, FINAL_K_NON_RERANKED ต้องถูกกำหนดใน Scope ภายนอก/Global
         self.FINAL_K_RERANKED = FINAL_K_RERANKED 
         self.FINAL_K_NON_RERANKED = FINAL_K_NON_RERANKED 
         self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" 
@@ -117,28 +116,45 @@ class EnablerAssessment:
         self.enabler_abbr = enabler_abbr.upper()
         
         self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
-        self.EVIDENCE_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
-        self.RUBRIC_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
-        self.LEVEL_FRACTIONS_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json")
-        self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
-        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json")
+        
+        # 🟢 [FIX 2] กำหนด File Paths โดยใช้ค่าจากพารามิเตอร์ก่อนเสมอ
+        
+        # A. Evidence File
+        default_evidence_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
+        self.EVIDENCE_FILE = evidence_file_path or default_evidence_file
+        
+        # B. Rubric File
+        default_rubric_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
+        self.RUBRIC_FILE = rubric_file_path or default_rubric_file
 
+        # C. Level Fractions File
+        default_level_fractions_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json")
+        self.LEVEL_FRACTIONS_FILE = level_fractions_file_path or default_level_fractions_file
+        
+        # D. Mapping File (แก้ไขตามคำขอ: ใช้ค่าที่ส่งมาแทน Hardcode เดิม)
+        default_mapping_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
+        self.MAPPING_FILE = mapping_file_path or default_mapping_file
+        
+        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json") # ถูกคอมเมนต์ไว้ตามเดิม
+        
+        # 2. โหลดข้อมูล (ใช้ self.XXX_FILE ที่ถูกกำหนดใหม่แล้ว)
         self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
         default_rubric = {self.enabler_rubric_key: {"levels": []}}
         self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
+        # NOTE: DEFAULT_LEVEL_FRACTIONS ต้องถูกกำหนดใน Scope ภายนอก/Global
         self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
         self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={}) 
         
         self.vectorstore_retriever = vectorstore_retriever
         
-        # 2. Attributes สำหรับ Filter และ Control
+        # 3. Attributes สำหรับ Filter และ Control
         self.use_mapping_filter = use_mapping_filter
         self.target_sub_id = target_sub_id
         
         self.disable_semantic_filter = disable_semantic_filter 
         self.allow_fallback = allow_fallback 
         
-        # 3. Attributes สำหรับ Mocking
+        # 4. Attributes สำหรับ Mocking
         self.mock_llm_eval_func = mock_llm_eval_func
         self.mock_llm_summarize_func = mock_llm_summarize_func
         self.mock_llm_action_plan_func = mock_llm_action_plan_func
@@ -146,6 +162,7 @@ class EnablerAssessment:
         self.raw_llm_results: List[Dict] = []
         self.final_subcriteria_results: List[Dict] = []
         
+        # NOTE: _prepare_rubric_map ต้องถูกกำหนดในคลาส EnablerAssessment
         self.global_rubric_map: Dict[int, Dict[str, str]] = self._prepare_rubric_map()
 
     # ----------------------------

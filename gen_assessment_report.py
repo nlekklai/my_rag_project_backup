@@ -616,9 +616,8 @@ def generate_raw_details_report_txt(raw_data: Optional[Dict[str, Any]], report_l
             
     report_lines.append("\n" + "="*80)
 
-
 # ==========================
-# 5. MAIN EXECUTION
+# 5. MAIN EXECUTION (Revised and Improved)
 # ==========================
 def main():
     """ฟังก์ชันหลักในการสร้างรายงานทั้งหมด"""
@@ -626,18 +625,21 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Comprehensive Assessment Reports.")
     parser.add_argument("--mode", choices=["all", "sub"], default="all", help="all: Generate full report. sub: Generate report for a specific sub-criteria.")
     parser.add_argument("--sub", type=str, help="SubCriteria ID (e.g., 2.2) if mode=sub.")
-    parser.add_argument("--summary_file", type=str, required=True, help="Path to the Summary JSON file.")
+    parser.add_argument("--summary_file", type=str, required=True, help="Path to the Strategic/Summary JSON file.")
     parser.add_argument("--raw_file", type=str, required=True, help="Path to the Raw Details JSON file.")
-    parser.add_argument("--output_docx", type=str, default="reports/KM_Comprehensive_Report.docx", help="Output path for the DOCX file prefix.")
-    parser.add_argument("--output_txt", type=str, default="reports/KM_Comprehensive_Report.txt", help="Output path for the TXT file.")
+    # เปลี่ยนชื่อ argument เพื่อใช้เป็น Output Directory และ Base Filename Prefix
+    parser.add_argument("--output_path", type=str, default="reports/KM_Comprehensive_Report", help="Output directory and base filename prefix (e.g., reports/KM_Comprehensive_Report).")
     
     args = parser.parse_args()
     
-    # 1. จัดการ Folder Output
-    setup_output_folder(args.output_docx)
+    # 1. จัดการ Folder Output และแยก Directory
+    output_dir = os.path.dirname(args.output_path)
+    if not output_dir:
+         output_dir = EXPORT_DIR # ใช้ Default หาก Path ไม่มี Directory
+    setup_output_folder(output_dir)
     
     # 2. โหลดไฟล์
-    summary_data = load_data(args.summary_file, "Summary Data")
+    summary_data = load_data(args.summary_file, "Strategic/Summary Data")
     raw_data = load_data(args.raw_file, "Raw Details Data") 
     
     if not summary_data:
@@ -645,54 +647,61 @@ def main():
         return
     
     # --- 3. ดึง ENABLER และกำหนดค่าเริ่มต้น ---
-    enabler_id = summary_data.get("Overall", {}).get("enabler", "GENERIC").upper()
+    enabler_id = summary_data.get("Overall", {}).get("enabler", "KM").upper() # ใช้ KM เป็น Default
     enabler_name_full = SEAM_ENABLER_MAP.get(enabler_id, f"Unknown Enabler ({enabler_id})")
     
     final_summary_data = summary_data
     final_raw_data = raw_data
-    output_docx_path = args.output_docx
-    output_txt_path = args.output_txt
     
-    # --- 4. การกรองข้อมูลสำหรับโหมด 'sub' ---
+    # --- 4. การจัดการชื่อไฟล์และการกรองข้อมูล ---
+    
+    # 4.1. กำหนด Base Filename Prefix
+    base_prefix = os.path.basename(args.output_path)
+    if not base_prefix or base_prefix == "KM_Comprehensive_Report":
+        base_prefix = f"{enabler_id}_Comprehensive_Report"
+        
+    # 4.2. การกรองข้อมูลสำหรับโหมด 'sub'
     if args.mode == "sub" and args.sub:
         sub_id = args.sub.upper()
         print(f"🔹 โหมด: รายงานเฉพาะเกณฑ์ย่อย {sub_id} สำหรับ {enabler_name_full}")
         
-        # 4.1. กรอง Summary Data
-        if sub_id not in summary_data.get("SubCriteria_Breakdown", {}):
-            print(f"⚠️ ไม่พบข้อมูลสำหรับเกณฑ์ย่อย {sub_id} ใน Summary Data. ใช้ข้อมูลทั้งหมดแทน.")
-        else:
+        # กรอง Summary Data (เพื่อให้ Section 3 และ 4 แสดงเฉพาะ Sub ที่เลือก)
+        if sub_id in summary_data.get("SubCriteria_Breakdown", {}):
             final_summary_data = {
                 "Overall": summary_data.get("Overall",{}),
-                "SubCriteria_Breakdown": {sub_id: summary_data["SubCriteria_Breakdown"].get(sub_id,{})},
+                "SubCriteria_Breakdown": {sub_id: summary_data["SubCriteria_Breakdown"][sub_id]},
                 "Action_Plans": {sub_id: summary_data.get("Action_Plans",{}).get(sub_id,[])}
             }
+        else:
+             print(f"⚠️ ไม่พบข้อมูลสำหรับเกณฑ์ย่อย {sub_id} ใน Summary Data. ใช้ข้อมูลทั้งหมดของ Summary แทน.")
             
-        # 4.2. กรอง Raw Data 
+        # กรอง Raw Data 
         if raw_data is not None:
-            # ดึง statements ทั้งหมดออกมาเป็น list ก่อน
             all_statements = flatten_raw_data(raw_data)
-            
-            # กรอง statements เฉพาะ sub_id ที่ต้องการ
             filtered_statements = [
                 stmt for stmt in all_statements 
                 if stmt.get("sub_criteria_id", "").upper() == sub_id
             ]
-            
-            # กำหนด final_raw_data เป็น List ของ Statements ที่ถูกกรองแล้ว
             final_raw_data = filtered_statements if filtered_statements else None
-                
-        # 4.3. กำหนดชื่อ Output ใหม่
-        report_prefix = f"{enabler_id}_Report_{sub_id}"
-        output_docx_path = os.path.join(os.path.dirname(output_docx_path), f"{report_prefix}.docx")
-        output_txt_path = os.path.join(os.path.dirname(output_txt_path), f"{report_prefix}.txt")
+            
+        # อัปเดต Base Prefix สำหรับโหมด Sub
+        base_prefix = f"{enabler_id}_Report_{sub_id}"
     
     else:
         print(f"🔹 โหมด: รายงานฉบับเต็มสำหรับ {enabler_name_full}")
+        
+    # 4.3. กำหนดชื่อ Output สุดท้าย (รวมวันที่)
+    final_base_name = f"{base_prefix}_{REPORT_DATE}"
+    
+    # สร้างชื่อไฟล์แยกตามประเภทและรวมวันที่
+    strategic_path = os.path.join(output_dir, f"{final_base_name}_Strategic.docx")
+    detail_path = os.path.join(output_dir, f"{final_base_name}_RawDetails.docx")
+    output_txt_path = os.path.join(output_dir, f"{final_base_name}.txt") # TXT คือฉบับรวม
 
     # --- A. การสร้างไฟล์ DOCX (แยกเป็น 2 ไฟล์: Strategic และ Raw Details) ---
     
     # 1. สร้าง Strategic Report (Sections 1-4)
+    print(f"\nกำลังสร้างไฟล์ DOCX [Strategic Report]...")
     strategic_doc = Document()
     setup_document(strategic_doc) 
     
@@ -706,12 +715,12 @@ def main():
     generate_action_plan_report_docx(strategic_doc, final_summary_data, gap_criteria_docx)
 
     # บันทึกไฟล์ Strategic Report
-    strategic_path = output_docx_path.rsplit('.', 1)[0] + "_Strategic.docx"
     strategic_doc.save(strategic_path)
     print(f"🎉 สร้างไฟล์ DOCX [Strategic Report] สำเร็จ! บันทึกที่: {strategic_path}")
 
 
     # 2. สร้าง Raw Details Working Document (Section 5)
+    print(f"กำลังสร้างไฟล์ DOCX [Raw Details]...")
     detail_doc = Document()
     setup_document(detail_doc) 
     detail_doc.add_heading(f"[SECTION 5] รายงานหลักฐานเชิงลึก (Raw Details) - {enabler_name_full} ({REPORT_DATE})", level=1)
@@ -719,25 +728,25 @@ def main():
     generate_raw_details_report_docx(detail_doc, final_raw_data) 
 
     # บันทึกไฟล์ Raw Details
-    detail_path = output_docx_path.rsplit('.', 1)[0] + "_RawDetails.docx"
     detail_doc.save(detail_path)
     print(f"🎉 สร้างไฟล์ DOCX [Raw Details] สำเร็จ! บันทึกที่: {detail_path}")
 
     # --- B. การสร้างไฟล์ TXT (ฉบับรวม 5 Sections) ---
+    print(f"\nกำลังสร้างไฟล์ TXT (ฉบับรวม)...")
     if os.path.exists(output_txt_path):
         os.remove(output_txt_path)
         
     txt_report_lines = []
     
-    # SECTION 1: Overall Summary
+    # SECTION 1: Overall Summary (TXT)
     generate_overall_summary_txt(final_summary_data, txt_report_lines, enabler_name_full) 
-    # SECTION 2: Executive Summary
+    # SECTION 2: Executive Summary (TXT)
     generate_executive_summary_txt(final_summary_data, txt_report_lines)
-    # SECTION 3: Sub-Criteria Status & Gap
+    # SECTION 3: Sub-Criteria Status & Gap (TXT)
     gap_criteria_txt = generate_sub_criteria_status_txt(final_summary_data, txt_report_lines)
-    # SECTION 4: Action Plan Report (พร้อม L4/L5 Summary)
+    # SECTION 4: Action Plan Report (พร้อม L4/L5 Summary) (TXT)
     generate_action_plan_report_txt(final_summary_data, gap_criteria_txt, txt_report_lines)
-    # SECTION 5: Raw Details (พร้อม Reason และ Source)
+    # SECTION 5: Raw Details (พร้อม Reason และ Source) (TXT)
     generate_raw_details_report_txt(final_raw_data, txt_report_lines) 
     
     # บันทึกไฟล์ TXT
