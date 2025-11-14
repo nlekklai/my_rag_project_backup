@@ -26,7 +26,8 @@ from core.vectorstore import (
     VectorStoreManager,
     load_all_vectorstores,
     GLOBAL_RERANKER, 
-    get_global_reranker
+    get_global_reranker,
+    _get_collection_name
 )
 
 
@@ -50,6 +51,7 @@ except ImportError as e:
     raise
 
 logger = logging.getLogger(__name__)
+
 
 # =================================================================
 # MOCKING LOGIC AND GLOBAL FLAGS
@@ -82,12 +84,16 @@ def normalize_stable_ids(ids: List[str]) -> List[str]:
             normalized.append(_hash_stable_id_to_64_char(i))
     return normalized
 
+
 # =================================================================
-# Document Retrieval
+# Document Retrieval (ปรับปรุง)
 # =================================================================
-def retrieve_context_by_doc_ids(doc_uuids: List[str], collection_name: str) -> Dict[str, Any]:
+# =================================================================
+# Document Retrieval (ปรับปรุงแก้ไข)
+# =================================================================
+def retrieve_context_by_doc_ids(doc_uuids: List[str], doc_type: str, enabler: Optional[str] = None) -> Dict[str, Any]:
     """
-    Retrieve documents by UUIDs from a specific collection (ใช้ 64-char Stable UUIDs)
+    Retrieve documents by UUIDs from a specific collection, calculating the collection name internally.
     """
     if VectorStoreManager is None:
         logger.error("❌ VectorStoreManager is not available.")
@@ -100,18 +106,29 @@ def retrieve_context_by_doc_ids(doc_uuids: List[str], collection_name: str) -> D
     try:
         manager = VectorStoreManager()
         
-        # 1. Normalize ID เป็น 64-char Stable UUIDs
+        # 🟢 [แก้ไข 1] ยังคงคำนวณชื่อ Collection เพื่อใช้ใน Log เท่านั้น
+        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
+        logger.info(f"Targeting collection: '{collection_name}' for UUID retrieval.")
+        
+        # 2. Normalize ID เป็น 64-char Stable UUIDs
         normalized_uuids = normalize_stable_ids(doc_uuids)
         
-        # 2. ดึงข้อมูลจาก Vector Store
-        docs: List[LcDocument] = manager.get_documents_by_id(normalized_uuids, doc_type=collection_name)
+        # 3. ดึงข้อมูลจาก Vector Store
+        # 🟢 [แก้ไข 2] ต้องส่ง doc_type และ enabler เดิม (ที่รับเข้ามา) ให้ manager
+        # เพื่อให้ get_documents_by_id คำนวณ collection_name เอง
+        docs: List[LcDocument] = manager.get_documents_by_id(
+            stable_doc_ids=normalized_uuids, 
+            doc_type=doc_type,          # <-- ใช้ doc_type เดิม
+            enabler=enabler             # <-- ใช้ enabler เดิม
+        )
 
-        # 3. จัดรูปแบบผลลัพธ์
+        # 4. จัดรูปแบบผลลัพธ์
         top_evidences = []
         for d in docs:
+            # ... (ส่วนนี้ใช้ได้แล้ว)
             meta = d.metadata
             top_evidences.append({
-                "doc_id": meta.get("doc_id"),              # 64-char Stable UUID
+                "doc_id": meta.get("stable_doc_uuid"), 
                 "doc_type": meta.get("doc_type"),
                 "chunk_uuid": meta.get("chunk_uuid"),      # ID เฉพาะของ Chunk
                 "source": meta.get("source") or meta.get("doc_source"), # ชื่อไฟล์/ที่มา
@@ -125,8 +142,7 @@ def retrieve_context_by_doc_ids(doc_uuids: List[str], collection_name: str) -> D
     except Exception as e:
         logger.error(f"Error during UUID-based retrieval: {e}", exc_info=True)
         return {"top_evidences": []}
-
-
+    
 # ------------------------------------------------------------------
 # RAG Retrieval with optional hard filter (ปรับปรุง rerank)
 # ------------------------------------------------------------------
@@ -145,8 +161,9 @@ def retrieve_context_with_filter(
     """
     try:
         manager = VectorStoreManager()
-        collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}" \
-                          if doc_type.lower() == "evidence" else doc_type.lower()
+        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
+        # collection_name = f"{doc_type}_{(enabler or DEFAULT_ENABLER).lower()}" \
+        #                   if doc_type.lower() == "evidence" else doc_type.lower()
         vectorstore = manager._load_chroma_instance(collection_name)
         if not vectorstore:
             logger.error(f"❌ Vectorstore '{collection_name}' not found.")
@@ -234,10 +251,6 @@ def retrieve_context_with_filter(
         logger.error(f"Error in retrieve_context_with_filter: {e}", exc_info=True)
         return {"top_evidences": []}
     
-# ------------------------------------------------------------------
-# Robust JSON Extraction
-# ------------------------------------------------------------------# 
-
 # ------------------------------------------------------------------
 # Robust JSON Extraction
 # ------------------------------------------------------------------# 

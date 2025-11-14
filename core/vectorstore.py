@@ -358,61 +358,65 @@ class VectorStoreManager:
                 logger.error(f"❌ Failed to load Chroma collection '{collection_name}': {e}")
                 return None
 
-    def get_documents_by_id(self, doc_uuids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
-        """
-        Retrieves chunks (Documents) from a specific Chroma collection 
-        using their internal Chroma UUIDs (chunk_uuid).
-        """
-        if isinstance(doc_uuids, str):
-            doc_uuids = [doc_uuids]
-            
-        doc_uuids = [uid for uid in doc_uuids if uid] # filter out None/empty strings
-        if not doc_uuids:
-            return []
-            
-        # Use the global helper to get the correct collection name
-        collection_name = _get_collection_name(doc_type, enabler)
-        chroma_instance = self._load_chroma_instance(collection_name)
+    def get_documents_by_id(self, stable_doc_ids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
+                """
+                Retrieves chunks (Documents) from a specific Chroma collection 
+                using their **Stable Document UUIDs** (64-char IDs).
+                """
+                # ... (ส่วนการเตรียม stable_doc_ids ยังคงเดิม)
+                if isinstance(stable_doc_ids, str):
+                    stable_doc_ids = [stable_doc_ids]
+                    
+                stable_doc_ids = [uid.strip() for uid in stable_doc_ids if uid]
+                if not stable_doc_ids:
+                    return []
+                    
+                collection_name = _get_collection_name(doc_type, enabler)
+                chroma_instance = self._load_chroma_instance(collection_name)
 
-        if not chroma_instance:
-            logger.warning(f"Cannot retrieve documents: Collection '{collection_name}' is not loaded.")
-            return []
-        
-        try:
-            # 1. Get collection client
-            # NOTE: We access the private attribute _collection as it's often the quickest way to the raw client
-            collection = chroma_instance._collection
-            
-            # 2. Fetch data by IDs
-            result = collection.get(
-                ids=doc_uuids,
-                include=['documents', 'metadatas'] 
-            )
-            
-            # 3. Process results into LangChain Documents
-            documents: List[LcDocument] = []
-            for i, text in enumerate(result.get('documents', [])):
-                if text:
-                    metadata = result.get('metadatas', [{}])[i]
-                    # Use ID from the Chroma result (which is the chunk UUID)
-                    chunk_uuid_from_result = result.get('ids', [''])[i]
+                if not chroma_instance:
+                    logger.warning(f"Cannot retrieve documents: Collection '{collection_name}' is not loaded.")
+                    return []
+                
+                try:
+                    collection = chroma_instance._collection
                     
-                    # Map chunk UUID back to the stable doc_id
-                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
+                    # 🟢 [FIX 1 - สำคัญ] ต้องเพิ่ม 'ids' เข้าไปใน include list 
+                    # เพื่อให้สามารถดึง chunk_uuid (ซึ่งอยู่ใน result.get('ids')) มาใช้ได้
+                    result = collection.get(
+                        where={"stable_doc_uuid": {"$in": stable_doc_ids}}, 
+                        include=['documents', 'metadatas'] # <--- ✅ แก้ไขตรงนี้
+                    )
                     
-                    # Ensure metadata contains necessary keys
-                    metadata["chunk_uuid"] = chunk_uuid_from_result
-                    metadata["doc_id"] = doc_id
-                    metadata["doc_type"] = doc_type # Use input doc_type
+                    # 3. Process results into LangChain Documents
+                    documents: List[LcDocument] = []
+                    # ตรวจสอบว่า result มี 'documents' และ 'ids' ในจำนวนที่เท่ากัน
+                    num_docs = len(result.get('documents', []))
                     
-                    documents.append(LcDocument(page_content=text, metadata=metadata))
-            
-            logger.info(f"✅ Retrieved {len(documents)} documents for {len(doc_uuids)} UUIDs from '{collection_name}'.")
-            return documents
-            
-        except Exception as e:
-            logger.error(f"❌ Error retrieving documents by UUIDs from collection '{collection_name}': {e}")
-            return []
+                    for i in range(num_docs):
+                        text = result['documents'][i]
+                        if text:
+                            # ดึง metadata, chunk_uuid ตาม index ที่ดึงมา
+                            metadata = result.get('metadatas', [{}])[i]
+                            chunk_uuid_from_result = result.get('ids', [''])[i]
+                            
+                            # 💡 ใช้ stable_doc_uuid จาก metadata ที่เราใช้ Filter
+                            doc_id = metadata.get("stable_doc_uuid", "UNKNOWN") 
+                            
+                            # Ensure metadata contains necessary keys
+                            metadata["chunk_uuid"] = chunk_uuid_from_result
+                            metadata["doc_id"] = doc_id
+                            metadata["doc_type"] = doc_type 
+                            
+                            documents.append(LcDocument(page_content=text, metadata=metadata))
+                    
+                    # 🟢 [FIX 2] เปลี่ยน Log ให้ชัดเจน
+                    logger.info(f"✅ Retrieved {len(documents)} documents for {len(stable_doc_ids)} Stable IDs from '{collection_name}'.")
+                    return documents
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error retrieving documents by Stable IDs from collection '{collection_name}': {e}")
+                    return []
 
 # -------------------- Retriever Creation --------------------
     def get_retriever(base_retriever, final_k: int = 5, use_rerank: bool = True) -> Any:

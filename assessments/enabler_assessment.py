@@ -7,6 +7,7 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Union, Tuple
 from core.action_plan_schema import ActionPlanActions, ActionItem, StepDetail
+from difflib import SequenceMatcher
 
 # -------------------- PATH SETUP --------------------
 try:
@@ -54,116 +55,86 @@ if not logger.handlers:
 DEFAULT_LEVEL_FRACTIONS = {"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6, "4": 0.85, "5": 1.0, "MAX_LEVEL_FRACTION": 1.0}
 
 
-def clean_for_display(retrieved_text: str) -> str:
-    """
-    Cleans up the segmented text retrieved from the vector store for final display 
-    by removing '|' and cleaning up excessive spaces/artifacts.
-    """
-    if not retrieved_text:
-        return ""
-        
-    # 1. แทนที่ตัวแบ่งคำ '|' ด้วยช่องว่างปกติ
-    text = retrieved_text.replace('|', ' ') 
-
-    # 2. ลบช่องว่างที่เกิดจากการทำความสะอาดมากเกินไป และรวมช่องว่างที่เกินสองช่องให้เหลือช่องว่างเดียว
-    text = re.sub(r'\s{2,}', ' ', text)
-    
-    # 3. ลบอักขระขึ้นบรรทัดใหม่ที่เกินความจำเป็น (เหลือไม่เกิน 2 บรรทัดติดกัน)
-    text = re.sub(r'(\n|\r\n|\r){2,}', '\n\n', text)
-    
-    # 4. ลบช่องว่างก่อน/หลังเครื่องหมายวรรคตอนที่อาจหลงเหลืออยู่จาก Segmentation/OCR
-    text = re.sub(r'\s*([.,:;])\s*', r'\1 ', text) # จัดการกับ . , : ; 
-    text = text.replace(' )', ')').replace('( ', '(')
-    
-    return text.strip()
-
-
-# -------------------- EnablerAssessment Class --------------------
+# -----------------------------
+# --- Context Cleaning Utility (ปรับปรุง FINAL) ---
+# -----------------------------
 class EnablerAssessment:
 
     def __init__(self,
-                 enabler_abbr: str, 
-                 evidence_data: Optional[List] = None,
-                 rubric_data: Optional[Dict] = None,
-                 level_fractions: Optional[Dict] = None,
-                 evidence_mapping_data: Optional[Dict] = None, 
-                 vectorstore_retriever=None,
-                 use_mapping_filter: bool = True,
-                 target_sub_id: Optional[str] = None,
-                 mock_llm_eval_func=None,
-                 mock_llm_summarize_func=None,
-                 mock_llm_action_plan_func=None,
-                 disable_semantic_filter: bool = False,
-                 allow_fallback: bool = False,
-                 # 🟢 [FIX 1] เพิ่มพารามิเตอร์สำหรับรับ File Paths
-                 evidence_file_path: Optional[str] = None,
-                 rubric_file_path: Optional[str] = None,
-                 level_fractions_file_path: Optional[str] = None,
-                 mapping_file_path: Optional[str] = None):
-        
-        # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
-        self.logger = logging.getLogger(__name__) # 🎯 ต้องเพิ่มบรรทัดนี้
-        self.MAX_CONTEXT_LENGTH = 35000 
-        self.MAX_SNIPPET_LENGTH = 300
-        # NOTE: FINAL_K_RERANKED, FINAL_K_NON_RERANKED ต้องถูกกำหนดใน Scope ภายนอก/Global
-        self.FINAL_K_RERANKED = FINAL_K_RERANKED 
-        self.FINAL_K_NON_RERANKED = FINAL_K_NON_RERANKED 
-        self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" 
+                    enabler_abbr: str, 
+                    evidence_data: Optional[List] = None,
+                    rubric_data: Optional[Dict] = None,
+                    level_fractions: Optional[Dict] = None,
+                    evidence_mapping_data: Optional[Dict] = None, 
+                    vectorstore_retriever=None,
+                    use_mapping_filter: bool = True,
+                    target_sub_id: Optional[str] = None,
+                    mock_llm_eval_func=None,
+                    mock_llm_summarize_func=None,
+                    mock_llm_action_plan_func=None,
+                    disable_semantic_filter: bool = False,
+                    allow_fallback: bool = False,
+                    # 🟢 [FIX 1] พารามิเตอร์สำหรับรับ File Paths
+                    evidence_file_path: Optional[str] = None,
+                    rubric_file_path: Optional[str] = None,
+                    level_fractions_file_path: Optional[str] = None,
+                    mapping_file_path: Optional[str] = None):
+            
+            # --- กำหนดค่า K-Values และ Context Length สำหรับใช้ภายในคลาส ---
+            self.logger = logging.getLogger(__name__) 
+            self.MAX_CONTEXT_LENGTH = 35000 
+            self.MAX_SNIPPET_LENGTH = 300
+            self.FINAL_K_RERANKED = FINAL_K_RERANKED 
+            self.FINAL_K_NON_RERANKED = FINAL_K_NON_RERANKED 
+            self.enabler_rubric_key = f"{enabler_abbr.upper()}_Maturity_Rubric" 
 
-        # --- การกำหนดค่า Attributes (สำคัญมาก) ---
-        
-        # 1. Attributes พื้นฐาน
-        self.enabler_abbr = enabler_abbr.upper()
-        
-        self.BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
-        
-        # 🟢 [FIX 2] กำหนด File Paths โดยใช้ค่าจากพารามิเตอร์ก่อนเสมอ
-        
-        # A. Evidence File
-        default_evidence_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
-        self.EVIDENCE_FILE = evidence_file_path or default_evidence_file
-        
-        # B. Rubric File
-        default_rubric_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
-        self.RUBRIC_FILE = rubric_file_path or default_rubric_file
+            # --- การกำหนดค่า Attributes (สำคัญมาก) ---
+            
+            # 1. Attributes พื้นฐาน
+            self.enabler_abbr = enabler_abbr.upper()
+            
+            # 2. คำนวณพาธ Fallback (ใช้ BASE_DIR เดิมที่ยืนยันว่าทำงานถูกต้อง)
+            BASE_DIR_FALLBACK = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "evidence_checklist"))
+            
+            # 3. 🟢 [FIX 2] กำหนดพาธ Fallback จาก BASE_DIR
+            EVIDENCE_FILE_FALLBACK = os.path.join(BASE_DIR_FALLBACK, f"{enabler_abbr.lower()}_evidence_statements_checklist.json")
+            RUBRIC_FILE_FALLBACK = os.path.join(BASE_DIR_FALLBACK, f"{enabler_abbr.lower()}_rating_criteria_rubric.json")
+            LEVEL_FRACTIONS_FILE_FALLBACK = os.path.join(BASE_DIR_FALLBACK, f"{enabler_abbr.lower()}_scoring_level_fractions.json")
+            MAPPING_FILE_FALLBACK = os.path.join(BASE_DIR_FALLBACK, f"{enabler_abbr.lower()}_evidence_mapping_new.json") # ใช้ pom.json ตามโค้ดเดิม
 
-        # C. Level Fractions File
-        default_level_fractions_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_scoring_level_fractions.json")
-        self.LEVEL_FRACTIONS_FILE = level_fractions_file_path or default_level_fractions_file
-        
-        # D. Mapping File (แก้ไขตามคำขอ: ใช้ค่าที่ส่งมาแทน Hardcode เดิม)
-        default_mapping_file = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_new.json")
-        self.MAPPING_FILE = mapping_file_path or default_mapping_file
-        
-        # self.MAPPING_FILE = os.path.join(self.BASE_DIR, f"{enabler_abbr.lower()}_evidence_mapping_pom.json") # ถูกคอมเมนต์ไว้ตามเดิม
-        
-        # 2. โหลดข้อมูล (ใช้ self.XXX_FILE ที่ถูกกำหนดใหม่แล้ว)
-        self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
-        default_rubric = {self.enabler_rubric_key: {"levels": []}}
-        self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
-        # NOTE: DEFAULT_LEVEL_FRACTIONS ต้องถูกกำหนดใน Scope ภายนอก/Global
-        self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
-        self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={}) 
-        
-        self.vectorstore_retriever = vectorstore_retriever
-        
-        # 3. Attributes สำหรับ Filter และ Control
-        self.use_mapping_filter = use_mapping_filter
-        self.target_sub_id = target_sub_id
-        
-        self.disable_semantic_filter = disable_semantic_filter 
-        self.allow_fallback = allow_fallback 
-        
-        # 4. Attributes สำหรับ Mocking
-        self.mock_llm_eval_func = mock_llm_eval_func
-        self.mock_llm_summarize_func = mock_llm_summarize_func
-        self.mock_llm_action_plan_func = mock_llm_action_plan_func
+            # 4. 🟢 [FIX 3] กำหนดพาธสุดท้ายที่จะใช้ (ใช้พาธที่ส่งเข้ามาเป็นอันดับแรก)
+            self.EVIDENCE_FILE = evidence_file_path if evidence_file_path else EVIDENCE_FILE_FALLBACK
+            self.RUBRIC_FILE = rubric_file_path if rubric_file_path else RUBRIC_FILE_FALLBACK
+            self.LEVEL_FRACTIONS_FILE = level_fractions_file_path if level_fractions_file_path else LEVEL_FRACTIONS_FILE_FALLBACK
+            self.MAPPING_FILE = mapping_file_path if mapping_file_path else MAPPING_FILE_FALLBACK
 
-        self.raw_llm_results: List[Dict] = []
-        self.final_subcriteria_results: List[Dict] = []
-        
-        # NOTE: _prepare_rubric_map ต้องถูกกำหนดในคลาส EnablerAssessment
-        self.global_rubric_map: Dict[int, Dict[str, str]] = self._prepare_rubric_map()
+            # 5. โหลดข้อมูลโดยใช้พาธที่ถูกเลือกแล้ว
+            # 💡 NOTE: เราต้องเพิ่มเมธอด _load_json_fallback ในคลาส EnablerAssessment ด้วย!
+            
+            self.evidence_data = evidence_data or self._load_json_fallback(self.EVIDENCE_FILE, default=[])
+            default_rubric = {self.enabler_rubric_key: {"levels": []}}
+            self.rubric_data = rubric_data or self._load_json_fallback(self.RUBRIC_FILE, default=default_rubric)
+            self.level_fractions = level_fractions or self._load_json_fallback(self.LEVEL_FRACTIONS_FILE, default=DEFAULT_LEVEL_FRACTIONS)
+            self.evidence_mapping_data = evidence_mapping_data or self._load_json_fallback(self.MAPPING_FILE, default={}) 
+            
+            self.vectorstore_retriever = vectorstore_retriever
+            
+            # 2. Attributes สำหรับ Filter และ Control
+            self.use_mapping_filter = use_mapping_filter
+            self.target_sub_id = target_sub_id
+            
+            self.disable_semantic_filter = disable_semantic_filter 
+            self.allow_fallback = allow_fallback 
+            
+            # 3. Attributes สำหรับ Mocking
+            self.mock_llm_eval_func = mock_llm_eval_func
+            self.mock_llm_summarize_func = mock_llm_summarize_func
+            self.mock_llm_action_plan_func = mock_llm_action_plan_func
+
+            self.raw_llm_results: List[Dict] = []
+            self.final_subcriteria_results: List[Dict] = []
+            
+            self.global_rubric_map: Dict[int, Dict[str, str]] = self._prepare_rubric_map()
 
     # ----------------------------
     # 1. _retrieve_context
@@ -234,16 +205,44 @@ class EnablerAssessment:
         top_evidences: list
     ) -> tuple[dict, str]:
         """
-        เลือกเอกสารและ snippet ที่ดีที่สุดจาก top_evidences
+        เลือกเอกสารและ snippet ที่ดีที่สุดจาก top_evidences โดยใช้ final_reason ในการเปรียบเทียบความคล้ายคลึง
         """
         if not top_evidences:
             self.logger.warning("No top_evidences found, returning empty fallback")
             return {"source": "Unknown", "uuid": "N/A", "snippet": "..."}, "..."
 
-        best_doc = top_evidences[0]
-        snippet_keys = ['text', 'content', 'chunk_text', 'snippet']
-        best_snippet = next((best_doc.get(k) for k in snippet_keys if best_doc.get(k)), "...")
+        best_doc = top_evidences[0] # ตั้งค่าเริ่มต้นเป็นเอกสารที่ถูกจัดอันดับสูงสุด
+        best_snippet = next((best_doc.get(k) for k in ['text', 'content', 'chunk_text', 'snippet'] if best_doc.get(k)), "...")
+        highest_similarity = -1.0
+        
+        # ใช้วิธีเปรียบเทียบความคล้ายคลึงของข้อความ (Ratio)
+        reason_clean = final_reason.strip().lower()
+        
+        if not reason_clean:
+            # หาก final_reason ว่าง ให้ใช้ top_evidences[0] ตามเดิม
+            self.logger.warning("final_reason is empty. Falling back to top_evidences[0].")
+        else:
+            for doc in top_evidences:
+                # ดึงเนื้อหาสั้น/ยาว ที่อาจเป็นหลักฐานที่ดี
+                snippet_keys = ['text', 'content', 'chunk_text', 'snippet']
+                current_snippet = next((doc.get(k) for k in snippet_keys if doc.get(k)), None)
 
+                if current_snippet:
+                    # ใช้ SequenceMatcher เพื่อวัดความคล้ายคลึงระหว่าง Reason กับ Snippet
+                    current_snippet_clean = current_snippet.strip().lower()
+                    
+                    # ใช้ ratio เพื่อเปรียบเทียบว่า snippet มีส่วนของ reason มากน้อยแค่ไหน
+                    sm = SequenceMatcher(None, reason_clean, current_snippet_clean)
+                    similarity_ratio = sm.ratio()
+
+                    if similarity_ratio > highest_similarity:
+                        highest_similarity = similarity_ratio
+                        best_doc = doc
+                        best_snippet = current_snippet
+                        
+            self.logger.info(f"🔍 Best Snippet Similarity Score: {highest_similarity:.3f}")
+
+        # ดึงข้อมูลของเอกสารที่ดีที่สุด
         best_doc_uuid = best_doc.get('uuid') or best_doc.get('metadata', {}).get('stable_doc_uuid') or best_doc.get('metadata', {}).get('doc_id', 'N/A')
         best_doc_source = best_doc.get('source') or best_doc.get('metadata', {}).get('source') or "Unknown"
 
@@ -334,15 +333,13 @@ class EnablerAssessment:
                             location_value = f"Chunk {chunk_idx}" if chunk_idx else "N/A"
 
                         snippet = doc_content[:self.MAX_SNIPPET_LENGTH]
-                        cleaned_snippet = clean_for_display(snippet) 
-                        cleaned_full_content = clean_for_display(doc_content) # <<< NEW: ทำความสะอาด Content เต็ม
 
                         retrieved_sources_list.append({
                             "source_name": source_name,
                             "doc_id": doc_id,
                             "location": location_value, 
-                            "snippet_for_display": cleaned_snippet, 
-                            "content": cleaned_full_content
+                            "snippet_for_display": snippet, 
+                            "content": doc_content
                         })
 
                         if context_length + len(doc_content) <= self.MAX_CONTEXT_LENGTH:

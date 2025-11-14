@@ -1,4 +1,3 @@
-#run_assessment.py
 import os
 import sys
 import logging
@@ -10,6 +9,7 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 from unittest.mock import patch
 
 # -------------------- PATH SETUP --------------------
+# 🚨 NOTE: run_assessment.py อยู่ใน core/ ดังนั้น project_root คือ directory แม่
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
@@ -54,10 +54,9 @@ _MOCK_EVALUATION_COUNTER = 0
 
 def get_default_assessment_file_paths(enabler_abbr: str) -> Dict[str, str]:
     """สร้างพาธไฟล์ตั้งค่าที่ใช้ในปัจจุบันสำหรับ Enabler."""
-    BASE_DIR = os.path.abspath(os.path.join(project_root, "assessments", "evidence_checklist"))
     
-    # 🚨 Note: พาธนี้สมมติว่า run_assessment.py อยู่ใน assessments/
-    # และ evidence_checklist อยู่ใน assessments/evidence_checklist
+    # 🟢 [FIXED PATH]: ใช้ project_root และ evidence_checklist โดยตรง
+    BASE_DIR = os.path.abspath(os.path.join(project_root, "evidence_checklist"))
     
     return {
         "evidence_file_path": os.path.join(BASE_DIR, f"{enabler_abbr.lower()}_evidence_statements_checklist.json"),
@@ -196,7 +195,7 @@ def _export_results_to_json(
     
     try:
         # 1. เตรียม Export Directory และ Timestamp
-        scope_prefix = f"_{sub_id}" if sub_id else "_All"
+        scope_prefix = f"_{sub_id}" if sub_id and sub_id != "all" else "_all"
         
         export_dir = os.path.abspath(os.path.join(project_root, "exports"))
         os.makedirs(export_dir, exist_ok=True)
@@ -256,30 +255,47 @@ def run_assessment_process(
     llm_action_plan_func = create_structured_action_plan_MOCK if original_mode == "mock" else None
 
     file_paths = get_default_assessment_file_paths(enabler)
+    
+    # 🟢 [NEW] Data container สำหรับเก็บข้อมูลที่โหลดจาก temp_loader
+    evidence_data_from_loader = []
+    evidence_mapping_data = {}
 
-    # -------------------- Load Vectorstore --------------------
+
+    # -------------------- Load Vectorstore & Mapping --------------------
     try:
-        # ... (โค้ด Load Vectorstore เหมือนเดิม) ...
         if mode == "real" and external_retriever is None:
             logger.warning("⚠️ Running in REAL mode without external retriever. Loading vector store inside function (slow).")
-            # temp_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=None)
-            # evidence_mapping_data = temp_loader.evidence_mapping_data or {}
-
+            
+            # 🟢 [FIX 1]: สร้าง temp_loader โดยส่ง **file_paths ทั้งหมด
             temp_loader = EnablerAssessment(enabler_abbr=enabler, 
                                             vectorstore_retriever=None, 
-                                            mapping_file_path=file_paths['mapping_file_path']) 
+                                            **file_paths) # 💡 ส่งพาธทั้งหมดเข้าไป
+            
+            # 💡 ดึง Evidence Data และ Mapping Data ที่โหลดมาแล้ว
+            evidence_data_from_loader = temp_loader.evidence_data or []
             evidence_mapping_data = temp_loader.evidence_mapping_data or {}
+            
+            # 💡 [DEBUG CHECK]: Log การโหลด Evidence
+            if not evidence_data_from_loader:
+                 logger.critical("❌ CRITICAL: temp_loader failed to load Evidence (Count: 0). Proceeding with vectorstore load only.")
+            else:
+                 logger.info(f"✅ temp_loader loaded Evidence successfully (Count: {len(evidence_data_from_loader)}).")
 
             # Filter document IDs
             file_ids_to_load = []
             if filter_mode and sub_criteria_id != "all":
+                if not evidence_mapping_data:
+                     logger.warning("⚠️ Warning: Mapping data is empty. Cannot apply document filtering.")
+                
                 for key, data in evidence_mapping_data.items():
                     if key.startswith(f"{sub_criteria_id}_L"):
-                        for ev in data.get(EVIDENCE_DOC_TYPES, []):
+                        # ใช้ EVIDENCE_DOC_TYPES เพื่อระบุคีย์
+                        for ev in data.get(EVIDENCE_DOC_TYPES, []): 
                             doc_uuid = ev.get('stable_doc_uuid', ev.get('doc_id'))
                             if doc_uuid:
                                 file_ids_to_load.append(doc_uuid)
-                logger.info(f"DEBUG: doc_ids to load for {sub_criteria_id}: {file_ids_to_load}")
+                logger.info(f"DEBUG: doc_ids to load for {sub_criteria_id}: {len(file_ids_to_load)} unique documents.")
+
 
             retriever = load_all_vectorstores(
                 doc_types=[EVIDENCE_DOC_TYPES],
@@ -299,55 +315,68 @@ def run_assessment_process(
         mode = "random"
         logger.warning(f"⚠️ MODE CHANGED TO: {mode.upper()} due to Vectorstore Load Failure.")
         # 🛑 ถ้าโหลดไม่สำเร็จ ให้สร้าง Engine ที่ไม่สมบูรณ์เพื่อคืนค่า (ถ้าจำเป็น)
-        assessment_engine = EnablerAssessment(enabler_abbr=enabler)
+        assessment_engine = EnablerAssessment(enabler_abbr=enabler, **file_paths)
 
 
     # -------------------- Load & Filter Evidence --------------------
     try:
         if 'temp_loader' in locals() and mode == "real" and external_retriever is None:
-            enabler_loader = temp_loader
+            # 💡 ใช้ข้อมูลที่โหลดมาแล้วจาก temp_loader
+            filtered_evidence = evidence_data_from_loader 
+            enabler_loader = temp_loader # ใช้ temp_loader เป็น loader หลัก
         else:
-            # 🛑 ถ้าโหลด Vectorstore สำเร็จ ให้สร้าง EnablerAssessment ด้วย retriever ที่โหลดมา
-            # enabler_loader = EnablerAssessment(enabler_abbr=enabler, vectorstore_retriever=retriever) 
+            # 🛑 ถ้าไม่ใช้ temp_loader ให้สร้าง loader ใหม่และใช้ **file_paths
             enabler_loader = EnablerAssessment(enabler_abbr=enabler, 
                                                 vectorstore_retriever=retriever,
                                                 **file_paths)
+            filtered_evidence = enabler_loader.evidence_data
 
-        filtered_evidence = enabler_loader.evidence_data
+        # 🟢 [DEBUG FIX] Log ตรวจสอบจำนวน Evidence ที่โหลดมา
+        logger.info(f"DEBUG: Initial Evidence loaded (enabler_loader.evidence_data count): {len(filtered_evidence)}")
+
+
         if sub_criteria_id != "all":
+            # 1. กรองตาม Sub-Criteria ID
+            initial_count = len(filtered_evidence)
             filtered_evidence = [e for e in filtered_evidence if e.get("Sub_Criteria_ID") == sub_criteria_id]
+            
+            # 2. กรองตาม Mapping (ถ้าเปิด filter_mode)
+            if filter_mode:
+                evidence_mapping_data_local = enabler_loader.evidence_mapping_data
+                valid_level_keys = {k for k, v in evidence_mapping_data_local.items() if k.startswith(sub_criteria_id) and v.get(EVIDENCE_DOC_TYPES)}
+                statements_to_assess = []
+                skipped_statements = 0
 
-        if filter_mode and sub_criteria_id != "all":
-            evidence_mapping_data = enabler_loader.evidence_mapping_data
-            valid_level_keys = {k for k, v in evidence_mapping_data.items() if k.startswith(sub_criteria_id) and v.get('evidences')}
-            statements_to_assess = []
-            skipped_statements = 0
+                for statement_dict in filtered_evidence:
+                    added = False
+                    for lvl in range(1, 6):
+                        level_key = f"{statement_dict['Sub_Criteria_ID']}_L{lvl}"
+                        # ตรวจสอบว่า statement นั้นอยู่ใน mapping หรือไม่ (มีการระบุเอกสารหลักฐาน)
+                        if level_key in valid_level_keys and statement_dict.get(f"Level_{lvl}_Statements"):
+                            statements_to_assess.append(statement_dict)
+                            added = True
+                            break
+                    if not added:
+                        skipped_statements += 1
 
-            for statement_dict in filtered_evidence:
-                added = False
-                for lvl in range(1, 6):
-                    level_key = f"{statement_dict['Sub_Criteria_ID']}_L{lvl}"
-                    if level_key in valid_level_keys and statement_dict.get(f"Level_{lvl}_Statements"):
-                        statements_to_assess.append(statement_dict)
-                        added = True
-                        break
-                if not added:
-                    skipped_statements += 1
-
-            filtered_evidence = statements_to_assess
+                filtered_evidence = statements_to_assess
+            else:
+                skipped_statements = initial_count - len(filtered_evidence)
+                
             logger.info(f"DEBUG: Statements after Strict Filter: {len(filtered_evidence)} (Skipped: {skipped_statements})")
 
     except Exception as e:
         # 🛑 ถ้าเกิด Error ในขั้นตอนนี้ และ assessment_engine ยังไม่ถูกสร้าง
         if assessment_engine is None:
-            assessment_engine = EnablerAssessment(enabler_abbr=enabler)
+            assessment_engine = EnablerAssessment(enabler_abbr=enabler, **file_paths)
         summary.update(assessment_engine.summarize_results())
         summary['Error'] = str(e)
         summary['mode_used'] = mode
         return summary, assessment_engine # 🛑 คืนค่า Engine ด้วย
 
 
-    # -------------------- Create Assessment Engine --------------------
+    # -------------------- Create Assessment Engine (ใช้ข้อมูลที่โหลด/กรองแล้ว) --------------------
+    # 💡 ใช้ filtered_evidence และ data จาก enabler_loader
     assessment_engine = EnablerAssessment(
         enabler_abbr=enabler,
         evidence_data=filtered_evidence,
@@ -361,7 +390,7 @@ def run_assessment_process(
         mock_llm_summarize_func=llm_summarize_func,
         mock_llm_action_plan_func=llm_action_plan_func,
         disable_semantic_filter=disable_semantic_filter,
-        **file_paths
+        **file_paths # 💡 ส่งพาธไฟล์ทั้งหมด
     )
 
     if original_mode == "mock":
@@ -374,7 +403,11 @@ def run_assessment_process(
 
     # -------------------- Run Assessment --------------------
     try:
-        assessment_engine.run_assessment()
+        if not filtered_evidence:
+            logger.warning(f"⚠️ No evidence statements found for Enabler: {enabler} and Sub-Criteria: {sub_criteria_id}. Skipping assessment.")
+        else:
+            assessment_engine.run_assessment(filtered_evidence) # ส่ง filtered_evidence เข้าไป
+
         
         # 🟢 NEW: ประมวลผลสถานะการผ่าน/ไม่ผ่านและดึง UUIDs
         assessment_engine._add_pass_status_and_extract_uuids()
@@ -395,7 +428,6 @@ def run_assessment_process(
         for sub_id, summary_data in summary.get('SubCriteria_Breakdown', {}).items():
             try:
                 action_plan = assessment_engine.generate_action_plan_sub(sub_id, enabler, summary_data, summary)
-                # print(f"🧩 DEBUG {sub_id} → ActionPlan: {action_plan}") # เอาบรรทัดนี้ออกเพื่อลด spam ใน log
                 if action_plan:
                     action_plans[sub_id] = action_plan
             except Exception as e:
@@ -433,7 +465,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(description="Automated Enabler Maturity Assessment System.")
         parser.add_argument("--mode", 
                             choices=["mock", "random", "real"], 
-                            default="mock",
+                            default="real", # 💡 เปลี่ยน default เป็น real
                             help="Assessment mode: 'mock', 'random', or 'real'.")
                             
         parser.add_argument("--enabler", 
@@ -459,7 +491,6 @@ if __name__ == "__main__":
                             action="store_true",
                             help="Disable semantic reranking / semantic filter in RAG (for debugging retrieval).")
         
-        # 🟢 [FIX 1] เพิ่ม Argument --allow-fallback เข้าไปใน argparse
         parser.add_argument("--allow-fallback",
                             action="store_true",
                             help="Allow assessment to fallback to a random/mock mode if a fatal error occurs during RAG/LLM.")
@@ -475,7 +506,6 @@ if __name__ == "__main__":
             filter_mode=args.filter,
             export=args.export,
             disable_semantic_filter=args.disable_semantic_filter,
-            # 🟢 [FIX 2] ส่ง allow_fallback โดยตรง
             allow_fallback=args.allow_fallback, 
             external_retriever=None
         )

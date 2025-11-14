@@ -103,12 +103,12 @@ try:
 except ImportError:
     from langchain_community.document_loaders import UnstructuredFileLoader
 
-try:
-    from pythainlp.tokenize import word_tokenize
-    THAI_SEGMENTATION_ENABLED = True
-except ImportError:
-    THAI_SEGMENTATION_ENABLED = False
-    logger.warning("PyThaiNLP not installed. Thai segmentation will be skipped.")
+# try:
+#     from pythainlp.tokenize import word_tokenize
+#     THAI_SEGMENTATION_ENABLED = True
+# except ImportError:
+#     THAI_SEGMENTATION_ENABLED = False
+#     logger.warning("PyThaiNLP not installed. Thai segmentation will be skipped.")
 
 # -------------------- Log Noise Suppression (NEW) --------------------
 # 📌 FIX: ปิดกั้น WARNINGs ที่ไม่จำเป็นจากไลบรารีภายนอก
@@ -280,56 +280,69 @@ def _normalize_doc_id(raw_id: str, file_content: bytes = None) -> str:
     return final_id
 
 
+# # -------------------- Text Cleaning --------------------
+# def _segment_thai_text(text: str) -> str:
+#     """
+#     Performs Thai word segmentation and uses a special separator (|) 
+#     instead of space to preserve word boundaries without adding excessive space.
+#     """
+#     if not THAI_SEGMENTATION_ENABLED:
+#         return text
+
+#     # ตรวจสอบว่ามีอักขระภาษาไทยอย่างน้อย 10 ตัวในข้อความ (เพื่อหลีกเลี่ยงการ Segment ภาษาอังกฤษ)
+#     thai_char_count = len(re.findall(r'[ก-๙]', text))
+#     if thai_char_count < 10: 
+#         return text
+
+#     try:
+#         # ใช้ 'THAI_SENTIMENT' เป็นค่า default
+#         # (หรือจะใช้ 'newmm' ก็ได้ ซึ่ง 'THAI_SENTIMENT' ก็ใช้ 'newmm' เป็นพื้นฐาน)
+#         words = word_tokenize(text, engine="newmm") 
+#         # ใช้เครื่องหมาย | เป็นตัวแบ่งคำแทน space เพื่อควบคุมการทำ Chunking ในภายหลัง
+#         # และทำให้ Text Splitter เห็น 'คำ' แทน 'ประโยคยาวๆ ที่ไม่มีวรรค'
+#         return "|".join(words) 
+#     except Exception as e:
+#         logger.warning(f"PyThaiNLP segmentation failed: {e}")
+#         return text
+
+# core/ingest.py (ส่วน Text Cleaning)
+
 # -------------------- Text Cleaning --------------------
-def _segment_thai_text(text: str) -> str:
-    """
-    Performs Thai word segmentation and uses a special separator (|) 
-    instead of space to preserve word boundaries without adding excessive space.
-    """
-    if not THAI_SEGMENTATION_ENABLED:
-        return text
-
-    # ตรวจสอบว่ามีอักขระภาษาไทยอย่างน้อย 10 ตัวในข้อความ (เพื่อหลีกเลี่ยงการ Segment ภาษาอังกฤษ)
-    thai_char_count = len(re.findall(r'[ก-๙]', text))
-    if thai_char_count < 10: 
-        return text
-
-    try:
-        # ใช้ 'THAI_SENTIMENT' เป็นค่า default
-        # (หรือจะใช้ 'newmm' ก็ได้ ซึ่ง 'THAI_SENTIMENT' ก็ใช้ 'newmm' เป็นพื้นฐาน)
-        words = word_tokenize(text, engine="newmm") 
-        # ใช้เครื่องหมาย | เป็นตัวแบ่งคำแทน space เพื่อควบคุมการทำ Chunking ในภายหลัง
-        # และทำให้ Text Splitter เห็น 'คำ' แทน 'ประโยคยาวๆ ที่ไม่มีวรรค'
-        return "|".join(words) 
-    except Exception as e:
-        logger.warning(f"PyThaiNLP segmentation failed: {e}")
-        return text
+# (ลบ _segment_thai_text และ THAI_SEGMENTATION_ENABLED ออกไปแล้ว)
 
 def clean_text(text: str) -> str:
     """
-    Basic text cleaning utility.
+    Basic text cleaning utility. (Final Clean for Ingest)
     """
     if not text: return ""
     
-    # 📌 NEW: 1. ทำ Word Segmentation ก่อน (ใช้ | เป็นตัวแบ่ง)
-    text = _segment_thai_text(text)
-    
-    # 2. การทำความสะอาดตามปกติ
+    # 📌 REVISED: 1. ลบ Logic Segmentation ออก
+    # text = _segment_thai_text(text) # <-- ลบบรรทัดนี้
+
+    # 2. การทำความสะอาด Unicode และอักขระควบคุม
     text = text.replace('\xa0', ' ').replace('\u200b', '').replace('\u00ad', '')
     text = re.sub(r'[\uFFFD\u2000-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]', '', text)
-    # Remove excessive spaces between Thai characters (อาจจะไม่จำเป็นมากถ้าทำ Segmentation แล้ว)
+    
+    # 3. ลบช่องว่างระหว่างอักขระไทย (ช่วยกำจัดช่องว่างที่ OCR สร้างขึ้นก่อนเข้า Text Splitter)
+    #    *NOTE: เรายังคงเก็บ Logic นี้ไว้*
     text = re.sub(r'([ก-๙])\s{1,3}(?=[ก-๙])', r'\1', text) 
+    
+    # 4. OCR Replacements (คงไว้)
     ocr_replacements = {"สำนักงน": "สำนักงาน", "คณะกรรมกร": "คณะกรรมการ"}
     for bad, good in ocr_replacements.items(): text = text.replace(bad, good)
-    # Filter out non-printable ASCII except standard ones and Thai characters
-    text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F|]', '', text) # ✅ เพิ่ม | ใน Regex
+    
+    # 5. Filter out non-printable ASCII except standard ones and Thai characters
+    #    ✅ FIX: ลบ | ออกจาก whitelist ใน Regex
+    text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0E00-\u0E7F]', '', text) 
+    
+    # 6. จัดการ Spacing
     text = re.sub(r'\(\s+', '(', text); text = re.sub(r'\s+\)', ')', text)
     text = re.sub(r'\r\n', '\n', text); text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]{2,}', ' ', text); text = re.sub(r'\s{2,}', ' ', text)
     
-    # 📌 NEW: 3. แทนที่ตัวแบ่ง | ด้วย space
-    # (หรือถ้าอยากให้ Chunking ใช้ | เป็นตัวแบ่งก่อน ก็ข้ามขั้นตอนนี้ไป)
-    # ในกรณีนี้ ผมแนะนำให้ใช้ | เป็นตัวแบ่งใน Text Splitter เลย 
+    # 📌 REVISED: 7. ลบ Logic การจัดการตัวแบ่ง | ออกไป
+    # (หรือถ้าอยากให้ Chunking ใช้ | เป็นตัวแบ่งก่อน ก็ข้ามขั้นตอนนี้ไป) <-- ลบบรรทัดนี้
+    
     return text.strip()
 
 

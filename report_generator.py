@@ -3,7 +3,6 @@ import os
 import argparse
 import json
 from datetime import datetime
-import re # <<< เพิ่มการ Import re สำหรับฟังก์ชัน clean_for_display
 from typing import Dict, Any, Optional, List
 
 # ==================== Essential Imports for DOCX ====================
@@ -121,30 +120,6 @@ def set_landscape(doc):
     # 4. ความกว้างที่เหลือสำหรับตาราง (ประมาณ 11.69 - 0.5 - 0.5 = 10.69 นิ้ว)
     return Inches(10.5) # กำหนดความกว้างตารางที่ปลอดภัย
 
-# <<< START: ฟังก์ชัน clean_for_display ที่เพิ่มเข้ามา >>>
-def clean_for_display(retrieved_text: str) -> str:
-    """
-    Cleans up the segmented text retrieved from the vector store for final display 
-    by removing '|' and cleaning up excessive spaces/artifacts.
-    """
-    if not retrieved_text:
-        return ""
-        
-    # 1. แทนที่ตัวแบ่งคำ '|' ด้วยช่องว่างปกติ
-    text = retrieved_text.replace('|', ' ') 
-
-    # 2. ลบช่องว่างที่เกิดจากการทำความสะอาดมากเกินไป และรวมช่องว่างที่เกินสองช่องให้เหลือช่องว่างเดียว
-    text = re.sub(r'\s{2,}', ' ', text)
-    
-    # 3. ลบอักขระขึ้นบรรทัดใหม่ที่เกินความจำเป็น (เหลือไม่เกิน 2 บรรทัดติดกัน)
-    text = re.sub(r'(\n|\r\n|\r){2,}', '\n\n', text)
-    
-    # 4. ลบช่องว่างก่อน/หลังเครื่องหมายวรรคตอนที่อาจหลงเหลืออยู่จาก Segmentation/OCR
-    text = re.sub(r'\s*([.,:;])\s*', r'\1 ', text) # จัดการกับ . , : ; 
-    text = text.replace(' )', ')').replace('( ', '(')
-    
-    return text.strip()
-# <<< END: ฟังก์ชัน clean_for_display ที่เพิ่มเข้ามา >>>
 
 # =========================================================================
 # 2. DOCX Formatting and Setup Functions
@@ -597,7 +572,7 @@ def generate_raw_details_report_docx(doc, final_raw_data, table_width=Inches(7.2
                 statement_full,
                 item.get('reason', ''),
                 source_names,
-                clean_for_display(item.get('context_retrieved_snippet', '')) 
+                item.get('context_retrieved_snippet', '')
             ]
 
             for i, text in enumerate(content):
