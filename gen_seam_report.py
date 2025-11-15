@@ -131,13 +131,16 @@ def generate_overall_summary_docx(document: Document, summary_data: Dict[str, An
     
     set_heading(document, f'[SECTION 1] สรุปผลการประเมิน {enabler_name_full} โดยรวม', level=1)
     
-    # ดึงข้อมูลจาก 'summary'
-    total_score = summary_data.get('total_achieved_weighted_score', 0.0)
-    max_score = summary_data.get('max_possible_weighted_score_run', 0.0)
-    percent = summary_data.get('avg_weighted_score_percent', 0.0)
+    # 🎯 FIX 1: ดึงข้อมูลจาก 'summary' โดยใช้คีย์ที่แก้ไขใน core/seam_assessment.py
+    achieved_score = summary_data.get('final_score_achieved', 0.0)
+    # ใช้ overall_enabler_max_score เพื่อสะท้อนคะแนนเต็ม 40 (สำหรับ KM)
+    overall_max_score = summary_data.get('overall_enabler_max_score', 0.0) 
 
-    # Maturity Score = (คะแนนที่ได้ / คะแนนเต็ม) * 5 (สมมติว่า 5 คือ Level สูงสุด)
-    maturity_score = (total_score / max_score) * 5 if max_score > 0 else 0.0
+    # Percentage calculation based on the Overall Enabler Max Score (40)
+    overall_percent = (achieved_score / overall_max_score) * 100 if overall_max_score > 0 else 0.0
+
+    # Maturity Score = (Achieved Score / Overall Enabler Max Score) * 5 (สมมติว่า 5 คือ Level สูงสุด)
+    maturity_score = (achieved_score / overall_max_score) * 5 if overall_max_score > 0 else 0.0
     
     table = document.add_table(rows=4, cols=2) 
     table.style = 'Table Grid'
@@ -149,8 +152,10 @@ def generate_overall_summary_docx(document: Document, summary_data: Dict[str, An
         table.cell(row_index, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
     
     add_summary_row(0, "ตัวขับเคลื่อน (Enabler):", f"{summary_data.get('enabler', '-')}\n({enabler_name_full})") 
-    add_summary_row(1, "คะแนนรวมถ่วงน้ำหนักที่ได้:", f"{total_score:.2f} / {max_score:.2f}")
-    add_summary_row(2, "เปอร์เซ็นต์ความคืบหน้าโดยรวม:", f"{percent:.2f}%")
+    # ใช้ achieved_score / overall_max_score
+    add_summary_row(1, "คะแนนรวมถ่วงน้ำหนักที่ได้:", f"{achieved_score:.2f} / {overall_max_score:.2f}")
+    # ใช้ overall_percent
+    add_summary_row(2, "เปอร์เซ็นต์ความคืบหน้าโดยรวม:", f"{overall_percent:.2f}%")
     add_summary_row(3, "คะแนนวุฒิภาวะโดยรวม (Maturity Score):", f"{maturity_score:.2f}")
     
     # กำหนดฟอนต์ให้ Table Headers และ Content
@@ -167,13 +172,15 @@ def generate_executive_summary_docx(document: Document, summary_data: Dict[str, 
     if not summary_data: return
     set_heading(document, "[SECTION 2] สรุปสำหรับผู้บริหาร (Executive Summary)", level=1)
 
-    total_score = summary_data.get('total_achieved_weighted_score', 0.0)
-    max_score = summary_data.get('max_possible_weighted_score_run', 0.0)
-    percent = summary_data.get('avg_weighted_score_percent', 0.0)
-    maturity_score = (total_score / max_score) * 5 if max_score > 0 else 0.0
+    # 🎯 FIX 2: ใช้ achieved_score และ overall_max_score เพื่อคำนวณตามคะแนนเต็ม 40
+    achieved_score = summary_data.get('final_score_achieved', 0.0)
+    overall_max_score = summary_data.get('overall_enabler_max_score', 0.0)
+    
+    overall_percent = (achieved_score / overall_max_score) * 100 if overall_max_score > 0 else 0.0
+    maturity_score = (achieved_score / overall_max_score) * 5 if overall_max_score > 0 else 0.0
 
-    add_paragraph(document, f"✅ คะแนนรวม: {total_score:.2f} / {max_score:.2f}")
-    add_paragraph(document, f"✅ ร้อยละความสำเร็จ: {percent:.2f}%")
+    add_paragraph(document, f"✅ คะแนนรวม: {achieved_score:.2f} / {overall_max_score:.2f}")
+    add_paragraph(document, f"✅ ร้อยละความสำเร็จ: {overall_percent:.2f}%")
     add_paragraph(document, f"✅ ระดับความเป็นผู้ใหญ่: {maturity_score:.2f}")
     document.add_paragraph()
 
@@ -487,7 +494,8 @@ def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict
             # Column 2 (Index 1): ผลการประเมิน (Status)
             llm_score = statement.get('llm_score', '-')
             if llm_score != '-':
-                row_cells[1].text = f"{status}\n({llm_score}/5)"
+                # llm_score คือ 0/1; คะแนนเต็มจริงคือ 5 แต่เนื่องจากเราไม่ทราบระดับคะแนนต่อข้อที่นี่ จึงแสดงเป็น 0/1
+                row_cells[1].text = f"{status}\n({llm_score}/1)" 
             else:
                  row_cells[1].text = status
             

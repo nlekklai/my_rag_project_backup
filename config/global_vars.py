@@ -51,6 +51,7 @@ SEAM_ENABLER_MAP: Final[dict] = {
 # --- Assessment Constants (ถูกนำกลับเข้ามา) ---
 MAX_LEVEL: Final[int] = 5 
 INITIAL_LEVEL: Final[int] = 1
+MAX_PARALLEL_WORKERS: Final[int] = 4 # แนะนำ 4 สำหรับ Mac เพื่อความเสถียร
 # 💡 ค่าคงที่ใหม่สำหรับ Rubric แบบแยกไฟล์
 RUBRIC_FILENAME_PATTERN: Final[str] = "{enabler}_rubric.json"
 RUBRIC_CONFIG_DIR: Final[str] = "config"

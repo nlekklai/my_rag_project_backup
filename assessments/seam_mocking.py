@@ -1,4 +1,3 @@
-# assessments/seam_mocking.py
 """
 Mocking Assessment Utilities
 ใช้สำหรับทดสอบระบบ KM/Enabler Assessment โดยไม่ต้องเรียก LLM จริง
@@ -35,7 +34,6 @@ T = TypeVar("T", bound=BaseModel)
 # MOCK: Controlled LLM Evaluation (Deterministic)
 # Mocks: llm_data_utils.evaluate_with_llm
 # -------------------------------------------------------
-# 🎯 Signature ต้องตรงกับ evaluate_with_llm ใน llm_data_utils.py
 def evaluate_with_llm_CONTROLLED_MOCK(
     context: str, 
     sub_criteria_name: str, 
@@ -78,7 +76,7 @@ def evaluate_with_llm_CONTROLLED_MOCK(
     is_passed = score == 1
     reason = f"[MOCK] Statement passed the {pdca_phase} check (Controlled Mock). หลักฐานจำลองชี้ว่าองค์กรมีหลักฐานครบถ้วนถึง L{level} แล้ว. Result: {'PASS' if is_passed else 'FAIL'}"
 
-    # 🎯 คืนค่าตามที่ llm_data_utils.py คาดหวัง
+    # คืนค่าตามที่ llm_data_utils.py คาดหวัง
     return {
         "score": score,
         "reason": reason,
@@ -90,8 +88,9 @@ def evaluate_with_llm_CONTROLLED_MOCK(
 # MOCK: Retrieval
 # Mocks: llm_data_utils.retrieve_context_with_filter
 # -------------------------------------------------------
-# 🎯 Signature ต้องตรงกับ retrieve_context_with_filter ใน llm_data_utils.py
+# 🎯 FIX: เพิ่ม Argument 'vsm_manager' เพื่อให้ Signature ตรงกับ llm_data_utils.py
 def retrieve_context_with_filter_MOCK(
+    vsm_manager: Optional[Any], # 🟢 Argument ที่เพิ่มเข้ามาเพื่อรับ VSM Instance
     query: str,
     collection_name: str,
     doc_uuid_filter: Optional[List[str]] = None,
@@ -103,6 +102,7 @@ def retrieve_context_with_filter_MOCK(
     คืนค่า Dict ในรูปแบบที่ LLM Engine คาดหวัง: {"top_evidences": [...], "aggregated_context": "..." }
     """
     
+    # Mock does not use vsm_manager, but must accept it.
     sub_id = collection_name.split('_')[-1] 
     logger.info(f"[MOCK RAG] Retrieving {top_k} chunks for query on {sub_id}...")
 
@@ -118,7 +118,7 @@ def retrieve_context_with_filter_MOCK(
         }
         page_content = f"[MOCK CHUNK {i+1}] Relevant evidence for topic {sub_id} (Query: {query[:30]}...)"
         
-        # 🎯 โครงสร้างการคืนค่า Evidence ต้องเป็น Dict ที่มี content และ metadata
+        # โครงสร้างการคืนค่า Evidence ต้องเป็น Dict ที่มี content และ metadata
         top_evidences.append({"content": page_content, "metadata": metadata})
         aggregated_parts.append(page_content)
 
@@ -134,7 +134,6 @@ def retrieve_context_with_filter_MOCK(
 # MOCK: Action Plan Generation
 # Mocks: llm_data_utils.create_structured_action_plan
 # -------------------------------------------------------
-# 🎯 Signature ต้องตรงกับ create_structured_action_plan ใน llm_data_utils.py
 def create_structured_action_plan_MOCK(
     failed_statements_data: List[Dict[str, Any]], 
     sub_id: str, 
@@ -154,7 +153,7 @@ def create_structured_action_plan_MOCK(
     # ใช้ PDCA Phase ที่เป็นเป้าหมาย
     target_phase = PDCA_PHASE_MAP.get(target_level, f"Level {target_level} Requirements")
     
-    # 🎯 คืนค่าตาม Action Plan Schema
+    # คืนค่าตาม Action Plan Schema
     return [
         {
             "Phase": f"1. Gap Closure & Planning ({target_phase})",
@@ -177,7 +176,6 @@ def create_structured_action_plan_MOCK(
 # MOCK: Summarize Context
 # Mocks: llm_data_utils.summarize_context_with_llm
 # -------------------------------------------------------
-# 🎯 Signature ต้องตรงกับ summarize_context_with_llm ใน llm_data_utils.py
 def summarize_context_with_llm_MOCK(
     context: str, 
     sub_criteria_name: str, 

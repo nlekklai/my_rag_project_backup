@@ -53,10 +53,11 @@ from config.global_vars import (
     FINAL_K_RERANKED,
     INITIAL_TOP_K,
     EVIDENCE_DOC_TYPES,
+    MAX_PARALLEL_WORKERS,
 )
 
 # -------------------- Vectorstore Constants --------------------
-MAX_PARALLEL_WORKERS = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
+# MAX_PARALLEL_WORKERS = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
 ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or ""
 
 # Logging
@@ -419,30 +420,69 @@ class VectorStoreManager:
                     return []
 
 # -------------------- Retriever Creation --------------------
-    def get_retriever(base_retriever, final_k: int = 5, use_rerank: bool = True) -> Any:
+    def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, use_rerank: bool = True) -> Any:
         """
-        base_retriever: retriever object ที่มี invoke(query) -> list docs
+        Loads the base Chroma retriever for the given collection, and returns a wrapper
+        that applies reranking and final truncation (final_k).
+        
+        collection_name: The name of the Chroma collection to load.
+        top_k: The initial number of documents to retrieve from the vectorstore.
+        final_k: The final number of documents to return after optional reranking.
         """
+        # 1. Load Chroma instance
+        chroma_instance = self._load_chroma_instance(collection_name)
+        if not chroma_instance:
+            logger.warning(f"Retriever creation failed: Collection '{collection_name}' not loaded.")
+            return None 
+            
+        # 2. Create the base retriever (Chroma as_retriever)
+        # ใช้ top_k สำหรับการดึงข้อมูลเริ่มต้นจาก vectorstore
+        search_kwargs = {"k": top_k}
+        try:
+            base_retriever = chroma_instance.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
+        except Exception as e:
+            logger.error(f"Failed to create base retriever for '{collection_name}': {e}")
+            return None
+
+        # 3. Apply Rerank/Truncation Wrapper (ใช้ตรรกะเดิมของคุณในการ Wrap)
+        
+        # ต้องแน่ใจว่า get_global_reranker ถูก import มาแล้วในไฟล์นี้
+        try:
+            from core.vectorstore import get_global_reranker
+        except ImportError:
+            # ถ้าระบบของคุณไม่ได้ import get_global_reranker ไว้ที่ด้านบน ให้แจ้งเตือน (แต่โดยทั่วไปควรจะถูก import แล้ว)
+            pass
+
         if use_rerank:
-            def invoke_with_rerank(query: str):
-                docs = base_retriever.invoke(query)
+            # Wrapper Function: ใช้ invoke_with_rerank ที่รองรับการรับ config (search_kwargs) จาก MultiDocRetriever
+            def invoke_with_rerank(query: str, config: Optional[Dict] = None):
+                # เรียก base retriever (chroma) เพื่อดึงข้อมูลตาม query และ config/filter ที่ส่งมา
+                docs = base_retriever.invoke(query, config=config)
+                
                 try:
-                    # ใช้ global reranker
-                    return GLOBAL_RERANKER.rerank(query, docs)[:final_k]
+                    reranker = get_global_reranker(final_k)
+                    if reranker and hasattr(reranker, 'rerank'):
+                        # ทำ rerank และ truncate ตาม final_k
+                        return reranker.rerank(query, docs)[:final_k]
+                    logger.warning("⚠️ Reranker not available. Returning base docs truncated.")
+                    return docs[:final_k]
                 except Exception as e:
-                    logger.warning(f"⚠️ FlashrankRerank failed: {e}. Returning base docs truncated to final_k")
+                    logger.warning(f"⚠️ Rerank failed: {e}. Returning base docs truncated to {final_k}")
                     return docs[:final_k]
 
-            # Wrapper เพื่อให้เรียก invoke เหมือน retriever ปกติ
+            # Wrapper class: ห่อหุ้มฟังก์ชัน invoke
             class SimpleRetrieverWrapper:
-                def invoke(self, query: str):
-                    return invoke_with_rerank(query)
+                def invoke(self, query: str, config: Optional[Dict] = None):
+                    return invoke_with_rerank(query, config=config)
 
             return SimpleRetrieverWrapper()
         else:
+            # No Rerank, just Truncate
             class TruncatedRetrieverWrapper:
-                def invoke(self, query: str):
-                    return base_retriever.invoke(query)[:final_k]
+                def invoke(self, query: str, config: Optional[Dict] = None):
+                    # Docs ถูกจำกัดด้วย k (top_k) จาก base_retriever แล้ว แค่ truncate เหลือ final_k
+                    docs = base_retriever.invoke(query, config=config)
+                    return docs[:final_k]
 
             return TruncatedRetrieverWrapper()
 

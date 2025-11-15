@@ -1,7 +1,6 @@
-# core/start_assessment.py
 """
 CLI runner that:
- - parses args (--sub, --enabler, --export, --mock)
+ - parses args (--sub, --enabler, --export, --mock, --sequential) 
  - loads central evidence vectorstore (via core.vectorstore.load_all_vectorstores)
  - instantiates SEAMPDCAEngine and runs assessment
  - prints summary and optionally detailed output and exports files
@@ -22,11 +21,14 @@ if project_root not in sys.path:
 try:
     # Import Config & Core Modules
     from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_ENABLER
-    from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
+    # 🎯 VSM: ต้อง import AssessmentConfig ด้วย
+    from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
+    # VSM: Import เพื่อโหลดและส่ง Instance เข้าไปยัง Engine
     from core.vectorstore import load_all_vectorstores, VectorStoreManager
+    # Import mock logic สำหรับการตั้งค่าภายใน
     import assessments.seam_mocking as seam_mocking 
 except Exception as e:
-    # This block catches the import error first, which was the previous issue
+    # บล็อกนี้จะจับข้อผิดพลาดการ Import 
     print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
     raise
 
@@ -43,38 +45,51 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target_level", type=int, default=5, help="Maximum target level for sequential assessment.")
     p.add_argument("--export", action="store_true", help="Export results to JSON file.")
     p.add_argument("--mock", choices=["none", "random", "control"], default="none", help="Mock mode ('none', 'random', 'control').")
+    # 🟢 NEW: Argument to force sequential execution
+    p.add_argument("--sequential", action="store_true", help="Force sequential execution, even when assessing all sub-criteria (recommended for low-resource machines).")
     return p.parse_args()
 
 # -------------------- MAIN EXECUTION --------------------
 def main():
     args = parse_args()
-    logger.info(f"Starting assessment runner (enabler={args.enabler}, sub={args.sub}, mock={args.mock}, target_level={args.target_level})")
+    # 🟢 เพิ่มการแสดงผล Mode ใน Log
+    run_mode = "Sequential" if args.sequential else "Parallel"
+    logger.info(f"Starting {run_mode} assessment runner (enabler={args.enabler}, sub={args.sub}, mock={args.mock}, target_level={args.target_level})")
     start_ts = time.time()
 
-    # 1. Load Vectorstores
+    # 1. Load Vectorstores (โหลดเพียงครั้งเดียวใน Process หลัก)
     vsm: Optional[VectorStoreManager] = None
-    try:
-        logger.info("Loading central evidence vectorstore(s)...")
-        # Note: EVIDENCE_DOC_TYPES is a string, load_all_vectorstores expects a list of types
-        # Assuming the function can handle a single string or the intent is a list containing the evidence type
-        vsm = load_all_vectorstores(doc_types=[EVIDENCE_DOC_TYPES], evidence_enabler=args.enabler)
-    except Exception as e:
-        logger.error(f"Failed to load vectorstores: {e}")
-        # Only raise error if VSM load is critical (i.e., not in mock mode)
-        if args.mock == "none":
-             logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
-             raise
+    
+    # 🟢 FIX: Skip VSM loading if running in Sequential Mode 
+    # เพื่อป้องกัน Module Conflict และให้ VSM โหลดแค่ครั้งเดียวใน Engine (seam_assessment.py)
+    if args.sequential and args.mock == "none":
+        logger.info("Sequential mode (non-mock): Skipping initial VSM load in main process. VSM will be loaded one time inside the Engine for robustness.")
+        # vsm remains None, forcing the load in seam_assessment.py
+    else:
+        try:
+            logger.info("Loading central evidence vectorstore(s)...")
+            # โหลด VSM โดยระบุประเภทเอกสาร (evidence) และ Enabler (e.g., KM)
+            vsm = load_all_vectorstores(doc_types=[EVIDENCE_DOC_TYPES], evidence_enabler=args.enabler)
+        except Exception as e:
+            logger.error(f"Failed to load vectorstores: {e}")
+            # ถ้าไม่ใช่ Mock mode และโหลด VSM ไม่สำเร็จ ให้แจ้ง Error ร้ายแรง
+            if args.mock == "none":
+                 logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
+                 raise
 
     # 2. Instantiate Engine
     config = AssessmentConfig(
         enabler=args.enabler, 
         target_level=args.target_level,
-        mock_mode=args.mock
+        mock_mode=args.mock,
+        # 🟢 PASS THE NEW ARGUMENT
+        force_sequential=args.sequential 
     )
     engine = SEAMPDCAEngine(config=config)
 
     # 3. Run Assessment
     try:
+        # 🎯 VSM INJECTION: ส่ง VSM Instance เข้าไป (ซึ่งจะเป็น None ถ้าอยู่ใน Sequential mode)
         final = engine.run_assessment(
             target_sub_id=args.sub, 
             export=args.export, 
@@ -90,10 +105,12 @@ def main():
     
     print("\n" + "="*60)
     print(f"ASSESSMENT COMPLETE - ENABLER: {args.enabler}")
+    # 🟢 แสดงโหมดที่ใช้ในการรัน
+    print(f"RUN MODE: {run_mode}")
     print("="*60)
     print(f"Target Level: {summary.get('target_level', config.target_level)}")
     print(f"Total sub-criteria run: {summary.get('total_subcriteria', 0)}")
-    print(f"Average weighted score: {summary.get('avg_weighted_score', 0.0):.3f}%")
+    print(f"Percentage Achieved: {summary.get('percentage_achieved_run', 0.0):.3f}%")
     print(f"Duration (s): {duration_s:.2f}")
     print("="*60)
 
@@ -107,4 +124,5 @@ def main():
     logger.info(f"Full runner execution completed in {duration_s:.2f}s")
 
 if __name__ == "__main__":
+    # ⚠️ สำคัญ: การใช้ Multiprocessing ต้องรันจาก __main__
     main()

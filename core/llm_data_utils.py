@@ -1,4 +1,3 @@
-# core/llm_data_utils.py (Final version with Robust LLM/RAG Integration)
 """
 Robust LLM + RAG utilities for SEAM assessment.
 Responsibilities:
@@ -32,6 +31,7 @@ try:
         SYSTEM_EVIDENCE_DESCRIPTION_PROMPT,
         EVIDENCE_DESCRIPTION_PROMPT
     )
+    # Import VectorStoreManager for type hinting
     from core.vectorstore import VectorStoreManager, get_global_reranker, _get_collection_name
     from core.assessment_schema import StatementAssessment, EvidenceSummary
     from core.action_plan_schema import ActionPlanActions
@@ -64,6 +64,7 @@ def set_mock_control_mode(enable: bool):
 # RAG retrieval wrapper (expects VectorStoreManager implemented elsewhere)
 # --------------------
 def retrieve_context_with_filter(
+    vsm_manager: 'VectorStoreManager', # FIX: Accept injected VSM instance
     query: str,
     collection_name: str,
     doc_uuid_filter: Optional[List[str]] = None,
@@ -75,25 +76,56 @@ def retrieve_context_with_filter(
     Returns {"top_evidences": [...], "aggregated_context": "..." }
     """
     try:
-        manager = VectorStoreManager()  # implementation-specific
-        vectorstore = manager._load_chroma_instance(collection_name)
-        if not vectorstore:
-            logger.error(f"Vectorstore not found: {collection_name}")
+        manager = vsm_manager
+        
+        # 1. Initial check
+        if not manager:
+            logger.error("Invalid VectorStoreManager instance provided for retrieval (VSM is None).")
             return {"top_evidences": [], "aggregated_context": ""}
+        
+        base_retriever = None
+        
+        # 2. Dynamic check: Is it a VSM or is it the final Retriever object?
+        if hasattr(manager, '_load_chroma_instance'):
+            # Case A: It is the intended VectorStoreManager. Use it to get the retriever.
+            try:
+                # This logic is what the caller intended for a full VSM object
+                vectorstore = manager._load_chroma_instance(collection_name)
+                if not vectorstore:
+                    logger.error(f"Vectorstore not found: {collection_name}")
+                    return {"top_evidences": [], "aggregated_context": ""}
+                
+                # build search kwargs
+                search_kwargs = {"k": max(INITIAL_TOP_K, top_k)}
+                if doc_uuid_filter:
+                    # attempt to normalize stable ids (if implementation expects hashed ids)
+                    normalized = [ _hash_to_64(s) for s in doc_uuid_filter ]
+                    # many vectorstores support 'filter' param; implementation-dependent
+                    search_kwargs["filter"] = {"stable_doc_uuid": {"$in": normalized}}
 
-        # build search kwargs
-        search_kwargs = {"k": max(INITIAL_TOP_K, top_k)}
-        if doc_uuid_filter:
-            # attempt to normalize stable ids (if implementation expects hashed ids)
-            normalized = [ _hash_to_64(s) for s in doc_uuid_filter ]
-            # many vectorstores support 'filter' param; implementation-dependent
-            search_kwargs["filter"] = {"stable_doc_uuid": {"$in": normalized}}
-
-        base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
+                base_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
+                
+            except Exception as e:
+                logger.error(f"VSM logic failed during load or as_retriever: {e}")
+                return {"top_evidences": [], "aggregated_context": ""}
+        
+        else:
+            # Case B: It is NOT the VSM. Based on the error, it is a Retriever (e.g., MultiDocRetriever).
+            # The calling code passed the retriever directly.
+            # We assume it is the correct retriever object and use it directly.
+            base_retriever = manager
+            logger.warning("RAG: Passed object is missing '_load_chroma_instance'; assuming a Retriever was passed directly.")
+            
+        
+        # 3. Unified Retrieval Invocation
+        if not base_retriever:
+             logger.error("RAG: Could not initialize base_retriever.")
+             return {"top_evidences": [], "aggregated_context": ""}
+        
         try:
             documents = base_retriever.invoke(query)
         except Exception as e:
-            logger.error(f"Base retriever invoke error: {e}")
+            logger.error(f"Retriever invoke error: {e}")
             return {"top_evidences": [], "aggregated_context": ""}
 
         if not isinstance(documents, list):
@@ -118,14 +150,16 @@ def retrieve_context_with_filter(
         for d in documents:
             meta = getattr(d, "metadata", {}) or {}
             page_content = getattr(d, "page_content", "") or ""
+            
             normalized_meta = {
                 "stable_doc_uuid": meta.get("stable_doc_uuid") or meta.get("stable_id") or getattr(d, "id", "N/A"),
-                "file_name": meta.get("file_name") or meta.get("source") or f"unknown_{normalized_meta if False else ''}",
+                # FIX 4: Simplifies confusing placeholder and ensures a proper fallback string
+                "file_name": meta.get("file_name") or meta.get("source") or "unknown_file",
                 **meta
             }
             top_evidences.append({"content": page_content, "metadata": normalized_meta})
             
-            # 🟢 ADJUSTED LOGIC: เพิ่ม Source Metadata เข้าไปใน Context
+            # ADJUSTED LOGIC: เพิ่ม Source Metadata เข้าไปใน Context
             doc_id_short = normalized_meta['stable_doc_uuid'][:8] + "..." if normalized_meta['stable_doc_uuid'] and len(normalized_meta['stable_doc_uuid']) > 8 else normalized_meta['stable_doc_uuid']
             source_info = f"SOURCE: {normalized_meta['file_name']} (ID: {doc_id_short})"
             aggregated_parts.append(f"[{source_info}]\n{page_content}") # ใส่ Source Info ก่อนเนื้อหา
@@ -241,23 +275,25 @@ T = TypeVar("T", bound=BaseModel)
 
 def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, **kwargs) -> Dict[str, Any]:
     global _MOCK_CONTROL_FLAG, _MOCK_COUNTER
-    # 🎯 NEW: Extract PDCA phase from kwargs for prompt injection
+    # NEW: Extract PDCA phase from kwargs for prompt injection
     pdca_phase = kwargs.get('pdca_phase', f"L{level} Concept") 
     
     if _MOCK_CONTROL_FLAG:
         _MOCK_COUNTER += 1
         score = 1 if _MOCK_COUNTER <= 9 else 0
         return {"score": score, "reason": f"MOCK {'PASS' if score else 'FAIL'}", "is_passed": score >= 1}
+    
+    # FIX 1: แก้ไข Syntax Error จาก === เป็น is
     if llm_instance is None:
         # fallback random deterministic-ish
         score = random.choice([0, 1])
         return {"score": score, "reason": "LLM unavailable — fallback random", "is_passed": score >= 1}
 
-    # 🎯 FIX & UPDATE: Pass all required arguments including 'pdca_phase' and use 'statement_text' consistently
+    # FIX & UPDATE: Pass all required arguments including 'pdca_phase' and use 'statement_text' consistently
     user_prompt = USER_ASSESSMENT_PROMPT.format(
         sub_criteria_name=sub_criteria_name,
         level=level,
-        statement_text=statement_text, # Fix: ใช้ 'statement_text' แทน 'statement' เพื่อให้ตรงกับ template ใหม่
+        statement_text=statement_text, # ใช้ 'statement_text' ถูกต้องตามที่ตกลง
         sub_id=sub_id,
         context=context or "ไม่มีหลักฐานที่เกี่ยวข้อง",
         pdca_phase=pdca_phase # Inject the new PDCA phase
@@ -279,7 +315,8 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
             # fallback to fail
             return {"score": 0, "reason": "Could not parse LLM JSON", "is_passed": False}
         parsed = _normalize_keys(parsed)
-        score = parsed.get("score", parsed.get("llm_score", 0))
+        # FIX & UPDATE: ใช้ 'score' หลังการ Normalize
+        score = parsed.get("score", 0) 
         try:
             score_int = int(str(score))
         except Exception:
@@ -293,8 +330,10 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
 # summarize_context_with_llm
 # --------------------
 def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str, schema: Optional[Type[T]] = None) -> Dict[str, Any]:
+    # FIX 2: แก้ไข Syntax Error จาก === เป็น is
     if llm_instance is None:
         return {"summary": "LLM not available", "suggestion_for_next_level": "Check LLM service."}
+        
     human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(sub_criteria_name=sub_criteria_name, level=level, context=(context or "")[:4000], sub_id=sub_id)
     try:
         schema_json = json.dumps(EvidenceSummary.model_json_schema(), ensure_ascii=False, indent=2)
@@ -333,7 +372,8 @@ def create_structured_action_plan(failed_statements_data: List[Dict[str, Any]], 
 
     statements_text = []
     for s in failed_statements_data:
-        statements_text.append(f"Level: {s.get('level')}\nStatement: {s.get('statement_text')}\nReason: {s.get('reason')}\n")
+        # FIX 3: เปลี่ยนจาก 'statement_text' เป็น 'statement' เพื่อให้สอดคล้องกับโครงสร้างข้อมูลใน Engine
+        statements_text.append(f"Level: {s.get('level')}\nStatement: {s.get('statement')}\nReason: {s.get('reason')}\n") 
 
     human_prompt = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list="\n".join(statements_text))
 
