@@ -1,44 +1,41 @@
-#config/globa_vars.py
+# config/global_vars.py
 import os
+from typing import Final, List
 
 # ==================== Project Paths ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
 MAPPING_FILE_PATH = os.path.join(DATA_DIR, "doc_id_mapping.json")
-INITIAL_TOP_K = 25
-FINAL_K_RERANKED = 5
-FINAL_K_NON_RERANKED = 7
-CHUNK_SIZE = 1500
-CHUNK_OVERLAP = 250
+INITIAL_TOP_K: Final[int] = 25
+FINAL_K_RERANKED: Final[int] = 5
+FINAL_K_NON_RERANKED: Final[int] = 7
+CHUNK_SIZE: Final[int] = 1500
+CHUNK_OVERLAP: Final[int] = 250
 
 
 # ==================== Supported File & Document Types ====================
-SUPPORTED_TYPES = [
+SUPPORTED_TYPES: Final[List[str]] = [
     ".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv", ".jpg", ".jpeg", ".png"
 ]
 
-SUPPORTED_DOC_TYPES = [
+SUPPORTED_DOC_TYPES: Final[List[str]] = [
     "document", "policy", "report", "statement", "evidence", "feedback", "faq", "seam"
 ]
 
-EVIDENCE_DOC_TYPES = "evidence"
-DEFAULT_DOC_TYPES = "document"
-
-# ปรับใน future
-# EVIDENCE_DOC_TYPES = ["evidence"]
-# DEFAULT_DOC_TYPES = ["document"]
+EVIDENCE_DOC_TYPES: Final[str] = "evidence"
+DEFAULT_DOC_TYPES: Final[str] = "document"
 
 
 # ==================== Enabler Configuration ====================
-DEFAULT_ENABLER = "KM"
-SUPPORTED_ENABLERS = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
+DEFAULT_ENABLER: Final[str] = "KM"
+SUPPORTED_ENABLERS: Final[List[str]] = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
 # ------------------------------------------------------------------
 # SE-AM Reference Document Mapping (Updated from latest ingestion)
 # ------------------------------------------------------------------
 
-SEAM_ENABLER_MAP = {
+SEAM_ENABLER_MAP: Final[dict] = {
     "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร (Corporate Governance & Leadership)",
     "SP": "2 การวางแผนเชิงยุทธศาสตร์ (Strategic Planning)",
     "RM&IC": "3 การบริหารความเสี่ยงและการควบคุมภายใน (Risk Management & Internal Control)",
@@ -51,3 +48,11 @@ SEAM_ENABLER_MAP = {
     "IA": "8 การตรวจสอบภายใน (Internal Audit)"
 }
 
+# --- Assessment Constants (ถูกนำกลับเข้ามา) ---
+MAX_LEVEL: Final[int] = 5 
+INITIAL_LEVEL: Final[int] = 1
+# 💡 ค่าคงที่ใหม่สำหรับ Rubric แบบแยกไฟล์
+RUBRIC_FILENAME_PATTERN: Final[str] = "{enabler}_rubric.json"
+RUBRIC_CONFIG_DIR: Final[str] = "config"
+EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
+KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
