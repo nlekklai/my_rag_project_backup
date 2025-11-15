@@ -196,12 +196,17 @@ class SEAMPDCAEngine:
         self,
         sub_criteria: Dict[str, Any],
         statement_data: Dict[str, Any],
-        # 🟢 VSM INJECTION: รับ VSM Instance เข้ามา
+        # 🟢 VSM INJECTION: Argument นี้ถูกลบออกแล้ว เพราะ VSM ถูกสร้างใน llm_data_utils 
+        # หรือถูกจัดการใน Process Worker
         vectorstore_manager: Optional['VectorStoreManager']
     ) -> Dict[str, Any]:
         """
         Runs RAG retrieval and LLM evaluation for a single statement (Level).
         Returns a comprehensive result dictionary.
+        
+        NOTE: vectorstore_manager is kept here only for the sequential run block 
+        as an implicit signal, but it is NOT passed to the rag_retriever 
+        since llm_data_utils handles VSM instantiation or fetching.
         """
         sub_id = sub_criteria['sub_id']
         level = statement_data['level']
@@ -214,22 +219,24 @@ class SEAMPDCAEngine:
         pdca_phase = self._get_pdca_phase(level)
 
         # 2. RAG Retrieval 
-        collection_name = f"{EVIDENCE_DOC_TYPES}_{self.enabler_id}".lower() 
+        # collection_name = f"{EVIDENCE_DOC_TYPES}_{self.enabler_id}".lower() # ไม่ใช้แล้ว
         rag_query = f"{sub_criteria_name} Level {level} - {statement_text}"
 
         retrieval_start = time.time()
         
         # Check for vectorstore manager dependency in non-mock mode
+        # การตรวจสอบนี้เหลือแค่การส่งต่อว่า VSM ถูกสร้างมาแล้วหรือไม่ใน sequential run
         if self.config.mock_mode == "none" and not vectorstore_manager:
             logger.error(f"Cannot run RAG for {sub_id} L{level}: VectorstoreManager is None in non-mock mode.")
             retrieval_result = {"top_evidences": [], "aggregated_context": "ERROR: No vectorstore manager."}
         else:
             try:
-                # 🎯 RAG Call: Pass VSM instance as the first argument
+                # 🎯 RAG Call: ปรับ Argument ให้ตรงกับ llm_data_utils.retrieve_context_with_filter
                 retrieval_result = self.rag_retriever(
-                    vsm_manager=vectorstore_manager, # 🟢 VSM INSTANCE INJECTED
+                    # vsm_manager=vectorstore_manager, # ❌ ถูกลบออก
                     query=rag_query,
-                    collection_name=collection_name, 
+                    doc_type=EVIDENCE_DOC_TYPES, # ✅ ใช้ doc_type แทน collection_name
+                    enabler=self.enabler_id,     # ✅ ใช้ enabler แทน collection_name
                     top_k=FINAL_K_RERANKED 
                 )
             except Exception as e:
@@ -286,7 +293,6 @@ class SEAMPDCAEngine:
         return result
 
     # -------------------- Multiprocessing Worker Method (New) --------------------
-    # ... (ส่วน _assess_single_sub_criteria_worker เหมือนเดิม) ...
     @staticmethod
     def _assess_single_sub_criteria_worker(
         sub_criteria: Dict[str, Any],
@@ -348,10 +354,12 @@ class SEAMPDCAEngine:
                 break 
 
             # Run Assessment for this level (using the locally created VSM)
+            # 🟢 VSM INSTANCE INJECTED: Pass worker_vsm 
+            # (แม้ว่า _run_single_assessment จะไม่ได้ส่งต่อให้ rag_retriever ตรงๆ แต่ใช้เพื่อตรวจสอบการเริ่มต้น)
             result = worker_engine._run_single_assessment(
                 sub_criteria=sub_criteria,
                 statement_data=statement_data,
-                vectorstore_manager=worker_vsm # 🟢 ใช้ VSM ที่สร้างขึ้นมาใหม่ใน Process นี้
+                vectorstore_manager=worker_vsm 
             )
             
             raw_results_for_sub.append(result)
@@ -678,7 +686,7 @@ class SEAMPDCAEngine:
                  for action in phase.get('Actions', []):
                      print(f"  > RECOMMENDATION: {action.get('Recommendation', 'N/A')}")
                      print(f"    - Responsible: {action.get('Responsible', 'N/A')} | Metric: {action.get('Key_Metric', 'N/A')}")
-             print("#"*53 + "\n")
+             print("#"*53 + "\n") # 🟢 แก้ไข: เติมส่วนท้ายของ print_detailed_results
 
 
     def _export_results(self, final_results: Dict[str, Any]) -> str:
@@ -693,12 +701,13 @@ class SEAMPDCAEngine:
             filename = f"seam_assessment_{enabler}_{target_sub}_{timestamp}.json"
             filepath = os.path.join(EXPORTS_DIR, filename)
             
+            # 🟢 แก้ไข: เพิ่มตรรกะในการเขียนข้อมูลลงในไฟล์ JSON
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(final_results, f, ensure_ascii=False, indent=2)
+                json.dump(final_results, f, indent=4, ensure_ascii=False)
             
-            logger.info(f"Report exported successfully to {filepath}")
+            logger.info(f"Assessment results exported successfully to: {filepath}")
+            
             return filepath
-            
         except Exception as e:
             logger.error(f"Failed to export results: {e}")
-            return f"EXPORT_FAILED: {e}"
+            return "ERROR_EXPORTING"

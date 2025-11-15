@@ -1,3 +1,4 @@
+#core/llm_data_utils.py
 """
 Robust LLM + RAG utilities for SEAM assessment.
 Responsibilities:
@@ -22,6 +23,16 @@ from typing import List, Dict, Any, Optional, Type, TypeVar, Union, List as TLis
 from pydantic import BaseModel, ValidationError
 
 # project imports (these must exist)
+
+logger = logging.getLogger(__name__)
+# 🟢 ตั้งค่า logging ให้ไม่ซ้ำซ้อน
+try:
+    if not logger.handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+except Exception:
+    pass
+
+
 try:
     from core.seam_prompts import (
         SYSTEM_ASSESSMENT_PROMPT,
@@ -31,12 +42,16 @@ try:
         SYSTEM_EVIDENCE_DESCRIPTION_PROMPT,
         EVIDENCE_DESCRIPTION_PROMPT
     )
-    # Import VectorStoreManager for type hinting
+    # Import VectorStoreManager, LcDocument (LangChain) for type hinting and functions
     from core.vectorstore import VectorStoreManager, get_global_reranker, _get_collection_name
     from core.assessment_schema import StatementAssessment, EvidenceSummary
     from core.action_plan_schema import ActionPlanActions
     from config.global_vars import DEFAULT_ENABLER, INITIAL_TOP_K, FINAL_K_RERANKED
+    # 🟢 เพิ่ม LcDocument เข้ามาเพื่อให้ retrieve_context_by_doc_ids ใช้งานได้
+    from langchain_core.documents import Document as LcDocument 
 except Exception as e:
+    # ⚠️ เพิ่ม logging เพื่อช่วย debug หาก import ล้มเหลว
+    logger.error(f"FATAL: Missing dependency in llm_data_utils.py: {e}")
     raise ImportError(f"Missing dependency in llm_data_utils.py: {e}")
 
 # LLM instance must be provided in project (models/llm.py exposes llm)
@@ -45,8 +60,6 @@ try:
 except Exception:
     llm_instance = None
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Mock control flags
 _MAX_LLM_RETRIES = 3
@@ -60,13 +73,94 @@ def set_mock_control_mode(enable: bool):
     logger.info(f"Mock control mode set to {_MOCK_CONTROL_FLAG}")
 
 
+# ------------------------------------------------------------------
+# ID Normalization and Hashing
+# ------------------------------------------------------------------
+def _hash_stable_id_to_64_char(stable_id: str) -> str:
+    # 🟢 ใช้ hashlib ที่ถูก Import ด้านบนแล้ว
+    return hashlib.sha256(stable_id.lower().encode('utf-8')).hexdigest()
+
+def normalize_stable_ids(ids: List[str]) -> List[str]:
+    normalized = []
+    for i in ids:
+        if len(i) == 64:
+            normalized.append(i.lower())
+        else:
+            normalized.append(_hash_stable_id_to_64_char(i))
+    return normalized
+
+def _hash_to_64(s: str) -> str:
+    """Helper used internally by retrieve_context_with_filter (for backward compatibility)."""
+    if not s:
+        return ""
+    try:
+        if len(s) == 64 and all(c in "0123456789abcdef" for c in s.lower()):
+            return s.lower()
+        # 🟢 FIX 3: ลบ import hashlib ที่ซ้ำซ้อน
+        return hashlib.sha256(s.lower().encode("utf-8")).hexdigest()
+    except Exception:
+        return s
+
+# ------------------------------------------------------------------
+# Retrieval Wrappers
+# ------------------------------------------------------------------
+
+def retrieve_context_by_doc_ids(doc_uuids: List[str], doc_type: str, enabler: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieve documents by UUIDs from a specific collection, calculating the collection name internally.
+    """
+    if VectorStoreManager is None:
+        logger.error("❌ VectorStoreManager is not available.")
+        return {"top_evidences": []}
+        
+    if not doc_uuids:
+        logger.warning("⚠️ No document UUIDs provided for retrieval.")
+        return {"top_evidences": []}
+
+    try:
+        manager = VectorStoreManager()
+        
+        # 🟢 ยังคงคำนวณชื่อ Collection เพื่อใช้ใน Log เท่านั้น
+        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
+        logger.info(f"Targeting collection: '{collection_name}' for UUID retrieval.")
+        
+        # 2. Normalize ID เป็น 64-char Stable UUIDs
+        normalized_uuids = normalize_stable_ids(doc_uuids) 
+        
+        # 3. ดึงข้อมูลจาก Vector Store
+        docs: List[LcDocument] = manager.get_documents_by_id(
+            stable_doc_ids=normalized_uuids, 
+            doc_type=doc_type,          # <-- ใช้ doc_type เดิม
+            enabler=enabler             # <-- ใช้ enabler เดิม
+        )
+
+        # 4. จัดรูปแบบผลลัพธ์
+        top_evidences = []
+        for d in docs:
+            meta = d.metadata
+            top_evidences.append({
+                "doc_id": meta.get("stable_doc_uuid"), 
+                "doc_type": meta.get("doc_type"),
+                "chunk_uuid": meta.get("chunk_uuid"),      # ID เฉพาะของ Chunk
+                "source": meta.get("source") or meta.get("doc_source"), # ชื่อไฟล์/ที่มา
+                "content": d.page_content.strip(),
+                "chunk_index": meta.get("chunk_index")
+            })
+
+        logger.info(f"✅ Successfully retrieved {len(top_evidences)} evidences by UUIDs from collection '{collection_name}'.")
+        return {"top_evidences": top_evidences}
+
+    except Exception as e:
+        logger.error(f"Error during UUID-based retrieval: {e}", exc_info=True)
+        return {"top_evidences": []}
+    
 # --------------------
 # RAG retrieval wrapper (expects VectorStoreManager implemented elsewhere)
 # --------------------
 def retrieve_context_with_filter(
-    vsm_manager: 'VectorStoreManager', # FIX: Accept injected VSM instance
     query: str,
-    collection_name: str,
+    doc_type: str, # 🟢 FIX 1: รับ doc_type แทน vsm_manager
+    enabler: Optional[str] = None, # 🟢 FIX 1: รับ enabler แทน collection_name
     doc_uuid_filter: Optional[List[str]] = None,
     disable_semantic_filter: bool = False,
     top_k: int = FINAL_K_RERANKED
@@ -76,8 +170,14 @@ def retrieve_context_with_filter(
     Returns {"top_evidences": [...], "aggregated_context": "..." }
     """
     try:
-        manager = vsm_manager
+        # 🟢 FIX 1: สร้าง Manager และคำนวณ Collection ภายใน
+        if VectorStoreManager is None:
+             logger.error("VectorStoreManager is not available.")
+             return {"top_evidences": [], "aggregated_context": ""}
         
+        manager = VectorStoreManager()
+        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
+
         # 1. Initial check
         if not manager:
             logger.error("Invalid VectorStoreManager instance provided for retrieval (VSM is None).")
@@ -89,7 +189,6 @@ def retrieve_context_with_filter(
         if hasattr(manager, '_load_chroma_instance'):
             # Case A: It is the intended VectorStoreManager. Use it to get the retriever.
             try:
-                # This logic is what the caller intended for a full VSM object
                 vectorstore = manager._load_chroma_instance(collection_name)
                 if not vectorstore:
                     logger.error(f"Vectorstore not found: {collection_name}")
@@ -98,8 +197,8 @@ def retrieve_context_with_filter(
                 # build search kwargs
                 search_kwargs = {"k": max(INITIAL_TOP_K, top_k)}
                 if doc_uuid_filter:
-                    # attempt to normalize stable ids (if implementation expects hashed ids)
-                    normalized = [ _hash_to_64(s) for s in doc_uuid_filter ]
+                    # 🟢 FIX 2: ใช้ normalize_stable_ids แทน _hash_to_64
+                    normalized = normalize_stable_ids(doc_uuid_filter) 
                     # many vectorstores support 'filter' param; implementation-dependent
                     search_kwargs["filter"] = {"stable_doc_uuid": {"$in": normalized}}
 
@@ -110,9 +209,7 @@ def retrieve_context_with_filter(
                 return {"top_evidences": [], "aggregated_context": ""}
         
         else:
-            # Case B: It is NOT the VSM. Based on the error, it is a Retriever (e.g., MultiDocRetriever).
-            # The calling code passed the retriever directly.
-            # We assume it is the correct retriever object and use it directly.
+            # Case B: The calling code passed the retriever directly.
             base_retriever = manager
             logger.warning("RAG: Passed object is missing '_load_chroma_instance'; assuming a Retriever was passed directly.")
             
@@ -170,20 +267,6 @@ def retrieve_context_with_filter(
         logger.exception(f"retrieve_context_with_filter failed: {e}")
         return {"top_evidences": [], "aggregated_context": ""}
 
-
-# --------------------
-# helpers: stable id hashing
-# --------------------
-def _hash_to_64(s: str) -> str:
-    if not s:
-        return ""
-    try:
-        if len(s) == 64 and all(c in "0123456789abcdef" for c in s.lower()):
-            return s.lower()
-        import hashlib
-        return hashlib.sha256(s.lower().encode("utf-8")).hexdigest()
-    except Exception:
-        return s
 
 # --------------------
 # Robust JSON extraction
@@ -283,7 +366,7 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
         score = 1 if _MOCK_COUNTER <= 9 else 0
         return {"score": score, "reason": f"MOCK {'PASS' if score else 'FAIL'}", "is_passed": score >= 1}
     
-    # FIX 1: แก้ไข Syntax Error จาก === เป็น is
+    # ✅ FIX 1: แก้ไข Syntax Error จาก === เป็น is None
     if llm_instance is None:
         # fallback random deterministic-ish
         score = random.choice([0, 1])
@@ -330,7 +413,7 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
 # summarize_context_with_llm
 # --------------------
 def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str, schema: Optional[Type[T]] = None) -> Dict[str, Any]:
-    # FIX 2: แก้ไข Syntax Error จาก === เป็น is
+    # ✅ FIX 2: แก้ไข Syntax Error จาก === เป็น is None
     if llm_instance is None:
         return {"summary": "LLM not available", "suggestion_for_next_level": "Check LLM service."}
         
@@ -372,7 +455,7 @@ def create_structured_action_plan(failed_statements_data: List[Dict[str, Any]], 
 
     statements_text = []
     for s in failed_statements_data:
-        # FIX 3: เปลี่ยนจาก 'statement_text' เป็น 'statement' เพื่อให้สอดคล้องกับโครงสร้างข้อมูลใน Engine
+        # ✅ FIX 3: เปลี่ยนจาก 'statement_text' เป็น 'statement' เพื่อให้สอดคล้องกับโครงสร้างข้อมูลใน Engine
         statements_text.append(f"Level: {s.get('level')}\nStatement: {s.get('statement')}\nReason: {s.get('reason')}\n") 
 
     human_prompt = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list="\n".join(statements_text))

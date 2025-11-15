@@ -1,4 +1,4 @@
-#router/llm_router.py
+# router/llm_router.py
 import logging
 from typing import List, Optional, Dict, Any, Tuple
 from fastapi import APIRouter, Form, HTTPException, status
@@ -18,7 +18,8 @@ from core.history_utils import load_conversation_history, save_message
 # **********************
 
 # Project Imports
-from core.retrieval_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids, normalize_stable_ids
+# 🟢 แก้ไข: ย้ายไปใช้ core/llm_data_utils.py แทน core/retrieval_utils.py
+from core.llm_data_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids, normalize_stable_ids
 from core.llm_guardrails import augment_seam_query, detect_intent, build_prompt
 from core.rag_prompts import (
     QA_PROMPT, 
@@ -87,7 +88,7 @@ def get_summary_for_comparison(doc1_text: str, doc2_text: str, final_query: str)
     return system_prompt, user_prompt
 
 # -----------------------------
-# --- /query Endpoint (ไม่มีการแก้ไข) ---
+# --- /query Endpoint (มีการแก้ไข) ---
 # -----------------------------
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
@@ -128,13 +129,18 @@ async def query_llm(
                 query=augmented_question,
                 doc_type=d_type,
                 enabler=enabler,
-                stable_doc_ids=doc_ids,
-                top_k_reranked=FINAL_K_RERANKED
+                # ❌ แก้ไข: เปลี่ยนจาก stable_doc_ids เป็น doc_uuid_filter
+                doc_uuid_filter=doc_ids,
+                top_k=FINAL_K_RERANKED # ใช้ top_k ตาม llm_data_utils
             ))
             evidences = result.get("top_evidences", [])
             for e in evidences:
                 metadata = e.get("metadata", {})
-                metadata["score"] = e.get("score", 0.0)
+                # Note: The score is typically added during reranking/retrieval in the llm_data_utils level
+                # For simplicity here, we assume it's available or default to 0.0
+                metadata["score"] = metadata.get("score", 0.0) 
+                
+                # Use content and metadata from the structure returned by llm_data_utils
                 all_chunks_raw.append(LcDocument(page_content=e["content"], metadata=metadata))
         except Exception as e:
             logger.error(f"Retrieval error for {d_type}: {e}", exc_info=True)
@@ -149,7 +155,8 @@ async def query_llm(
         return QueryResponse(answer=llm_answer, sources=[], conversation_id=conversation_id)
 
     # 6. Use RAG context & Build Messages
-    top_chunks = sorted(all_chunks_raw, key=lambda d: d.metadata.get("score", 0), reverse=True)[:FINAL_K_RERANKED]
+    # 💡 ใช้ key 'score' ใน metadata ที่เราพยายามดึงมา
+    top_chunks = sorted(all_chunks_raw, key=lambda d: d.metadata.get("score", 0.0), reverse=True)[:FINAL_K_RERANKED]
     
     # 💡 ใช้ QA_PROMPT ในการ build prompt
     context_text = "\n\n---\n\n".join([f"Source {i+1}: {doc.page_content[:3000]}" for i, doc in enumerate(top_chunks)])
@@ -185,9 +192,6 @@ async def query_llm(
 
     return QueryResponse(answer=llm_answer, sources=final_sources, conversation_id=conversation_id)
 
-# ---------------------------------------------------------------------
-# --- /compare Endpoint (Revised & Robust) ---
-# ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
 # --- /compare Endpoint (Full, Metric List Version) ---
 # ---------------------------------------------------------------------
