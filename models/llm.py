@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION CONSTANTS ---
 LLM_MODEL = "llama3.1:8b"  # สามารถเปลี่ยนเป็น "qwen3:latest" ได้
+# LLM_MODEL = "mistral:latest"  # สามารถเปลี่ยนเป็น "qwen3:latest" ได้
 LLM_TEMPERATURE = 0.0       # ตั้งเป็น 0.0 เพื่อความเสถียร
 LLM_CONTEXT_WINDOW = 4096   # เวอร์ชันใหม่ใช้ context_window แทน num_ctx
 

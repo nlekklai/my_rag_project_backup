@@ -1,10 +1,11 @@
-# gen_seam_report.py (โค้ดฉบับแก้ไข: เพิ่ม PDCA Grouping และเน้น Actionability)
+# gen_seam_report.py (โค้ดฉบับแก้ไขรอบที่ 4: ดึงชื่อ Source จาก Snippet หากไม่พบใน Metadata)
 
 import json
 import os
 import argparse
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+import re 
 
 # Import libraries for DOCX generation
 from docx import Document
@@ -19,7 +20,7 @@ EXPORT_DIR = "reports"
 REPORT_DATE = datetime.now().strftime("%Y-%m-%d")
 THAI_FONT_NAME = "Angsana New" 
 
-# พจนานุกรมสำหรับชื่อ Enabler ฉบับเต็ม (ใช้เป็น Fallback)
+# พจนานุกรมสำหรับชื่อ Enabler ฉบับเต็ม
 SEAM_ENABLER_MAP = {
     "KM": "7.1 การจัดการความรู้ (Knowledge Management)",
     "IT": "7.2 เทคโนโลยีดิจิทัล",
@@ -57,14 +58,12 @@ def setup_output_folder(file_path):
 
 def setup_document(doc):
     """Sets up document-wide formatting like margins and default font."""
-    # 1. ตั้งค่า Margins: ลดระยะขอบซ้าย/ขวาเหลือ 0.75 นิ้ว
     section = doc.sections[0]
     section.top_margin = Inches(1.0)
     section.bottom_margin = Inches(1.0)
     section.left_margin = Inches(0.75) 
     section.right_margin = Inches(0.75)
 
-    # 2. ตั้งค่า Default Font เป็น Angsana New
     doc.styles['Normal'].font.name = THAI_FONT_NAME
     
 def add_paragraph(doc, text, bold=False, italic=False, color=None, style=None):
@@ -86,44 +85,44 @@ def set_heading(doc, text, level=1):
     p = doc.add_heading(text, level=level)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 else WD_ALIGN_PARAGRAPH.LEFT
     
-    # กำหนดฟอนต์ให้กับ Heading
     for run in p.runs:
         run.font.name = THAI_FONT_NAME 
 
 def flatten_raw_data(raw_data_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     ดึง Statement ทั้งหมดออกมาจาก Raw Data Dictionary 
-    ให้อยู่ในรูปแบบ List ที่สามารถวนซ้ำได้ง่าย
-    (รองรับโครงสร้างใหม่: sub_criteria_results -> raw_results_ref และโครงสร้างเดิม)
+    (รองรับโครงสร้าง List ของ Statements โดยตรง)
     """
     statements = []
     
-    # *** โครงสร้างใหม่ที่ต้องรองรับ: ดึงจาก 'sub_criteria_results' -> 'raw_results_ref' ***
+    # 1. โครงสร้าง List ของ Statements โดยตรง (สำหรับ New Single-File Export)
+    if isinstance(raw_data_dict, list):
+        statements = [s for s in raw_data_dict if isinstance(s, dict)]
+        if statements:
+            return statements
+            
+    # 2. โครงสร้างเดิมที่เผื่อไว้ (สำหรับ Raw Details ที่เคยเป็น Dictionary)
     if isinstance(raw_data_dict, dict) and 'sub_criteria_results' in raw_data_dict:
         sub_results = raw_data_dict.get('sub_criteria_results', [])
         for sub_item in sub_results:
             if isinstance(sub_item, dict) and 'raw_results_ref' in sub_item:
                 raw_statements = sub_item['raw_results_ref']
                 if isinstance(raw_statements, list):
-                    statements.extend(raw_statements)
-        # ถ้าดึงได้จากโครงสร้างใหม่นี้ ให้ return เลย
+                    statements.extend([s for s in raw_statements if isinstance(s, dict)])
         if statements:
             return statements
             
-    # โครงสร้างเดิม 1: {"Assessment_Details": {"2.2": [...], ...}}
+    # 3. โครงสร้างเก่ามาก (เผื่อไว้)
     details = raw_data_dict.get("Assessment_Details") if isinstance(raw_data_dict, dict) else None
     if isinstance(details, dict):
         for sub_id_statements in details.values():
             if isinstance(sub_id_statements, list):
-                statements.extend(sub_id_statements)
-    # โครงสร้างเดิม 2: List ของ Statements ตรงๆ
-    elif isinstance(raw_data_dict, list):
-        statements = raw_data_dict
-        
+                statements.extend([s for s in sub_id_statements if isinstance(s, dict)])
+                
     return statements
 
 # ==========================
-# 3. REPORT GENERATION FUNCTIONS (DOCX - Native to New Structure)
+# 3. REPORT GENERATION FUNCTIONS (DOCX)
 # ==========================
 
 def generate_overall_summary_docx(document: Document, summary_data: Dict[str, Any], enabler_name_full: str): 
@@ -131,18 +130,18 @@ def generate_overall_summary_docx(document: Document, summary_data: Dict[str, An
     
     set_heading(document, f'[SECTION 1] สรุปผลการประเมิน {enabler_name_full} โดยรวม', level=1)
     
-    # 🎯 FIX 1: ดึงข้อมูลจาก 'summary' โดยใช้คีย์ที่แก้ไขใน core/seam_assessment.py
-    achieved_score = summary_data.get('final_score_achieved', 0.0)
-    # ใช้ overall_enabler_max_score เพื่อสะท้อนคะแนนเต็ม 40 (สำหรับ KM)
-    overall_max_score = summary_data.get('overall_enabler_max_score', 0.0) 
+    # ดึงคีย์ที่ถูกต้องจาก New Single-File structure (ซึ่งมาจาก 'summary')
+    achieved_score = summary_data.get('Total Weighted Score Achieved', 0.0)
+    overall_max_score = summary_data.get('Total Possible Weight', 0.0)
 
-    # Percentage calculation based on the Overall Enabler Max Score (40)
-    overall_percent = (achieved_score / overall_max_score) * 100 if overall_max_score > 0 else 0.0
+    # Percentage calculation
+    overall_percent = summary_data.get('Overall Progress Percentage (0.0 - 1.0)', 0.0) * 100
 
-    # Maturity Score = (Achieved Score / Overall Enabler Max Score) * 5 (สมมติว่า 5 คือ Level สูงสุด)
-    maturity_score = (achieved_score / overall_max_score) * 5 if overall_max_score > 0 else 0.0
+    # Maturity Score & Level: 
+    maturity_score = summary_data.get('Overall Maturity Score (Avg.)', 0.0) 
+    maturity_level = summary_data.get('Overall Maturity Level (Weighted)', 'N/A')
     
-    table = document.add_table(rows=4, cols=2) 
+    table = document.add_table(rows=5, cols=2) 
     table.style = 'Table Grid'
     
     def add_summary_row(row_index, label, value):
@@ -150,13 +149,13 @@ def generate_overall_summary_docx(document: Document, summary_data: Dict[str, An
         table.cell(row_index, 1).text = value
         table.cell(row_index, 0).paragraphs[0].runs[0].font.bold = True
         table.cell(row_index, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    
-    add_summary_row(0, "ตัวขับเคลื่อน (Enabler):", f"{summary_data.get('enabler', '-')}\n({enabler_name_full})") 
-    # ใช้ achieved_score / overall_max_score
+        
+    enabler_id = summary_data.get("enabler", summary_data.get("enabler_id", "N/A")).upper()
+    add_summary_row(0, "ตัวขับเคลื่อน (Enabler):", f"{enabler_id}\n({enabler_name_full})") 
     add_summary_row(1, "คะแนนรวมถ่วงน้ำหนักที่ได้:", f"{achieved_score:.2f} / {overall_max_score:.2f}")
-    # ใช้ overall_percent
     add_summary_row(2, "เปอร์เซ็นต์ความคืบหน้าโดยรวม:", f"{overall_percent:.2f}%")
     add_summary_row(3, "คะแนนวุฒิภาวะโดยรวม (Maturity Score):", f"{maturity_score:.2f}")
+    add_summary_row(4, "ระดับวุฒิภาวะโดยรวม (Maturity Level):", maturity_level)
     
     # กำหนดฟอนต์ให้ Table Headers และ Content
     for row in table.rows:
@@ -172,33 +171,34 @@ def generate_executive_summary_docx(document: Document, summary_data: Dict[str, 
     if not summary_data: return
     set_heading(document, "[SECTION 2] สรุปสำหรับผู้บริหาร (Executive Summary)", level=1)
 
-    # 🎯 FIX 2: ใช้ achieved_score และ overall_max_score เพื่อคำนวณตามคะแนนเต็ม 40
-    achieved_score = summary_data.get('final_score_achieved', 0.0)
-    overall_max_score = summary_data.get('overall_enabler_max_score', 0.0)
+    # ดึงข้อมูลจาก Summary Section 
+    achieved_score = summary_data.get('Total Weighted Score Achieved', 0.0)
+    overall_max_score = summary_data.get('Total Possible Weight', 0.0)
     
-    overall_percent = (achieved_score / overall_max_score) * 100 if overall_max_score > 0 else 0.0
-    maturity_score = (achieved_score / overall_max_score) * 5 if overall_max_score > 0 else 0.0
+    overall_percent = summary_data.get('Overall Progress Percentage (0.0 - 1.0)', 0.0) * 100
+    maturity_score = summary_data.get('Overall Maturity Score (Avg.)', 0.0)
+    maturity_level = summary_data.get('Overall Maturity Level (Weighted)', 'N/A')
 
     add_paragraph(document, f"✅ คะแนนรวม: {achieved_score:.2f} / {overall_max_score:.2f}")
     add_paragraph(document, f"✅ ร้อยละความสำเร็จ: {overall_percent:.2f}%")
-    add_paragraph(document, f"✅ ระดับความเป็นผู้ใหญ่: {maturity_score:.2f}")
+    add_paragraph(document, f"✅ ระดับความเป็นผู้ใหญ่: {maturity_score:.2f} ({maturity_level})")
     document.add_paragraph()
 
     if sub_results:
         # Strength: Top 3 highest scoring
         add_paragraph(document, "📈 จุดแข็งที่โดดเด่น (Top Strengths):", bold=True, color=(0x00, 0x70, 0xC0))
-        top_strengths = sorted(sub_results, key=lambda x: x.get("weighted_score", 0), reverse=True)[:3]
+        top_strengths = sorted(sub_results, key=lambda x: (x.get("weighted_score", 0) / x.get("weight", 1)) if x.get("weight", 1) > 0 else 0, reverse=True)[:3]
         for s in top_strengths:
             sub_id = s.get('sub_criteria_id', 'N/A')
             sub_name = s.get('sub_criteria_name', 'N/A')
-            add_paragraph(document, f"• {sub_id} - {sub_name} ({s.get('weighted_score', 0):.2f}/{s.get('weight', 0):.2f})", style="List Bullet")
+            add_paragraph(document, f"• {sub_id} - {sub_name} (L{s.get('highest_full_level', 0)} ได้ {s.get('weighted_score', 0):.2f}/{s.get('weight', 0):.2f})", style="List Bullet")
 
         document.add_paragraph()
         
         # Weakness: Top 3 with Gap (or lowest scoring with Gap)
         add_paragraph(document, "🚨 จุดที่ควรพัฒนา (Development Areas):", bold=True, color=(0xFF, 0x00, 0x00))
         gaps = [s for s in sub_results if not s.get("target_level_achieved", True)]
-        # เรียงตาม Level ที่ผ่านได้ต่ำสุด (Highest Full Level)
+        # เรียงตามระดับที่ผ่านได้สูงสุด (Highest Full Level) น้อยที่สุด
         top_weaknesses = sorted(gaps, key=lambda x: x.get("highest_full_level", 0))[:3] 
         for s in top_weaknesses:
             sub_id = s.get('sub_criteria_id', 'N/A')
@@ -216,14 +216,14 @@ def generate_sub_criteria_status_docx(document: Document, sub_results: List[Dict
     table.style = 'Table Grid'
     
     # ตั้งค่าความกว้างคอลัมน์
-    table.columns[0].width = Inches(0.5) # ID
-    table.columns[1].width = Inches(4.5) # ชื่อเกณฑ์ย่อย
-    table.columns[2].width = Inches(0.7) # คะแนน
-    table.columns[3].width = Inches(0.7) # Level
-    table.columns[4].width = Inches(1.0) # Gap
+    table.columns[0].width = Inches(0.5) 
+    table.columns[1].width = Inches(4.5) 
+    table.columns[2].width = Inches(0.8) # คะแนน/น้ำหนัก
+    table.columns[3].width = Inches(0.7) 
+    table.columns[4].width = Inches(0.8) # Gap
     
     header_cells = table.rows[0].cells
-    headers = ["ID", "ชื่อเกณฑ์ย่อย", "คะแนน", "Level", "Gap"]
+    headers = ["ID", "ชื่อเกณฑ์ย่อย", "คะแนน/น้ำหนัก", "Level", "Gap"] 
     for i, h in enumerate(headers):
         header_cells[i].text = h
         header_cells[i].paragraphs[0].runs[0].font.bold = True
@@ -239,24 +239,27 @@ def generate_sub_criteria_status_docx(document: Document, sub_results: List[Dict
         row_cells = table.add_row().cells
         
         name = info.get('sub_criteria_name', 'N/A') 
-        score = info.get('weighted_score', 0.0)
+        score = info.get('weighted_score', 0.0) 
+        weight = info.get('weight', 0.0) 
         level = info.get('highest_full_level', 0)
         has_gap = "❌ YES" if not info.get('target_level_achieved', True) else "✅ NO"
         
         if not info.get('target_level_achieved', True):
-            gap_criteria[sub_id] = info # เก็บ info ทั้งหมด
+            # เก็บข้อมูล Sub-criteria ที่มี Gap
+            gap_criteria[sub_id] = info 
             
         row_cells[0].text = sub_id
         row_cells[1].text = name
-        row_cells[2].text = f"{score:.2f}"
+        row_cells[2].text = f"{score:.2f} / {weight:.2f}" 
         row_cells[3].text = f"L{level}"
         row_cells[4].text = has_gap
         
         # กำหนดฟอนต์สำหรับแถวข้อมูล
-        for cell in row_cells:
-            for p in cell.paragraphs:
-                for run in p.runs:
-                    run.font.name = THAI_FONT_NAME
+        for row in table.rows: # Re-apply font to all rows/cells for consistency
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for run in p.runs:
+                        run.font.name = THAI_FONT_NAME
 
         row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         row_cells[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -267,7 +270,7 @@ def generate_sub_criteria_status_docx(document: Document, sub_results: List[Dict
     return gap_criteria
 
 def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str, Any]):
-    """สร้างรายงานรายละเอียดแผนปฏิบัติการ (Action Plan) [SECTION 4] ใน DOCX (รวม L4/L5 Summary และจัดกลุ่มตาม PDCA)"""
+    """สร้างรายงานรายละเอียดแผนปฏิบัติการ (Action Plan) [SECTION 4] ใน DOCX"""
     
     document.add_heading('[SECTION 4] รายงานรายละเอียดแผนปฏิบัติการเพื่อปิดช่องว่าง (Action Plan)', level=1)
     
@@ -275,11 +278,10 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
         add_paragraph(document, "✅ ทุกเกณฑ์ย่อยผ่านครบถ้วนแล้ว ไม่จำเป็นต้องมี Action Plan เพิ่มเติม")
         return
 
-    # เพิ่มย่อหน้าแนะนำเพื่อเพิ่ม Actionability
     add_paragraph(document, 
         "ℹ️ คำแนะนำเหล่านี้เป็นการระบุ 'ช่องว่างเชิงระบบ' (Systemic Gap) เพื่อให้องค์กรบรรลุวุฒิภาวะ Level ถัดไป องค์กรควรนำคำแนะนำเหล่านี้ไปแตกเป็น 'แผนปฏิบัติการย่อย (Detailed Work Plan)' ที่ระบุรายละเอียดกิจกรรม, ผู้รับผิดชอบ, และไทม์ไลน์ ภายใต้กรอบ PDCA ที่กำหนดไว้",
         italic=True,
-        color=(0x80, 0x80, 0x80) # สีเทาสำหรับข้อแนะนำ
+        color=(0x80, 0x80, 0x80)
     )
     document.add_paragraph()
 
@@ -288,14 +290,13 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
         
         document.add_heading(f"• เกณฑ์ย่อย {sub_id}: {sub_name} (Highest Full Level: L{sub_info.get('highest_full_level', 0)})", level=2)
         
-        # --- ดึง L4/L5 Summary (โค้ดเดิม) ---
+        # ดึง Summary Evidence ที่สำคัญ (ถ้ามี)
         evidence_summary_L5 = sub_info.get("evidence_summary_L5", {})
         evidence_summary_L4 = sub_info.get("evidence_summary_L4", {})
         
         if evidence_summary_L5.get('summary'):
             add_paragraph(document, "💡 ข้อมูลเชิงลึกหลักฐานระดับ L5 (เป้าหมายสูงสุด):", bold=True, color=(0x00, 0x70, 0xC0))
             add_paragraph(document, f"   - สรุปหลักฐาน: {evidence_summary_L5.get('summary', 'ไม่มีสรุป L5')}", italic=True)
-            # เน้นข้อเสนอแนะหลัก
             p_sugg = add_paragraph(document, f"   - ข้อเสนอแนะ: ", italic=True)
             run_sugg = p_sugg.add_run(evidence_summary_L5.get('suggestion_for_next_level', 'ไม่มีข้อเสนอแนะ'))
             run_sugg.font.bold = True
@@ -306,12 +307,10 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
             add_paragraph(document, "💡 ข้อมูลเชิงลึกหลักฐานระดับ L4:", bold=True, color=(0x00, 0x70, 0xC0))
             add_paragraph(document, f"   - สรุปหลักฐาน: {evidence_summary_L4.get('summary', 'ไม่มีสรุป L4')}", italic=True)
             document.add_paragraph()
-        # --- END L4/L5 Summary ---
         
-        # --- START: จัดกลุ่ม Action Plan ตาม PDCA (User Guideline) ---
         action_plans = sub_info.get('action_plan', [])
         
-        # โครงสร้างสำหรับจัดเก็บ Action Plan ตาม PDCA
+        # จัดกลุ่ม Action Plan ตาม PDCA (เผื่อกรณี LLM สร้าง Action Plan แบบไม่มี Phase/Goal)
         pdca_actions = {
             'P (Plan / วางแผน)': [],
             'D (Do / ปฏิบัติ)': [],
@@ -319,29 +318,49 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
             'A (Act / ปรับปรุง)': []
         }
 
-        # รวบรวมและจัดกลุ่ม Action Plan ทั้งหมด
-        for plan_phase in action_plans:
-            actions_list = plan_phase.get('Actions', [])
-            for action in actions_list:
+        # 1. ตรวจสอบโครงสร้างแบบซับซ้อน (Phase/Goal/Actions)
+        is_complex_structure = (
+             isinstance(action_plans, list) and 
+             action_plans and 
+             isinstance(action_plans[0], dict) and 
+             'Phase' in action_plans[0]
+        )
+
+        if is_complex_structure:
+            # วนลูปและดึงข้อมูลจากโครงสร้าง Phase/Goal/Actions
+            for plan in action_plans:
+                # Basic mapping based on name prefix
+                phase = plan.get('Phase', 'D (Do / ปฏิบัติ)')
+                if 'P (' in phase: pdca_key = 'P (Plan / วางแผน)'
+                elif 'D (' in phase: pdca_key = 'D (Do / ปฏิบัติ)'
+                elif 'C (' in phase: pdca_key = 'C (Check / ตรวจสอบ)'
+                elif 'A (' in phase: pdca_key = 'A (Act / ปรับปรุง)'
+                else: pdca_key = 'D (Do / ปฏิบัติ)' 
+                    
+                for action in plan.get('Actions', []):
+                    # สมมติว่า Action Plan ในโครงสร้างซับซ้อนมีแค่ Recommendation
+                    pdca_actions[pdca_key].append({
+                        'rec': action.get('Recommendation', ''), 
+                        'target_evidence': '-', # ไม่มีข้อมูลในโครงสร้างนี้
+                        'key_metric': '-' # ไม่มีข้อมูลในโครงสร้างนี้
+                    })
+        
+        # 2. ตรวจสอบโครงสร้างแบบเรียบง่าย (List of Recommendations ที่มีคีย์ Target_Evidence_Type, Key_Metric)
+        elif isinstance(action_plans, list) and all(isinstance(a, dict) and 'Recommendation' in a for a in action_plans):
+            for action in action_plans:
                 rec = action.get('Recommendation', '')
                 failed_level = action.get('Failed_Level', 5)
                 target_evidence = action.get('Target_Evidence_Type', '-')
                 key_metric = action.get('Key_Metric', '-')
                 
-                # Logic การแมปเข้าสู่ PDCA
-                pdca_key = 'D (Do / ปฏิบัติ)' # กำหนดค่าเริ่มต้นเป็น D
-
+                # Logic การจัดกลุ่ม PDCA (ใช้ Logic เดิมที่เคยทำไว้สำหรับ Action Plan)
                 if 'ปรับปรุง' in rec or 'ข้อมูลป้อนกลับ' in rec or failed_level == 5:
-                    # ถ้าล้มเหลวที่ L5 หรือมีคำว่าปรับปรุง/ข้อมูลป้อนกลับ จะเป็น Act
                     pdca_key = 'A (Act / ปรับปรุง)'
                 elif 'ติดตาม' in rec or 'ประเมินผล' in rec or 'ทบทวน' in rec:
-                    # ถ้ามีคำว่า ติดตาม/ประเมินผล/ทบทวน จะจัดอยู่ใน Check
                     pdca_key = 'C (Check / ตรวจสอบ)'
                 elif failed_level in [1, 2] or 'กำหนดแผน' in rec or 'กำหนดกลยุทธ์' in rec:
-                    # ถ้าล้มเหลวที่ระดับต้นๆ หรือเน้นคำว่าวางแผน จะเป็น Plan
                     pdca_key = 'P (Plan / วางแผน)' 
                 else:
-                    # ที่เหลือส่วนใหญ่มักเป็น D (การสร้าง การดำเนินการตามปกติ)
                     pdca_key = 'D (Do / ปฏิบัติ)'
 
                 pdca_actions[pdca_key].append({
@@ -349,9 +368,9 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
                     'target_evidence': target_evidence,
                     'key_metric': key_metric
                 })
-        
-        # แสดงผลใน Report ตามหมวด PDCA
-        if any(pdca_actions.values()):
+                
+        # 3. สร้างตารางรายงาน PDCA จากข้อมูลที่จัดกลุ่มแล้ว
+        if any(actions for actions in pdca_actions.values()):
             document.add_paragraph()
             add_paragraph(document, "📋 แผนปฏิบัติการเพื่อปิดช่องว่างตามวงจร PDCA (User Guideline)", bold=True, color=(0x00, 0x00, 0x00))
 
@@ -359,160 +378,220 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
                 if actions:
                     document.add_heading(f"--- {phase} ---", level=4)
                     
-                    # สร้างตาราง Action Plan
-                    action_table = document.add_table(rows=1, cols=3, style='Table Grid')
+                    # สร้างตารางเฉพาะเมื่อมีข้อมูล (สำหรับโครงสร้างแบบเรียบง่ายที่มี Target/Metric)
+                    if not is_complex_structure and all(a.get('target_evidence') != '-' for a in actions):
+                        action_table = document.add_table(rows=1, cols=3, style='Table Grid')
+                        
+                        header_cells = action_table.rows[0].cells
+                        header_cells[0].text = "คำแนะนำ (Recommendation)"
+                        header_cells[1].text = "หลักฐานเป้าหมาย (Evidence Type)"
+                        header_cells[2].text = "ตัวชี้วัดสำคัญ (Key Metric)"
+                        
+                        for cell in action_table.rows[0].cells:
+                             cell.paragraphs[0].runs[0].font.bold = True
+                             cell.paragraphs[0].runs[0].font.name = THAI_FONT_NAME 
+                        
+                        for action in actions:
+                            row_cells = action_table.add_row().cells
+                            
+                            row_cells[0].text = action['rec']
+                            
+                            p_evidence = row_cells[1].paragraphs[0]
+                            run_evidence = p_evidence.add_run(action['target_evidence'])
+                            run_evidence.font.bold = True
+                            run_evidence.font.color.rgb = RGBColor(0x00, 0x70, 0xC0) 
+                            
+                            p_metric = row_cells[2].paragraphs[0]
+                            run_metric = p_metric.add_run(action['key_metric'])
+                            run_metric.font.bold = True
+                            run_metric.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+                            
+                            for cell in row_cells:
+                                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                                for p_cell in cell.paragraphs:
+                                    for run in p_cell.runs:
+                                        run.font.name = THAI_FONT_NAME
+                                        run.font.size = Pt(11) 
                     
-                    # ตั้งค่า Header
-                    header_cells = action_table.rows[0].cells
-                    header_cells[0].text = "คำแนะนำ (Recommendation)"
-                    header_cells[1].text = "หลักฐานเป้าหมาย (Evidence Type)"
-                    header_cells[2].text = "ตัวชี้วัดสำคัญ (Key Metric)"
+                    # ถ้าเป็นโครงสร้างซับซ้อน หรือขาด Target/Metric ให้แสดงเป็น List Bullet ธรรมดา
+                    else:
+                        for action in actions:
+                            add_paragraph(document, f"• {action['rec']}", style="List Bullet")
                     
-                    # Format Header
-                    for cell in action_table.rows[0].cells:
-                         cell.paragraphs[0].runs[0].font.bold = True
-                         cell.paragraphs[0].runs[0].font.name = THAI_FONT_NAME 
-                    
-                    # เพิ่ม Action Rows
-                    for action in actions:
-                        row_cells = action_table.add_row().cells
-                        
-                        # Column 1: Recommendation
-                        row_cells[0].text = action['rec']
-                        
-                        # Column 2: Target Evidence (เน้นด้วยสีน้ำเงินและตัวหนา)
-                        p_evidence = row_cells[1].paragraphs[0]
-                        run_evidence = p_evidence.add_run(action['target_evidence'])
-                        run_evidence.font.bold = True
-                        run_evidence.font.color.rgb = RGBColor(0x00, 0x70, 0xC0) # Blue
-                        
-                        # Column 3: Key Metric (เน้นด้วยสีแดงและตัวหนา)
-                        p_metric = row_cells[2].paragraphs[0]
-                        run_metric = p_metric.add_run(action['key_metric'])
-                        run_metric.font.bold = True
-                        run_metric.font.color.rgb = RGBColor(0xFF, 0x00, 0x00) # Red
-                        
-                        # กำหนดฟอนต์สำหรับแถวข้อมูลทั้งหมด
-                        for cell in row_cells:
-                            for p_cell in cell.paragraphs:
-                                for run in p_cell.runs:
-                                    run.font.name = THAI_FONT_NAME
-                                    run.font.size = Pt(11) # กำหนดขนาดฟอนต์
-                
-            document.add_paragraph() 
+                    document.add_paragraph() 
         else:
-            add_paragraph(document, ">>> [ข้อมูล]: ไม่มี Action Plan ถูกกำหนดไว้สำหรับเกณฑ์นี้", style='List Bullet')
-        # --- END: จัดกลุ่ม Action Plan ตาม PDCA ---
+            add_paragraph(document, f">>> [ข้อมูล]: ไม่มี Action Plan ถูกกำหนดไว้สำหรับเกณฑ์ย่อย {sub_id}", style='List Bullet')
+        document.add_paragraph()
 
-def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict[str, Any]]): 
-    """สร้างรายงานการตรวจสอบความถูกต้องเชิงลึก (Raw Details) [SECTION 5] ใน DOCX"""
+def generate_raw_details_report_docx(document: Document, raw_data_list: List[Dict[str, Any]]): 
+    """
+    สร้างรายงานการตรวจสอบความถูกต้องเชิงลึก (Raw Details) [SECTION 5] ใน DOCX
+    หมายเหตุ: raw_data_list คือ List ของ Statements ที่มาจาก 'raw_llm_results'
+    """
     
-    raw_data_base = raw_data 
-    if raw_data is None:
-        document.add_paragraph(f"⚠️ ไม่สามารถโหลดไฟล์ Raw Details ได้ หรือไฟล์ว่างเปล่า") 
+    document.add_heading('[SECTION 5] รายงานหลักฐานเชิงลึก (Raw Details)', level=1)
+    
+    if not raw_data_list or not isinstance(raw_data_list, list):
+        add_paragraph(document, f"⚠️ ไม่พบ Raw Statements ในไฟล์ Input (คีย์ 'raw_llm_results' อาจว่างเปล่า)", bold=True, color=(0xFF, 0x80, 0x00)) 
         return
         
     assessment_details = {}
+    for statement in raw_data_list:
+        sub_id = statement.get('sub_criteria_id', 'N/A')
+        if sub_id != 'N/A' and isinstance(statement, dict):
+            if sub_id not in assessment_details:
+                assessment_details[sub_id] = []
+            assessment_details[sub_id].append(statement)
     
-    # ดึงข้อมูล Raw Data และจัดกลุ่มตาม Sub-criteria ID
-    if isinstance(raw_data_base, dict):
-        assessment_details = raw_data_base.get('Assessment_Details', {})
+    sorted_assessment_details = dict(sorted(assessment_details.items()))
     
-    if not assessment_details:
-         statements_list = flatten_raw_data(raw_data_base) # ลองดึงแบบ 'all statements'
-         if statements_list:
-             for statement in statements_list:
-                sub_id = statement.get('sub_criteria_id', 'N/A')
-                if sub_id not in assessment_details:
-                    assessment_details[sub_id] = []
-                assessment_details[sub_id].append(statement)
-         else:
-            add_paragraph(document, "ℹ️ ข้อมูล Raw Details ว่างเปล่าหลังจากตรวจสอบโครงสร้าง (โปรดตรวจสอบว่า 'raw_results_ref' มีข้อมูลหรือไม่)")
-            return
-    
-    # โค้ดแสดงผลรายละเอียด
-    document.add_heading('[SECTION 5] รายงานหลักฐานเชิงลึก (Raw Details)', level=1)
-    
-    for sub_id, statements in assessment_details.items():
+    if not sorted_assessment_details:
+        add_paragraph(document, "🚨 **ไม่พบ Raw Statements ใดๆ** (โปรดตรวจสอบว่าไฟล์ Input JSON ถูกต้อง)", bold=True, color=(0xFF, 0x00, 0x00))
+        return 
+
+    for sub_id, statements in sorted_assessment_details.items():
         document.add_heading(f"รายละเอียดการประเมินเกณฑ์ย่อย: {sub_id}", level=2)
         
-        # สร้างตารางสำหรับแต่ละ Sub-criteria (5 คอลัมน์)
         table = document.add_table(rows=1, cols=5, style='Table Grid')
+
+        table.columns[0].width = Inches(1.0)  
+        table.columns[1].width = Inches(1.0)  
+        table.columns[2].width = Inches(2.5)  
+        table.columns[3].width = Inches(2.0)  
+        table.columns[4].width = Inches(3.0)  
+        
         header_cells = table.rows[0].cells
         
-        # Headers (เหลือ 5 คอลัมน์: ลบคอลัมน์ Statement / Standard ออก)
         headers = ["Statement ID (Level)", "ผลการประเมิน", "เหตุผล/วิเคราะห์", "แหล่งที่มา", "หลักฐาน/บริบท (Snippet)"] 
         for i, h in enumerate(headers):
             header_cells[i].text = h
             header_cells[i].paragraphs[0].runs[0].font.bold = True
             header_cells[i].paragraphs[0].runs[0].font.name = THAI_FONT_NAME 
+
+        if not statements or not all(isinstance(s, dict) for s in statements):
+            row_cells = table.add_row().cells
+            row_cells[0].merge(row_cells[4]) 
+            merged_cell = row_cells[0]
+            merged_cell.text = "⚠️ ไม่พบ Raw Statements สำหรับเกณฑ์ย่อยนี้"
             
+            for p_cell in merged_cell.paragraphs:
+                run = p_cell.runs[0]
+                run.font.name = THAI_FONT_NAME
+                run.font.size = Pt(11)
+                run.font.color.rgb = RGBColor(0xFF, 0x80, 0x00) 
+            
+            document.add_paragraph()
+            continue 
+            
+        # Regex pattern to find source entries in the raw context snippet
+        # [SOURCE: filename.ext (ID:hash)]
+        SOURCE_PATTERN = re.compile(r'\[SOURCE:\s*(.*?)\s*\(ID:([0-9a-f]+)...?\)\s*\]', re.DOTALL)
+
+
         for statement in statements:
-            # ใช้คีย์ที่คาดว่าจะมาจาก raw_results_ref: is_passed และ llm_score
             is_passed = statement.get('is_passed', statement.get('is_pass', False)) 
             status = "✅ PASS" if is_passed else "❌ FAIL"
             level = statement.get('level', '-')
             reason_text = statement.get('reason', 'N/A')
 
-            # --- START: แก้ไขการดึง Source และ Location (Column 4 - Index 3) ให้รองรับโครงสร้าง JSON ที่ซ้อน metadata ---
-            sources_list = statement.get('retrieved_full_source_info', [])
+            # --- START: ดึง Source/Snippet จากคีย์ Custom ---
+            sources_list_raw = statement.get('retrieved_full_source_info', []) 
+            
+            # 1. ดึง Snippet มาเพื่อหาชื่อไฟล์ที่ถูกซ่อนไว้
+            context_snippet_raw = statement.get('aggregated_context_used', 'ไม่มีหลักฐานสนับสนุนที่ชัดเจน') 
+            extracted_names_from_snippet = {} # {doc_id_prefix: file_name}
+            
+            for match in SOURCE_PATTERN.finditer(context_snippet_raw):
+                file_name = match.group(1).strip()
+                doc_id_prefix = match.group(2).strip() # Hash ID Prefix
+                # ใช้ Prefix 8 ตัวแรกเป็นคีย์ในการจับคู่
+                extracted_names_from_snippet[doc_id_prefix] = file_name 
+            
             
             valid_sources = []
-            for src in sources_list:
-                metadata = src.get('metadata', {}) # ดึง metadata ออกมา
-                
-                # 1. พยายามดึงชื่อ: file_name > source > source_file > uuid (จาก metadata)
-                name = metadata.get('file_name') or metadata.get('source') or metadata.get('source_file') or metadata.get('uuid')
-                
-                # 2. พยายามดึงตำแหน่ง: page_label > page (จาก metadata)
-                location = metadata.get('page_label') or metadata.get('page')
-                
-                # 3. สร้างข้อความ
-                if name:
-                    name_display = name
+            if isinstance(sources_list_raw, list): 
+                for src in sources_list_raw:
+                    # 2.1 พยายามหาชื่อไฟล์จากคีย์ที่ชัดเจนก่อน
+                    name = (
+                        src.get('file_name') or 
+                        src.get('source_name') or 
+                        src.get('title') # ค้นหา 'title'
+                    )
                     
-                    location_str = None
-                    if location is not None:
-                        # ถ้า page เป็น 0 และไม่มี page_label (สันนิษฐานว่าเป็นหน้าแรก p.1)
-                        if str(location) == '0' and not metadata.get('page_label'): 
-                             location_str = "p.1"
-                        # ถ้าเป็นค่าตัวเลข/ข้อความปกติ
-                        elif str(location).strip() != "":
-                            location_str = f"p.{location}"
+                    # 2.2 ดึง doc_id สำหรับการจับคู่
+                    doc_id = str(src.get('doc_id') or src.get('document_id', '')).strip()
+                    doc_id_prefix = doc_id[:8]
+
+                    # 2.3 ถ้าไม่มีชื่อที่ชัดเจน ให้ใช้ชื่อที่ดึงมาจาก Snippet แทน (ถ้าพบการจับคู่ Hash Prefix)
+                    if not name and doc_id_prefix and doc_id_prefix in extracted_names_from_snippet:
+                         name = extracted_names_from_snippet[doc_id_prefix] # ใช้ชื่อที่ดึงมา
                     
-                    location_display = f"({location_str})" if location_str else ''
-                    valid_sources.append(f"{name_display}{location_display}")
-                
+                    
+                    location = src.get('page')
+                    rank = src.get('retrieved_rank')
+                    
+                    if name: # พบชื่อที่อ่านได้ (ทั้งแบบตรงและแบบที่ดึงจาก snippet)
+                        location_display = f" (p.{location})" if location and str(location).strip() != "" else ''
+                        rank_display = f" (Rank {rank})" if rank is not None else ""
+                        
+                        valid_sources.append(f"{name}{location_display}{rank_display}")
+                    else:
+                        # Fallback message (ถ้ายังไม่พบชื่อ)
+                        if doc_id:
+                            # Check if it's the long hash the user complained about
+                            if len(doc_id) > 20:
+                                 valid_sources.append(f"[ERROR: ไม่พบชื่อไฟล์ (Hash: {doc_id_prefix}...)]")
+                            else:
+                                 valid_sources.append(f"[ERROR: ไม่พบชื่อไฟล์ (ID: {doc_id})]")
+                        else:
+                            valid_sources.append("[ERROR: ไม่พบชื่อแหล่งที่มา]")
+
             sources_text = "\n".join(valid_sources) if valid_sources else 'ไม่มีแหล่งที่มา'
-            # --- END: แก้ไขการดึง Source และ Location (New Fix) ---
+            
+            # --- END: ดึง Source/Snippet ---
 
             row_cells = table.add_row().cells
             
-            # Column 1 (Index 0): Statement ID (Level)
-            row_cells[0].text = f"{statement.get('statement_id', '-')}\n(L{level})"
+            # Column 1
+            row_cells[0].text = f"{statement.get('sub_criteria_id', '-')}\n(L{level})"
             
-            # Column 2 (Index 1): ผลการประเมิน (Status)
+            # Column 2
             llm_score = statement.get('llm_score', '-')
             if llm_score != '-':
-                # llm_score คือ 0/1; คะแนนเต็มจริงคือ 5 แต่เนื่องจากเราไม่ทราบระดับคะแนนต่อข้อที่นี่ จึงแสดงเป็น 0/1
                 row_cells[1].text = f"{status}\n({llm_score}/1)" 
             else:
                  row_cells[1].text = status
             
-            # Column 3 (Index 2): เหตุผล/วิเคราะห์ (Reason)
+            # Column 3
             row_cells[2].text = reason_text 
             
-            # Column 4 (Index 3): แหล่งที่มา (Source)
+            # Column 4 (Source)
             row_cells[3].text = sources_text 
             
-            # Column 5 (Index 4): หลักฐาน/บริบท (Snippet)
-            row_cells[4].text = statement.get('aggregated_context_used', 'ไม่มีหลักฐานสนับสนุนที่ชัดเจน')
+            # Column 5 (Snippet) - ต้องทำความสะอาด Source Prefix ออกจาก Snippet
+            context_snippet_cleaned = context_snippet_raw
+            
+            # FIX 2: Clean the Snippet by removing the [SOURCE: ...] prefix if present 
+            # เราใช้ Regex เดียวกันนี้เพื่อทำความสะอาด
+            # เราใช้ sub() เพื่อแทนที่ทุกครั้งที่พบ pattern ด้วยสตริงว่าง
+            context_snippet_cleaned = SOURCE_PATTERN.sub('', context_snippet_raw).strip() 
+
+            if not context_snippet_cleaned:
+                context_snippet_cleaned = 'ไม่มีหลักฐานสนับสนุนที่ชัดเจน (ถูกลบ Source Prefix ออกไป)'
+            
+            # Take only the first 300 characters for a snippet if full context is too long
+            if len(context_snippet_cleaned) > 300:
+                row_cells[4].text = context_snippet_cleaned[:300] + "..."
+            else:
+                row_cells[4].text = context_snippet_cleaned
             
             # กำหนดฟอนต์สำหรับแถวข้อมูล
             for cell in row_cells:
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
                 for p_cell in cell.paragraphs:
                     for run in p_cell.runs:
                         run.font.name = THAI_FONT_NAME
+                        run.font.size = Pt(11)
 
             row_cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             if not is_passed:
@@ -521,19 +600,18 @@ def generate_raw_details_report_docx(document: Document, raw_data: Optional[Dict
         document.add_paragraph()
 
 # ==========================
-# 4. MAIN EXECUTION (Updated to accept 1 input file)
+# 4. MAIN EXECUTION (Updated for Single-File Input)
 # ==========================
 def main():
-    """ฟังก์ชันหลักในการสร้างรายงานทั้งหมด"""
+    """ฟังก์ชันหลักในการสร้างรายงานทั้งหมด (รองรับ Input 1 ไฟล์ในโครงสร้างใหม่)"""
     
-    parser = argparse.ArgumentParser(description="Generate Comprehensive SEAM Assessment Reports (New Structure V2).")
+    parser = argparse.ArgumentParser(description="Generate Comprehensive SEAM Assessment Reports (Using the new Single-File Export).")
     parser.add_argument("--mode", choices=["all", "sub"], default="all", help="all: Generate full report. sub: Generate report for a specific sub-criteria.")
     parser.add_argument("--sub", type=str, help="SubCriteria ID (e.g., 2.2) if mode=sub.")
     
-    # *** เปลี่ยนเป็นรับไฟล์เดียว ***
-    parser.add_argument("--input_file", type=str, required=True, help="Path to the single JSON file containing both summary and raw details.") 
+    # *** 🟢 รับ 1 ไฟล์ Input ***
+    parser.add_argument("--results_file", type=str, required=True, help="Path to the unified JSON results file (e.g., seam_assessment_results_km_L5_...json).") 
     
-    # *** ไม่มีการรับ --raw_file แล้ว ***
     parser.add_argument("--output_path", type=str, default="reports/SEAM_Comprehensive_Report", help="Output directory and base filename prefix (e.g., reports/SEAM_Comprehensive_Report).")
     
     args = parser.parse_args()
@@ -541,30 +619,62 @@ def main():
     # 1. จัดการ Folder Output และแยก Directory
     output_dir = os.path.dirname(args.output_path)
     if not output_dir:
-         output_dir = EXPORT_DIR # ใช้ Default หาก Path ไม่มี Directory
+         output_dir = EXPORT_DIR 
     setup_output_folder(output_dir)
     
-    # 2. โหลดไฟล์ (โหลดเพียงครั้งเดียว)
-    full_data = load_data(args.input_file, "Comprehensive Input Data")
+    # 2. โหลดไฟล์ Single Results File
+    results_data_loaded = load_data(args.results_file, "Unified Results File")
     
-    if not full_data or 'summary' not in full_data or 'sub_criteria_results' not in full_data:
-        print("🚨 ไม่สามารถสร้างรายงานได้เนื่องจากไฟล์ Input Core Data ไม่พร้อมหรือโครงสร้างไม่ถูกต้อง (ขาด 'summary' หรือ 'sub_criteria_results')")
+    if not results_data_loaded:
+        print("🚨 ไม่สามารถสร้างรายงานได้เนื่องจากไฟล์ Results Data โหลดไม่ได้")
         return
         
-    # *** Assign ตัวแปรทั้งสองไปยังข้อมูลที่โหลดมาเดียวกัน ***
-    full_summary_data = full_data
-    raw_data = full_data
+    # --- 3. การดึงข้อมูลจากโครงสร้าง Single-File Export ---
     
-    # --- 3. ดึงและกรองข้อมูลหลัก ---
-    summary_section = full_summary_data["summary"]
-    sub_results_full = full_summary_data["sub_criteria_results"]
+    # 3.1 GOAL 1: Get Summary Section (for Sections 1 & 2)
+    summary_section = results_data_loaded.get("summary", {})
+    if not summary_section:
+        print("🚨 ไม่พบคีย์ 'summary' ในไฟล์ Results Data (โปรดตรวจสอบโครงสร้างไฟล์)")
+        return
     
+    # 3.2 GOAL 2: Synthesize Sub Results Full (for Sections 2, 3, 4)
+    # FIX: Access 'sub_criteria_results' as a LIST
+    sub_results_list = results_data_loaded.get("sub_criteria_results")
+    sub_results_full = []
+    
+    if sub_results_list and isinstance(sub_results_list, list):
+        print("✅ ตรวจพบโครงสร้าง Results File (summary/sub_criteria_results เป็น List) กำลังเตรียมข้อมูล...")
+        
+        for item in sub_results_list:
+            if isinstance(item, dict):
+                sub_results_full.append({
+                    "sub_criteria_id": item.get('sub_criteria_id', 'N/A'),
+                    "sub_criteria_name": item.get('sub_criteria_name', 'N/A'),
+                    "weighted_score": item.get('weighted_score', 0.0), 
+                    "weight": item.get('weight', 0.0),      
+                    "highest_full_level": item.get('highest_full_level', 0),
+                    "target_level_achieved": item.get('target_level_achieved', False), 
+                    "action_plan": item.get('action_plan', []),
+                    "evidence_summary_L5": item.get('evidence_summary_L5', {}),
+                    "evidence_summary_L4": item.get('evidence_summary_L4', {}),
+                })
+    else:
+         print("🚨 ไม่พบหรือโครงสร้าง 'sub_criteria_results' ไม่ถูกต้อง")
+         return
+         
+    # 3.3 GOAL 3: Raw Data (for Section 5)
+    # FIX: Correct key name to 'raw_llm_results'
+    raw_data_for_section5 = results_data_loaded.get("raw_llm_results") 
+    
+    if not raw_data_for_section5:
+         print("🚨 ไม่พบ Raw Data ในคีย์ 'raw_llm_results' (Section 5 จะถูกข้าม)")
+         raw_data_for_section5 = [] 
+         
     # ดึง ENABLER และกำหนดค่าเริ่มต้น
-    enabler_id = summary_section.get("enabler", "KM").upper() 
+    enabler_id = summary_section.get("enabler", summary_section.get("enabler_id", "KM")).upper()
     enabler_name_full = SEAM_ENABLER_MAP.get(enabler_id, f"Unknown Enabler ({enabler_id})")
     
     final_sub_results = sub_results_full
-    final_raw_data = raw_data
     
     # --- 4. การจัดการชื่อไฟล์และการกรองข้อมูลสำหรับโหมด 'sub' ---
     
@@ -583,26 +693,18 @@ def main():
         ]
         
         # กรอง Raw Data 
-        if raw_data is not None:
-            # *** FIX: flatten_raw_data ถูกแก้ไขให้ดึงจาก 'raw_results_ref' ได้แล้ว ***
-            all_statements = flatten_raw_data(raw_data)
-            filtered_statements = [
-                stmt for stmt in all_statements 
+        if raw_data_for_section5:
+            raw_data_for_section5 = [
+                stmt for stmt in raw_data_for_section5 
                 if stmt.get("sub_criteria_id", "").upper() == sub_id_filter
             ]
-            
-            # ถ้า Raw Data ที่กรองแล้วมีข้อมูล ให้สร้างโครงสร้าง Dict ใหม่เพื่อให้ generate_raw_details_report_docx ทำงานได้
-            if filtered_statements:
-                 # สร้างโครงสร้างใหม่: {"Assessment_Details": {sub_id_filter: [...]}}
-                 final_raw_data = {"Assessment_Details": {sub_id_filter: filtered_statements}}
-            else:
-                 final_raw_data = None
             
         base_prefix = f"{enabler_id}_Report_{sub_id_filter}"
     
     else:
         print(f"🔹 โหมด: รายงานฉบับเต็มสำหรับ {enabler_name_full}")
         
+    
     # กำหนดชื่อ Output สุดท้าย (รวมวันที่)
     final_base_name = f"{base_prefix}_{REPORT_DATE}"
     
@@ -613,33 +715,41 @@ def main():
     # --- A. การสร้างไฟล์ DOCX ---
     
     # 1. สร้าง Strategic Report (Sections 1-4)
-    print(f"\nกำลังสร้างไฟล์ DOCX [Strategic Report]...")
-    strategic_doc = Document()
-    setup_document(strategic_doc) 
-    
-    # SECTION 1: Overall Summary
-    generate_overall_summary_docx(strategic_doc, summary_section, enabler_name_full) 
-    # SECTION 2: Executive Summary
-    generate_executive_summary_docx(strategic_doc, summary_section, final_sub_results)
-    # SECTION 3: Sub-Criteria Status & Gap
-    gap_criteria_docx = generate_sub_criteria_status_docx(strategic_doc, final_sub_results)
-    # SECTION 4: Action Plan Report (พร้อม L4/L5 Summary) -> โค้ดได้รับการปรับปรุง PDCA
-    generate_action_plan_report_docx(strategic_doc, gap_criteria_docx)
+    if not final_sub_results:
+        print("🚨 ไม่สามารถสร้าง Strategic Report ได้เนื่องจากไม่มีข้อมูล Sub-Criteria ที่กรองแล้ว")
+        if args.mode == "sub":
+             print(f"   (ข้อผิดพลาด: ไม่พบข้อมูลสำหรับเกณฑ์ย่อย {args.sub})")
+        # ยังคงไปขั้นตอน 2 เพื่อลองสร้าง Raw Details (เผื่อมีข้อมูล)
+    else:
+        print(f"\nกำลังสร้างไฟล์ DOCX [Strategic Report]...")
+        strategic_doc = Document()
+        setup_document(strategic_doc) 
+        
+        # SECTION 1: Overall Summary 
+        generate_overall_summary_docx(strategic_doc, summary_section, enabler_name_full) 
+        # SECTION 2: Executive Summary
+        generate_executive_summary_docx(strategic_doc, summary_section, final_sub_results)
+        # SECTION 3: Sub-Criteria Status & Gap 
+        gap_criteria_docx = generate_sub_criteria_status_docx(strategic_doc, final_sub_results)
+        # SECTION 4: Action Plan Report
+        generate_action_plan_report_docx(strategic_doc, gap_criteria_docx)
 
-    strategic_doc.save(strategic_path)
-    print(f"🎉 สร้างไฟล์ DOCX [Strategic Report] สำเร็จ! บันทึกที่: {strategic_path}")
+        strategic_doc.save(strategic_path)
+        print(f"🎉 สร้างไฟล์ DOCX [Strategic Report] สำเร็จ! บันทึกที่: {strategic_path}")
 
 
     # 2. สร้าง Raw Details Working Document (Section 5)
     print(f"กำลังสร้างไฟล์ DOCX [Raw Details]...")
     detail_doc = Document()
     setup_document(detail_doc) 
-    detail_doc.add_heading(f"[SECTION 5] รายงานหลักฐานเชิงลึก (Raw Details) - {enabler_name_full} ({REPORT_DATE})", level=1)
-    # SECTION 5: Raw Details 
-    generate_raw_details_report_docx(detail_doc, final_raw_data) 
-
+    
+    # SECTION 5: Raw Details (ส่ง List ของ Statements เข้าไปโดยตรง)
+    generate_raw_details_report_docx(detail_doc, raw_data_for_section5)
+    
     detail_doc.save(detail_path)
     print(f"🎉 สร้างไฟล์ DOCX [Raw Details] สำเร็จ! บันทึกที่: {detail_path}")
+
+    print("\n✅ การสร้างรายงาน SEAM Assessment ทั้งหมดเสร็จสมบูรณ์")
 
 
 if __name__ == "__main__":

@@ -25,7 +25,6 @@ from core.rag_prompts import (
 from core.vectorstore import (
     VectorStoreManager,
     load_all_vectorstores,
-    GLOBAL_RERANKER, 
     get_global_reranker,
     _get_collection_name
 )

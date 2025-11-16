@@ -1,4 +1,4 @@
-# core/vectorstore.py
+#core/vectorstore.py
 import os
 import platform
 import logging
@@ -22,20 +22,28 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import BaseDocumentCompressor 
 
 
-from langchain_community.document_compressors import FlashrankRerank
-
 # External libraries
+# ✅ FIXED: นำเข้า PrivateAttr, ConfigDict, BaseModel โดยตรงจาก pydantic
 from pydantic import PrivateAttr, ConfigDict, BaseModel
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-
-from flashrank import Ranker
 import chromadb
 from chromadb.config import Settings
 
-from sentence_transformers import SentenceTransformer, util
-
+# Logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+# 🟢 FIX (Option C): แทนที่ Flashrank ด้วย Sentence Transformers CrossEncoder
+try:
+    from sentence_transformers import CrossEncoder 
+except ImportError:
+    # Placeholder class to avoid crash if not installed
+    logger.warning("⚠️ CrossEncoder not found. Install 'sentence-transformers' to use this reranker.")
+    class CrossEncoder:
+        def __init__(self, model_name, device, max_length): pass
+        def predict(self, sentences, show_progress_bar): return [0] * len(sentences)
 
 # Configure chromadb telemetry if available
 try:
@@ -47,6 +55,8 @@ except Exception:
         pass
 
 # -------------------- Global Config --------------------
+# NOTE: ต้องแน่ใจว่า import ถูกต้องตามโครงสร้างโปรเจกต์ของคุณ
+# สมมติว่าไฟล์นี้ถูกเรียกใช้และ config.global_vars สามารถถูกเข้าถึงได้
 from config.global_vars import (
     VECTORSTORE_DIR,
     MAPPING_FILE_PATH,
@@ -57,22 +67,12 @@ from config.global_vars import (
 )
 
 # -------------------- Vectorstore Constants --------------------
-# MAX_PARALLEL_WORKERS = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
 ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or ""
 
-# Logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.handlers = logging.root.handlers
-
 # Global caches (per process)
-_CACHED_RANKER = None
 _CACHED_EMBEDDINGS = None
 _EMBED_LOCK = threading.Lock()
 _MPS_WARNING_SHOWN = False
-
-# Flashrank cache dir
-CUSTOM_CACHE_DIR = os.path.expanduser("~/.hf_cache_dir/flashrank_models")
 
 # -------------------- Helper: detect environment & device --------------------
 def _detect_system():
@@ -88,34 +88,36 @@ def _detect_system():
 
 
 def _detect_torch_device():
-    """Return best device string for HuggingFaceEmbeddings: 'cuda'|'mps'|'cpu' when available."""
+    """
+    Return best device string for HuggingFaceEmbeddings: 'cuda'|'mps'|'cpu' when available.
+    """
     # avoid importing torch at top-level if not installed; check safely
     try:
         import torch
         if torch.cuda.is_available():
             return "cuda"
         # mac mps support: torch.backends.mps.is_available() may exist
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        # 🟢 CLEANUP: ใช้ platform.system() แทน sys.platform ในการตรวจสอบ platform
+        if platform.system().lower() == "darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return "mps"
     except Exception:
         pass
+    # If no accelerator is found (or torch not installed), default to 'cpu'.
     return "cpu"
 
 
 def get_hf_embeddings(device_hint: Optional[str] = None):
     """
     Return a HuggingFaceEmbeddings instance (cached per process).
-    device_hint can be 'cuda'|'mps'|'cpu' or None to auto-detect.
-    Note: per-process caching - threads will share this instance within same process.
     """
     global _CACHED_EMBEDDINGS, _MPS_WARNING_SHOWN
     device = device_hint or _detect_torch_device()
 
-    # Safety: if MPS is detected and we're in a multi-process environment, prefer CPU
-    # because MPS + multiprocessing is fragile on macOS.
-    # We choose CPU if VECTOR_MODE forced to 'process' or if platform is darwin and using processes
+    # Safety: MPS + multiprocessing is fragile on macOS.
     sys_info = _detect_system()
     force_mode = ENV_FORCE_MODE
+    
+    # ใช้วิธีการตรวจสอบแบบง่าย (ถ้าไม่ใช้ Thread pool ถือว่าเป็น Process-parallel)
     using_process = (force_mode == "process") or (sys_info["cpu_count"] >= 8 and (sys_info["total_ram_gb"] or 0) >= 16)
 
     if device == "mps" and using_process and not _MPS_WARNING_SHOWN:
@@ -131,46 +133,36 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
         with _EMBED_LOCK:
             if _CACHED_EMBEDDINGS is None:
                 try:
-                    # ใช้ E5-large เพื่อให้เข้ากับ ingest.py
                     model_name = "intfloat/multilingual-e5-large"
                     logger.info(f"📦 Creating HuggingFaceEmbeddings (model={model_name}, device={device})")
                     
-                    # 🟢 การปรับปรุงสำหรับ E5: เพิ่ม query_instruction และ encode_kwargs
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
                         model_name=model_name, 
                         model_kwargs={"device": device},
-                        # 1. เพิ่มคำสั่งนำหน้า "query: " สำหรับข้อความค้นหา (Query) เพื่อประสิทธิภาพ E5
-                        # query_instruction="query: ", #NOTE: Commented out as per original code template
-                        # 2. แนะนำให้ normalize embeddings สำหรับ E5 เพื่อความแม่นยำ
-                        # encode_kwargs={'normalize_embeddings': True} #NOTE: Commented out as per original code template
+                        # query_instruction="query: ", 
+                        # encode_kwargs={'normalize_embeddings': True} 
                     )
 
                 except Exception as e:
-                    # fallback to CPU if any issue
                     logger.warning(f"⚠️ Failed to create embeddings on device={device}: {e}. Falling back to CPU.")
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={"device": "cpu"})
     return _CACHED_EMBEDDINGS
-
+    
 
 # -------------------- Vectorstore helpers (REVISED/CLEANED) --------------------
 
 def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
     """
     Calculates the Chroma collection name and directory name based on doc_type and enabler.
-    For doc_type='evidence', it returns 'evidence_<ENABLER>'.
-    Otherwise, it returns the doc_type string (e.g., 'document').
     """
     doc_type_norm = doc_type.strip().lower()
 
     if doc_type_norm == EVIDENCE_DOC_TYPES:
-        # Apply default enabler if None, หรือใช้ enabler ที่ส่งมา
-        # NOTE: การใช้ DEFAULT_ENABLER ต้องมั่นใจว่ามีการ import มาแล้ว
-        enabler_norm = (enabler or "km").strip().lower() # 🟢 ใช้ "km" เป็นค่า default ชั่วคราว ถ้า DEFAULT_ENABLER ยังไม่ถูกกำหนด
+        enabler_norm = (enabler or "km").strip().lower() 
         collection_name = f"{doc_type_norm}_{enabler_norm}"
     else:
         collection_name = doc_type_norm
         
-    # ✅ เพิ่ม Log ที่ต้องการ
     logger.critical(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
     
     return collection_name
@@ -183,7 +175,6 @@ def get_vectorstore_path(doc_type: Optional[str] = None, enabler: Optional[str] 
     if not doc_type:
         return VECTORSTORE_DIR
     
-    # 🟢 REVISED: ใช้ _get_collection_name
     collection_name = _get_collection_name(doc_type, enabler)
     return os.path.join(VECTORSTORE_DIR, collection_name)
 
@@ -195,14 +186,13 @@ def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optiona
     if not os.path.exists(base_path):
         return []
     
-    # List folders inside VECTORSTORE_DIR
     folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
     
     if doc_type:
         doc_type_norm = doc_type.lower().strip()
         
         if doc_type_norm == EVIDENCE_DOC_TYPES and not enabler:
-            # 🟢 NEW LOGIC: Special case: 'evidence' without enabler means list ALL evidence_*
+            # Special case: 'evidence' without enabler means list ALL evidence_*
             return [f for f in folders if f.startswith(f"{EVIDENCE_DOC_TYPES}_")]
             
         # Specific collection requested (e.g., 'document' or 'evidence_km')
@@ -220,28 +210,148 @@ def vectorstore_exists(doc_id: str, base_path: str = VECTORSTORE_DIR, doc_type: 
     if not doc_type:
         return False
     
-    # 🟢 REVISED: ใช้ _get_collection_name
     collection_name = _get_collection_name(doc_type, enabler)
     path = os.path.join(base_path, collection_name)
     file_path = os.path.join(path, "chroma.sqlite3")
-    
-    # 🟢 DEBUG: แสดงพาธที่กำลังจะตรวจสอบ (เพื่อยืนยันว่าถูกต้อง)
-    # logger.info(f"🔍 V-Exists Check: Checking path: {file_path} (from CWD: {os.getcwd()})")
     
     if not os.path.isdir(path):
         logger.warning(f"❌ V-Exists Check 1: Directory not found for collection '{collection_name}' at {path}")
         return False
         
-    # 2. ตรวจสอบไฟล์ฐานข้อมูลหลัก
     if os.path.isfile(file_path):
-        # logger.info(f"✅ V-Exists Check 2: Found required file at {file_path}")
         return True
         
-    # 🚨 DEBUG: หากถึงตรงนี้ แสดงว่าหาไฟล์ไม่เจอ (คือบั๊กที่เรากำลังหา)
     logger.error(f"❌ V-Exists Check 3: FAILED to find file chroma.sqlite3 at {file_path} for collection '{collection_name}'")
     return False
 
+# =================================================================
+# Custom HuggingFace Cross-Encoder Compressor
+# =================================================================
 
+class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor, BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    # 🟢 FIX Pydantic NameError: เปลี่ยนชื่อ fields เพื่อหลีกเลี่ยงข้อขัดแย้งกับ Pydantic/LangChain
+    # rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_model: str = "intfloat/multilingual-e5-large" # <<-- แก้ไขตรงนี้
+    rerank_device: str = _detect_torch_device() 
+    rerank_max_length: int = 512
+    _cross_encoder: Any = PrivateAttr(None)
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialization logic is now fully handled in get_global_reranker
+        pass 
+        
+    def set_encoder_instance(self, encoder: Any):
+        """Method to manually set the globally created CrossEncoder instance."""
+        self._cross_encoder = encoder
+
+    def compress_documents(
+        self,
+        documents: Sequence[LcDocument],
+        query: str,
+        top_n: int, 
+        callbacks: Optional[Any] = None,
+    ) -> List[LcDocument]:
+        
+        if not documents:
+            return []
+        # Check for predict method
+        if self._cross_encoder is None or not hasattr(self._cross_encoder, 'predict'):
+            logger.error("HuggingFace Cross-Encoder is not initialized. Returning truncated documents.")
+            return list(documents)[:top_n]
+
+        # 1. Prepare inputs: (query, document_text) pairs
+        # Sentence Transformers CrossEncoder expects a list of [query, document] pairs
+        sentence_pairs = [[query, doc.page_content] for doc in documents]
+
+        # 2. Perform Reranking (Prediction)
+        try:
+            # Predict returns a list of scores (logits)
+            scores = self._cross_encoder.predict(sentence_pairs, show_progress_bar=False)
+        except Exception as e:
+            logger.error(f"❌ Cross-Encoder prediction failed: {e}. Returning truncated documents.")
+            return list(documents)[:top_n]
+
+        # 3. Combine documents and scores, then sort
+        doc_scores = sorted(
+            zip(documents, scores), key=lambda x: x[1], reverse=True
+        )
+
+        # 4. Map back to LcDocuments and apply top_n
+        final_docs = []
+        for doc, score in doc_scores[:top_n]:
+            # Add the relevance score to the metadata
+            doc.metadata["relevance_score"] = float(score)
+            final_docs.append(doc)
+            
+        return final_docs
+
+
+# B. แก้ไขฟังก์ชัน get_global_reranker: รับประกันการสร้าง Encoder ครั้งเดียว
+
+_CACHED_RERANKER_INSTANCE: Optional[HuggingFaceCrossEncoderCompressor] = None
+_CACHED_CROSS_ENCODER: Any = None # Instance ของ sentence_transformers.CrossEncoder จริงๆ
+
+def get_global_reranker(final_k: int) -> Optional[HuggingFaceCrossEncoderCompressor]:
+    """
+    Return a global (cached) HuggingFaceCrossEncoderCompressor instance.
+    The actual CrossEncoder is initialized only once.
+    """
+    global _CACHED_RERANKER_INSTANCE, _CACHED_CROSS_ENCODER
+    
+    if _CACHED_RERANKER_INSTANCE is None:
+        try:
+            # 1. สร้าง Compressor Wrapper Instance
+            instance = HuggingFaceCrossEncoderCompressor()
+            
+            if _CACHED_CROSS_ENCODER is None:
+                # 🟢 FIX: เรียกใช้ชื่อ fields ใหม่
+                model_name = instance.rerank_model 
+                device = instance.rerank_device     
+                
+                logger.info(f"📦 Initializing global CrossEncoder (model={model_name}, device={device})")
+                
+                # 2. Try to create the actual CrossEncoder object
+                try: 
+                    from sentence_transformers import CrossEncoder # Import again inside the function for robustness
+                    
+                    # Call the CrossEncoder constructor
+                    _CACHED_CROSS_ENCODER = CrossEncoder(
+                        model_name=model_name, 
+                        device=device,
+                        # 🟢 FIX: เรียกใช้ชื่อ fields ใหม่
+                        max_length=instance.rerank_max_length 
+                    )
+                    logger.info("✅ CrossEncoder initialized successfully.")
+
+                except ImportError:
+                    logger.error("❌ FATAL: sentence-transformers library not found. Cannot initialize CrossEncoder.")
+                    _CACHED_CROSS_ENCODER = None
+                    
+                except Exception as encoder_e:
+                    # Catch PyTorch/device/download errors
+                    logger.error(f"❌ FATAL: CrossEncoder constructor failed: {encoder_e}. Try running in CPU mode.")
+                    _CACHED_CROSS_ENCODER = None 
+                    
+            # 3. ตรวจสอบและกำหนด Encoder ให้กับ Singleton
+            if _CACHED_CROSS_ENCODER and hasattr(_CACHED_CROSS_ENCODER, 'predict'):
+                 instance.set_encoder_instance(_CACHED_CROSS_ENCODER)
+                 _CACHED_RERANKER_INSTANCE = instance
+                 logger.critical("✅ Reranker set to HuggingFace Cross-Encoder.")
+            else:
+                 logger.error("❌ HuggingFace Cross-Encoder failed to initialize or missing 'predict' method. Reranking disabled.")
+                 return None
+                 
+        except Exception as e:
+            logger.error(f"❌ Failed to create global HuggingFaceCrossEncoderCompressor: {e}")
+            _CACHED_RERANKER_INSTANCE = None 
+            return None
+    
+    return _CACHED_RERANKER_INSTANCE
+    
+    
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
     """
@@ -251,18 +361,13 @@ class VectorStoreManager:
     _instance = None
     _is_initialized = False
     
-    # Cache to store loaded Chroma instances
     _chroma_cache: Dict[str, Chroma] = PrivateAttr({}) 
-    # Lock for thread-safe initialization and cache access
+    _multi_doc_retriever: Optional['MultiDocRetriever'] = PrivateAttr(None) 
     _lock = threading.Lock()
     
-    # Cache for Doc ID Mapping (doc_id -> DocInfo)
-    # The structure is Dict[str, Dict[str, Any]] to match the DocInfo structure
     _doc_id_mapping: Dict[str, Dict[str, Any]] = PrivateAttr({}) 
-    # Reverse cache: chunk_uuid -> doc_id
     _uuid_to_doc_id: Dict[str, str] = PrivateAttr({})
     
-    # Embeddings (Shared across all instances)
     _embeddings: Any = PrivateAttr(None)
 
 
@@ -276,35 +381,47 @@ class VectorStoreManager:
         if not self._is_initialized:
             self._base_path = base_path
             self._chroma_cache = {}
-            # Initialization of embeddings and reranker models
             self._embeddings = get_hf_embeddings()
             
-            # Load mapping on startup
             self._load_doc_id_mapping()
             
             logger.info(f"Initialized VectorStoreManager. Loaded {len(self._doc_id_mapping)} stable doc IDs.")
             VectorStoreManager._is_initialized = True
 
+    # เพิ่ม close/del method เพื่อจัดการ Executor ของ MultiDocRetriever (หากมี)
+    def close(self):
+        """Cleanly shuts down all managed resources, including MultiDocRetriever's executor."""
+        with self._lock:
+            # 1. Shutdown MultiDocRetriever's Executor
+            if self._multi_doc_retriever and hasattr(self._multi_doc_retriever, 'shutdown'):
+                logger.info("Closing MultiDocRetriever executor via VSM.")
+                self._multi_doc_retriever.shutdown()
+                self._multi_doc_retriever = None
+                
+            # 2. Clear caches
+            self._chroma_cache = {}
+            # 3. รีเซ็ตสถานะ Singleton
+            VectorStoreManager._is_initialized = False
+
+    def __del__(self):
+        """Fallback cleanup for the VSM Singleton."""
+        self.close()
+    
     def _load_doc_id_mapping(self):
             """Loads doc_id_mapping.json into memory."""
             self._doc_id_mapping = {}
             self._uuid_to_doc_id = {}
             try:
-                # Load mapping data (doc_id -> DocInfo structure)
                 with open(MAPPING_FILE_PATH, 'r', encoding='utf-8') as f:
                     mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
                     
-                    # 🎯 FIX: ทำความสะอาด (strip) คีย์ทั้งหมดของ Dictionary ทันทีที่โหลด
-                    # เพื่อป้องกันอักขระที่ไม่คาดคิดที่อาจติดมาจากไฟล์ JSON
+                    # FIX: ทำความสะอาด (strip) คีย์ทั้งหมดของ Dictionary ทันทีที่โหลด
                     cleaned_mapping = {k.strip(): v for k, v in mapping_data.items()}
                     
                     self._doc_id_mapping = cleaned_mapping
                     
-                    # Create reverse mapping for quick lookup UUID -> Doc ID
-                    # ใชั cleaned_mapping ในการวนซ้ำ
                     for doc_id, doc_entry in cleaned_mapping.items(): 
-                        # Ensure doc_entry is a dict and contains the 'chunk_uuids' key
-                        if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry['chunk_uuids'], list):
+                        if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry.get('chunk_uuids'), list):
                             for uid in doc_entry['chunk_uuids']:
                                 self._uuid_to_doc_id[uid] = doc_id
                             
@@ -322,7 +439,6 @@ class VectorStoreManager:
             # Return 'evidence' as doc_type, and the enabler part (uppercase)
             return EVIDENCE_DOC_TYPES, parts[1].upper() if len(parts) == 2 else None
             
-        # For non-evidence types (document, faq, etc.)
         return collection_name_lower, None 
 
     def _load_chroma_instance(self, collection_name: str) -> Optional[Chroma]:
@@ -331,22 +447,18 @@ class VectorStoreManager:
             return self._chroma_cache[collection_name]
 
         with self._lock:
-            # Re-check cache after acquiring lock
             if collection_name in self._chroma_cache:
                 return self._chroma_cache[collection_name]
             
             persist_directory = os.path.join(self._base_path, collection_name)
             
-            # NOTE: vectorstore_exists needs doc_type/enabler, parse collection_name.
             doc_type, enabler = self._re_parse_collection_name(collection_name)
             
-            # Use the global helper to check existence on disk
             if not vectorstore_exists(doc_id="N/A", base_path=self._base_path, doc_type=doc_type, enabler=enabler):
                 logger.warning(f"⚠️ Chroma collection '{collection_name}' folder not found at {persist_directory}")
                 return None
 
             try:
-                # Load Chroma DB
                 vectordb = Chroma(
                     persist_directory=persist_directory, 
                     embedding_function=self._embeddings,
@@ -364,7 +476,6 @@ class VectorStoreManager:
                 Retrieves chunks (Documents) from a specific Chroma collection 
                 using their **Stable Document UUIDs** (64-char IDs).
                 """
-                # ... (ส่วนการเตรียม stable_doc_ids ยังคงเดิม)
                 if isinstance(stable_doc_ids, str):
                     stable_doc_ids = [stable_doc_ids]
                     
@@ -382,36 +493,29 @@ class VectorStoreManager:
                 try:
                     collection = chroma_instance._collection
                     
-                    # 🟢 [FIX 1 - สำคัญ] ต้องเพิ่ม 'ids' เข้าไปใน include list 
-                    # เพื่อให้สามารถดึง chunk_uuid (ซึ่งอยู่ใน result.get('ids')) มาใช้ได้
+                    # FIX: ใช้ "doc_id" เป็นคีย์ใน where clause และรวม 'ids'
                     result = collection.get(
-                        where={"stable_doc_uuid": {"$in": stable_doc_ids}}, 
-                        include=['documents', 'metadatas'] # <--- ✅ แก้ไขตรงนี้
+                        where={"doc_id": {"$in": stable_doc_ids}}, 
+                        include=['documents', 'metadatas', 'ids']
                     )
                     
-                    # 3. Process results into LangChain Documents
                     documents: List[LcDocument] = []
-                    # ตรวจสอบว่า result มี 'documents' และ 'ids' ในจำนวนที่เท่ากัน
                     num_docs = len(result.get('documents', []))
                     
                     for i in range(num_docs):
                         text = result['documents'][i]
                         if text:
-                            # ดึง metadata, chunk_uuid ตาม index ที่ดึงมา
                             metadata = result.get('metadatas', [{}])[i]
                             chunk_uuid_from_result = result.get('ids', [''])[i]
                             
-                            # 💡 ใช้ stable_doc_uuid จาก metadata ที่เราใช้ Filter
-                            doc_id = metadata.get("stable_doc_uuid", "UNKNOWN") 
+                            doc_id = metadata.get("doc_id", "UNKNOWN") 
                             
-                            # Ensure metadata contains necessary keys
                             metadata["chunk_uuid"] = chunk_uuid_from_result
                             metadata["doc_id"] = doc_id
                             metadata["doc_type"] = doc_type 
                             
                             documents.append(LcDocument(page_content=text, metadata=metadata))
                     
-                    # 🟢 [FIX 2] เปลี่ยน Log ให้ชัดเจน
                     logger.info(f"✅ Retrieved {len(documents)} documents for {len(stable_doc_ids)} Stable IDs from '{collection_name}'.")
                     return documents
                     
@@ -424,10 +528,6 @@ class VectorStoreManager:
         """
         Loads the base Chroma retriever for the given collection, and returns a wrapper
         that applies reranking and final truncation (final_k).
-        
-        collection_name: The name of the Chroma collection to load.
-        top_k: The initial number of documents to retrieve from the vectorstore.
-        final_k: The final number of documents to return after optional reranking.
         """
         # 1. Load Chroma instance
         chroma_instance = self._load_chroma_instance(collection_name)
@@ -436,7 +536,6 @@ class VectorStoreManager:
             return None 
             
         # 2. Create the base retriever (Chroma as_retriever)
-        # ใช้ top_k สำหรับการดึงข้อมูลเริ่มต้นจาก vectorstore
         search_kwargs = {"k": top_k}
         try:
             base_retriever = chroma_instance.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
@@ -444,57 +543,88 @@ class VectorStoreManager:
             logger.error(f"Failed to create base retriever for '{collection_name}': {e}")
             return None
 
-        # 3. Apply Rerank/Truncation Wrapper (ใช้ตรรกะเดิมของคุณในการ Wrap)
+        # 3. Apply Rerank/Truncation Wrapper
         
-        # ต้องแน่ใจว่า get_global_reranker ถูก import มาแล้วในไฟล์นี้
-        try:
-            from core.vectorstore import get_global_reranker
-        except ImportError:
-            # ถ้าระบบของคุณไม่ได้ import get_global_reranker ไว้ที่ด้านบน ให้แจ้งเตือน (แต่โดยทั่วไปควรจะถูก import แล้ว)
-            pass
-
         if use_rerank:
             # Wrapper Function: ใช้ invoke_with_rerank ที่รองรับการรับ config (search_kwargs) จาก MultiDocRetriever
             def invoke_with_rerank(query: str, config: Optional[Dict] = None):
-                # เรียก base retriever (chroma) เพื่อดึงข้อมูลตาม query และ config/filter ที่ส่งมา
-                docs = base_retriever.invoke(query, config=config)
                 
-                try:
-                    reranker = get_global_reranker(final_k)
-                    if reranker and hasattr(reranker, 'rerank'):
-                        # ทำ rerank และ truncate ตาม final_k
-                        return reranker.rerank(query, docs)[:final_k]
-                    logger.warning("⚠️ Reranker not available. Returning base docs truncated.")
-                    return docs[:final_k]
+                # Initialize docs to prevent NameError
+                docs = [] 
+                
+                # 1. ดึง filter จาก config ที่ส่งมาจาก MultiDocRetriever
+                chroma_filter = config.get('configurable', {}).get('search_kwargs', {}).get('filter') if config else None
+                
+                try: # ห่อหุ้มการเรียกใช้ base_retriever.invoke() ด้วย try-except
+                    # 2. ถ้ามี filter ให้ override search_kwargs ของ base_retriever
+                    if chroma_filter:
+                        # ใช้ top_k เดิมของ collection นี้สำหรับการดึงก่อน Rerank
+                        new_config = {'configurable': {"search_kwargs": {"k": top_k, "filter": chroma_filter}}}
+                        docs = base_retriever.invoke(query, config=new_config)
+                    else:
+                        docs = base_retriever.invoke(query, config=config)
                 except Exception as e:
-                    logger.warning(f"⚠️ Rerank failed: {e}. Returning base docs truncated to {final_k}")
-                    return docs[:final_k]
+                    logger.error(f"❌ Retrieval failed before rerank: {e}")
+                    return [] # หากดึงข้อมูลล้มเหลว ให้คืนค่าลิสต์ว่างทันที (docs ยังคงเป็น [])
+                
+                # 3. Perform Reranking
+                try:
+                    # 4. ใช้ HuggingFaceCrossEncoderCompressor (ผ่าน get_global_reranker)
+                    # NOTE: final_k ที่ถูกส่งไปใน get_global_reranker (ในบรรทัด 380) ถูกใช้แค่ในการ Init ตัว Compressor
+                    reranker = get_global_reranker(final_k) 
+
+                    if reranker and hasattr(reranker, 'compress_documents'):
+                        # // 🟢 FIX: Rerank และ TRUNCATE ผลลัพธ์กลับไปที่ top_k (30/50) แทน final_k (5)
+                        # // เพื่อให้ llm_data_utils.py ได้เอกสารเต็มจำนวนที่ถูกจัดเรียงแล้วไปประมวลผลต่อ
+                        return reranker.compress_documents(docs, query, top_n=top_k) 
+                    
+                    logger.warning("⚠️ Reranker not available. Returning base docs truncated.")
+                    return docs[:top_k] 
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Rerank failed: {e}. Returning base docs truncated to {top_k}")
+                    return docs[:top_k] 
 
             # Wrapper class: ห่อหุ้มฟังก์ชัน invoke
-            class SimpleRetrieverWrapper:
+            class SimpleRetrieverWrapper(BaseRetriever):
+                model_config = ConfigDict(arbitrary_types_allowed=True)
                 def invoke(self, query: str, config: Optional[Dict] = None):
                     return invoke_with_rerank(query, config=config)
+                # สำหรับ BaseRetriever ใหม่, ต้องมี _get_relevant_documents
+                def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[LcDocument]:
+                    config = None # LangChain config is typically passed via the 'invoke' method.
+                    return invoke_with_rerank(query, config=config)
+
 
             return SimpleRetrieverWrapper()
         else:
             # No Rerank, just Truncate
-            class TruncatedRetrieverWrapper:
+            class TruncatedRetrieverWrapper(BaseRetriever):
+                model_config = ConfigDict(arbitrary_types_allowed=True)
                 def invoke(self, query: str, config: Optional[Dict] = None):
-                    # Docs ถูกจำกัดด้วย k (top_k) จาก base_retriever แล้ว แค่ truncate เหลือ final_k
-                    docs = base_retriever.invoke(query, config=config)
-                    return docs[:final_k]
+                    # ถ้ามีการส่ง filter มา ให้ override search_kwargs ของ base_retriever
+                    chroma_filter = config.get('configurable', {}).get('search_kwargs', {}).get('filter') if config else None
+                    if chroma_filter:
+                        new_config = {'configurable': {"search_kwargs": {"k": top_k, "filter": chroma_filter}}}
+                        docs = base_retriever.invoke(query, config=new_config)
+                    else:
+                        docs = base_retriever.invoke(query, config=config)
+                        
+                    return docs[:top_k] 
+                
+                def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[LcDocument]:
+                    config = run_manager.get_session_info() if run_manager else None
+                    return self.invoke(query, config=config)
 
             return TruncatedRetrieverWrapper()
 
     def get_all_collection_names(self) -> List[str]:
         """Returns a list of all available collection names (folders in VECTORSTORE_DIR)."""
-        # Use the global helper
         return list_vectorstore_folders(base_path=self._base_path)
     
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
             """
             Retrieves chunks (Documents) for a list of Stable Document IDs from a specific collection.
-            This retrieves ALL chunks belonging to the specified Stable Document IDs.
             """
             if isinstance(stable_doc_ids, str):
                 stable_doc_ids = [stable_doc_ids]
@@ -503,7 +633,6 @@ class VectorStoreManager:
             if not stable_doc_ids:
                 return []
                 
-            # Get the correct Collection Name
             collection_name = _get_collection_name(doc_type, enabler)
 
             all_chunk_uuids = []
@@ -512,24 +641,22 @@ class VectorStoreManager:
 
             # 1. ค้นหา Chunk UUIDs ทั้งหมดจาก Mapping
             for stable_id in stable_doc_ids:
-                # 🟢 FIX: ทำความสะอาด ID โดยการ strip() ก่อนการเปรียบเทียบ
                 stable_id_clean = stable_id.strip()
 
                 if stable_id_clean in self._doc_id_mapping:
                     doc_entry = self._doc_id_mapping[stable_id_clean] 
                     
-                    # ตรวจสอบโครงสร้าง: {"stable_id": {"chunk_uuids": ["uuid1", "uuid2", ...]}}
                     if isinstance(doc_entry, dict) and 'chunk_uuids' in doc_entry and isinstance(doc_entry.get('chunk_uuids'), list):
                         chunk_uuids = doc_entry['chunk_uuids']
                         if chunk_uuids:
                             all_chunk_uuids.extend(chunk_uuids)
-                            found_stable_ids.append(stable_id_clean) # ใช้ ID ที่สะอาดในการบันทึก
+                            found_stable_ids.append(stable_id_clean) 
                         else:
                             logger.warning(f"Mapping found for Stable ID '{stable_id_clean}' but 'chunk_uuids' list is empty.")
                     else:
                         logger.warning(f"Mapping entry for Stable ID '{stable_id_clean}' is malformed or missing 'chunk_uuids'.")
                 else:
-                    skipped_docs.append(stable_id_clean) # ใช้ ID ที่สะอาดในการบันทึกว่าถูก skip
+                    skipped_docs.append(stable_id_clean)
                     
             if skipped_docs:
                 logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
@@ -557,7 +684,7 @@ class VectorStoreManager:
                 documents: List[LcDocument] = []
                 
                 if not result.get('documents'):
-                    logger.warning(f"ChromaDB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
+                    logger.warning(f"Chroma DB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
                     return []
                     
                 for i, text in enumerate(result.get('documents', [])):
@@ -566,10 +693,9 @@ class VectorStoreManager:
                         chunk_uuid_from_result = result.get('ids', [''])[i]
                         doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
                         
-                        # Ensure metadata contains necessary keys
                         metadata["chunk_uuid"] = chunk_uuid_from_result
                         metadata["doc_id"] = doc_id
-                        metadata["doc_type"] = doc_type # Use input doc_type
+                        metadata["doc_type"] = doc_type
                         
                         documents.append(LcDocument(page_content=text, metadata=metadata))
                 
@@ -585,7 +711,7 @@ def get_vectorstore_manager() -> VectorStoreManager:
     """Returns the singleton instance of VectorStoreManager."""
     return VectorStoreManager()
     
-# Backward compatibility function (if needed by other parts of the system)
+# Backward compatibility function 
 def load_vectorstore(doc_type: str, enabler: Optional[str] = None) -> Optional[Chroma]:
     """Helper for other modules to load a Chroma instance directly."""
     collection_name = _get_collection_name(doc_type, enabler)
@@ -603,36 +729,79 @@ class VectorStoreExecutorSingleton:
 
     def __init__(self):
         if not VectorStoreExecutorSingleton._is_initialized:
-            # Placeholder implementation
             self.max_workers = MAX_PARALLEL_WORKERS
             self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
+            logger.info(f"Initialized VectorStoreExecutorSingleton (ThreadPoolExecutor with {self.max_workers} workers) for batch tasks.")
             VectorStoreExecutorSingleton._is_initialized = True
 
     @property
     def executor(self) -> ThreadPoolExecutor:
+        """Returns the shared ThreadPoolExecutor."""
         return self._executor
 
     def close(self):
+        """Shutdown the executor when the application is done."""
         if self._is_initialized:
+            logger.info("Shutting down VectorStoreExecutorSingleton ThreadPoolExecutor...")
             self._executor.shutdown(wait=True)
             VectorStoreExecutorSingleton._is_initialized = False 
-            
+
 def get_vectorstore() -> VectorStoreExecutorSingleton:
-    """Returns the singleton instance managing the executor."""
+    """
+    REQUIRED by ingest_batch.py. Returns the singleton instance managing the executor.
+    """
     return VectorStoreExecutorSingleton()
     
-def load_all_vectorstores():
+def load_all_vectorstores_dummy():
     """Placeholder for loading all vectorstores if needed globally."""
     pass
-    
-def get_vectorstore_path(doc_type: str, enabler: Optional[str] = None) -> str:
-    """Returns the path to the vectorstore folder."""
-    collection_name = _get_collection_name(doc_type, enabler)
-    return os.path.join(VECTORSTORE_DIR, collection_name)
 
+
+# -------------------- Custom Retriever for Chroma --------------------
+class ChromaRetriever(BaseRetriever):
+    """
+    A simple custom retriever wrapper that uses the underlying Chroma vectorstore
+    instance to retrieve documents with specific k and filter parameters.
+    """
+    vectorstore: Any
+    k: int
+    filter: Optional[Dict] = None
+    
+    # กำหนดให้ pydantic อนุญาตประเภทที่ไม่ใช่ Base Model
+    model_config = ConfigDict(arbitrary_types_allowed=True) 
+
+    def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+        """
+        Synchronous retrieval method for the Chroma instance.
+        """
+        try:
+            # self.vectorstore คือ Chroma instance
+            # Chroma.similarity_search รองรับ query, k, และ filter โดยตรง
+            return self.vectorstore.similarity_search(
+                query=query, 
+                k=self.k, 
+                filter=self.filter 
+            )
+        except Exception as e:
+            logger.error(f"❌ Chroma similarity_search failed in custom retriever: {e}")
+            return []
+    
+    # Method สาธารณะที่โค้ดเรียกใช้ (get_relevant_documents)
+    def get_relevant_documents(self, query: str, **kwargs) -> List[LcDocument]:
+        """Public synchronous method for retrieval."""
+        return self._get_relevant_documents(query, **kwargs)
+
+    async def _aget_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+        # สำหรับ Chroma, เราสามารถเรียกใช้ sync method ได้โดยตรง
+        return self._get_relevant_documents(query, run_manager=run_manager)
+
+# -------------------- END Custom Retriever --------------------
 
 # -------------------- MultiDoc / Parallel Retriever --------------------
 class NamedRetriever(BaseModel):
+    # BaseRetriever requires model_config
+    model_config = ConfigDict(arbitrary_types_allowed=True) 
+    
     doc_id: str
     doc_type: str
     top_k: int
@@ -640,8 +809,9 @@ class NamedRetriever(BaseModel):
     base_path: str = VECTORSTORE_DIR
     enabler: Optional[str] = None
 
-    def load_instance(self) -> BaseRetriever:
+    def load_instance(self) -> Any:
         manager = VectorStoreManager(base_path=self.base_path)
+        # set use_rerank=True 
         retriever = manager.get_retriever(
             collection_name=_get_collection_name(self.doc_type, self.enabler),
             top_k=self.top_k,
@@ -649,7 +819,7 @@ class NamedRetriever(BaseModel):
             use_rerank=True
         )
         if not retriever:
-            raise ValueError(f"Retriever not found for collection '{self.doc_type}' at path '{self.base_path}'")
+            raise ValueError(f"Retriever not found for collection '{_get_collection_name(self.doc_type, self.enabler)}' at path '{self.base_path}'")
         return retriever
 
 
@@ -657,18 +827,39 @@ class MultiDocRetriever(BaseRetriever):
     """
     Combine multiple NamedRetriever sources. Choose executor automatically (thread vs process).
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True) 
 
+    _all_retrievers: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    
     _retrievers_list: list[NamedRetriever] = PrivateAttr()
     _k_per_doc: int = PrivateAttr()
     _manager: VectorStoreManager = PrivateAttr() 
     _doc_ids_filter: Optional[List[str]] = PrivateAttr()
     _chroma_filter: Optional[Dict[str, Any]] = PrivateAttr()
+    _executor_type: str = PrivateAttr()
+    _executor: Union[ThreadPoolExecutor, ProcessPoolExecutor, None] = PrivateAttr(None)
 
     def __init__(self, retrievers_list: list[NamedRetriever], k_per_doc: int = INITIAL_TOP_K, doc_ids_filter: Optional[List[str]] = None):
         super().__init__()
         self._retrievers_list = retrievers_list
         self._k_per_doc = k_per_doc
         self._manager = VectorStoreManager() 
+        
+        # Initialize _all_retrievers และโหลด instance
+        self._all_retrievers = {} 
+        for named_r in retrievers_list:
+            collection_name = _get_collection_name(named_r.doc_type, named_r.enabler)
+            try:
+                # โหลด Retriever Instance ด้วย Key ที่ถูกต้อง (collection_name)
+                retriever_instance = named_r.load_instance()
+                if retriever_instance:
+                    self._all_retrievers[collection_name] = retriever_instance # 👈 ใช้ _all_retrievers
+                    logger.info(f"✅ MultiDocRetriever cached collection: {collection_name}")
+                else:
+                    logger.warning(f"⚠️ Failed to load instance for {collection_name} during MDR init.")
+            except Exception as e:
+                logger.error(f"❌ Error loading instance {collection_name} into MDR cache: {e}")
+        # -------------------- END NEW LOGIC --------------------
 
         # NEW LOGIC: สร้าง Chroma Filter จาก Doc IDs
         self._doc_ids_filter = doc_ids_filter
@@ -676,177 +867,213 @@ class MultiDocRetriever(BaseRetriever):
         if doc_ids_filter:
             # สร้าง Chroma DB Metadata Filter: ค้นหาเฉพาะเอกสารที่มี 'doc_id' อยู่ในลิสต์
             self._chroma_filter = {
-                # 🟢 FIX: เปลี่ยนคีย์เป็น "doc_id" ซึ่งเป็นคีย์ที่ใช้เก็บ Stable Document ID ใน Metadata
                 "doc_id": {"$in": doc_ids_filter} 
             }
 
             logger.info(f"✅ MultiDocRetriever initialized with doc_ids filter for {len(doc_ids_filter)} Stable IDs.")
-
-    # ... (omitted code - ส่วนที่เหลือของคลาส MultiDocRetriever ไม่ต้องแก้ไข) ...
-    # 🟢 FIX: เมธอด _choose_executor ที่หายไป
-    def _choose_executor(self):
+            
+        self._executor_type = self._choose_executor()
+        logger.info(f"MultiDocRetriever will use executor type: {self._executor_type} (workers={MAX_PARALLEL_WORKERS})")
+        
+    
+    # เมธอด _choose_executor ที่หายไป
+    def _choose_executor(self) -> str:
         """
         Decide whether to use ProcessPoolExecutor or ThreadPoolExecutor.
-        Logic:
-          - If ENV_FORCE_MODE set -> obey it.
-          - If platform is darwin (mac) and GPU device is mps -> prefer thread (MPS multi-process is fragile).
-          - If total RAM is low (below 12GB) -> prefer thread.
-          - Else if CPU cores 8 or more and RAM 16GB or more -> prefer process.
         """
         sys_info = _detect_system()
         device = _detect_torch_device()
         force = ENV_FORCE_MODE
 
-        # Force mode if user set
+        # 1. Force mode if user set
         if force in ("thread", "process"):
             mode = force
             logger.info(f"VECTOR_MODE override: forcing '{mode}' executor")
-            return ("process" if mode == "process" else "thread")
-
-        # prefer thread on macOS if MPS to avoid MPS multiprocessing issues
+            return mode
+        
+        # 2. MPS + Multiprocessing Safety on macOS
         if sys_info["platform"] == "darwin" and device == "mps":
-            logger.info("Detected macOS + MPS -> choosing 'thread' executor to avoid multi-process MPS issues")
+            logger.warning("⚠️ Detected MPS on macOS: forcing executor -> thread to avoid multi-process failures.")
             return "thread"
-
-        # prefer thread if RAM too small or explicit low-resource machine
-        if sys_info["total_ram_gb"] is not None and sys_info["total_ram_gb"] < 12:
-            logger.info(f"Low RAM ({sys_info['total_ram_gb']:.1f}GB) detected -> choosing 'thread' executor")
+            
+        # 3. Low RAM check 
+        if sys_info["total_ram_gb"] and sys_info["total_ram_gb"] < 12:
+            logger.warning(f"⚠️ Detected low RAM ({sys_info['total_ram_gb']:.1f}GB): forcing executor -> thread.")
             return "thread"
-
-        # otherwise prefer process on beefy machines
+            
+        # 4. High Resource check: Prefer ProcessPoolExecutor
         if sys_info["cpu_count"] >= 8 and (sys_info["total_ram_gb"] or 0) >= 16:
             logger.info("High-resources machine detected -> choosing 'process' executor")
             return "process"
 
-        # fallback to thread
+        # 5. Default
         logger.info("Defaulting to 'thread' executor")
         return "thread"
 
-    # 🟢 FIX: แก้ไข _static_retrieve_task ให้รับ filter
+    def shutdown(self):
+        """Cleanly shuts down the internal executor if it was created."""
+        if self._executor:
+            executor_type_name = "ProcessPoolExecutor" if self._executor_type == "process" else "ThreadPoolExecutor"
+            workers = self._executor._max_workers if hasattr(self._executor, '_max_workers') else "N/A"
+            logger.info(f"Shutting down MultiDocRetriever's {executor_type_name} executor ({workers} workers).")
+            
+            self._executor.shutdown(wait=True)
+            self._executor = None
+            
+    def __del__(self):
+        """Fallback cleanup. Attempts to shutdown the executor when the object is garbage collected."""
+        self.shutdown() 
+        
+    def _get_executor(self) -> Union[ThreadPoolExecutor, ProcessPoolExecutor]:
+        """Returns the cached or newly created executor based on the chosen type."""
+        if self._executor is None:
+            workers = MAX_PARALLEL_WORKERS
+            if self._executor_type == "process":
+                self._executor = ProcessPoolExecutor(max_workers=workers)
+                logger.info(f"🛠️ Using ProcessPoolExecutor with {workers} workers.")
+            else:
+                self._executor = ThreadPoolExecutor(max_workers=workers)
+                logger.info(f"🛠️ Using ThreadPoolExecutor with {workers} workers.")
+        return self._executor
+
+    # แก้ไข _static_retrieve_task ให้รับ filter
     @staticmethod
-    def _static_retrieve_task(named_r: "NamedRetriever", query: str, chroma_filter: Optional[Dict]):
+    def _static_retrieve_task(named_r: NamedRetriever, query: str, chroma_filter: Optional[Dict]):
         """
         Static helper used in ProcessPoolExecutor. Executes inside child process.
         """
         try:
             retriever_instance = named_r.load_instance()
-            # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
+            
+            # NEW: ส่ง filter ผ่าน search_kwargs
             search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
-            # 🎯 เพิ่ม Log ตรงนี้:
-            # logger.info(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Static): Filter is {bool(chroma_filter)}")
-            print(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Static): Filter is {bool(chroma_filter)}")
-            return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
-        except Exception as e:
-            print(f"❌ Child retrieval error for {named_r.doc_id} ({named_r.doc_type}): {e}")
-            return None
+            config = {'configurable': {'search_kwargs': search_kwargs}}
 
-    # 🟢 FIX: แก้ไข _thread_retrieve_task ให้รับ filter
-    def _thread_retrieve_task(self, named_r: "NamedRetriever", query: str, chroma_filter: Optional[Dict]):
+            docs = retriever_instance.invoke(query, config=config)
+            
+            # 3. Add source info
+            for doc in docs:
+                doc.metadata["retrieval_source"] = named_r.doc_type
+                doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+            
+            return docs
+        except Exception as e:
+            # ใช้ print สำหรับ exceptions ใน child processes
+            print(f"❌ Child retrieval error for {named_r.doc_id} ({named_r.doc_type}): {e}")
+            return []
+
+    # แก้ไข _thread_retrieve_task ให้รับ filter
+    def _thread_retrieve_task(self, named_r: NamedRetriever, query: str, chroma_filter: Optional[Dict]):
         """
         Retrieval performed in a thread inside the same process.
         """
         try:
             retriever_instance = named_r.load_instance()
-            # 🟢 NEW: ส่ง filter ผ่าน search_kwargs
+            
+            # NEW: ส่ง filter ผ่าน search_kwargs
             search_kwargs = {"k": named_r.top_k, "filter": chroma_filter} if chroma_filter else {"k": named_r.top_k}
-            # 🎯 เพิ่ม Log ตรงนี้:
-            # logger.info(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Thread): Filter is {bool(chroma_filter)}")
-            print(f"🎯 DEBUG: Task Filter Check for {named_r.doc_type} (Thread): Filter is {bool(chroma_filter)}")
-            return retriever_instance.invoke(query, config={'configurable': {'search_kwargs': search_kwargs}})
+            config = {'configurable': {'search_kwargs': search_kwargs}}
+            
+            docs = retriever_instance.invoke(query, config=config)
+
+            # 3. Add source info
+            for doc in docs:
+                doc.metadata["retrieval_source"] = named_r.doc_type
+                doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+            
+            return docs
         except Exception as e:
             logger.warning(f"⚠️ Thread retrieval error for {named_r.doc_id}: {e}")
-            return None
+            return []
 
-    # 🟢 FIX: แก้ไข _get_relevant_documents เพื่อส่ง filter เข้าไป
-    def _get_relevant_documents(self, query: str, *, run_manager=None):
+    # แก้ไข _get_relevant_documents เพื่อส่ง filter เข้าไป
+    def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[LcDocument]:
         """
-        This is the LangChain compatible retrieval method.
+        Runs multiple retrievers in parallel using the chosen executor, and aggregates results.
+        This method is required by BaseRetriever.
         """
         max_workers = min(len(self._retrievers_list), MAX_PARALLEL_WORKERS)
         if max_workers <= 0:
             max_workers = 1
 
-        # 🟢 FIX: _choose_executor ถูกเรียกใช้ที่นี่
-        chosen = self._choose_executor() 
-        ExecutorClass = ProcessPoolExecutor if chosen == "process" else ThreadPoolExecutor
+        chosen = self._executor_type # ใช้ _executor_type ที่ถูก set ใน __init__
 
         logger.info(f"⚙️ Running MultiDocRetriever with {chosen} executor ({max_workers} workers) [Filter: {bool(self._chroma_filter)}]")
 
-        results = []
-        if chosen == "process":
-            # Use process pool
-            with ExecutorClass(max_workers=max_workers) as executor:
-                # 🟢 NEW: ส่ง self._chroma_filter เข้าไปใน task
-                futures = [executor.submit(MultiDocRetriever._static_retrieve_task, nr, query, self._chroma_filter) for nr in self._retrievers_list]
-                for f in futures:
-                    try:
-                        results.append(f.result())
-                    except Exception as e:
-                        logger.warning(f"Child process future failed: {e}")
-                        results.append(None)
-        else:
-            # Use threads
-            with ExecutorClass(max_workers=max_workers) as executor:
-                # 🟢 NEW: ส่ง self._chroma_filter เข้าไปใน task
-                futures = [executor.submit(self._thread_retrieve_task, nr, query, self._chroma_filter) for nr in self._retrievers_list]
-                for f in futures:
-                    try:
-                        results.append(f.result())
-                    except Exception as e:
-                        logger.warning(f"Thread future failed: {e}")
-                        results.append(None)
+        all_docs: List[LcDocument] = []
+        
+        # ใช้ _get_executor() เพื่อสร้างหรือเรียก Executor ที่แคชไว้
+        executor = self._get_executor() 
+        
+        futures = []
+        for named_r in self._retrievers_list:
+            if chosen == "process":
+                # For process, use the static method
+                # NEW: ส่ง self._chroma_filter เข้าไปใน task
+                future = executor.submit(MultiDocRetriever._static_retrieve_task, named_r, query, self._chroma_filter)
+            else:
+                # For thread, use the instance method
+                # NEW: ส่ง self._chroma_filter เข้าไปใน task
+                future = executor.submit(self._thread_retrieve_task, named_r, query, self._chroma_filter)
+            futures.append(future)
+
+        # Wait for all tasks to complete and collect results
+        for f in futures:
+            try:
+                docs = f.result()
+                if docs:
+                    all_docs.extend(docs)
+            except Exception as e:
+                logger.warning(f"Future failed: {e}")
 
         # Combine results and deduplicate
         seen = set()
         unique_docs = []
-        for dlist, named_r in zip(results, self._retrievers_list):
-            if not dlist:
-                continue
-            for d in dlist:
-                # dedupe key: source + chunk + doc_id + a snippet
-                src = d.metadata.get("source") or d.metadata.get("doc_source") or named_r.doc_id
-                chunk = d.metadata.get("chunk_index") or d.metadata.get("chunk") or ""
-                # ใช้ doc_type ที่หมายถึง Collection Name เป็นส่วนหนึ่งของ key
-                key = f"{src}_{chunk}_{named_r.doc_type}_{d.page_content[:120]}" 
-                if key not in seen:
-                    seen.add(key)
-                    # NamedRetriever.doc_id และ doc_type ตอนนี้คือ Collection Name
-                    d.metadata["doc_type"] = named_r.doc_type
-                    d.metadata["doc_id"] = named_r.doc_id 
-                    d.metadata["doc_source"] = src
-                    unique_docs.append(d)
+        for d in all_docs:
+            # dedupe key: source + chunk + doc_id + a snippet
+            # ใช้ metadata ที่ถูกเพิ่มโดย worker (retrieval_source และ collection_name)
+            src = d.metadata.get("retrieval_source") or ""
+            chunk_uuid = d.metadata.get("chunk_uuid") or d.metadata.get("ids") or ""
+            key = f"{src}_{chunk_uuid}_{d.page_content[:120]}" 
+            
+            if key not in seen:
+                seen.add(key)
+                unique_docs.append(d)
 
         logger.info(f"📝 Query='{query[:80]}...' found {len(unique_docs)} unique docs across sources (Executor={chosen})")
-        # debug: print reranked items
+        
+        # Final log of top documents
         for d in unique_docs:
-            if "relevance_score" in d.metadata:
-                score = d.metadata.get("relevance_score")
-                logger.debug(f" - [Reranked] Source={d.metadata.get('doc_source')}, Score={score:.4f}, Type={d.metadata.get('doc_type')}, Content='{d.page_content[:80]}...'")
+            score = d.metadata.get("relevance_score")
+            if score is not None:
+                logger.debug(f" - [Reranked] Source={d.metadata.get('doc_type')}, Score={score:.4f}, Content='{d.page_content[:80]}...'")
+        
         return unique_docs
      
+    # Required method for BaseRetriever
+    def get_relevant_documents(self, query: str, **kwargs) -> List[LcDocument]:
+        """Synchronous public method for retrieval."""
+        return self._get_relevant_documents(query, **kwargs)
+
+
 # -------------------- Load single vectorstore retriever (REVISED) --------------------
-def load_vectorstore(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR, enabler: Optional[str] = None):
+def load_vectorstore_retriever(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR, enabler: Optional[str] = None):
     """
     Loads a retriever instance for a specific collection name (doc_type) and optional enabler. 
     """
-    # 🟢 NEW: ตรรกะใหม่ใช้ doc_types/enabler เพื่อสร้าง collection_name ที่ถูกต้อง
     if isinstance(doc_types, str):
         target_doc_type = doc_types
-    elif isinstance(doc_types, list) and target_doc_type:
-         target_doc_type = doc_types[0] # Use the first one if list is provided
+    elif isinstance(doc_types, list) and doc_types:
+         target_doc_type = doc_types[0] 
     else:
-        raise ValueError("doc_types must be a single string or a list containing the target doc_type.")
+        raise ValueError("doc_types must be a single string or a non-empty list containing the target doc_type.")
 
-    # 1. คำนวณชื่อ Collection ที่ถูกต้อง
     collection_name = _get_collection_name(target_doc_type, enabler)
 
     manager = VectorStoreManager(base_path=base_path)
     retriever = None
 
-    # 2. ตรวจสอบว่า Collection นี้มีอยู่จริงหรือไม่
-    # NOTE: vectorstore_exists จะใช้ collection_name ที่ถูกต้องในการตรวจสอบพาธ
     if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=target_doc_type, enabler=enabler):
-        # 3. ใช้ manager เพื่อโหลด retriever
         retriever = manager.get_retriever(collection_name, top_k, final_k)
     
     if retriever is None:
@@ -860,11 +1087,10 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
                           final_k: int = FINAL_K_RERANKED,
                           base_path: str = VECTORSTORE_DIR,
                           evidence_enabler: Optional[str] = None,
-                          doc_ids: Optional[List[str]] = None) -> MultiDocRetriever:
+                          doc_ids: Optional[List[str]] = None) -> VectorStoreManager: 
     
     """
     Load multiple vectorstore collections as MultiDocRetriever.
-    ... (Docstring เดิม) ...
     """
     doc_types = [doc_types] if isinstance(doc_types, str) else doc_types or []
     doc_type_filter = {dt.strip().lower() for dt in doc_types}
@@ -872,7 +1098,7 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
     manager = VectorStoreManager(base_path=base_path)
     all_retrievers: List[NamedRetriever] = []
     
-    # 1. กำหนดรายการ Collection ที่ต้องการโหลดจริง ๆ (Collection Name) - (เหมือนเดิม)
+    # 1. กำหนดรายการ Collection ที่ต้องการโหลดจริง ๆ (Collection Name)
     target_collection_names: Set[str] = set()
     
     if not doc_type_filter:
@@ -895,7 +1121,7 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
                 target_collection_names.add(collection_name)
                 logger.info(f"🔍 Added standard collection: {collection_name}")
                 
-    # 2. ทำการโหลดทีละ Collection - (เหมือนเดิม)
+    # 2. ทำการโหลดทีละ Collection
     logger.info(f"🔍 DEBUG: Attempting to load {len(target_collection_names)} total target collections: {target_collection_names}")
     
     for collection_name in target_collection_names:
@@ -907,7 +1133,8 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
             
         nr = NamedRetriever(
             doc_id=collection_name, 
-            doc_type=collection_name, 
+            doc_type=doc_type_for_check, # ใช้ doc_type ที่แยกออกมา (e.g., 'evidence')
+            enabler=enabler_for_check,   # ใช้ enabler ที่แยกออกมา (e.g., 'KM')
             top_k=top_k,
             final_k=final_k,
             base_path=base_path
@@ -916,123 +1143,27 @@ def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None,
         logger.info(f"🔍 DEBUG: Successfully added retriever for collection '{collection_name}'.")
 
     # 3. จัดการ Hard Filter ID (ใช้ 64-char ID ดั้งเดิมโดยตรง)
-    final_filter_ids = doc_ids # ⬅️ ใช้ doc_ids (64-char UUIDs) ที่ส่งมาโดยตรง
+    final_filter_ids = doc_ids 
     
     if doc_ids:
-        # ⚠️ ไม่จำเป็นต้องวนลูปหรือ Map อีกต่อไป
-        # เพียงแค่ใช้ ID 64-char ที่ส่งมาจาก Evidence Mapping
         logger.info(f"✅ Hard Filter Enabled: Using {len(doc_ids)} original 64-char UUIDs for filtering.")
         
-    # 4. ส่ง doc_ids ที่เป็น 64-char UUIDs ไปให้ MultiDocRetriever กรองต่อ
+    # 4. สร้าง MultiDocRetriever
     logger.info(f"🔍 DEBUG: Final count of all_retrievers = {len(all_retrievers)}")
     if not all_retrievers:
         raise ValueError(f"No vectorstore collections found matching doc_types={doc_types} and evidence_enabler={evidence_enabler}")
 
-    return MultiDocRetriever(
+    mdr = MultiDocRetriever(
             retrievers_list=all_retrievers, 
             k_per_doc=top_k,
             doc_ids_filter=final_filter_ids 
         )
+        
+    # ผูก MultiDocRetriever เข้ากับ VectorStoreManager
+    manager._multi_doc_retriever = mdr
+    
+    # เปลี่ยนการเข้าถึงจาก .all_retrievers เป็น ._all_retrievers
+    logger.info(f"✅ MultiDocRetriever loaded with {len(mdr._all_retrievers)} collections and cached in VSM.")
 
-# -------------------- VECTORSTORE EXECUTOR SINGLETON (RETAINED) --------------------
-# REQUIRED by ingest_batch.py for shared resource management.
-class VectorStoreExecutorSingleton:
-    _instance = None
-    _is_initialized = False
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(VectorStoreExecutorSingleton, cls).__new__(cls)
-        return cls._instance
-
-    def __init__(self):
-        if not VectorStoreExecutorSingleton._is_initialized:
-            # Use MAX_PARALLEL_WORKERS defined in the config section
-            self.max_workers = MAX_PARALLEL_WORKERS
-            # We use ThreadPoolExecutor here as it's safer for resource sharing in batch ingestion
-            self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
-            logger.info(f"Initialized VectorStoreExecutorSingleton (ThreadPoolExecutor with {self.max_workers} workers) for batch tasks.")
-            VectorStoreExecutorSingleton._is_initialized = True
-
-    @property
-    def executor(self) -> ThreadPoolExecutor:
-        """Returns the shared ThreadPoolExecutor."""
-        return self._executor
-
-    def close(self):
-        """Shutdown the executor when the application is done."""
-        if self._is_initialized:
-            logger.info("Shutting down VectorStoreExecutorSingleton ThreadPoolExecutor...")
-            self._executor.shutdown(wait=True)
-            VectorStoreExecutorSingleton._is_initialized = False 
-
-def get_vectorstore() -> VectorStoreExecutorSingleton:
-    """
-    REQUIRED by ingest_batch.py. Returns the singleton instance managing the executor.
-    """
-    return VectorStoreExecutorSingleton()
-
-# -------------------------
-# FlashrankRerank class
-# -------------------------
-class FlashrankRerank:
-    def __init__(self, top_n: int = 5, device: str = "mps"):
-        """
-        top_n: จำนวนเอกสารสูงสุดที่จะคืน
-        device: 'cpu', 'cuda', 'mps' ตาม hardware
-        """
-        self.top_n = top_n
-        self.device = device
-        self.model: Optional[SentenceTransformer] = None
-        self.util = None
-        self._load_model()
-
-    def _load_model(self):
-        """โหลด SentenceTransformer model"""
-        try:
-            logger.info(f"📦 Loading SentenceTransformer on device: {self.device}")
-            self.model = SentenceTransformer("intfloat/multilingual-e5-large", device=self.device)
-            self.util = util
-        except Exception as e:
-            logger.error(f"⚠️ Failed to load SentenceTransformer: {e}")
-            self.model = None
-            self.util = None
-
-    def rerank(self, query: str | Any, docs: list) -> list:
-        """
-        Rerank documents ตามความใกล้ query
-        - query: str หรือ embedding tensor
-        - docs: list ของ LcDocument
-        คืน list ของ LcDocument top_n
-        """
-        if not self.model or not docs:
-            logger.warning("⚠️ Model not loaded or docs empty. Returning original docs truncated.")
-            return docs[:self.top_n]
-
-        # embedding query
-        query_emb = self.model.encode(query, convert_to_tensor=True) if isinstance(query, str) else query
-
-        # embedding docs
-        doc_texts = [doc.page_content for doc in docs]
-        doc_embs = self.model.encode(doc_texts, convert_to_tensor=True)
-
-        # cosine similarity
-        scores = self.util.cos_sim(query_emb, doc_embs)[0]  # [1, n] tensor
-        sorted_docs = [doc for _, doc in sorted(zip(scores.tolist(), docs), key=lambda x: x[0], reverse=True)]
-        return sorted_docs[:self.top_n]
-
-
-# -------------------------
-# Global reranker instance
-# -------------------------
-GLOBAL_RERANKER = FlashrankRerank(top_n=5, device="mps")  # ปรับ device ตาม hardware
-
-def get_global_reranker(top_n: int | None = None) -> FlashrankRerank:
-    """
-    คืน reranker instance
-    - top_n ถ้าไม่ระบุหรือเท่ากับ FINAL_K_RERANKED -> ใช้ global instance
-    - top_n ถ้าระบุ -> สร้าง instance ใหม่
-    """
-    if top_n is None or top_n == 5:  # หรือใช้ FINAL_K_RERANKED
-        return GLOBAL_RERANKER
-    return FlashrankRerank(top_n=top_n, device="mps")
+    # คืนค่า VectorStoreManager แทน
+    return manager

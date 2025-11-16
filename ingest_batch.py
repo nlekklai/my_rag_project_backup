@@ -1,3 +1,4 @@
+# ingest_batch.py
 import argparse
 import logging
 import sys
@@ -31,8 +32,6 @@ try:
         list_documents,
         wipe_vectorstore,
         delete_document_by_uuid,
-        get_vectorstore,
-        get_target_dir,
     )
 
 except ImportError as e:
@@ -74,6 +73,16 @@ ingest_parser.add_argument(
     default=50,
     help="Log progress every N files",
 )
+ingest_parser.add_argument(
+    "--dry_run",
+    action="store_true",
+    help="Perform a dry run without writing to vectorstore",
+)
+ingest_parser.add_argument(
+    "--debug",
+    action="store_true",
+    help="Enable debug logging"
+)
 
 # wipe
 wipe_parser = subparsers.add_parser("wipe", help="Wipe vectorstore collection(s)")
@@ -109,7 +118,7 @@ list_parser.add_argument(
     type=str,
     default="ingested",
     choices=["full", "ingested", "failed"],
-    help="Filter documents to show: 'full', 'ingested', or 'failed'",
+    help="Filter documents to show: 'full', 'ingested', or 'failed'"
 )
 
 # delete
@@ -133,6 +142,11 @@ delete_parser.add_argument(
 
 # -------------------- Main Logic --------------------
 args = parser.parse_args()
+
+# -------------------- Enable debug if requested --------------------
+if getattr(args, "debug", False):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Debug logging enabled")
 
 # -------------------- LIST --------------------
 if args.command == "list":
@@ -187,24 +201,24 @@ elif args.command == "ingest":
     doc_type = args.doc_type.lower()
     enabler = args.enabler
 
-    # 📌 FIX: ตรวจสอบเฉพาะกรณีที่เป็น doc_type 'evidence' และไม่ได้เลือก 'all'
+    # ตรวจสอบเฉพาะกรณีที่เป็น doc_type 'evidence' และไม่ได้เลือก 'all'
     if doc_type == "evidence" and not enabler:
         logger.error("❌ Must specify --enabler for evidence ingestion")
         sys.exit(1)
 
     logger.info(f"--- Starting Ingestion: doc_type='{doc_type}' (Enabler: {enabler or 'ALL'}) ---")
+    logger.info(f"Dry run: {getattr(args, 'dry_run', False)} | Sequential: {args.sequential}")
 
-    # 🟢 FIX: เรียก ingest_all_files เพียงครั้งเดียว 
-    # โดยฟังก์ชันจะจัดการการสแกนโฟลเดอร์ย่อยทั้งหมดภายใน DATA_DIR เอง
     ingest_all_files(
         doc_type=doc_type,
         enabler=enabler,
-        data_dir=DATA_DIR,          # ⬅️ Source Files Base Path
-        base_path=VECTORSTORE_DIR,  # ⬅️ Vector Store Base Path (แก้ไขปัญหา Vector Store Path)
+        data_dir=DATA_DIR,
+        base_path=VECTORSTORE_DIR,
         skip_ext=args.skip_ext,
         sequential=args.sequential,
-        log_every=args.log_every
+        log_every=args.log_every,
+        dry_run=getattr(args, "dry_run", False)
     )
 
-    logger.info("✅ Ingestion process completed. Check ingest.log for details.")
+    logger.info("✅ Ingestion process completed. Check logs for details.")
     sys.exit(0)

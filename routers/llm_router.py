@@ -130,7 +130,7 @@ async def query_llm(
                 doc_type=d_type,
                 enabler=enabler,
                 # ❌ แก้ไข: เปลี่ยนจาก stable_doc_ids เป็น doc_uuid_filter
-                doc_uuid_filter=doc_ids,
+                stable_doc_ids=doc_ids,
                 top_k=FINAL_K_RERANKED # ใช้ top_k ตาม llm_data_utils
             ))
             evidences = result.get("top_evidences", [])
@@ -141,7 +141,7 @@ async def query_llm(
                 metadata["score"] = metadata.get("score", 0.0) 
                 
                 # Use content and metadata from the structure returned by llm_data_utils
-                all_chunks_raw.append(LcDocument(page_content=e["content"], metadata=metadata))
+                all_chunks_raw.append(LcDocument(page_content=e["text"], metadata=metadata))
         except Exception as e:
             logger.error(f"Retrieval error for {d_type}: {e}", exc_info=True)
             

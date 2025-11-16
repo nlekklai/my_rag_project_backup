@@ -831,6 +831,7 @@ def create_stable_uuid_from_path(filepath: str, ref_id_key: Optional[str] = None
     # แปลง Hash เป็น UUID-like string
     return hash_object.hexdigest()
 
+
 # -------------------- [REVISED] ingest_all_files --------------------
 def ingest_all_files(
     data_dir: str = DATA_DIR,
@@ -843,7 +844,9 @@ def ingest_all_files(
     sequential: bool = True,
     skip_ext: Optional[List[str]] = None,
     log_every: int = 50,
-    batch_size: int = 500
+    batch_size: int = 500,
+    dry_run: bool = False,          # <-- เพิ่ม dry_run
+    debug: bool = False             # <-- เพิ่ม debug
 ) -> List[Dict[str, Any]]:
     """
     Ingest documents into vectorstore based on doc_type and enabler filters.
@@ -861,11 +864,10 @@ def ingest_all_files(
 
     logger.info(f"Starting ingest_all_files: doc_type_req='{doc_type_req}', enabler_req='{enabler_req}'")
 
-    # 📌 [FIXED: Flexible Source Dir] กำหนด Root Path สำหรับการสแกน
+    # 📌 [Flexible Source Dir]
     scan_roots: List[str] = []
     
     if doc_type_req == "all":
-        # ถ้าเป็น 'all' ให้สแกนทุกโฟลเดอร์ที่รองรับ
         for dt in SUPPORTED_DOC_TYPES:
              if dt == EVIDENCE_DOC_TYPES:
                 for ena in SUPPORTED_ENABLERS:
@@ -873,9 +875,7 @@ def ingest_all_files(
              else:
                 scan_roots.append(_get_source_dir(dt, None, data_dir))
     elif doc_type_req in SUPPORTED_DOC_TYPES:
-        # ถ้าเป็น Specific Doc Type ให้คำนวณพาธเฉพาะ
         if doc_type_req == EVIDENCE_DOC_TYPES and not enabler_req:
-             # ถ้าเป็น evidence แต่ไม่ระบุ enabler ให้สแกนทุก enabler
              for ena in SUPPORTED_ENABLERS:
                  scan_roots.append(_get_source_dir(doc_type_req, ena, data_dir))
         else:
@@ -884,13 +884,12 @@ def ingest_all_files(
         logger.error(f"Invalid doc_type_req for ingestion: {doc_type_req}")
         return []
 
-    # 1. รวบรวมไฟล์ทั้งหมด based on scanning calculated source dir(s)
+    # 1. รวบรวมไฟล์
     for root_to_scan in set(scan_roots):
         if not os.path.isdir(root_to_scan):
              logger.warning(f"⚠️ Source directory not found: {root_to_scan}. Skipping scan.")
              continue
              
-        # Collection name คือชื่อโฟลเดอร์ที่สแกน (e.g., 'document' หรือ 'evidence_km')
         current_collection_name = os.path.basename(root_to_scan) 
         original_doc_type, resolved_enabler = _parse_collection_name(current_collection_name)
         
@@ -898,28 +897,23 @@ def ingest_all_files(
 
         for root, dirs, filenames in os.walk(root_to_scan):
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
-            # สแกนแค่ชั้นแรกของแต่ละ source_dir
             if root != root_to_scan: continue 
 
             for f in filenames:
-                # Skip hidden files
                 if f.startswith('.'):
                     continue
 
                 file_path = os.path.join(root, f)
                 file_extension = os.path.splitext(f)[1].lower()
 
-                # Skip unsupported types
                 if file_extension not in SUPPORTED_TYPES:
                     logger.info(f"⚠️ Skipping unsupported file type {file_extension}: {f}")
                     continue
 
-                # Skip extensions in skip_ext
                 if skip_ext and file_extension in skip_ext:
                     logger.info(f"⚠️ Skipping excluded extension {file_extension}: {f}")
                     continue
 
-                # ✅ Append file 
                 files_to_process.append({
                     "file_path": file_path,
                     "file_name": f,
@@ -932,61 +926,44 @@ def ingest_all_files(
         logger.warning("⚠️ No files found to ingest!")
         return []
 
-    # 2. Load Mapping DB และกำหนด Stable IDs (***REVISED LOGIC***)
+    # 2. Load Mapping DB และกำหนด Stable IDs
     doc_mapping_db = load_doc_id_mapping(MAPPING_FILE_PATH)
-    
-    # 📌 REVISED: ใช้ Stable UUID ที่สร้างจาก File Path เป็นคีย์ในการค้นหา
     uuid_from_path_lookup: Dict[str, str] = {
         entry["filepath"]: s_uuid 
         for s_uuid, entry in doc_mapping_db.items() 
-        if "filepath" in entry # ใช้ filepath ในการค้นหาไฟล์เดิม
+        if "filepath" in entry
     } 
 
-    # 📌 REVISED: กำหนด Stable UUID ทีละไฟล์โดยอิงจาก Path
     for file_info in files_to_process:
-        # 0. คำนวณ filename_doc_id_key (ใช้เป็น REF ID)
         filename_doc_id_key = _normalize_doc_id(os.path.splitext(file_info["file_name"])[0])
-        file_info["doc_id_key"] = filename_doc_id_key # เก็บ Ref ID ไว้ใน file_info
-
-        # 🟢 A. สร้าง UUID ที่มั่นคงจาก File Path (ใหม่)
-        # 💡 FIX: ส่ง filename_doc_id_key เข้าไปเป็น Ref ID Key
-        stable_uuid_from_path = create_stable_uuid_from_path(
-            file_info["file_path"], 
-            ref_id_key=filename_doc_id_key # <--- ส่ง Ref ID Key เข้าไป
-        ) 
-        
-        # 🟢 B. ค้นหา ID เดิมจาก Mapping โดยใช้ File Path เป็น Key
+        file_info["doc_id_key"] = filename_doc_id_key
+        stable_uuid_from_path = create_stable_uuid_from_path(file_info["file_path"], ref_id_key=filename_doc_id_key)
         stable_doc_uuid = uuid_from_path_lookup.get(file_info["file_path"])
         
         if stable_doc_uuid and stable_doc_uuid in doc_mapping_db:
-            # ใช้ UUID เดิมที่พบ
             file_info["stable_doc_uuid"] = stable_doc_uuid
-            # อัปเดตข้อมูลที่อาจเปลี่ยนไป
             doc_mapping_db[stable_doc_uuid].update({
                 "filename": file_info["file_name"],
                 "doc_type": file_info["doc_type"],
                 "enabler": file_info["enabler"],
-                "doc_id_key": filename_doc_id_key, # อัปเดต Ref ID Key
+                "doc_id_key": filename_doc_id_key,
             })
         else:
-            # 🟢 C. ถ้าไม่เจอ ID เดิม 
-            new_uuid = stable_uuid_from_path # ใช้ Stable ID ใหม่
+            new_uuid = stable_uuid_from_path
             file_info["stable_doc_uuid"] = new_uuid
-            
-            # 🟢 D. สร้าง Mapping entry ใหม่
             doc_mapping_db[new_uuid] = {
                 "file_name": file_info["file_name"],
                 "doc_type": file_info["doc_type"],
                 "enabler": file_info["enabler"],
-                "doc_id_key": filename_doc_id_key, # เก็บ Ref ID Key
-                "filepath": file_info["file_path"], # บันทึก File Path
+                "doc_id_key": filename_doc_id_key,
+                "filepath": file_info["file_path"],
                 "notes": "",
                 "statement_id": "",
                 "chunk_uuids": []
             }
-            uuid_from_path_lookup[file_info["file_path"]] = new_uuid # อัปเดต Lookup
+            uuid_from_path_lookup[file_info["file_path"]] = new_uuid
 
-    # 3. Load & Chunk (sequential or threaded)
+    # 3. Load & Chunk
     all_chunks: List[Document] = []
     results: List[Dict[str, Any]] = []
 
@@ -1010,15 +987,15 @@ def ingest_all_files(
                 chunks, doc_id, dt = _process_file_task(file_info)
                 all_chunks.extend(chunks)
                 results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks)})
+                if debug or dry_run:
+                    logger.debug(f"[DRY RUN] {f}: {len(chunks)} chunks, UUID={stable_doc_uuid}")
                 if idx % log_every == 0:
                     logger.info(f"Processed {idx}/{len(files_to_process)} files...")
             except Exception as e:
                 results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e)})
-                # 📌 [FIXED: Detailed Process/Chunk Failure Logging]
                 logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
     else:
         max_workers = os.cpu_count() or 4
-        # max_workers = 1
         logger.info(f"Using ThreadPoolExecutor with max_workers={max_workers}")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {executor.submit(_process_file_task, fi): fi for fi in files_to_process}
@@ -1030,9 +1007,10 @@ def ingest_all_files(
                     chunks, doc_id, dt = future.result()
                     all_chunks.extend(chunks)
                     results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks)})
+                    if debug or dry_run:
+                        logger.debug(f"[DRY RUN] {f}: {len(chunks)} chunks, UUID={stable_doc_uuid}")
                 except Exception as e:
                     results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": fi["doc_type"], "status": "failed_chunk", "error": str(e)})
-                    # 📌 [FIXED: Detailed Process/Chunk Failure Logging]
                     logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
                 if idx % log_every == 0:
                     logger.info(f"Processed {idx}/{len(files_to_process)} files...")
@@ -1052,20 +1030,23 @@ def ingest_all_files(
         logger.info(f"--- Indexing collection '{coll_name}' ({len(coll_chunks)} chunks) ---")
         for i in range(0, len(coll_chunks), batch_size):
             batch = coll_chunks[i:i+batch_size]
-            logger.info(f"Indexing chunks {i+1} to {i+len(batch)} of {len(coll_chunks)}")
-            try:
-                create_vectorstore_from_documents(
-                    chunks=batch,
-                    collection_name=coll_name,
-                    doc_mapping_db=doc_mapping_db,
-                    base_path=base_path
-                )
-            except Exception as e:
-                logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
+            if dry_run:
+                logger.info(f"[DRY RUN] Would index {len(batch)} chunks into collection '{coll_name}'")
+            else:
+                try:
+                    create_vectorstore_from_documents(
+                        chunks=batch,
+                        collection_name=coll_name,
+                        doc_mapping_db=doc_mapping_db,
+                        base_path=base_path
+                    )
+                except Exception as e:
+                    logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
 
     save_doc_id_mapping(doc_mapping_db, MAPPING_FILE_PATH)
-    logger.info("✅ Batch ingestion process finished.")
+    logger.info("✅ Batch ingestion process finished (dry_run={dry_run}).")
     return results
+
 
 
 # -------------------- [REVISED] wipe_vectorstore --------------------

@@ -1,3 +1,4 @@
+#core/start_assessment.py
 """
 CLI runner that:
  - parses args (--sub, --enabler, --export, --mock, --sequential) 
@@ -116,7 +117,8 @@ def main():
 
     # 5. Detailed print if single sub requested
     if args.sub and args.sub.lower() != "all":
-        engine.print_detailed_results(target_sub_id=args.sub)
+        # engine.print_detailed_results(target_sub_id=args.sub)
+        pass # 🟢 เพิ่ม pass เข้ามาแทน (หรือไม่เพิ่มก็ได้)
 
     if args.export:
         print("\nReport export status logged (see INFO logs for path).")
