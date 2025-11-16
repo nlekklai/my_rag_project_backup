@@ -150,11 +150,6 @@ def retrieve_context_by_doc_ids(doc_uuids: List[str], doc_type: str, enabler: Op
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
-# ในไฟล์ core/llm_data_utils.py
-
-# ... (ตรวจสอบให้แน่ใจว่าได้ import สิ่งที่จำเป็น เช่น List, Optional, Dict, Any, LcDocument, logger, 
-#      FINAL_K_RERANKED, INITIAL_TOP_K, VectorStoreManager, get_global_reranker, normalize_stable_ids)
-#      (ผมจะสมมติว่าคุณมีฟังก์ชันเหล่านี้แล้ว)
 
 def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,

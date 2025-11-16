@@ -495,8 +495,8 @@ class VectorStoreManager:
                     
                     # FIX: ใช้ "doc_id" เป็นคีย์ใน where clause และรวม 'ids'
                     result = collection.get(
-                        where={"doc_id": {"$in": stable_doc_ids}}, 
-                        include=['documents', 'metadatas', 'ids']
+                        where={"stable_doc_uuid": {"$in": stable_doc_ids}}, 
+                        include=['documents', 'metadatas']
                     )
                     
                     documents: List[LcDocument] = []

@@ -9,6 +9,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 import multiprocessing # NEW: Import for parallel execution
 from core.rag_enhancer import enhance_query_for_statement
+import pathlib, uuid
 
 # -------------------- PATH SETUP & IMPORTS --------------------
 try:
@@ -440,14 +441,11 @@ class SEAMPDCAEngine:
             
         overall_maturity_score_avg = 0.0
         overall_maturity_level = "N/A"
+        overall_progress_percent = 0.0 # ตั้งค่าเริ่มต้นที่ 0.0
         
         if total_possible_weight > 0:
-            # ใช้ตรรกะที่ท่านได้ระบุในเวอร์ชันล่าสุด (Total Weighted Score / Total Possible Weight)
-            # ซึ่งคาดว่าคะแนนนี้เป็นค่าเฉลี่ยที่ Scale ให้เป็น 0.0 - 5.0 (หรือ 0.0 - 1.0)
             overall_progress_percent = total_weighted_score / total_possible_weight
             
-            # 📌 FIX: ใช้ตรรกะการคำนวณคะแนนเฉลี่ยที่ปลอดภัยและสอดคล้องกับตรรกะการแมประดับ
-            # ถ้า _calculate_weighted_score คำนวณเป็น (L/5)*Weight แสดงว่าคะแนนรวมต้องถูกหารด้วย Sum(Weight) เพื่อให้ได้ค่าเฉลี่ย Level
             MAX_LEVEL_STATS = 5 
             overall_maturity_score_avg = overall_progress_percent * MAX_LEVEL_STATS 
 
@@ -464,9 +462,10 @@ class SEAMPDCAEngine:
                 overall_maturity_level = "L1"
             else:
                 overall_maturity_level = "L0"
-        else:
-            overall_progress_percent = 0.0
         
+        # 📌 ปรับแก้ Key name และคำนวณ % Achieved เป็น 0-100% สำหรับ CLI
+        percentage_achieved_for_cli = overall_progress_percent * 100 
+
         # Store Results
         self.total_stats = {
             "Overall Maturity Score (Avg.)": overall_maturity_score_avg,
@@ -474,38 +473,40 @@ class SEAMPDCAEngine:
             "Number of Sub-Criteria Assessed": assessed_count,
             "Total Weighted Score Achieved": total_weighted_score,
             "Total Possible Weight": total_possible_weight,
-            "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percent
+            "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percent,
+            # 🟢 KEY ใหม่ที่ CLI ใช้ (ค่า 0-100)
+            "percentage_achieved_run": percentage_achieved_for_cli, 
+            # 🟢 KEY ใหม่ที่ CLI ใช้ (อ้างอิงจาก start_assessment.py)
+            "total_subcriteria": assessed_count, 
+            # 🟢 KEY สำหรับ Target Level
+            "target_level": self.config.target_level,
         }
     
     # -------------------- Export Results --------------------
-    def _export_results(self, full_results: Dict[str, Any]) -> str:
-        """Exports the FULL results into a single JSON file."""
-        import os
-        import json
-        from datetime import datetime
+    def _export_results(self, data: Dict[str, Any], target_id: str) -> str:
+        """Exports the final results to a JSON file."""
         
-        enabler = self.enabler_id
-        # scope = self.config.target_sub_id if hasattr(self.config, 'target_sub_id') and self.config.target_sub_id else 'all'
+        # 🟢 1. สร้างชื่อไฟล์ตาม Enabler และ Target ID
+        # ใช้ ID ที่ถูกส่งมาแทนค่า Default
+        file_name = f"assessment_results_{self.config.enabler}_{target_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:4]}.json"
         
-        scope_raw = self.config.target_sub_id if hasattr(self.config, 'target_sub_id') and self.config.target_sub_id else 'all'
-        scope = str(scope_raw).replace('.', '-')
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_filename = os.path.join(
-            EXPORTS_DIR, 
-            f"{enabler}_report_{scope}_{timestamp}.json" 
-        )
+        # กำหนดที่จัดเก็บ (สมมติว่าเก็บในโฟลเดอร์ 'exports' ที่ Root)
+        export_dir = pathlib.Path(pathlib.Path(__file__).parent.parent, "exports")
+        export_dir.mkdir(exist_ok=True) # สร้างโฟลเดอร์ถ้ายังไม่มี
+        
+        export_path = export_dir / file_name
         
         try:
-            with open(report_filename, 'w', encoding='utf-8') as f:
-                json.dump(full_results, f, ensure_ascii=False, indent=4)
+            with open(export_path, 'w', encoding='utf-8') as f:
+                # ใช้ indent 4 เพื่อให้อ่านง่าย
+                json.dump(data, f, ensure_ascii=False, indent=4)
             
-            logger.info(f"✅ Full Report successfully exported to: {report_filename}")
-            return report_filename 
-
+            logger.info(f"Successfully exported results for {target_id} to: {export_path}")
+            return str(export_path)
+            
         except Exception as e:
-            logger.error(f"FATAL: Failed to export results to JSON. Error: {e}")
-            return "Export failed."
+            logger.error(f"Error during file export to {export_path}: {e}")
+            return f"EXPORT_FAILED: {e}"
     
     def print_detailed_results(self, target_sub_id: str = "all"):
             """พิมพ์สรุปผลการประเมินโดยละเอียดแบบระดับต่อระดับ"""
@@ -836,7 +837,11 @@ class SEAMPDCAEngine:
         }
         
         if export:
-             export_path = self._export_results(final_results)
+             # อัปเดตการเรียกใช้เมธอดให้ส่ง Sub-ID เข้าไปด้วย
+             export_path = self._export_results(
+                 data=final_results, 
+                 target_id=target_sub_id # <--- เพิ่มตัวแปรนี้
+             )
              final_results["export_path_used"] = export_path
 
         return final_results
