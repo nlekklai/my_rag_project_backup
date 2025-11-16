@@ -500,10 +500,19 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
     if failure_result:
         return failure_result
 
+    # 🟢 ดึง Level Constraint ออกจาก kwargs
+    level_constraint = kwargs.get("level_constraint", "")
+
     # L1/L2 (Low-Level Evaluation)
     user_prompt = USER_LOW_LEVEL_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, level=level, statement_text=statement_text, sub_id=sub_id,
-        context=context, pdca_phase=kwargs.get("pdca_phase","")
+        sub_criteria_name=sub_criteria_name, 
+        level=level, 
+        statement_text=statement_text, 
+        sub_id=sub_id,
+        context=context, 
+        pdca_phase=kwargs.get("pdca_phase", ""),
+        # 🟢 เพิ่ม Level Constraint เข้าไปใน Format
+        level_constraint=level_constraint 
     )
     try:
         # ใช้ StatementAssessment Schema เดียวกัน
@@ -517,7 +526,8 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
         parsed = _normalize_keys(_robust_extract_json(raw) or {})
         
         score = int(parsed.get("score",0))
-        is_passed = parsed.get("is_passed", score >= 1) # ใช้ score >= 1 เป็นค่า default
+        # ⚠️ Note: is_passed ถูกส่งมาใน parsed จาก LLM หรือคำนวณจาก score >= 1
+        is_passed = parsed.get("is_passed", score >= 1) 
         
         return {"score":score,"reason":parsed.get("reason",""),"is_passed":is_passed}
         
