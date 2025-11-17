@@ -13,6 +13,9 @@ FINAL_K_NON_RERANKED: Final[int] = 7
 CHUNK_SIZE: Final[int] = 1500
 CHUNK_OVERLAP: Final[int] = 250
 
+QUERY_INITIAL_K = 20
+QUERY_FINAL_K = 5
+
 
 # ==================== Supported File & Document Types ====================
 SUPPORTED_TYPES: Final[List[str]] = [
@@ -52,8 +55,11 @@ SEAM_ENABLER_MAP: Final[dict] = {
 MAX_LEVEL: Final[int] = 5 
 INITIAL_LEVEL: Final[int] = 1
 MAX_PARALLEL_WORKERS: Final[int] = 4 # แนะนำ 4 สำหรับ Mac เพื่อความเสถียร
+LIMIT_CHUNKS_PER_PRIORITY_DOC = 7
 # 💡 ค่าคงที่ใหม่สำหรับ Rubric แบบแยกไฟล์
 RUBRIC_FILENAME_PATTERN: Final[str] = "{enabler}_rubric.json"
 RUBRIC_CONFIG_DIR: Final[str] = "config"
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
+
+EVIDENCE_MAPPING_FILENAME_SUFFIX = "_evidence_mapping.json"

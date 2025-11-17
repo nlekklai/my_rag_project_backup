@@ -1,1767 +1,1880 @@
 {
-    "3.2_L3": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "2660d90421bd4f72159b62c40d741e4767782b4395e7d5c52776ae4992a923e3",
-                "file_name": "KM3.2L305 3.2-3 สรุป Show and Share by PEA by PEA Scholarship Students.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "de3bf7f19cfa60f1414c48ea758eaa2f256306d4f89bfdaa72e3dadbfb621d23",
-                "file_name": "KM3.2L304 3.2-3หลักสูตร Critical Knowledge for KM Leader.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "798dbdeb4af86f88c213d6c8c8bcae38f1321b746adca863a44fa5c23a378063",
-                "file_name": "KM3.2L301 3.2-3 โครงการพัฒนาบุคลากรของ กฟภ. ด้านปัญญาประดิษฐ์ (Artificial Intelligence) ประจำปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "cee68f2adbfb4f1a7953e581b949953703d48f55e160a8e8e9881209392d8564",
-                "file_name": "KM3.2L302 3.2-3 การจัดงาน PEA Biz-Tech Innovation Hackathon 24.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b6efb175e7654788bba856824d9354089bbd18c1b366ae3dc609d66fedc4f24a",
-                "file_name": "KM3.2L303 3.2-3 รูปภาพโครงการ Show and Share by PEA by PEA Scholarship Students.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.1_L1": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "77a5335bc05a2c051b9f5539d61379d24f0b077a45d2470f4d945a8e271581ab",
-                "file_name": "KM4.1L112 KM-QP-01 การตรวจติดตามภายใน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "fd86a09fa5a0519ab3e6c883a05ed4a688025b5216e4b0e02637dcd9a6374af5",
-                "file_name": "KM4.1L120 KM-FP-02-01 แบบฟอร์มการตรวจสอบและแก้ไข.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "62f984151d3a21288fb0575fa86c63ca0fb36c47fb0dbfd1c6a6143b96b0fa74",
-                "file_name": "KM4.1L113 KM-QP-05 การควบคุมเอกสารและบันทึก.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9c727a94e48a93e359f5bb71ba49c8f69c877bb9bedf31a09241f1f6ba149895",
-                "file_name": "KM4.1L118 KM-SD-01 แผนการสื่อสารด้านการจัดการความรู้ สายงานบริหารองค์กร ประจำปี 2567 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "57daf31bdb0870bfd6f8b3d36e270803eeff60d98c14a9fb841459bce00dfa16",
-                "file_name": "KM4.1L122 KM-FW-01-03 แบบฟอร์ม KM Implementation.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
-                "file_name": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "fc301359c0e83c07f22452997d8066005cfed792d3c312cab4d1a3b7c6ee4a32",
-                "file_name": "KM4.1L102 KM-QM-01_คู่มือระบบการจัดการความรู้ (PEA-ฝ่ายพัฒนาทรัพยากรบุคคล)2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "55dc77558678fbc8d68607945d38e82b89358ea426f607fbe76e2034ff4cd984",
-                "file_name": "KM4.1L123 KM-FW-01-08_แบบฟอร์มการคัดเลือกกระบวนการเพื่อนำมาจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e2fd33082724b3bd5a0bf19d68afd8f9fd45509cc9c2a25e36746acbace22152",
-                "file_name": "KM4.1L121 KM-FW-01-02 แบบฟอร์ม KM Action Plan.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "dbfe7dbd4f7e42339860030699c4a69bb07067a462b8f2e7d1822a8b930b9cda",
-                "file_name": "KM4.1L114 KM-FW-01-05 แบบฟอร์มทบทวนการปฏิบัติงาน (Action Review).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0d88c19d31d41cacdb4675dbf3b15e8766a009b65f721f6f3c38731537bea90b",
-                "file_name": "KM4.1L103 KM-FW-01-07 แบบฟอร์มความรู้หนึ่งประเด็น One Point Knowledge.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "49f3d052b90e42fd1703843e1658f2d6e451dfb33e3f9be18fc8535176c36cb1",
-                "file_name": "KM4.1L107 KM-FW-01-06 แบบฟอร์มความรู้หนึ่งประเด็น One Point Lesson.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c52c0de1760dcfdf64e10d79b0d03eac32ff136d508e086d071569dd0588242a",
-                "file_name": "KM4.1L109 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "78d951d7e207258ca97122e183494a7a7918d86bbe4143e3d90cbb7994c1f32d",
-                "file_name": "KM4.1L110 KM-FW-01-01 รายการเอกสารที่ใช้ในการทบทวนแผนแม่บทการจัดการความรู้ 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "da942c18cee4366fba05e0a5ebf8fc5259d89bb35e84299fc186b7d8dae2190a",
-                "file_name": "KM4.1L101 KM-WI-01 คู่มือการปฏิบัติงาน กระบวนการจัดการความรู้ของ กฟภ. (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "06440f6083604f5787bcc9d048dbce9fdade66ee03a1b25cf086e21d348d9f87",
-                "file_name": "KM4.1L116 KM-FW-01-04 แบบฟอร์ม Knowledge Landscape (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6a11d0c75c1d9d674c006742d7b07c725c6216db8d82153db7b26644e9639a13",
-                "file_name": "KM4.1L115 KM-SD-02 แผน KM Implementation สายงาน บก.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "16df65cbd5657e85042e66e0ff8bd636bc61651c404ac31538dca4392d3a28e7",
-                "file_name": "KM4.1L117 KM-QP-03_การประเมินความเสี่ยงและโอกาส.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "97bacc8a4caa040dee6439442281939b83cb49c1c1b7e693b4220632a5d2147e",
-                "file_name": "KM4.1L108 KM-FP-01-01 แผนการตรวจติดตามภายในประจำปี.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d44e82cf1a5b0e4aff3f1180330aa50f6423807f86d64328949d795689c26adb",
-                "file_name": "KM4.1L104 KM-QP-04 ประชุมทบทวนฝ่ายบริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9d676b3413c84bda89ce7ee990c3be5eaf5f4811d3ee821b0ec9d6f7e3878829",
-                "file_name": "KM4.1L111 KM-QP-02 การปฏิบัติการแก้ไข.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "186d8c0cb76a6d64bf4b6d97845721008fba319fe9e37cca6b514929c7d11034",
-                "file_name": "KM4.1L119 KM-FP-03-04 Action Plan การนำองค์ความรู้ไปใช้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
-                "file_name": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.3_L2": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L2",
-        "evidences": [
-            {
-                "doc_id": "dc99d3541e5eff0c0ee1b47f75ec4f0d0fdb780bc5cf9007fb4d120d23e51fa6",
-                "file_name": "KM3.3L203 แผนการตรวจติดตามภายในประจำปี ตามกรอบมาตรฐาน 30401.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "881bd5ec5a15743e44653207b05bbcaad6e0dc84c6e4a1109a6e0102737550c6",
-                "file_name": "KM3.3L202 การตรวจติดตามภายใน ตามกรอบมาตรฐาน ISO 30401.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "40a1cdb10b64a93dda93062f532a84c15f7346f9ddfbae08d950fe6514223fbe",
-                "file_name": "KM3.3L201 โครงสร้างคณะกรรมการจัดการความรู้ (KM).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.1_L1": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "e38efdfb47d82293dcc83ef15557a5a88824bff4e8dd4193e1d2ca8f7fd96186",
-                "file_name": "KM1.1L106 มติบอร์ด ทบทวนแผนครั้งที่ 4.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "13dbc874c78ec05f5843c8f5faa53d50d4c927eb52dd835cfef75da958b740a5",
-                "file_name": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "5053c7b5ebbb4e94a4e1dae3c142937f767ab3cf80b7d485f61818766fa5060d",
-                "file_name": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bde52a6aa9f387d3f173e4431e3190346786d24110ed4a2c87bacf9bd3a2b349",
-                "file_name": "KM1.1L103 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c6bf768f040eea54f4a468f807ce6c6d6851bc6c4fd000698af64bdf4d07ff10",
-                "file_name": "KM1.1L102 แผนแม่บท ในระบบ KM-Si.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "fa9fa2b10e219169aabebc5ad003659fc006a50512b5fafc15487a3761933977",
-                "file_name": "KM1.1L105 นโยบาย KM 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.3_L3": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L3",
-        "evidences": [
-            {
-                "doc_id": "104b6f5bf1d3c7c1cf56eb42724b91398036bd7e2c24315d3e94e596afd3080d",
-                "file_name": "KM3.3L305 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e8c76b5b0f4ee02d082619631593a31058abc420b16e16eab784a422855c4bf9",
-                "file_name": "KM3.3L302 3.3-3 การศึกษาดูงานกับการไฟฟ้าฝ่ายผลิต (EGAT) ด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "67c17c2a337f29184f264e31a48417c77973f9fccb71c276a2f041b2c236a5ee",
-                "file_name": "KM3.3L304 การศึกษาดูงานร่วมกับท่าอากาศยานไทย .pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "780d9ac434a8bd14113f70c3e725ef67c5915b9e3911b9867a0225de7cac0250",
-                "file_name": "KM3.3L301 3.3-3 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a6c16dedef91b0765e337df8f03a45d4356204e04c09990fecb5c53b750765e0",
-                "file_name": "KM3.3L306 แนวทางปฏิบัติที่ดีด้านการจัดการความรู้ บริษัท ปตท. จำกัด (มหาชน).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "3fecd4c76ca16b1a41279f80569a3ffda45f97f25b6b7d44bd119963c54fbafd",
-                "file_name": "KM3.3L303 การศึกษาดูงานร่วมกับ ธ.ก.ส..pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "6.1_L5": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "d6285bd01b45a42fa2ab48ec073d43f3343408139d826d0c286c486940810bed",
-                "file_name": "KM6.1L503 KM_6_5_Thaiskill.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "461d320fe5efb14333a44cba218ea908dd906cdf062d7e68ac8e3182ac719b54",
-                "file_name": "KM6.1L501 KM_6_5_T3CC.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a5e384ab9425c1d247d026dc028047fab19174615d8d214c50ef0e9c68e4caa3",
-                "file_name": "KM6.1L504 KM_6_5_ESS.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b9182f35da0dcbaee65a59be201f27a6ad8ea306c342d487ff51b653d964437a",
-                "file_name": "KM6.1L505 KM_6_5_GreenTech.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "264934f2df4d290f094836bada615e6398b8a34a68fd4fe55c2f25611c953d86",
-                "file_name": "KM6.1L502 KM_6_5_ตัวชี้วัดที่สำคัญของค์กร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.2_L1": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "9c50adc6a054f7ffde3e69c2251f69bfe9a9abaf985a752de854de89864413ed",
-                "file_name": "KM3.2L104 3.2-1การตอบรับการเข้าร่วมงานประชุมวิชาการ และนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7682d9c624226437eb390106dce46eaf5fe6caf271dfaa6e8d4ae94a3f3ed52d",
-                "file_name": "KM3.2L107 3.2-1 ผลประเมินความพึงพอใจระบบ KM-Si.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "87df26db7f7e856733d02fcb5fd53ed44c5d3a9388fae490c1992c8452435c86",
-                "file_name": "KM3.2L102 รูปการจัดหลักสูตร อบรมเชิงปฏิบัติการเรียนรู้การพัฒนาระบบสารสนเทศด้วย Jenkins Pipeline และการ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d2fae6c6adbd3d4ab2bbb2fe2f7db1310cc13a678fc14d3309bcc7bdeb1ad83a",
-                "file_name": "KM3.2L103 ภาพงานประชุมวิชาการและนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "20d8f6c75a6225296a9f9c83ee972f2c4ea6819285a7aa9669dfe03623f66e5d",
-                "file_name": "KM3.2L105 ชุมชนนักปฏิบัติ (KM PEA CoP).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f033a29414734c824424ecdd5af91e6789df1ebccce510f869dd8a4ccbae3b65",
-                "file_name": "KM3.2L106 3.2-1 Line Openchat ในชื่อ HRD Connext สำหรับการสื่อสาร-แลกเปลี่ยนความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "81f578b00b181226255c21ea22405f704cbf9c6d079fd2b25584eeacb18efcd6",
-                "file_name": "KM3.2L101 การปรับปรุงพื้นที่ Coworking Space.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.2_L2": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "444933e7b3eeb7ddae8709d25580a40cb1ee38b4f626e134c55442eec52cb274",
-                "file_name": "KM3.2L201 3.2-2 นโยบายการจัดการความรู้ (KM) ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d38cb051963feb1caa262e28dda36b68bba3c651b1c6d08e01e1e04df96487ae",
-                "file_name": "KM3.2L202 3.2-2 ผลวัฒนธรรมองค์กรและสภาพแวดล้อมการทำงานที่สนับสนุนให้เกิดการจัดการความรู้..png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6ad4b8352ab2e54c1c3c7c89b1a64966ed784438181efb23d4660e1492fb6381",
-                "file_name": "KM3.2L203 3.2-2 ร้อยละการแสดงพฤติกรรมตาม TRUSTED ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.1_L3": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "66ad33dd30538f8fe0db74eb63f4edd4d22725616ffdf7d26ba7d176d71ca15e",
-                "file_name": "KM4.1L307 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis) (2).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
-                "file_name": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "cc8eb1e0b029b8691a623fbb179d4d30042c9fe133c8e839e852c706a9598f95",
-                "file_name": "KM4.1L310 KM-QP-02 การปฏิบัติการแก้ไข.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6d3f79c5667462be3e17b53e8fb562ed74edf89b28058953e6bca26f200f2d40",
-                "file_name": "KM4.1L309 KM-SD-03 รายงานการประชุมทบทวนฝ่ายบริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e0d8a127c2d3b70cd1e690d4a3e9463b665ca925a5f39ee93714f00761670ceb",
-                "file_name": "KM4.1L305 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร (2).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e8102495a01479099e168a53eee59c07561161050f42e8105871d06c5fdebceb",
-                "file_name": "KM4.1L308 KM-FW-01-01 รายการเอกสารที่ใช้ในการทบทวนแผนแม่บทการจัดการความรู้ 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b02be5d2dbc7224b01b14d29da581a7ba8bc8d97bcfad8d34f34ee4321902b99",
-                "file_name": "KM4.1L306 KM-QP-04 ประชุมทบทวนฝ่ายบริหาร (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "79babfcc946779003635a5f8dc9c674e66e50a0417c36fd46326880366aa626e",
-                "file_name": "KM4.1L312 KM-QP-05 การควบคุมเอกสารและบันทึก (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "5cfe9f2840ad028e198ed92f1018bab3a84d03f16cdad2ce33bc6559d261ea61",
-                "file_name": "KM4.1L313 KM-SD-02 แผน KM Implementation สายงาน บก (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
-                "file_name": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7d145bf51e3e669d50f0c42be30309314d69f98069f9e4e12f4e261e9a190444",
-                "file_name": "KM4.1L311 KM-QP-01 การตรวจติดตามภายใน (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "5c17f117a11bd44dc2ab7cc3457a630a03c008ccd12acd88ae7079956276cd85",
-                "file_name": "KM4.1L302 KM-FW-01-02 แบบฟอร์ม KM Action Plan_บก.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "25d13ffd039b5ff73630ee97d7495e699ad6e46046990a16d4d26e44a4b5fcbd",
-                "file_name": "KM4.1L314 KM-QP-03_การประเมินความเสี่ยงและโอกาส.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "4aa76ca1b1383094f865215bfad78fc2936800cf9fe25f872e0996d7dd98b8ec",
-                "file_name": "KM4.1L303 KM-SD-04 แผนการตรวจติดตามภายในประจำปี.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.2_L4": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "c6e8cb81b053d27689bf98e9d4deaf1053e0ff6ed10effa7c844faeaf190a94a",
-                "file_name": "KM2.2L401 process การดำเนินงาน 100_.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a14e25d804f32711612599d8bc237dffcc9789468d80a21f51cacfff42f51b5a",
-                "file_name": "KM2.2L405 km-survey.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "ac1b7077ab33e2dd44062e4750cd4e8df3b4fea3c82342e8e73d347beb6e337a",
-                "file_name": "KM2.2L406 ตัวอย่างผลการดำเนินงาน กฟฉ.3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "369f9e62ec3128244cc7635d2abdae546b032cfcdb25989b339dfef5adcf9815",
-                "file_name": "KM2.2L404 km-survey 2.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "263349ed313571d9666e3202cb6bb0d1c61dca5a68de176a1fcc841f44430220",
-                "file_name": "KM2.2L403 km-survey 3.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "03d96c2ecbced99b2d7851057cc25f52704935d3b256092e2221beed6c8c7251",
-                "file_name": "KM2.2L402 ผลการดำเนนิงาน รายงานบอร์ด ไตรมาส 3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.1_L3": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "b924432262eaf653e4213537d93c7ef772ee463f60322a4d4b1dfe682f7e3897",
-                "file_name": "KM5.1L306 5.1 ระดับ 3 (2) เชิญรับฟังการสื่อสารแนวทางฯ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b4d4b4236e954a4594e9b0659cde435d2dc17783beab05bacec47c8b797f9cd9",
-                "file_name": "KM5.1L301 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d2950753d89c65fe07fb004fd7fdc206179863927ca6196a6f1149ea8093bb8d",
-                "file_name": "KM5.1L302 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7bb60a7862c1865dbf30d15d9bc43761f0fd48d0623ec4518e11c811f73be9a9",
-                "file_name": "KM5.1L304 5.1 ระดับ 3 (1) อนุมัติทบทวนปรับปรุงโครงสร้างกา.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2ca16f94d4915983dad98899b5d2c96f8ecae12a27ee38be66bc6b1b65b9de43",
-                "file_name": "KM5.1L303 5.1 ระดับ 2 (5)_ระดับ 3 (3) รายงานผลการดำเนินงานตาม .pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6fbea6147f6cbc61c469e0befa95fb882e2e39bd5c590d1058c7e5d85e0897e1",
-                "file_name": "KM5.1L305 5.1 ระดับ 3 (2) เชิญรับฟังการสื่อสารแนวทางฯ.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.1_L4": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "8d2cd71647110deab3db977e5e0134c9cc9d5438588e5916ba683acdeed2a327",
-                "file_name": "KM4.1L402 Artificial Intelligence..pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d1bb23d34d92e2fe4fcad6ab0ec38bdd6975af783b2a69f9c29f641a7541c24a",
-                "file_name": "KM4.1L406 KM_4_1_4_KM-Si.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a76b359913b5aa1ce8f953a7f0529a886bb631e746a715d6bcc80f8f74a7dfd2",
-                "file_name": "KM4.1L407 KM-4_1_รายงานจัดฝึกอบรม_km-si.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "003781fa58ecde4ece1acdd7a2f323db9fe778aa8694f9ee576e69afe5e81add",
-                "file_name": "KM4.1L403 KM-อนุมัติหลักสูตรKMCapturing.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d2e9472014347da5165f41bdc9faf8f1aa1b0836627f32252196bcf71f98abaf",
-                "file_name": "KM4.1L401 KM-SD-05 ระบบสารสนเทศ.pptx.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a5b81ef29a59a417f20778afd9de47531be02022d5cd33a116973b4fcd17cfcd",
-                "file_name": "KM4.1L404 KM-4_1_อนุมัติหลักสูตรอบรมพัฒนาระบบKM-Si.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bbb5ed0faecf068a308937ade2056744b188f9ec89e21c846a5f8819811083de",
-                "file_name": "KM4.1L405 KM-4_1_5_A1_1_แผนการพัฒนาระบบดทคโนโลยีสารสนเทศด้านการจัดการความรู้และรายงานความพึงพอใจ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.2_L1": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "1f307213da78e4c160f3f4dcb395934c2766f417e9811a17a1dbf79d70f59ab9",
-                "file_name": "KM2.2L105 อนุมัติ Implementation 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "38c6861c3b3c3de972f18c3ac1cdcbea8ad86ac8bf09bc9f1fe8226d00b43464",
-                "file_name": "KM2.2L102 ขอบเขตงาน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
-                "file_name": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d8765cb95076f25111c0e595eaa96e5c46f0a6d730c24337811d0b693c7ad38f",
-                "file_name": "KM2.2L103 ใบสั่งจ้าง.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c28c061a582cd8198cd0bc74b74e2f7be208d4ce5b67dc9a073c96f13d527c0a",
-                "file_name": "KM2.2L104 อนุมัติหลักการ KM Implementation.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.1_L3": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "60a8b7e8f74ba5157f1d4f064c781d76d5d1c835dfa3280ce0f68077ecec7baa",
-                "file_name": "KM2.1L302 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0591707c21aefbd6f4ca130d1a573b909bff143e106012ed5b6afcbd1947211d",
-                "file_name": "KM2.1L301 ผลประเมิน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "efd3cdaec73d59bd2f5dacfac0c9081b0e91f5be98edc0884ecc92d52c3cfc6d",
-                "file_name": "KM2.1L304 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6a6755478d87b57ca45710f742fcf5350f065fa2d5c06ed3326de3e3af4e7b39",
-                "file_name": "KM2.1L303 แผนแม่บท ในระบบ KM-Si.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.2_L5": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "fce957e3edefd7728bcfbee96b0f97df8f8842cd971a794b6b196b754ae79a0b",
-                "file_name": "KM1.2L509 ดูงาน ptt (2).jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "77973d4d692f62d2e9c683a6a0ae84d7c0bc2456a52c3a1cd9df2dbf820cabd4",
-                "file_name": "KM1.2L510 ดูงาน ptt (3).jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c4303b733a347fd43d17f27175ad92ecdd35aea8f5a0a63d4efb94317c74fa75",
-                "file_name": "KM1.2L506 ดูงาน egat 2.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "667bbfaa7fa2e19a38b2c8fa7c23a0e99e2bee1263f93898c8ee93f6dba66e5e",
-                "file_name": "KM1.2L508 ดูงาน ptt (1).jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "05564448cca71c448af77e78cdb562b4ebccb68d4e5724cf9cfbb27ab6c8a8e2",
-                "file_name": "KM1.2L507 ดูงาน egat.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0118b74bb157bccab23c04e6505d5d23682e4b4264084eef1624bc394812dfaf",
-                "file_name": "KM1.2L502 ผลประเมินผู้บริหาร นำมาปรับปรุง.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2e399d8dc133441ff443b3bbadb19db6d3eb8c92cd7c8e3ae477c9d387627b13",
-                "file_name": "KM1.2L501 Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.1_L3": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-                "file_name": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9180c09ef9497c2fbae72fe861579d82c1ff166bab9060f3a80983dbdd853e7c",
-                "file_name": "KM1.1L306 นโยบาย KM 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c601c9786172c1e873b688244896218a9168ef7519aa4792f05e5735056ec506",
-                "file_name": "KM1.1L305 การรับรู้และเข้าใจ ผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f8e9d25c4818675f3973c509b6b99654c8f45faa00b0b01342ef5a90548b6916",
-                "file_name": "KM1.1L309 ผลการประเมินผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e260f2e9e9d22972b2e52e44974f5053c0164cf76be0a844299027833ed28996",
-                "file_name": "KM1.1L307 Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.2_L3": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "cb2de4c730cb95ec684e27fbd8d5deeb35a55c92fbedf3eb1c7f0793b75019b5",
-                "file_name": "KM2.2L306 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "4bec1c05231e1a85a2866eac3fd6756e895b8c9e1e97e8f64c92a33f899b6b65",
-                "file_name": "KM2.2L302 งบประมาณในแผนแม่บท.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "4c83c99fb7e3e85a3aa6a90c8f8d0d16fbf2f5b612c29eb91cc79db54203cf77",
-                "file_name": "KM2.2L304 แจ้งการจัดสรรงบ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "4b2d0a8101b4e64dcbcdf0ddaddb497f760999d61c95f64d9fa2d1bbf5c50e0f",
-                "file_name": "KM2.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "759cd5850f1e610a3d2207a41c5ec191af2e031b1ec3b52c99d1c57c62230fc0",
-                "file_name": "KM2.2L303 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "290af46bb95b74b1fb5886985d3980ac378349666e201629e614935ca7a60ce7",
-                "file_name": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.2_L1": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-                "file_name": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.2_L4": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "3aac8daee0fd0b09e68fd3de67c11298ee3dc866cda79cf541b37c537dcf91f5",
-                "file_name": "KM4.2L403 ดูงาน_ธกส.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "8102be713deb49ca662243689293a40c6b8a21d75490e152ac55cdcbe6d8d264",
-                "file_name": "KM4.2L404 KM_4_2_PPT.docx.docx",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f67edd1c96b73924ab498c5759a9ce23920f31264fc62517da8f367072838529",
-                "file_name": "KM4.2L407 แนบ1_หนังสือสคร._กฟภ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "36331af122b81b68ff9d743c548bf3ee21a23713f3be1a8064f9dc944c29e324",
-                "file_name": "KM4.2L402 ดูงาน_NT.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "970762a88e3018aadef510531d65a23ed4d32a69c7ac889f160bb2756f47d59f",
-                "file_name": "KM4.2L405 KM_4_2_Egat.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e417dd5ae21b1b7fb7bd054d46aee560ee4ba2412c35d9984272381bf32ac959",
-                "file_name": "KM4.2L401 KM_4_2_BMTA.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2e3b482ac6c15ded260e3e0931ad1b1f03b4d2d8808aff154060a1a5e333a413",
-                "file_name": "KM4.2L406 KM_4_2_Good_Practice.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.3_L4": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L4",
-        "evidences": [
-            {
-                "doc_id": "295ecd4039ce5cab9bb88b2cb18b274020b9074aa57fb92442b66cf1f6f07471",
-                "file_name": "KM3.3L401 3.3-4 แผนพัฒนารายบุคคล (IDP) จากกการทำประเมิน Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "ad5fc8b27f7d5890c26e9a1ab196279b5a516f1161b3fc2fb0bab796c2c82574",
-                "file_name": "KM3.3L402 3.3-4 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "ad625bdb976fba64b7847dfbbd0b2ca80b24bd3f5ee3901a52240a7222b27f03",
-                "file_name": "KM3.3L404 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "69577190f8a0b793923a342dc4550a7538a0ee98f137f4dd990671ab2c8fe9b4",
-                "file_name": "KM3.3L406 ตัวอย่างใบประกาศการผ่านการอบรมเชิงปฏิบัติการสร้างความตระหนักด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6ef507067dc744b52fa04a0c0691995ecec32bc212ae33e3438524388e9fe2ec",
-                "file_name": "KM3.3L405 3.3-4 แผนแม่บทการจัดการความรู้ P4.1.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "56e4fe1a96aaff45f88b81096b2ec336519de76eaa0904a3793b597c2f5c89cc",
-                "file_name": "KM3.3L403 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.2_L4": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "7a3bfce3026f5c5d6e98efbaaf4616cac205498ddc8d4d5eaa99e13316b8c8d7",
-                "file_name": "KM3.2L401 ผลประเมินความพึงพอใจของบุคลากรต่อระบบแรงจูงใจ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "355b2402f5aebac9decb23739ab70ea20cb1c98fce28bc57d3b15ecc8ade132e",
-                "file_name": "KM3.2L402 3.2-4 ร้อยละการแสดงพฤติกรรมตาม TRUSTED ปี 2567 - Copy.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "438ae2f681f2868c8d1ecc41a3bf74e732971fd26caaec2e400630de17aae561",
-                "file_name": "KM3.2L403 3.2-4หลักสูตร Critical Knowledge for KM Leader.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "eaae546cb6d5f8400b30f7bef19d3a27f6d9262ee0f636310778bad5d2bce630",
-                "file_name": "KM3.2L405 3.2-4 การศึกษาดูงานกับการไฟฟ้าฝ่ายผลิต (EGAT) ด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.3_L5": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L5",
-        "evidences": [
-            {
-                "doc_id": "8485c326266f9bc1efe020ab7b69813f3f148ceaf8efda85e2205c37153948c3",
-                "file_name": "KM3.3L505 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1070c41e1ebd173dd95e8b8f4def5cf77c5fab9b7827bc3df69b5aba0198200a",
-                "file_name": "KM3.3L502 3.3-5เล่มแผนยุทธศาสตร์ กฟภ. พ.ศ.2567-2571 - ทิศทางและตำแหน่งทางยุทธศาสตร์.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9f453400919cf08778137ecc6843720a86642a383246c1a1ad43728bd6b4d060",
-                "file_name": "KM3.3L501 3.3-5 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f611fd492fabb38413723dc8eb063ca379d29f16f7e231791cf6a3815d8f9339",
-                "file_name": "KM3.3L503 3.3 -5 หลักสูตร Critical Knowledge for KM Leader.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "738e0f7436df595e4dca369caa53ce918b1cd3a81103c98df817ed3f8da8756f",
-                "file_name": "KM3.3L504 รายงานการจัดฝึกอบรม ISO30401.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.2_L1": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "2dba2de62f0a43e589e5fed80d81de00a778fc9b703a4e6d8ea75b5ed5bebc95",
-                "file_name": "KM4.2L102 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "24011bd6eed28f60d2a18148c7ab09e26bd93e2a5fe6d82daa6dcbae191cec6f",
-                "file_name": "KM4.2L103 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
-                "file_name": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
-                "file_name": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.1_L5": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
-                "file_name": "KM1.1L502 Learning Form กระบวนการ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7dc125a095319053ebbd8b3941277a2f4779b6436245c1012cd5dccbd0fabf24",
-                "file_name": "KM1.1L503 KM-WI-01 คู่มือการปฏิบัติงาน กระบวนการจัดการความรู้ของ กฟภ..pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
-                "file_name": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "4512d5039acfd7b21a54a909f697317a1c7b8693b883156a6af21053c972c26d",
-                "file_name": "KM1.1L504 กิจกรรมสื่อสารแผนฯ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1dc5a9620b7e79cafadca79b409bb52a58618c29b7f849a956510d00afbefe56",
-                "file_name": "KM1.1L505 Sipoc กระบวนการจัดทำแผนแม่บทฯ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.1_L4": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "861b67b1e764b8c2629b090bbefeae58f85e28ecfbea344281ac4da51588787a",
-                "file_name": "KM5.1L401 KM_5_1_4_อนุมัติอบรมเชิงปฏิบัติการสร้างความตระหนักด้านการจัดการความรู้ ตามมาตรฐาน ISO 30401.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "5e7a3414a9959cc51a28b551400b5f9809552e8c4e289eba21b64b1f2e84f634",
-                "file_name": "KM5.1L402 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2c4a99769aaa842456482e297801bbc95da57886e537d8f90710defc07e82051",
-                "file_name": "KM5.1L404 KM_5_1_4_กระบวนการทำสำคัญแบะสอดคล้องกับEnablersทั้ง8ด้าน.docx.docx",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c0276d3d8656280b3338849e0550aad4215d52c2e0ccb5e8b68f418fda9eddaf",
-                "file_name": "KM5.1L403 KM_5_1_4_การจัดหมวดหมู่ความรู้ในระบบ KM.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.2_L5": {
-        "title": "Mapping for Sub-Criteria 3.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "db517e6529fec7c0034bed2d11ca8bd8924ca241495a9486032b44401cae5f11",
-                "file_name": "KM3.2L502 3.2-5 รูปภาพโครงการ Show and Share by PEA by PEA Scholarship Students.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6cf4e2b02c6ac4d182399d7bd3d8799d2bdd0194037dfbb4cb5dff6010c0ceb4",
-                "file_name": "KM3.2L504 3.2-5 การปรับปรุงพื้นที่ Coworking Space.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6a2a68089319a2a9020e028ad9b1e24240a577eb2ac9ebdb20120e5d73af940a",
-                "file_name": "KM3.2L503 3.2-5 สรุป Show and Share by PEA by PEA Scholarship Students.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2ede3f86a8d179d3ea64203686a9ecb666beae11b67742b695f5b4ff5bf5d367",
-                "file_name": "KM3.2L501 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.1_L4": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
-                "file_name": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f6883fd775613ea2c905c70c25376790864b6728bb177936d8ffc6923073698b",
-                "file_name": "KM2.1L407 ติดตามผลผ่านระบบ km-survey.png (1).png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f20fb2d4080ec699916d29696b3de35ffc93928e20867662e5571fcec27b48bf",
-                "file_name": "KM2.1L403 มติประชุม ไตรมาส 3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9ed191417ef414822b227d22f0d06d908cc8fa7029e692401e41ee0030af7325",
-                "file_name": "KM2.1L406 ติดตามผลผ่านระบบ km-survey.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "8e25b290574f6d65ef0c479d2406e46991a72d6098238b7f8fd9bf8a8df9b480",
-                "file_name": "KM2.1L401 Sipoc ทำแผน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "724946f0c21db7a038d8e0ac8ace520339e3ae266c1181c68f39fc8b8f99acde",
-                "file_name": "KM2.1L404 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "8f9849f128b8e883a444ac2b4e0022c2d1f59102b0470302d772f4be12fd7be7",
-                "file_name": "KM2.1L402 กพค.(จค) 1866.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.2_L2": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "000ff197115c406d30894b6a9f9991ebaeb899f4881bda2b631e9eca1526536f",
-                "file_name": "KM1.2L204 ประเมิน Skill Matrix.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "aaa7c7dfb78e30ecf2a2ad1da5fd281830318a9574bc72cbdce6625fa769e97f",
-                "file_name": "KM1.2L203 กพค.(จค) 370 จัดทำ Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a2d2c110a0a20e7dca2e8e0ec4b1132b9013870b686a2553954f3ee35de6f327",
-                "file_name": "KM1.2L201 เกณฑ์และพฤติกรรมที่คาดหวังของผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9f207c88cd18931674b568c797073909c9f9b2dcad0c0057b00f3f0fcff3f9fe",
-                "file_name": "KM1.2L202 นโยบาย KM 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.1_L1": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "ddcad92841dbde43c23cbbf6f121e25cb93b0d133514399225e64cc697c466d4",
-                "file_name": "KM2.1L103 ภาพประชุม.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0cf5e7c08eb49878ec97359eb92b46192d8e1aaa79a82098d01d345019afaf63",
-                "file_name": "KM2.1L104 ตัวอย่างรายงานผลการดำเนินงาน ไตรมาส 3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e1c3c53db674f69791526ff18152ccd65ad9468abb7f937b308e211bd635daba",
-                "file_name": "KM2.1L101 Sipoc ทำแผน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b26d1453ea81dbf09848ac1903c91548a4f9a4ffe89487df563f0f58a454d6cb",
-                "file_name": "KM2.1L102 รายงานการประชุม คณะ Core Business Enablers KM.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "6.1_L4": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "c9799f406987ba7b1c8abdf59c06d2757cf09e7be2bab3f4b10ff724ea1b7c7e",
-                "file_name": "KM6.1L408 กธน Action Plan.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "52365ea48089c8f438fb867dde17c96e3721ffcdbae7325e215512f0db0ae806",
-                "file_name": "KM6.1L401 อนุมัติ การจัดการความรู้สู่นวัตกรรมฯ 67 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "28c2ced6af45c3869de117f72acab480eafaae5960250141d01113e82078779f",
-                "file_name": "KM6.1L405 รวม กวช. Critical Knowledge.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e2d01144afc78999ce90c7a679dffd298537954e8d2295d93ad28688122cb86d",
-                "file_name": "KM6.1L404 ตัวชี้วัดที่สำคัญประจำปี 2567 และผู้มีส่วนได้ส่วนเสีย_edit2 (30-10-66).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1a88175058d915c79f13744a2eed4e37245693bafe668bc517ab670e67e4f097",
-                "file_name": "KM6.1L407 กธน Knowledge Landscape.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1c17ebc49a56503d1e2d558dc130768ec4946c8d58302e390c9f92c978cefaa0",
-                "file_name": "KM6.1L402 ส่งกพค-ThaiSkill 1_Knowledge Landscape.xlsx - TS.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "8fad6265ffb20adaceaedaf62ea90740d20e605168f499b8fa4c3c0801f84405",
-                "file_name": "KM6.1L406 กธน. Action Review.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "56b484907dc9ee0a86fb95a70c053a0a3f8bd5e93ef651966fae088b1ede6049",
-                "file_name": "KM6.1L403 บันทึก ตัวชี้วัด.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.2_L3": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "fa9b9e385af5a59aec826cf2310eda7337231d32436a15d82bbb0def2fa8272d",
-                "file_name": "KM1.2L305 LINE_ALBUM_งาน peacon2024 สื่อสารแผนฯ_241226_1.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "096e7c66478d515dcddef4cfc90f63b0241d923762baa8f1a8dee582cb34bfe8",
-                "file_name": "KM1.2L304 แผนแม่บท ในระบบ KM-Si.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "555c53dc9bce489269b7ec83d637b9fa34a8a6d8fdf1939a750fd078e8876662",
-                "file_name": "KM1.2L302 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0fa53f62afd6d0fe1564ec29a7405ad1c504fdc851a3c290de131e7e9cc0a8da",
-                "file_name": "KM1.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4 ย่อ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "644ba2c1e1ecbb3179531767ace7acf4bd3530fb9cdf9ae397e8bfde899fd675",
-                "file_name": "KM1.2L303 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.1_L3": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "b6ebfb8da32709d9eda2787f72710f4e45c69ddd02b481a83d2382204beaa865",
-                "file_name": "KM3.1L304 ภาพการจัดงาน Innovation & KM Day PEA(S3) 2024.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e407814b97f1724f29d3ae547dc7bc137db55d593372972ff23eb478b398918b",
-                "file_name": "KM3.1L303 อนุมัติการจัดสรรงบประมาณ Implementation 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "9c4abf15bc98c547f93637e68596d8bfc09ed8e06f4571724f9b02551f7e9be6",
-                "file_name": "KM3.1L308 PEA C2 KM Sharing Day 2024 กฟก.2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e4b1f9fe998f878a31717123314f4aedfb546b303967730ce44ef82820924a65",
-                "file_name": "KM3.1L309 ระบบรายงานผลการดำเนินงาน (สำหรับคณะกรรมการฯ).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f5dd09fa2d784e2a25fbe18f976f30c7a4f6fd2d7687c74a0926153e2c190db9",
-                "file_name": "KM3.1L305 รูปการจัดกิจกรรม KM Training Day สายงานวางแผนและวิศวกรรม ประจำปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "2fb56612cc2e0eaca8f69160d9ddb275f620a8cad0e32546521058d813e753b7",
-                "file_name": "KM3.1L301 แผนที่การจัดกิจกรรมการจัดการความรู้ ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bfad32691a6144f79393d40271710ccf3f313339fd6cc13fbef54441fb2268e4",
-                "file_name": "KM3.1L307 การจัดกิจกรรม KM Day ของ กฟต.3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "3b2f99ce7448c178e6d69cc230c79f7057af5472e254f4b910d513f4f0fbec89",
-                "file_name": "KM3.1L306 การจัดกิจกรรม PEANE3 KM Show & Share กฟฉ.3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "57a0584c0a313ea9dc4c607acf7a15a621781539c1ed5f80e6bd3752b3de1644",
-                "file_name": "KM3.1L302 ภาพงานประชุมวิชาการและนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.1_L1": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "e6a3d89054d8904dcf0bef82e9f33e76e426a3fb05bb9fd1ba2e97773aa3b475",
-                "file_name": "KM3.1L102 3.1-1 รูปภาพกิจกรรม Onboarding Program 2024 วันที่ 17 พ.ค 67.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bace49574bcad9eabf13ed03c99895c57d07b9af7b15c048842d664f86cc0ee2",
-                "file_name": "KM3.1L104 3.1-1 นโยบายการจัดการความรู้ (KM) ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "42ef068bd480655a1168bd443cf08658715ce6c9c6c152d733598c40d268fedf",
-                "file_name": "KM3.1L103 3.1-1 รูปภาพการเสวนาในหัวข้อ “สร้างมูลค่าเพิ่มให้ PEA อย่างยั่งยืนด้วย KM & ISO 30401”.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c59a8112a6c393f09db4ce3334ee09b60117811cc2ff1eec6676c0553f2e2e82",
-                "file_name": "KM3.1L101 3.1-1 แผนการสื่อสารด้านการจัดการความรู้ สายงานบริหารองค์กร ประจำปี 2567 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.1_L2": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "7c6cf0466dbd4ca1cf0e2ab2f271f4b8cb6b21c7d758cfe24e11e0110b6031f2",
-                "file_name": "KM1.1L201 ตัวอย่าง Skill Matrix.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "1bb6fafe17d66c80af9405a070be1d5f0675c6ad2a3bf95e5e9373128c3f5073",
-                "file_name": "KM1.1L204 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "3b14ad05a9e0e2792003a133b891a4cf490add78652e1b95ea3afedef9ce71d7",
-                "file_name": "KM1.1L209 PEA KM Model.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "23bd5e885aa02141bbe662071449e6af16113dab8a32ed174bc6795dddcdda36",
-                "file_name": "KM1.1L205 ตัวอย่างคำสั่งแต่งตั้ง ระดับสายงาน และระดับกอง (สายงาน ย).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "61a1f21191bf6facb74355eee5e7326550f8de56cd32435157aebb1bf7278cd9",
-                "file_name": "KM1.1L206 ตัวอย่างคำสั่งแต่งตั้ง สายงาน บ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e5046edfb46de8ccac6649a1dc566c1aa72525a026e6e8b0fec13f8bc03dd2c4",
-                "file_name": "KM1.1L207 กพค.(จค) 2073 ทบทวนคณะกรรมการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "ad1e9d76797909dc51eaeb2622d8500a5fb147ab57b2721eb630d1bc61a5ce13",
-                "file_name": "KM1.1L211 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6d30d0a3523c73c921f6d0798da621a9d6268bcf931d78e9e2e0502757bb3807",
-                "file_name": "KM1.1L208 PEA KM Model.pdf (2).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "26bf1f3af49e020a4129967a537fc133a18e996c45e1e8d9ff5ca171b93e1792",
-                "file_name": "KM1.1L210 PEA KM Model.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c8a5740b331629ab5825a86fd8b088dd5e5af6f1c625ef92ecdadcd5b8c422c2",
-                "file_name": "KM1.1L202 ประเมิน Skill Matrix.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bd17f89224708f4abcc89fa3d367310a1037be2ab5130d5e79d7dd64ca8b448c",
-                "file_name": "KM1.1L203 ตัวอย่างคำสั่งแต่งตั้งระดับสาขาการไฟฟ้า.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.1_L5": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "0dab357a50c202dce229455cc8d881c2a0d785425dd5d09e2531ea0a69a436d5",
-                "file_name": "KM5.1L502 5.1 ระดับ 3 (5) _ระดับ 5 (2) รายงานการประเมินกระบวนก.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a815bbb15a87a2febbcdb444a1c1f52918b2f9ac8d3be10c54f1381b91f4a18b",
-                "file_name": "KM5.1L501 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.2_L2": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "c92709aab8ececb3596df9c652bac2e26e028c1c327a7cfd6605572c8fe1f26e",
-                "file_name": "KM5.2L207 KM_4_2_2_หนังสืออนุมัติคู่มือปฎิบัติงานระเบียบวิธีปฏิบัติงาน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-                "file_name": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a8e98d94e1c687ce8debc02a18ff90ef2bb96a44fd0a076e914a25163b12483d",
-                "file_name": "KM5.2L202 KM_4_2_2_คู่มือการจัดการความรู้ตามบริบทของสายงาน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "373bd68bff747dcdfd6d03520c8b206f317248b6072f29e92dd424ded029c126",
-                "file_name": "KM5.2L204 KM_4_2_2_ระเบียบวิธีปฏิบัติงานการประเมินผลการนำไปใช้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "12916ee25d2f074a5cec4cdfcd5ecaff54e2c8b00786f3c3acc46761510f7048",
-                "file_name": "KM5.2L203 KM_4_2_2_ระเบียบวิธีปฏิบัติงานการนำกระบวนไปใช้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "87915345fd996cb755d5db85b6c0b144cb5330171bc456f009ff6ddfb7e58acd",
-                "file_name": "KM5.2L205 KM_4_2_2_สื่อสารคู่มือการจัดการความรู้และระเบียบ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "52ca55431714af838c5b0baec3dc422ec4fb3821796621ce3c52740fe565559a",
-                "file_name": "KM5.2L201 KM_4_2_2_ระเบียบวิธีปฏิบัติงานกระบวนการบริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a074456eda9437e18a5246fffb7e40cf0f8ff1670b12432393c5127de33b8e3b",
-                "file_name": "KM5.2L206 KM_4_2_2_คู่มือระเบียบวิธีปฎิบัติขึ้นระบบKM-SI.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.2_L4": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "243d15ddc16f96df9565b06bc7595d399248ee73ea6b426658be647b44af0362",
-                "file_name": "KM1.2L403 ผลประเมินผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "520d061b25dcf451f6fe4f05324f8a4a86c8ccf2ee5b4baefe47abee0171f150",
-                "file_name": "KM1.2L401 ตัวอย่าง K Landscape สตภ..pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "99947b2dbc73225898848844dca5e931fca77e7f20b55d629ca9cba95afabd5e",
-                "file_name": "KM1.2L402 ตัวอย่าง K Landscape สายงาน ย.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d1bae31659e4083a4adb8d813c82e8f7c87355bd67eea4eb3402cc6f0d2386dc",
-                "file_name": "KM1.2L404 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.2_L3": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "9fb0d3b03c18d43be1c40b2a5e5dfe948912c87fc6d38cdeab616d7c00e4d456",
-                "file_name": "KM4.2L301 Knowledge Management (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.2_L3": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L3",
-        "evidences": [
-            {
-                "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-                "file_name": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "011ce10b893958a06e8f61f90b93ae095d71bc207dedf3c9445dcea1e3defd6f",
-                "file_name": "KM5.2L303 อนุมัติอบรม_ISO30401_67 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "90b5ff8f9503bb487096df1c42b115ad6de54eaa201a528be1378373f1bc0f20",
-                "file_name": "KM5.2L302 1.รายงานการจัดอบรมISO.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.1_L2": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "c5c95cdacf75b4ed4b22a417f6d398c2f0441040ef78a8ce25d1964221173828",
-                "file_name": "KM4.1L201 KM-SD-01 แผนการสื่อสารด้านการจัดการความรู้ ประจำปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.3_L1": {
-        "title": "Mapping for Sub-Criteria 3.3 Level L1",
-        "evidences": [
-            {
-                "doc_id": "ef95e366bba892877b2eacc57e1b2af8c10226e5a8ada74a169f93ad29f5606f",
-                "file_name": "KM3.3L103 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "472d483bd53297f9120fcf8e5c4c0c40f088c11e9677d8823c9e0c5ab8e08758",
-                "file_name": "KM3.3L102 3.3-1 แผนพัฒนารายบุคคล (IDP) จากกการทำประเมิน Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.1_L2": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "58d3cab34ae80a0d5d58322b3e002e72cc16e5c98a0fae21148e6296073bc49a",
-                "file_name": "KM5.1L204 5.1 ระดับ 1 (3)_ระดับ 2(3) รายงานการประชุมศูนย์บริห.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "a51f3d0aba63a5e96bdbc92dc718172b6e3fffd0f831c8ae5f351008faf05b33",
-                "file_name": "KM5.1L202 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "af2f18a9f5d214fb8468658fa6f37e1d4d6a6e2487ac85196c7e4e2022996dcd",
-                "file_name": "KM5.1L205 5.1 ระดับ 1 (1) _ระดับ 2 (1) SIPOC กระบวนการจัดทำสถาปัตย.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "0a22851102e2bf128bb52910123e3707a5e7b6cf47cf89894da0c84814f9e1bc",
-                "file_name": "KM5.1L206 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "120ebb9e513f494ab03b0f0bac25a36be7c377db86f839b19d010e8352539d1b",
-                "file_name": "KM5.1L201 5.1 ระดับ 1 (2)_ระดับ 2(2) รายงานการประชุมคณะกำกับค.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "d0c247ed535eecc63be766c6fc0b192bf6fd83eb577f565d079abc7c0a7938e2",
-                "file_name": "KM5.1L203 5.1 ระดับ 2 (5)_ระดับ 3 (3) รายงานผลการดำเนินงานตาม .pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.1_L5": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "359a28cfd6f6214a010c8009a1c4488bb504015a82e8d108ac62c05fdc151d83",
-                "file_name": "KM3.1L503 ตัวอย่างการปรับเปลี่ยนวิธีการส่งเสริม และสร้างแรงจูงใจให้บุคลากรในการสร้างสรรค์อ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "403ab242e083a4dd1f161f5a2547337a29c6cd9ca55bf1b6578807659b9b0671",
-                "file_name": "KM3.1L502 3.1-5 Line Openchat ในชื่อ HRD Connext สำหรับการสื่อสาร-แลกเปลี่ยนความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "14ad2b392c664fd2b752eacdac542ee3efb3e355b6adf29205071074a86a3ec0",
-                "file_name": "KM3.1L505 3.1-5 ตัวอย่างการมอบรางวัลบัตรเงินสดงาน PEACON 2024.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e38bae5e4d1e9a6ff61bba544163261135782636f5339365b9f20d5f94f4b3e0",
-                "file_name": "KM3.1L501 3.1-5 ผลประเมินความความเข้าใจกระบวนการจัดการความรู้ กฟภ. ปี 2567.png",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f89ea5a977e5fa8e51d02c7ad41d1d7c883e98cad698a65c675df9aa572cbb05",
-                "file_name": "KM3.1L504 หลักสูตร Organizational Knowledge Management for New Business 67.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.2_L4": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L4",
-        "evidences": [
-            {
-                "doc_id": "f608d08ad3cf0b29c9b730136fdd8231e6442dd568cb616c7097107a94eb6a6f",
-                "file_name": "KM5.2L404 คู่มือการขาย_RF7.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7a8f8971019dd8414323b145de98eaaa1b3d3917e02dc77386ed2dc5c8f71c92",
-                "file_name": "KM5.2L401 อนุมัติ KM for New business 67 (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "cca83161325c3bb93572abf405649deac4fc3f0a3d15cfa30fa6716095f4646d",
-                "file_name": "KM5.2L402 อนุมัติ sales skills (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "c25c59e496e753f78ab65dc9fb148df9ee117882d97da722a62df3023eb1544b",
-                "file_name": "KM5.2L403 เอกสารแนบรายได้ ธก. เกี่ยวเนื่องสะสม ม.ค (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.1_L4": {
-        "title": "Mapping for Sub-Criteria 1.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "46c471c73f3b228d623bec79a4435e4d87e59e382836bf98d630a48479cdb2b4",
-                "file_name": "KM1.1L402 แผนใหม่.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e3c4087a3ccdea0c5ff58ddd791fcad4ac0bee72acad576accbbe8a4fabf3307",
-                "file_name": "KM1.1L401 Mapping แผนแม่บท.xlsx",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.1_L4": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L4",
-        "evidences": [
-            {
-                "doc_id": "34924208d8023bd86201c8b1ce086d61a9a0bf5273be0e6322b72c575e78e723",
-                "file_name": "KM3.1L405 3.1-4การมอบรางวัลการจัดแข่งขันทักษะการปฏิบัติงาน ครั้งที่ 11 ประจำปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7315c1170e4e989448657a3f0f4d632f7307161589cd7c7fcd54ac6f0989f712",
-                "file_name": "KM3.1L404 3.1-4 การยกย่องชมเชยต่อสาธารณะ โดยการประกาศรางวัลสำหรับ KM ยอดเยี่ยม.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "791436ead6b87ac9662409e9b3eba9162f6d9c605bf0cc5120a2fe0c55d4a0db",
-                "file_name": "KM3.1L402 3.1-4การยกย่องชมเชยต่อสาธารณะ Building Tomorrow Together 2024.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "95088474c75b197f1080213f16b39a84ee546567c22fad205031bb763473f0bd",
-                "file_name": "KM3.1L401 กิจกรรมการจัดการความรู้ ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6ae60e497673eb86524d30e8625347f6a78723501a5a9797490048722b9f39c8",
-                "file_name": "KM3.1L403 3.1-4 การมอบรางวัล ในการอบรมเชิงปฏิบัติการการจัดการความรู้สู่การสร้างธุรกิจ ประจำปี 2567.p.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "66b8fcac0b1d7a64958d1febb8d82dd5043ec83ebc84b60786c12d46884aaefc",
-                "file_name": "KM3.1L406 3.1-4 การยกย่องชมเชยต่อสาธารณะ โดยการประกาศรางวัลสำหรับ KM ยอดเยี่ยม งาน PEACON 24.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "1.2_L1": {
-        "title": "Mapping for Sub-Criteria 1.2 Level L1",
-        "evidences": [
-            {
-                "doc_id": "963a332c4cf71af9c345991087e894d4aa2bf1394d81b97eb7e5811da124ab40",
-                "file_name": "KM1.2L103 กพค.(จค) 370 จัดทำ Skill Matrix.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f822e2f852c8b7427a6959126d0df91262c9d5a817cfdd1762c299209f999d1d",
-                "file_name": "KM1.2L102 เกณฑ์และพฤติกรรมที่คาดหวังของผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e9b9528601323fdbb73ad40d9111fe793732a0966f9c995300e18623d14592ae",
-                "file_name": "KM1.2L101 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "40e2821f59b9115195db6554300d7adc80a491402dd6b2b8fb36fffbe1de0088",
-                "file_name": "KM1.2L10 KM1.2L103 ตัวอย่าง Skill Matrix.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "3.1_L2": {
-        "title": "Mapping for Sub-Criteria 3.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "ee74c75fb8a4f88d23d6b8f35b7414d7acae85459ccc2c801e0865407fe0905e",
-                "file_name": "KM3.1L204 3.1-2 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "8c4f1620997a6fcf5a079ebbd56bb6bcaab42d4109ccf98c9fde62bac03f3c18",
-                "file_name": "KM3.1L203 3.1-2 ระบบประเมินผลการปฏิบัติงาน PEATA.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "f467c008814b71db684e761872414ffcb384d4f03b9d5803bef705967e48d3f6",
-                "file_name": "KM3.1L202 แผนพัฒนารายบุคคล (IDP) ด้านการจัดการความรู้.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "45722f356e7d99e593a86c4214729248ea4a1bfd9605004523cf002dc73202c0",
-                "file_name": "KM3.1L201 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "b174a1010dc88eb92711cc8ac9c28555089f015f5606d268f74bf5222fae3d6c",
-                "file_name": "KM3.1L205 แผนที่การจัดกิจกรรมการจัดการความรู้ ปี 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.1_L5": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
-                "file_name": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
-                "file_name": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7a427692d847a6af05ce1865a7e9f074a1b670bfe144455da6ed90694ac51d09",
-                "file_name": "KM2.1L503 Sipoc หลังปรับ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "6.1_L1": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "77e04aa4b67d1bcbda8435e6bf347b05d3c542921d22378d7eb5598086773faf",
-                "file_name": "KM6.1L102 KM_6_1_รายงานผลประเมินด้านการจัดการความรู้ด้านผู้บริหาร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "ee5cd15f60977bcb0528e60ff8a30080ab9aaa5561c11456744ff853531eb63c",
-                "file_name": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.1_L2": {
-        "title": "Mapping for Sub-Criteria 2.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "54b3102de86fabe1bba8caa1cbc75c83f1166044ee6de9330f8d9ba41750a566",
-                "file_name": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "526b96842a704621521c056ba93d7d2b216d8800ac23bd96b642fdec0da5f9d2",
-                "file_name": "KM2.1L204 Sipoc ทำแผน.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "3941ceabe159fb500c7550dd97d5c5ffb67449b28e588bf41a27ed874b3b12ca",
-                "file_name": "KM2.1L202 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "e6419b9fc9f2d65f5ae06ef5f5ab63c13c889f7d721e6d265ec4966c1827ecb7",
-                "file_name": "KM2.1L201 แผนยุทธศาสตร์.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.1_L1": {
-        "title": "Mapping for Sub-Criteria 5.1 Level L1",
-        "evidences": [
-            {
-                "doc_id": "7dbc8104024fd4336cc97a62fa68f0674e25b0179fe8a4284b4a9c0fc184597f",
-                "file_name": "KM5.1L103 5.1 ระดับ 1 (1) _ระดับ 2 (1) SIPOC กระบวนการจัดทำสถาปัตย.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "102c57b561df5069f4eb12360aa95eb3758001f601f70d90606c569dedab29e5",
-                "file_name": "KM5.1L102 5.1 ระดับ 1 (3)_ระดับ 2(3) รายงานการประชุมศูนย์บริห.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "955cd47cc78105ee6792d34ab98b703986bd58cea5e5b2e8d69ed1cf9f21fd2f",
-                "file_name": "KM5.1L104 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "812140984bb2e86ada598691ce056a96816cd6ef0afdca17f89f8c9b68d02fce",
-                "file_name": "KM5.1L105 5.1 ระดับ 1 (6) อนุมัติกระบวนการทำงานที่เป็นมาต.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "3fa3dae49258bbfdd5e74f6c4d2898dff54c996866caae22604f9b855b040403",
-                "file_name": "KM5.1L101 5.1 ระดับ 1 (2)_ระดับ 2(2) รายงานการประชุมคณะกำกับค.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.2_L2": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "31af4a5139b123bfa5678e115e5e4ae683ea31fac01d929d3546dd3369934df4",
-                "file_name": "KM4.2L201 KM_4_2_2_channel.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "5.2_L5": {
-        "title": "Mapping for Sub-Criteria 5.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "69fe7cf046de424be47e2a6e67d5df34567e33b7a73cb44d26a9236172cb51f3",
-                "file_name": "KM5.2L502 KM_5_2_5_ผลประเมินความเข้าใจการบริหารความเสี่ยง.jpg",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "630c3ad2fc3b31d44a9c16f1a0bf8652fe91690de57c90476371ec26fdc466ce",
-                "file_name": "KM5.2L501 KM_5_2_5_workmanual_selling_cut.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "6.1_L3": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L3",
-        "evidences": [
-            {
-                "doc_id": "3bf862da78f82dfbebac982a61e33211a230f0e3cf32e92d5d53107fc8583e6f",
-                "file_name": "KM6.1L301 KM_6_3_PEA_Assessment Report.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "fbbbf971f96a74461cdacbeac2813e23a7cbfe8c8a87921b51dd551e1373167f",
-                "file_name": "KM6.1L302 KM_4_1_4_KM-Si.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.2_L2": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L2",
-        "evidences": [
-            {
-                "doc_id": "985f469f95067e070e47820a96be3da52cd6b0567fec76f658cad42d0e07b9aa",
-                "file_name": "KM2.2L204 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "63e64550df89f1eefac95cec6ff2739c551cfb2e5809e18d094903cac8b9dbe9",
-                "file_name": "KM2.2L203 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 3.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "bfc4d48cf4c1b7b11e69c54b1de8c9b3418ff8386f2252eb0711887ca2b43613",
-                "file_name": "KM2.2L202 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "73dc2beeee6725bc45c8ffa272d2abaff94fab696ef8f4a5c6c2a357e4f299fe",
-                "file_name": "KM2.2L201 เกณฑ์การจัดสรรร.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.1_L5": {
-        "title": "Mapping for Sub-Criteria 4.1 Level L5",
-        "evidences": [
-            {
-                "doc_id": "606e0dcb78f2d513494371971ad19dcedf311499139859f1c572a6279eb28755",
-                "file_name": "KM4.1L501 KM-ผลประเมินสารสนเทศKMS.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "4.2_L5": {
-        "title": "Mapping for Sub-Criteria 4.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "cbc08da81ed570153617e09a883556d0b92dd75cc9b0b459a7b71eb528f20308",
-                "file_name": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "6.1_L2": {
-        "title": "Mapping for Sub-Criteria 6.1 Level L2",
-        "evidences": [
-            {
-                "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
-                "file_name": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    },
-    "2.2_L5": {
-        "title": "Mapping for Sub-Criteria 2.2 Level L5",
-        "evidences": [
-            {
-                "doc_id": "04de84c99f7103dddbbe45c6eeea76541bb308af584dd50cbe1cd0bcc86b8456",
-                "file_name": "KM2.2L501 ให้ประเมินผลการดำเนินงาน KM 2567.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "7c42011da8139897abcc6573ec3a5eae4d6d274e278c6b9d914112456f8f3674",
-                "file_name": "KM2.2L503 ขอ user canva 2.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "33bff3fdf69a216d825e625b1e316279375fd3c4f9a15915aac11102b56109be",
-                "file_name": "KM2.2L504 ความพึงพอใจ จัดสรรงบ IT.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            },
-            {
-                "doc_id": "6269988bd2ddaccf57d02515e36bc2d2f556c240c17ff1a9cd5a402cb7d493bc",
-                "file_name": "KM2.2L502 ขอ user canva.pdf",
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
-            }
-        ]
-    }
+    "3.2.L3": [
+        {
+            "doc_id": "2660d90421bd4f72159b62c40d741e4767782b4395e7d5c52776ae4992a923e3",
+            "filename": "KM3.2L305 3.2-3 สรุป Show and Share by PEA by PEA Scholarship Students.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "de3bf7f19cfa60f1414c48ea758eaa2f256306d4f89bfdaa72e3dadbfb621d23",
+            "filename": "KM3.2L304 3.2-3หลักสูตร Critical Knowledge for KM Leader.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "798dbdeb4af86f88c213d6c8c8bcae38f1321b746adca863a44fa5c23a378063",
+            "filename": "KM3.2L301 3.2-3 โครงการพัฒนาบุคลากรของ กฟภ. ด้านปัญญาประดิษฐ์ (Artificial Intelligence) ประจำปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "cee68f2adbfb4f1a7953e581b949953703d48f55e160a8e8e9881209392d8564",
+            "filename": "KM3.2L302 3.2-3 การจัดงาน PEA Biz-Tech Innovation Hackathon 24.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b6efb175e7654788bba856824d9354089bbd18c1b366ae3dc609d66fedc4f24a",
+            "filename": "KM3.2L303 3.2-3 รูปภาพโครงการ Show and Share by PEA by PEA Scholarship Students.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.1.L1": [
+        {
+            "doc_id": "77a5335bc05a2c051b9f5539d61379d24f0b077a45d2470f4d945a8e271581ab",
+            "filename": "KM4.1L112 KM-QP-01 การตรวจติดตามภายใน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "fd86a09fa5a0519ab3e6c883a05ed4a688025b5216e4b0e02637dcd9a6374af5",
+            "filename": "KM4.1L120 KM-FP-02-01 แบบฟอร์มการตรวจสอบและแก้ไข.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "62f984151d3a21288fb0575fa86c63ca0fb36c47fb0dbfd1c6a6143b96b0fa74",
+            "filename": "KM4.1L113 KM-QP-05 การควบคุมเอกสารและบันทึก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9c727a94e48a93e359f5bb71ba49c8f69c877bb9bedf31a09241f1f6ba149895",
+            "filename": "KM4.1L118 KM-SD-01 แผนการสื่อสารด้านการจัดการความรู้ สายงานบริหารองค์กร ประจำปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "57daf31bdb0870bfd6f8b3d36e270803eeff60d98c14a9fb841459bce00dfa16",
+            "filename": "KM4.1L122 KM-FW-01-03 แบบฟอร์ม KM Implementation.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "fc301359c0e83c07f22452997d8066005cfed792d3c312cab4d1a3b7c6ee4a32",
+            "filename": "KM4.1L102 KM-QM-01_คู่มือระบบการจัดการความรู้ (PEA-ฝ่ายพัฒนาทรัพยากรบุคคล)2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "55dc77558678fbc8d68607945d38e82b89358ea426f607fbe76e2034ff4cd984",
+            "filename": "KM4.1L123 KM-FW-01-08_แบบฟอร์มการคัดเลือกกระบวนการเพื่อนำมาจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e2fd33082724b3bd5a0bf19d68afd8f9fd45509cc9c2a25e36746acbace22152",
+            "filename": "KM4.1L121 KM-FW-01-02 แบบฟอร์ม KM Action Plan.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "dbfe7dbd4f7e42339860030699c4a69bb07067a462b8f2e7d1822a8b930b9cda",
+            "filename": "KM4.1L114 KM-FW-01-05 แบบฟอร์มทบทวนการปฏิบัติงาน (Action Review).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0d88c19d31d41cacdb4675dbf3b15e8766a009b65f721f6f3c38731537bea90b",
+            "filename": "KM4.1L103 KM-FW-01-07 แบบฟอร์มความรู้หนึ่งประเด็น One Point Knowledge.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "49f3d052b90e42fd1703843e1658f2d6e451dfb33e3f9be18fc8535176c36cb1",
+            "filename": "KM4.1L107 KM-FW-01-06 แบบฟอร์มความรู้หนึ่งประเด็น One Point Lesson.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c52c0de1760dcfdf64e10d79b0d03eac32ff136d508e086d071569dd0588242a",
+            "filename": "KM4.1L109 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "78d951d7e207258ca97122e183494a7a7918d86bbe4143e3d90cbb7994c1f32d",
+            "filename": "KM4.1L110 KM-FW-01-01 รายการเอกสารที่ใช้ในการทบทวนแผนแม่บทการจัดการความรู้ 2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "da942c18cee4366fba05e0a5ebf8fc5259d89bb35e84299fc186b7d8dae2190a",
+            "filename": "KM4.1L101 KM-WI-01 คู่มือการปฏิบัติงาน กระบวนการจัดการความรู้ของ กฟภ. (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "06440f6083604f5787bcc9d048dbce9fdade66ee03a1b25cf086e21d348d9f87",
+            "filename": "KM4.1L116 KM-FW-01-04 แบบฟอร์ม Knowledge Landscape (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6a11d0c75c1d9d674c006742d7b07c725c6216db8d82153db7b26644e9639a13",
+            "filename": "KM4.1L115 KM-SD-02 แผน KM Implementation สายงาน บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "16df65cbd5657e85042e66e0ff8bd636bc61651c404ac31538dca4392d3a28e7",
+            "filename": "KM4.1L117 KM-QP-03_การประเมินความเสี่ยงและโอกาส.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "97bacc8a4caa040dee6439442281939b83cb49c1c1b7e693b4220632a5d2147e",
+            "filename": "KM4.1L108 KM-FP-01-01 แผนการตรวจติดตามภายในประจำปี.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d44e82cf1a5b0e4aff3f1180330aa50f6423807f86d64328949d795689c26adb",
+            "filename": "KM4.1L104 KM-QP-04 ประชุมทบทวนฝ่ายบริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9d676b3413c84bda89ce7ee990c3be5eaf5f4811d3ee821b0ec9d6f7e3878829",
+            "filename": "KM4.1L111 KM-QP-02 การปฏิบัติการแก้ไข.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "186d8c0cb76a6d64bf4b6d97845721008fba319fe9e37cca6b514929c7d11034",
+            "filename": "KM4.1L119 KM-FP-03-04 Action Plan การนำองค์ความรู้ไปใช้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.3.L2": [
+        {
+            "doc_id": "dc99d3541e5eff0c0ee1b47f75ec4f0d0fdb780bc5cf9007fb4d120d23e51fa6",
+            "filename": "KM3.3L203 แผนการตรวจติดตามภายในประจำปี ตามกรอบมาตรฐาน 30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "881bd5ec5a15743e44653207b05bbcaad6e0dc84c6e4a1109a6e0102737550c6",
+            "filename": "KM3.3L202 การตรวจติดตามภายใน ตามกรอบมาตรฐาน ISO 30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "40a1cdb10b64a93dda93062f532a84c15f7346f9ddfbae08d950fe6514223fbe",
+            "filename": "KM3.3L201 โครงสร้างคณะกรรมการจัดการความรู้ (KM).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.1.L1": [
+        {
+            "doc_id": "e38efdfb47d82293dcc83ef15557a5a88824bff4e8dd4193e1d2ca8f7fd96186",
+            "filename": "KM1.1L106 มติบอร์ด ทบทวนแผนครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "13dbc874c78ec05f5843c8f5faa53d50d4c927eb52dd835cfef75da958b740a5",
+            "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "5053c7b5ebbb4e94a4e1dae3c142937f767ab3cf80b7d485f61818766fa5060d",
+            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bde52a6aa9f387d3f173e4431e3190346786d24110ed4a2c87bacf9bd3a2b349",
+            "filename": "KM1.1L103 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c6bf768f040eea54f4a468f807ce6c6d6851bc6c4fd000698af64bdf4d07ff10",
+            "filename": "KM1.1L102 แผนแม่บท ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "fa9fa2b10e219169aabebc5ad003659fc006a50512b5fafc15487a3761933977",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.3.L3": [
+        {
+            "doc_id": "104b6f5bf1d3c7c1cf56eb42724b91398036bd7e2c24315d3e94e596afd3080d",
+            "filename": "KM3.3L305 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e8c76b5b0f4ee02d082619631593a31058abc420b16e16eab784a422855c4bf9",
+            "filename": "KM3.3L302 3.3-3 การศึกษาดูงานกับการไฟฟ้าฝ่ายผลิต (EGAT) ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "67c17c2a337f29184f264e31a48417c77973f9fccb71c276a2f041b2c236a5ee",
+            "filename": "KM3.3L304 การศึกษาดูงานร่วมกับท่าอากาศยานไทย .pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "780d9ac434a8bd14113f70c3e725ef67c5915b9e3911b9867a0225de7cac0250",
+            "filename": "KM3.3L301 3.3-3 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a6c16dedef91b0765e337df8f03a45d4356204e04c09990fecb5c53b750765e0",
+            "filename": "KM3.3L306 แนวทางปฏิบัติที่ดีด้านการจัดการความรู้ บริษัท ปตท. จำกัด (มหาชน).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "3fecd4c76ca16b1a41279f80569a3ffda45f97f25b6b7d44bd119963c54fbafd",
+            "filename": "KM3.3L303 การศึกษาดูงานร่วมกับ ธ.ก.ส..pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "6.1.L5": [
+        {
+            "doc_id": "d6285bd01b45a42fa2ab48ec073d43f3343408139d826d0c286c486940810bed",
+            "filename": "KM6.1L503 KM_6_5_Thaiskill.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "461d320fe5efb14333a44cba218ea908dd906cdf062d7e68ac8e3182ac719b54",
+            "filename": "KM6.1L501 KM_6_5_T3CC.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a5e384ab9425c1d247d026dc028047fab19174615d8d214c50ef0e9c68e4caa3",
+            "filename": "KM6.1L504 KM_6_5_ESS.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b9182f35da0dcbaee65a59be201f27a6ad8ea306c342d487ff51b653d964437a",
+            "filename": "KM6.1L505 KM_6_5_GreenTech.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "264934f2df4d290f094836bada615e6398b8a34a68fd4fe55c2f25611c953d86",
+            "filename": "KM6.1L502 KM_6_5_ตัวชี้วัดที่สำคัญของค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.2.L1": [
+        {
+            "doc_id": "9c50adc6a054f7ffde3e69c2251f69bfe9a9abaf985a752de854de89864413ed",
+            "filename": "KM3.2L104 3.2-1การตอบรับการเข้าร่วมงานประชุมวิชาการ และนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7682d9c624226437eb390106dce46eaf5fe6caf271dfaa6e8d4ae94a3f3ed52d",
+            "filename": "KM3.2L107 3.2-1 ผลประเมินความพึงพอใจระบบ KM-Si.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "87df26db7f7e856733d02fcb5fd53ed44c5d3a9388fae490c1992c8452435c86",
+            "filename": "KM3.2L102 รูปการจัดหลักสูตร อบรมเชิงปฏิบัติการเรียนรู้การพัฒนาระบบสารสนเทศด้วย Jenkins Pipeline และการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d2fae6c6adbd3d4ab2bbb2fe2f7db1310cc13a678fc14d3309bcc7bdeb1ad83a",
+            "filename": "KM3.2L103 ภาพงานประชุมวิชาการและนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "20d8f6c75a6225296a9f9c83ee972f2c4ea6819285a7aa9669dfe03623f66e5d",
+            "filename": "KM3.2L105 ชุมชนนักปฏิบัติ (KM PEA CoP).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f033a29414734c824424ecdd5af91e6789df1ebccce510f869dd8a4ccbae3b65",
+            "filename": "KM3.2L106 3.2-1 Line Openchat ในชื่อ HRD Connext สำหรับการสื่อสาร-แลกเปลี่ยนความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "81f578b00b181226255c21ea22405f704cbf9c6d079fd2b25584eeacb18efcd6",
+            "filename": "KM3.2L101 การปรับปรุงพื้นที่ Coworking Space.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.2.L2": [
+        {
+            "doc_id": "444933e7b3eeb7ddae8709d25580a40cb1ee38b4f626e134c55442eec52cb274",
+            "filename": "KM3.2L201 3.2-2 นโยบายการจัดการความรู้ (KM) ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d38cb051963feb1caa262e28dda36b68bba3c651b1c6d08e01e1e04df96487ae",
+            "filename": "KM3.2L202 3.2-2 ผลวัฒนธรรมองค์กรและสภาพแวดล้อมการทำงานที่สนับสนุนให้เกิดการจัดการความรู้..png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6ad4b8352ab2e54c1c3c7c89b1a64966ed784438181efb23d4660e1492fb6381",
+            "filename": "KM3.2L203 3.2-2 ร้อยละการแสดงพฤติกรรมตาม TRUSTED ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.1.L3": [
+        {
+            "doc_id": "66ad33dd30538f8fe0db74eb63f4edd4d22725616ffdf7d26ba7d176d71ca15e",
+            "filename": "KM4.1L307 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis) (2).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "cc8eb1e0b029b8691a623fbb179d4d30042c9fe133c8e839e852c706a9598f95",
+            "filename": "KM4.1L310 KM-QP-02 การปฏิบัติการแก้ไข.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6d3f79c5667462be3e17b53e8fb562ed74edf89b28058953e6bca26f200f2d40",
+            "filename": "KM4.1L309 KM-SD-03 รายงานการประชุมทบทวนฝ่ายบริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e0d8a127c2d3b70cd1e690d4a3e9463b665ca925a5f39ee93714f00761670ceb",
+            "filename": "KM4.1L305 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร (2).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e8102495a01479099e168a53eee59c07561161050f42e8105871d06c5fdebceb",
+            "filename": "KM4.1L308 KM-FW-01-01 รายการเอกสารที่ใช้ในการทบทวนแผนแม่บทการจัดการความรู้ 2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b02be5d2dbc7224b01b14d29da581a7ba8bc8d97bcfad8d34f34ee4321902b99",
+            "filename": "KM4.1L306 KM-QP-04 ประชุมทบทวนฝ่ายบริหาร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "79babfcc946779003635a5f8dc9c674e66e50a0417c36fd46326880366aa626e",
+            "filename": "KM4.1L312 KM-QP-05 การควบคุมเอกสารและบันทึก (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "5cfe9f2840ad028e198ed92f1018bab3a84d03f16cdad2ce33bc6559d261ea61",
+            "filename": "KM4.1L313 KM-SD-02 แผน KM Implementation สายงาน บก (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7d145bf51e3e669d50f0c42be30309314d69f98069f9e4e12f4e261e9a190444",
+            "filename": "KM4.1L311 KM-QP-01 การตรวจติดตามภายใน (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "5c17f117a11bd44dc2ab7cc3457a630a03c008ccd12acd88ae7079956276cd85",
+            "filename": "KM4.1L302 KM-FW-01-02 แบบฟอร์ม KM Action Plan_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "25d13ffd039b5ff73630ee97d7495e699ad6e46046990a16d4d26e44a4b5fcbd",
+            "filename": "KM4.1L314 KM-QP-03_การประเมินความเสี่ยงและโอกาส.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "4aa76ca1b1383094f865215bfad78fc2936800cf9fe25f872e0996d7dd98b8ec",
+            "filename": "KM4.1L303 KM-SD-04 แผนการตรวจติดตามภายในประจำปี.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.2.L4": [
+        {
+            "doc_id": "c6e8cb81b053d27689bf98e9d4deaf1053e0ff6ed10effa7c844faeaf190a94a",
+            "filename": "KM2.2L401 process การดำเนินงาน 100_.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a14e25d804f32711612599d8bc237dffcc9789468d80a21f51cacfff42f51b5a",
+            "filename": "KM2.2L405 km-survey.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "ac1b7077ab33e2dd44062e4750cd4e8df3b4fea3c82342e8e73d347beb6e337a",
+            "filename": "KM2.2L406 ตัวอย่างผลการดำเนินงาน กฟฉ.3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "369f9e62ec3128244cc7635d2abdae546b032cfcdb25989b339dfef5adcf9815",
+            "filename": "KM2.2L404 km-survey 2.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "263349ed313571d9666e3202cb6bb0d1c61dca5a68de176a1fcc841f44430220",
+            "filename": "KM2.2L403 km-survey 3.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "03d96c2ecbced99b2d7851057cc25f52704935d3b256092e2221beed6c8c7251",
+            "filename": "KM2.2L402 ผลการดำเนนิงาน รายงานบอร์ด ไตรมาส 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.1.L3": [
+        {
+            "doc_id": "b924432262eaf653e4213537d93c7ef772ee463f60322a4d4b1dfe682f7e3897",
+            "filename": "KM5.1L306 5.1 ระดับ 3 (2) เชิญรับฟังการสื่อสารแนวทางฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b4d4b4236e954a4594e9b0659cde435d2dc17783beab05bacec47c8b797f9cd9",
+            "filename": "KM5.1L301 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d2950753d89c65fe07fb004fd7fdc206179863927ca6196a6f1149ea8093bb8d",
+            "filename": "KM5.1L302 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7bb60a7862c1865dbf30d15d9bc43761f0fd48d0623ec4518e11c811f73be9a9",
+            "filename": "KM5.1L304 5.1 ระดับ 3 (1) อนุมัติทบทวนปรับปรุงโครงสร้างกา.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2ca16f94d4915983dad98899b5d2c96f8ecae12a27ee38be66bc6b1b65b9de43",
+            "filename": "KM5.1L303 5.1 ระดับ 2 (5)_ระดับ 3 (3) รายงานผลการดำเนินงานตาม .pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6fbea6147f6cbc61c469e0befa95fb882e2e39bd5c590d1058c7e5d85e0897e1",
+            "filename": "KM5.1L305 5.1 ระดับ 3 (2) เชิญรับฟังการสื่อสารแนวทางฯ.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.1.L4": [
+        {
+            "doc_id": "8d2cd71647110deab3db977e5e0134c9cc9d5438588e5916ba683acdeed2a327",
+            "filename": "KM4.1L402 Artificial Intelligence..pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d1bb23d34d92e2fe4fcad6ab0ec38bdd6975af783b2a69f9c29f641a7541c24a",
+            "filename": "KM4.1L406 KM_4_1_4_KM-Si.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a76b359913b5aa1ce8f953a7f0529a886bb631e746a715d6bcc80f8f74a7dfd2",
+            "filename": "KM4.1L407 KM-4_1_รายงานจัดฝึกอบรม_km-si.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "003781fa58ecde4ece1acdd7a2f323db9fe778aa8694f9ee576e69afe5e81add",
+            "filename": "KM4.1L403 KM-อนุมัติหลักสูตรKMCapturing.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d2e9472014347da5165f41bdc9faf8f1aa1b0836627f32252196bcf71f98abaf",
+            "filename": "KM4.1L401 KM-SD-05 ระบบสารสนเทศ.pptx.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a5b81ef29a59a417f20778afd9de47531be02022d5cd33a116973b4fcd17cfcd",
+            "filename": "KM4.1L404 KM-4_1_อนุมัติหลักสูตรอบรมพัฒนาระบบKM-Si.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bbb5ed0faecf068a308937ade2056744b188f9ec89e21c846a5f8819811083de",
+            "filename": "KM4.1L405 KM-4_1_5_A1_1_แผนการพัฒนาระบบดทคโนโลยีสารสนเทศด้านการจัดการความรู้และรายงานความพึงพอใจ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.2.L1": [
+        {
+            "doc_id": "1f307213da78e4c160f3f4dcb395934c2766f417e9811a17a1dbf79d70f59ab9",
+            "filename": "KM2.2L105 อนุมัติ Implementation 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "38c6861c3b3c3de972f18c3ac1cdcbea8ad86ac8bf09bc9f1fe8226d00b43464",
+            "filename": "KM2.2L102 ขอบเขตงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
+            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d8765cb95076f25111c0e595eaa96e5c46f0a6d730c24337811d0b693c7ad38f",
+            "filename": "KM2.2L103 ใบสั่งจ้าง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c28c061a582cd8198cd0bc74b74e2f7be208d4ce5b67dc9a073c96f13d527c0a",
+            "filename": "KM2.2L104 อนุมัติหลักการ KM Implementation.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.1.L3": [
+        {
+            "doc_id": "60a8b7e8f74ba5157f1d4f064c781d76d5d1c835dfa3280ce0f68077ecec7baa",
+            "filename": "KM2.1L302 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0591707c21aefbd6f4ca130d1a573b909bff143e106012ed5b6afcbd1947211d",
+            "filename": "KM2.1L301 ผลประเมิน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "efd3cdaec73d59bd2f5dacfac0c9081b0e91f5be98edc0884ecc92d52c3cfc6d",
+            "filename": "KM2.1L304 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6a6755478d87b57ca45710f742fcf5350f065fa2d5c06ed3326de3e3af4e7b39",
+            "filename": "KM2.1L303 แผนแม่บท ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.2.L5": [
+        {
+            "doc_id": "fce957e3edefd7728bcfbee96b0f97df8f8842cd971a794b6b196b754ae79a0b",
+            "filename": "KM1.2L509 ดูงาน ptt (2).jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "77973d4d692f62d2e9c683a6a0ae84d7c0bc2456a52c3a1cd9df2dbf820cabd4",
+            "filename": "KM1.2L510 ดูงาน ptt (3).jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c4303b733a347fd43d17f27175ad92ecdd35aea8f5a0a63d4efb94317c74fa75",
+            "filename": "KM1.2L506 ดูงาน egat 2.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "667bbfaa7fa2e19a38b2c8fa7c23a0e99e2bee1263f93898c8ee93f6dba66e5e",
+            "filename": "KM1.2L508 ดูงาน ptt (1).jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "05564448cca71c448af77e78cdb562b4ebccb68d4e5724cf9cfbb27ab6c8a8e2",
+            "filename": "KM1.2L507 ดูงาน egat.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0118b74bb157bccab23c04e6505d5d23682e4b4264084eef1624bc394812dfaf",
+            "filename": "KM1.2L502 ผลประเมินผู้บริหาร นำมาปรับปรุง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2e399d8dc133441ff443b3bbadb19db6d3eb8c92cd7c8e3ae477c9d387627b13",
+            "filename": "KM1.2L501 Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.1.L3": [
+        {
+            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
+            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9180c09ef9497c2fbae72fe861579d82c1ff166bab9060f3a80983dbdd853e7c",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c601c9786172c1e873b688244896218a9168ef7519aa4792f05e5735056ec506",
+            "filename": "KM1.1L305 การรับรู้และเข้าใจ ผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f8e9d25c4818675f3973c509b6b99654c8f45faa00b0b01342ef5a90548b6916",
+            "filename": "KM1.1L309 ผลการประเมินผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e260f2e9e9d22972b2e52e44974f5053c0164cf76be0a844299027833ed28996",
+            "filename": "KM1.1L307 Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.2.L3": [
+        {
+            "doc_id": "cb2de4c730cb95ec684e27fbd8d5deeb35a55c92fbedf3eb1c7f0793b75019b5",
+            "filename": "KM2.2L306 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "4bec1c05231e1a85a2866eac3fd6756e895b8c9e1e97e8f64c92a33f899b6b65",
+            "filename": "KM2.2L302 งบประมาณในแผนแม่บท.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "4c83c99fb7e3e85a3aa6a90c8f8d0d16fbf2f5b612c29eb91cc79db54203cf77",
+            "filename": "KM2.2L304 แจ้งการจัดสรรงบ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "4b2d0a8101b4e64dcbcdf0ddaddb497f760999d61c95f64d9fa2d1bbf5c50e0f",
+            "filename": "KM2.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "759cd5850f1e610a3d2207a41c5ec191af2e031b1ec3b52c99d1c57c62230fc0",
+            "filename": "KM2.2L303 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "290af46bb95b74b1fb5886985d3980ac378349666e201629e614935ca7a60ce7",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.2.L1": [
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.2.L4": [
+        {
+            "doc_id": "3aac8daee0fd0b09e68fd3de67c11298ee3dc866cda79cf541b37c537dcf91f5",
+            "filename": "KM4.2L403 ดูงาน_ธกส.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "8102be713deb49ca662243689293a40c6b8a21d75490e152ac55cdcbe6d8d264",
+            "filename": "KM4.2L404 KM_4_2_PPT.docx.docx",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f67edd1c96b73924ab498c5759a9ce23920f31264fc62517da8f367072838529",
+            "filename": "KM4.2L407 แนบ1_หนังสือสคร._กฟภ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "36331af122b81b68ff9d743c548bf3ee21a23713f3be1a8064f9dc944c29e324",
+            "filename": "KM4.2L402 ดูงาน_NT.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "970762a88e3018aadef510531d65a23ed4d32a69c7ac889f160bb2756f47d59f",
+            "filename": "KM4.2L405 KM_4_2_Egat.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e417dd5ae21b1b7fb7bd054d46aee560ee4ba2412c35d9984272381bf32ac959",
+            "filename": "KM4.2L401 KM_4_2_BMTA.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2e3b482ac6c15ded260e3e0931ad1b1f03b4d2d8808aff154060a1a5e333a413",
+            "filename": "KM4.2L406 KM_4_2_Good_Practice.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.3.L4": [
+        {
+            "doc_id": "295ecd4039ce5cab9bb88b2cb18b274020b9074aa57fb92442b66cf1f6f07471",
+            "filename": "KM3.3L401 3.3-4 แผนพัฒนารายบุคคล (IDP) จากกการทำประเมิน Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "ad5fc8b27f7d5890c26e9a1ab196279b5a516f1161b3fc2fb0bab796c2c82574",
+            "filename": "KM3.3L402 3.3-4 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "ad625bdb976fba64b7847dfbbd0b2ca80b24bd3f5ee3901a52240a7222b27f03",
+            "filename": "KM3.3L404 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "69577190f8a0b793923a342dc4550a7538a0ee98f137f4dd990671ab2c8fe9b4",
+            "filename": "KM3.3L406 ตัวอย่างใบประกาศการผ่านการอบรมเชิงปฏิบัติการสร้างความตระหนักด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6ef507067dc744b52fa04a0c0691995ecec32bc212ae33e3438524388e9fe2ec",
+            "filename": "KM3.3L405 3.3-4 แผนแม่บทการจัดการความรู้ P4.1.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "56e4fe1a96aaff45f88b81096b2ec336519de76eaa0904a3793b597c2f5c89cc",
+            "filename": "KM3.3L403 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.2.L4": [
+        {
+            "doc_id": "7a3bfce3026f5c5d6e98efbaaf4616cac205498ddc8d4d5eaa99e13316b8c8d7",
+            "filename": "KM3.2L401 ผลประเมินความพึงพอใจของบุคลากรต่อระบบแรงจูงใจ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "355b2402f5aebac9decb23739ab70ea20cb1c98fce28bc57d3b15ecc8ade132e",
+            "filename": "KM3.2L402 3.2-4 ร้อยละการแสดงพฤติกรรมตาม TRUSTED ปี 2567 - Copy.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "438ae2f681f2868c8d1ecc41a3bf74e732971fd26caaec2e400630de17aae561",
+            "filename": "KM3.2L403 3.2-4หลักสูตร Critical Knowledge for KM Leader.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "eaae546cb6d5f8400b30f7bef19d3a27f6d9262ee0f636310778bad5d2bce630",
+            "filename": "KM3.2L405 3.2-4 การศึกษาดูงานกับการไฟฟ้าฝ่ายผลิต (EGAT) ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.3.L5": [
+        {
+            "doc_id": "8485c326266f9bc1efe020ab7b69813f3f148ceaf8efda85e2205c37153948c3",
+            "filename": "KM3.3L505 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1070c41e1ebd173dd95e8b8f4def5cf77c5fab9b7827bc3df69b5aba0198200a",
+            "filename": "KM3.3L502 3.3-5เล่มแผนยุทธศาสตร์ กฟภ. พ.ศ.2567-2571 - ทิศทางและตำแหน่งทางยุทธศาสตร์.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9f453400919cf08778137ecc6843720a86642a383246c1a1ad43728bd6b4d060",
+            "filename": "KM3.3L501 3.3-5 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f611fd492fabb38413723dc8eb063ca379d29f16f7e231791cf6a3815d8f9339",
+            "filename": "KM3.3L503 3.3 -5 หลักสูตร Critical Knowledge for KM Leader.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "738e0f7436df595e4dca369caa53ce918b1cd3a81103c98df817ed3f8da8756f",
+            "filename": "KM3.3L504 รายงานการจัดฝึกอบรม ISO30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.2.L1": [
+        {
+            "doc_id": "2dba2de62f0a43e589e5fed80d81de00a778fc9b703a4e6d8ea75b5ed5bebc95",
+            "filename": "KM4.2L102 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "24011bd6eed28f60d2a18148c7ab09e26bd93e2a5fe6d82daa6dcbae191cec6f",
+            "filename": "KM4.2L103 KM-FP-03-02 การวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.1.L5": [
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7dc125a095319053ebbd8b3941277a2f4779b6436245c1012cd5dccbd0fabf24",
+            "filename": "KM1.1L503 KM-WI-01 คู่มือการปฏิบัติงาน กระบวนการจัดการความรู้ของ กฟภ..pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "4512d5039acfd7b21a54a909f697317a1c7b8693b883156a6af21053c972c26d",
+            "filename": "KM1.1L504 กิจกรรมสื่อสารแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1dc5a9620b7e79cafadca79b409bb52a58618c29b7f849a956510d00afbefe56",
+            "filename": "KM1.1L505 Sipoc กระบวนการจัดทำแผนแม่บทฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.1.L4": [
+        {
+            "doc_id": "861b67b1e764b8c2629b090bbefeae58f85e28ecfbea344281ac4da51588787a",
+            "filename": "KM5.1L401 KM_5_1_4_อนุมัติอบรมเชิงปฏิบัติการสร้างความตระหนักด้านการจัดการความรู้ ตามมาตรฐาน ISO 30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "5e7a3414a9959cc51a28b551400b5f9809552e8c4e289eba21b64b1f2e84f634",
+            "filename": "KM5.1L402 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2c4a99769aaa842456482e297801bbc95da57886e537d8f90710defc07e82051",
+            "filename": "KM5.1L404 KM_5_1_4_กระบวนการทำสำคัญแบะสอดคล้องกับEnablersทั้ง8ด้าน.docx.docx",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c0276d3d8656280b3338849e0550aad4215d52c2e0ccb5e8b68f418fda9eddaf",
+            "filename": "KM5.1L403 KM_5_1_4_การจัดหมวดหมู่ความรู้ในระบบ KM.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.2.L5": [
+        {
+            "doc_id": "db517e6529fec7c0034bed2d11ca8bd8924ca241495a9486032b44401cae5f11",
+            "filename": "KM3.2L502 3.2-5 รูปภาพโครงการ Show and Share by PEA by PEA Scholarship Students.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6cf4e2b02c6ac4d182399d7bd3d8799d2bdd0194037dfbb4cb5dff6010c0ceb4",
+            "filename": "KM3.2L504 3.2-5 การปรับปรุงพื้นที่ Coworking Space.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6a2a68089319a2a9020e028ad9b1e24240a577eb2ac9ebdb20120e5d73af940a",
+            "filename": "KM3.2L503 3.2-5 สรุป Show and Share by PEA by PEA Scholarship Students.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2ede3f86a8d179d3ea64203686a9ecb666beae11b67742b695f5b4ff5bf5d367",
+            "filename": "KM3.2L501 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.1.L4": [
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f6883fd775613ea2c905c70c25376790864b6728bb177936d8ffc6923073698b",
+            "filename": "KM2.1L407 ติดตามผลผ่านระบบ km-survey.png (1).png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f20fb2d4080ec699916d29696b3de35ffc93928e20867662e5571fcec27b48bf",
+            "filename": "KM2.1L403 มติประชุม ไตรมาส 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9ed191417ef414822b227d22f0d06d908cc8fa7029e692401e41ee0030af7325",
+            "filename": "KM2.1L406 ติดตามผลผ่านระบบ km-survey.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "8e25b290574f6d65ef0c479d2406e46991a72d6098238b7f8fd9bf8a8df9b480",
+            "filename": "KM2.1L401 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "724946f0c21db7a038d8e0ac8ace520339e3ae266c1181c68f39fc8b8f99acde",
+            "filename": "KM2.1L404 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "8f9849f128b8e883a444ac2b4e0022c2d1f59102b0470302d772f4be12fd7be7",
+            "filename": "KM2.1L402 กพค.(จค) 1866.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.2.L2": [
+        {
+            "doc_id": "000ff197115c406d30894b6a9f9991ebaeb899f4881bda2b631e9eca1526536f",
+            "filename": "KM1.2L204 ประเมิน Skill Matrix.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "aaa7c7dfb78e30ecf2a2ad1da5fd281830318a9574bc72cbdce6625fa769e97f",
+            "filename": "KM1.2L203 กพค.(จค) 370 จัดทำ Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a2d2c110a0a20e7dca2e8e0ec4b1132b9013870b686a2553954f3ee35de6f327",
+            "filename": "KM1.2L201 เกณฑ์และพฤติกรรมที่คาดหวังของผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9f207c88cd18931674b568c797073909c9f9b2dcad0c0057b00f3f0fcff3f9fe",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.1.L1": [
+        {
+            "doc_id": "ddcad92841dbde43c23cbbf6f121e25cb93b0d133514399225e64cc697c466d4",
+            "filename": "KM2.1L103 ภาพประชุม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0cf5e7c08eb49878ec97359eb92b46192d8e1aaa79a82098d01d345019afaf63",
+            "filename": "KM2.1L104 ตัวอย่างรายงานผลการดำเนินงาน ไตรมาส 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e1c3c53db674f69791526ff18152ccd65ad9468abb7f937b308e211bd635daba",
+            "filename": "KM2.1L101 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b26d1453ea81dbf09848ac1903c91548a4f9a4ffe89487df563f0f58a454d6cb",
+            "filename": "KM2.1L102 รายงานการประชุม คณะ Core Business Enablers KM.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "6.1.L4": [
+        {
+            "doc_id": "c9799f406987ba7b1c8abdf59c06d2757cf09e7be2bab3f4b10ff724ea1b7c7e",
+            "filename": "KM6.1L408 กธน Action Plan.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "52365ea48089c8f438fb867dde17c96e3721ffcdbae7325e215512f0db0ae806",
+            "filename": "KM6.1L401 อนุมัติ การจัดการความรู้สู่นวัตกรรมฯ 67 2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "28c2ced6af45c3869de117f72acab480eafaae5960250141d01113e82078779f",
+            "filename": "KM6.1L405 รวม กวช. Critical Knowledge.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e2d01144afc78999ce90c7a679dffd298537954e8d2295d93ad28688122cb86d",
+            "filename": "KM6.1L404 ตัวชี้วัดที่สำคัญประจำปี 2567 และผู้มีส่วนได้ส่วนเสีย_edit2 (30-10-66).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1a88175058d915c79f13744a2eed4e37245693bafe668bc517ab670e67e4f097",
+            "filename": "KM6.1L407 กธน Knowledge Landscape.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1c17ebc49a56503d1e2d558dc130768ec4946c8d58302e390c9f92c978cefaa0",
+            "filename": "KM6.1L402 ส่งกพค-ThaiSkill 1_Knowledge Landscape.xlsx - TS.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "8fad6265ffb20adaceaedaf62ea90740d20e605168f499b8fa4c3c0801f84405",
+            "filename": "KM6.1L406 กธน. Action Review.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "56b484907dc9ee0a86fb95a70c053a0a3f8bd5e93ef651966fae088b1ede6049",
+            "filename": "KM6.1L403 บันทึก ตัวชี้วัด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.2.L3": [
+        {
+            "doc_id": "fa9b9e385af5a59aec826cf2310eda7337231d32436a15d82bbb0def2fa8272d",
+            "filename": "KM1.2L305 LINE_ALBUM_งาน peacon2024 สื่อสารแผนฯ_241226_1.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "096e7c66478d515dcddef4cfc90f63b0241d923762baa8f1a8dee582cb34bfe8",
+            "filename": "KM1.2L304 แผนแม่บท ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "555c53dc9bce489269b7ec83d637b9fa34a8a6d8fdf1939a750fd078e8876662",
+            "filename": "KM1.2L302 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0fa53f62afd6d0fe1564ec29a7405ad1c504fdc851a3c290de131e7e9cc0a8da",
+            "filename": "KM1.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4 ย่อ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "644ba2c1e1ecbb3179531767ace7acf4bd3530fb9cdf9ae397e8bfde899fd675",
+            "filename": "KM1.2L303 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.1.L3": [
+        {
+            "doc_id": "b6ebfb8da32709d9eda2787f72710f4e45c69ddd02b481a83d2382204beaa865",
+            "filename": "KM3.1L304 ภาพการจัดงาน Innovation & KM Day PEA(S3) 2024.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e407814b97f1724f29d3ae547dc7bc137db55d593372972ff23eb478b398918b",
+            "filename": "KM3.1L303 อนุมัติการจัดสรรงบประมาณ Implementation 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "9c4abf15bc98c547f93637e68596d8bfc09ed8e06f4571724f9b02551f7e9be6",
+            "filename": "KM3.1L308 PEA C2 KM Sharing Day 2024 กฟก.2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e4b1f9fe998f878a31717123314f4aedfb546b303967730ce44ef82820924a65",
+            "filename": "KM3.1L309 ระบบรายงานผลการดำเนินงาน (สำหรับคณะกรรมการฯ).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f5dd09fa2d784e2a25fbe18f976f30c7a4f6fd2d7687c74a0926153e2c190db9",
+            "filename": "KM3.1L305 รูปการจัดกิจกรรม KM Training Day สายงานวางแผนและวิศวกรรม ประจำปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "2fb56612cc2e0eaca8f69160d9ddb275f620a8cad0e32546521058d813e753b7",
+            "filename": "KM3.1L301 แผนที่การจัดกิจกรรมการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bfad32691a6144f79393d40271710ccf3f313339fd6cc13fbef54441fb2268e4",
+            "filename": "KM3.1L307 การจัดกิจกรรม KM Day ของ กฟต.3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "3b2f99ce7448c178e6d69cc230c79f7057af5472e254f4b910d513f4f0fbec89",
+            "filename": "KM3.1L306 การจัดกิจกรรม PEANE3 KM Show & Share กฟฉ.3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "57a0584c0a313ea9dc4c607acf7a15a621781539c1ed5f80e6bd3752b3de1644",
+            "filename": "KM3.1L302 ภาพงานประชุมวิชาการและนวัตกรรมของ กฟภ. ประจำปี 2567 (PEACON & Innovation 2024).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.1.L1": [
+        {
+            "doc_id": "e6a3d89054d8904dcf0bef82e9f33e76e426a3fb05bb9fd1ba2e97773aa3b475",
+            "filename": "KM3.1L102 3.1-1 รูปภาพกิจกรรม Onboarding Program 2024 วันที่ 17 พ.ค 67.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bace49574bcad9eabf13ed03c99895c57d07b9af7b15c048842d664f86cc0ee2",
+            "filename": "KM3.1L104 3.1-1 นโยบายการจัดการความรู้ (KM) ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "42ef068bd480655a1168bd443cf08658715ce6c9c6c152d733598c40d268fedf",
+            "filename": "KM3.1L103 3.1-1 รูปภาพการเสวนาในหัวข้อ “สร้างมูลค่าเพิ่มให้ PEA อย่างยั่งยืนด้วย KM & ISO 30401”.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c59a8112a6c393f09db4ce3334ee09b60117811cc2ff1eec6676c0553f2e2e82",
+            "filename": "KM3.1L101 3.1-1 แผนการสื่อสารด้านการจัดการความรู้ สายงานบริหารองค์กร ประจำปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.1.L2": [
+        {
+            "doc_id": "7c6cf0466dbd4ca1cf0e2ab2f271f4b8cb6b21c7d758cfe24e11e0110b6031f2",
+            "filename": "KM1.1L201 ตัวอย่าง Skill Matrix.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "1bb6fafe17d66c80af9405a070be1d5f0675c6ad2a3bf95e5e9373128c3f5073",
+            "filename": "KM1.1L204 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "3b14ad05a9e0e2792003a133b891a4cf490add78652e1b95ea3afedef9ce71d7",
+            "filename": "KM1.1L209 PEA KM Model.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "23bd5e885aa02141bbe662071449e6af16113dab8a32ed174bc6795dddcdda36",
+            "filename": "KM1.1L205 ตัวอย่างคำสั่งแต่งตั้ง ระดับสายงาน และระดับกอง (สายงาน ย).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "61a1f21191bf6facb74355eee5e7326550f8de56cd32435157aebb1bf7278cd9",
+            "filename": "KM1.1L206 ตัวอย่างคำสั่งแต่งตั้ง สายงาน บ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e5046edfb46de8ccac6649a1dc566c1aa72525a026e6e8b0fec13f8bc03dd2c4",
+            "filename": "KM1.1L207 กพค.(จค) 2073 ทบทวนคณะกรรมการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "ad1e9d76797909dc51eaeb2622d8500a5fb147ab57b2721eb630d1bc61a5ce13",
+            "filename": "KM1.1L211 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6d30d0a3523c73c921f6d0798da621a9d6268bcf931d78e9e2e0502757bb3807",
+            "filename": "KM1.1L208 PEA KM Model.pdf (2).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "26bf1f3af49e020a4129967a537fc133a18e996c45e1e8d9ff5ca171b93e1792",
+            "filename": "KM1.1L210 PEA KM Model.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c8a5740b331629ab5825a86fd8b088dd5e5af6f1c625ef92ecdadcd5b8c422c2",
+            "filename": "KM1.1L202 ประเมิน Skill Matrix.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bd17f89224708f4abcc89fa3d367310a1037be2ab5130d5e79d7dd64ca8b448c",
+            "filename": "KM1.1L203 ตัวอย่างคำสั่งแต่งตั้งระดับสาขาการไฟฟ้า.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.1.L5": [
+        {
+            "doc_id": "0dab357a50c202dce229455cc8d881c2a0d785425dd5d09e2531ea0a69a436d5",
+            "filename": "KM5.1L502 5.1 ระดับ 3 (5) _ระดับ 5 (2) รายงานการประเมินกระบวนก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a815bbb15a87a2febbcdb444a1c1f52918b2f9ac8d3be10c54f1381b91f4a18b",
+            "filename": "KM5.1L501 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.2.L2": [
+        {
+            "doc_id": "c92709aab8ececb3596df9c652bac2e26e028c1c327a7cfd6605572c8fe1f26e",
+            "filename": "KM5.2L207 KM_4_2_2_หนังสืออนุมัติคู่มือปฎิบัติงานระเบียบวิธีปฏิบัติงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a8e98d94e1c687ce8debc02a18ff90ef2bb96a44fd0a076e914a25163b12483d",
+            "filename": "KM5.2L202 KM_4_2_2_คู่มือการจัดการความรู้ตามบริบทของสายงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "373bd68bff747dcdfd6d03520c8b206f317248b6072f29e92dd424ded029c126",
+            "filename": "KM5.2L204 KM_4_2_2_ระเบียบวิธีปฏิบัติงานการประเมินผลการนำไปใช้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "12916ee25d2f074a5cec4cdfcd5ecaff54e2c8b00786f3c3acc46761510f7048",
+            "filename": "KM5.2L203 KM_4_2_2_ระเบียบวิธีปฏิบัติงานการนำกระบวนไปใช้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "87915345fd996cb755d5db85b6c0b144cb5330171bc456f009ff6ddfb7e58acd",
+            "filename": "KM5.2L205 KM_4_2_2_สื่อสารคู่มือการจัดการความรู้และระเบียบ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "52ca55431714af838c5b0baec3dc422ec4fb3821796621ce3c52740fe565559a",
+            "filename": "KM5.2L201 KM_4_2_2_ระเบียบวิธีปฏิบัติงานกระบวนการบริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a074456eda9437e18a5246fffb7e40cf0f8ff1670b12432393c5127de33b8e3b",
+            "filename": "KM5.2L206 KM_4_2_2_คู่มือระเบียบวิธีปฎิบัติขึ้นระบบKM-SI.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.2.L4": [
+        {
+            "doc_id": "243d15ddc16f96df9565b06bc7595d399248ee73ea6b426658be647b44af0362",
+            "filename": "KM1.2L403 ผลประเมินผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "520d061b25dcf451f6fe4f05324f8a4a86c8ccf2ee5b4baefe47abee0171f150",
+            "filename": "KM1.2L401 ตัวอย่าง K Landscape สตภ..pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "99947b2dbc73225898848844dca5e931fca77e7f20b55d629ca9cba95afabd5e",
+            "filename": "KM1.2L402 ตัวอย่าง K Landscape สายงาน ย.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d1bae31659e4083a4adb8d813c82e8f7c87355bd67eea4eb3402cc6f0d2386dc",
+            "filename": "KM1.2L404 ตัวอย่างจัดกิจกรรม ของทุกพื้นที่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.2.L3": [
+        {
+            "doc_id": "9fb0d3b03c18d43be1c40b2a5e5dfe948912c87fc6d38cdeab616d7c00e4d456",
+            "filename": "KM4.2L301 Knowledge Management (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.2.L3": [
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "011ce10b893958a06e8f61f90b93ae095d71bc207dedf3c9445dcea1e3defd6f",
+            "filename": "KM5.2L303 อนุมัติอบรม_ISO30401_67 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "90b5ff8f9503bb487096df1c42b115ad6de54eaa201a528be1378373f1bc0f20",
+            "filename": "KM5.2L302 1.รายงานการจัดอบรมISO.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.1.L2": [
+        {
+            "doc_id": "c5c95cdacf75b4ed4b22a417f6d398c2f0441040ef78a8ce25d1964221173828",
+            "filename": "KM4.1L201 KM-SD-01 แผนการสื่อสารด้านการจัดการความรู้ ประจำปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.3.L1": [
+        {
+            "doc_id": "ef95e366bba892877b2eacc57e1b2af8c10226e5a8ada74a169f93ad29f5606f",
+            "filename": "KM3.3L103 การจัดหลักสูตร Knowledge Capturing & KM Tools (เทคนิคการถอดองค์ความรู้และเครื่องมือ KM)2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "472d483bd53297f9120fcf8e5c4c0c40f088c11e9677d8823c9e0c5ab8e08758",
+            "filename": "KM3.3L102 3.3-1 แผนพัฒนารายบุคคล (IDP) จากกการทำประเมิน Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.1.L2": [
+        {
+            "doc_id": "58d3cab34ae80a0d5d58322b3e002e72cc16e5c98a0fae21148e6296073bc49a",
+            "filename": "KM5.1L204 5.1 ระดับ 1 (3)_ระดับ 2(3) รายงานการประชุมศูนย์บริห.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "a51f3d0aba63a5e96bdbc92dc718172b6e3fffd0f831c8ae5f351008faf05b33",
+            "filename": "KM5.1L202 5.1 ระดับ 2 (6) _ระดับ 3 (4)_ระดับ 5 (1) ตัวอย่างการรายง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "af2f18a9f5d214fb8468658fa6f37e1d4d6a6e2487ac85196c7e4e2022996dcd",
+            "filename": "KM5.1L205 5.1 ระดับ 1 (1) _ระดับ 2 (1) SIPOC กระบวนการจัดทำสถาปัตย.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "0a22851102e2bf128bb52910123e3707a5e7b6cf47cf89894da0c84814f9e1bc",
+            "filename": "KM5.1L206 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "120ebb9e513f494ab03b0f0bac25a36be7c377db86f839b19d010e8352539d1b",
+            "filename": "KM5.1L201 5.1 ระดับ 1 (2)_ระดับ 2(2) รายงานการประชุมคณะกำกับค.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "d0c247ed535eecc63be766c6fc0b192bf6fd83eb577f565d079abc7c0a7938e2",
+            "filename": "KM5.1L203 5.1 ระดับ 2 (5)_ระดับ 3 (3) รายงานผลการดำเนินงานตาม .pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.1.L5": [
+        {
+            "doc_id": "359a28cfd6f6214a010c8009a1c4488bb504015a82e8d108ac62c05fdc151d83",
+            "filename": "KM3.1L503 ตัวอย่างการปรับเปลี่ยนวิธีการส่งเสริม และสร้างแรงจูงใจให้บุคลากรในการสร้างสรรค์อ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "403ab242e083a4dd1f161f5a2547337a29c6cd9ca55bf1b6578807659b9b0671",
+            "filename": "KM3.1L502 3.1-5 Line Openchat ในชื่อ HRD Connext สำหรับการสื่อสาร-แลกเปลี่ยนความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "14ad2b392c664fd2b752eacdac542ee3efb3e355b6adf29205071074a86a3ec0",
+            "filename": "KM3.1L505 3.1-5 ตัวอย่างการมอบรางวัลบัตรเงินสดงาน PEACON 2024.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e38bae5e4d1e9a6ff61bba544163261135782636f5339365b9f20d5f94f4b3e0",
+            "filename": "KM3.1L501 3.1-5 ผลประเมินความความเข้าใจกระบวนการจัดการความรู้ กฟภ. ปี 2567.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f89ea5a977e5fa8e51d02c7ad41d1d7c883e98cad698a65c675df9aa572cbb05",
+            "filename": "KM3.1L504 หลักสูตร Organizational Knowledge Management for New Business 67.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.2.L4": [
+        {
+            "doc_id": "f608d08ad3cf0b29c9b730136fdd8231e6442dd568cb616c7097107a94eb6a6f",
+            "filename": "KM5.2L404 คู่มือการขาย_RF7.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7a8f8971019dd8414323b145de98eaaa1b3d3917e02dc77386ed2dc5c8f71c92",
+            "filename": "KM5.2L401 อนุมัติ KM for New business 67 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "cca83161325c3bb93572abf405649deac4fc3f0a3d15cfa30fa6716095f4646d",
+            "filename": "KM5.2L402 อนุมัติ sales skills (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "c25c59e496e753f78ab65dc9fb148df9ee117882d97da722a62df3023eb1544b",
+            "filename": "KM5.2L403 เอกสารแนบรายได้ ธก. เกี่ยวเนื่องสะสม ม.ค (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.1.L4": [
+        {
+            "doc_id": "46c471c73f3b228d623bec79a4435e4d87e59e382836bf98d630a48479cdb2b4",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e3c4087a3ccdea0c5ff58ddd791fcad4ac0bee72acad576accbbe8a4fabf3307",
+            "filename": "KM1.1L401 Mapping แผนแม่บท.xlsx",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.1.L4": [
+        {
+            "doc_id": "34924208d8023bd86201c8b1ce086d61a9a0bf5273be0e6322b72c575e78e723",
+            "filename": "KM3.1L405 3.1-4การมอบรางวัลการจัดแข่งขันทักษะการปฏิบัติงาน ครั้งที่ 11 ประจำปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7315c1170e4e989448657a3f0f4d632f7307161589cd7c7fcd54ac6f0989f712",
+            "filename": "KM3.1L404 3.1-4 การยกย่องชมเชยต่อสาธารณะ โดยการประกาศรางวัลสำหรับ KM ยอดเยี่ยม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "791436ead6b87ac9662409e9b3eba9162f6d9c605bf0cc5120a2fe0c55d4a0db",
+            "filename": "KM3.1L402 3.1-4การยกย่องชมเชยต่อสาธารณะ Building Tomorrow Together 2024.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "95088474c75b197f1080213f16b39a84ee546567c22fad205031bb763473f0bd",
+            "filename": "KM3.1L401 กิจกรรมการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6ae60e497673eb86524d30e8625347f6a78723501a5a9797490048722b9f39c8",
+            "filename": "KM3.1L403 3.1-4 การมอบรางวัล ในการอบรมเชิงปฏิบัติการการจัดการความรู้สู่การสร้างธุรกิจ ประจำปี 2567.p.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "66b8fcac0b1d7a64958d1febb8d82dd5043ec83ebc84b60786c12d46884aaefc",
+            "filename": "KM3.1L406 3.1-4 การยกย่องชมเชยต่อสาธารณะ โดยการประกาศรางวัลสำหรับ KM ยอดเยี่ยม งาน PEACON 24.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "1.2.L1": [
+        {
+            "doc_id": "963a332c4cf71af9c345991087e894d4aa2bf1394d81b97eb7e5811da124ab40",
+            "filename": "KM1.2L103 กพค.(จค) 370 จัดทำ Skill Matrix.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f822e2f852c8b7427a6959126d0df91262c9d5a817cfdd1762c299209f999d1d",
+            "filename": "KM1.2L102 เกณฑ์และพฤติกรรมที่คาดหวังของผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e9b9528601323fdbb73ad40d9111fe793732a0966f9c995300e18623d14592ae",
+            "filename": "KM1.2L101 อนุมัติหลักการแต่งตั้งคณะกรรมการและคณะทำงาน กพค.(จค) 1992 2566.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "40e2821f59b9115195db6554300d7adc80a491402dd6b2b8fb36fffbe1de0088",
+            "filename": "KM1.2L10 KM1.2L103 ตัวอย่าง Skill Matrix.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "3.1.L2": [
+        {
+            "doc_id": "ee74c75fb8a4f88d23d6b8f35b7414d7acae85459ccc2c801e0865407fe0905e",
+            "filename": "KM3.1L204 3.1-2 แผนฝึกอบรมด้านการจัดการความรู้ 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "8c4f1620997a6fcf5a079ebbd56bb6bcaab42d4109ccf98c9fde62bac03f3c18",
+            "filename": "KM3.1L203 3.1-2 ระบบประเมินผลการปฏิบัติงาน PEATA.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "f467c008814b71db684e761872414ffcb384d4f03b9d5803bef705967e48d3f6",
+            "filename": "KM3.1L202 แผนพัฒนารายบุคคล (IDP) ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "45722f356e7d99e593a86c4214729248ea4a1bfd9605004523cf002dc73202c0",
+            "filename": "KM3.1L201 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "b174a1010dc88eb92711cc8ac9c28555089f015f5606d268f74bf5222fae3d6c",
+            "filename": "KM3.1L205 แผนที่การจัดกิจกรรมการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.1.L5": [
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7a427692d847a6af05ce1865a7e9f074a1b670bfe144455da6ed90694ac51d09",
+            "filename": "KM2.1L503 Sipoc หลังปรับ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "6.1.L1": [
+        {
+            "doc_id": "77e04aa4b67d1bcbda8435e6bf347b05d3c542921d22378d7eb5598086773faf",
+            "filename": "KM6.1L102 KM_6_1_รายงานผลประเมินด้านการจัดการความรู้ด้านผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "ee5cd15f60977bcb0528e60ff8a30080ab9aaa5561c11456744ff853531eb63c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.1.L2": [
+        {
+            "doc_id": "54b3102de86fabe1bba8caa1cbc75c83f1166044ee6de9330f8d9ba41750a566",
+            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "526b96842a704621521c056ba93d7d2b216d8800ac23bd96b642fdec0da5f9d2",
+            "filename": "KM2.1L204 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "3941ceabe159fb500c7550dd97d5c5ffb67449b28e588bf41a27ed874b3b12ca",
+            "filename": "KM2.1L202 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "e6419b9fc9f2d65f5ae06ef5f5ab63c13c889f7d721e6d265ec4966c1827ecb7",
+            "filename": "KM2.1L201 แผนยุทธศาสตร์.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.1.L1": [
+        {
+            "doc_id": "7dbc8104024fd4336cc97a62fa68f0674e25b0179fe8a4284b4a9c0fc184597f",
+            "filename": "KM5.1L103 5.1 ระดับ 1 (1) _ระดับ 2 (1) SIPOC กระบวนการจัดทำสถาปัตย.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "102c57b561df5069f4eb12360aa95eb3758001f601f70d90606c569dedab29e5",
+            "filename": "KM5.1L102 5.1 ระดับ 1 (3)_ระดับ 2(3) รายงานการประชุมศูนย์บริห.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "955cd47cc78105ee6792d34ab98b703986bd58cea5e5b2e8d69ed1cf9f21fd2f",
+            "filename": "KM5.1L104 5.1 ระดับ 1 (4)_ระดับ 2(4) อนุมัติ ผวก. สถาปัตยกรรมธุ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "812140984bb2e86ada598691ce056a96816cd6ef0afdca17f89f8c9b68d02fce",
+            "filename": "KM5.1L105 5.1 ระดับ 1 (6) อนุมัติกระบวนการทำงานที่เป็นมาต.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "3fa3dae49258bbfdd5e74f6c4d2898dff54c996866caae22604f9b855b040403",
+            "filename": "KM5.1L101 5.1 ระดับ 1 (2)_ระดับ 2(2) รายงานการประชุมคณะกำกับค.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.2.L2": [
+        {
+            "doc_id": "31af4a5139b123bfa5678e115e5e4ae683ea31fac01d929d3546dd3369934df4",
+            "filename": "KM4.2L201 KM_4_2_2_channel.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "5.2.L5": [
+        {
+            "doc_id": "69fe7cf046de424be47e2a6e67d5df34567e33b7a73cb44d26a9236172cb51f3",
+            "filename": "KM5.2L502 KM_5_2_5_ผลประเมินความเข้าใจการบริหารความเสี่ยง.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "630c3ad2fc3b31d44a9c16f1a0bf8652fe91690de57c90476371ec26fdc466ce",
+            "filename": "KM5.2L501 KM_5_2_5_workmanual_selling_cut.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "6.1.L3": [
+        {
+            "doc_id": "3bf862da78f82dfbebac982a61e33211a230f0e3cf32e92d5d53107fc8583e6f",
+            "filename": "KM6.1L301 KM_6_3_PEA_Assessment Report.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "fbbbf971f96a74461cdacbeac2813e23a7cbfe8c8a87921b51dd551e1373167f",
+            "filename": "KM6.1L302 KM_4_1_4_KM-Si.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.2.L2": [
+        {
+            "doc_id": "985f469f95067e070e47820a96be3da52cd6b0567fec76f658cad42d0e07b9aa",
+            "filename": "KM2.2L204 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "63e64550df89f1eefac95cec6ff2739c551cfb2e5809e18d094903cac8b9dbe9",
+            "filename": "KM2.2L203 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "bfc4d48cf4c1b7b11e69c54b1de8c9b3418ff8386f2252eb0711887ca2b43613",
+            "filename": "KM2.2L202 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "73dc2beeee6725bc45c8ffa272d2abaff94fab696ef8f4a5c6c2a357e4f299fe",
+            "filename": "KM2.2L201 เกณฑ์การจัดสรรร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.1.L5": [
+        {
+            "doc_id": "606e0dcb78f2d513494371971ad19dcedf311499139859f1c572a6279eb28755",
+            "filename": "KM4.1L501 KM-ผลประเมินสารสนเทศKMS.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "4.2.L5": [
+        {
+            "doc_id": "cbc08da81ed570153617e09a883556d0b92dd75cc9b0b459a7b71eb528f20308",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "6.1.L2": [
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ],
+    "2.2.L5": [
+        {
+            "doc_id": "04de84c99f7103dddbbe45c6eeea76541bb308af584dd50cbe1cd0bcc86b8456",
+            "filename": "KM2.2L501 ให้ประเมินผลการดำเนินงาน KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "7c42011da8139897abcc6573ec3a5eae4d6d274e278c6b9d914112456f8f3674",
+            "filename": "KM2.2L503 ขอ user canva 2.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "33bff3fdf69a216d825e625b1e316279375fd3c4f9a15915aac11102b56109be",
+            "filename": "KM2.2L504 ความพึงพอใจ จัดสรรงบ IT.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        },
+        {
+            "doc_id": "6269988bd2ddaccf57d02515e36bc2d2f556c240c17ff1a9cd5a402cb7d493bc",
+            "filename": "KM2.2L502 ขอ user canva.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-11-17T13:35:35.720"
+        }
+    ]
 }

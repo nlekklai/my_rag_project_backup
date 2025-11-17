@@ -4,9 +4,10 @@ import os
 import json
 import sys
 from typing import Dict, List, Any
+import datetime # <--- [NEW] นำเข้า datetime สำหรับสร้าง timestamp
 
 # ----------------------------------------------------------------------
-# 1. Configuration (Path Corrected)
+# 1. Configuration 
 # ----------------------------------------------------------------------
 
 # Path Setup
@@ -16,8 +17,11 @@ DOC_ID_MAPPING_FILE = os.path.abspath(os.path.join(BASE_DIR, "data", "doc_id_map
 OUTPUT_FILE_PATH = os.path.join("evidence_checklist", "km_evidence_mapping_new.json")
 
 # Regular Expression Pattern for KM Evidence Extraction from filename:
-# KM(\d+\.\d+)L(\d)\d* เช่น KM3.1L101 จะได้เป็น 3.1_L1
 FILENAME_KM_PATTERN = re.compile(r'KM(\d+\.\d+)L(\d)\d*') 
+
+# [NEW] กำหนด Timestamp และ Mapper Type สำหรับรายการที่สร้างอัตโนมัติ
+GENERATED_TIMESTAMP = datetime.datetime.now().isoformat(timespec='milliseconds')
+GENERATED_MAPPER_TYPE = "AI_GENERATED"
 
 
 # ----------------------------------------------------------------------
@@ -26,8 +30,7 @@ FILENAME_KM_PATTERN = re.compile(r'KM(\d+\.\d+)L(\d)\d*')
 
 def _load_full_doc_mapping(filepath: str) -> Dict[str, Any]:
     """
-    Loads the internal doc_id_mapping.json which stores the full 64-char Stable UUID 
-    as the top-level key. This is the reliable source of truth.
+    Loads the internal doc_id_mapping.json which stores the full 64-char Stable UUID.
     """
     print(f"อ่านไฟล์ต้นฉบับ (doc_id_mapping.json): {filepath}")
     try:
@@ -43,7 +46,7 @@ def _load_full_doc_mapping(filepath: str) -> Dict[str, Any]:
         return {}
 
 def generate_mapping():
-    """Main function to load doc mapping and generate the JSON mapping file."""
+    """Main function to load doc mapping and generate the JSON mapping file in the correct format."""
     
     print("--- เริ่มต้นการสร้างไฟล์ Mapping จาก doc_id_mapping.json (ใช้ Full UUID) ---")
 
@@ -52,31 +55,27 @@ def generate_mapping():
 
     if not full_mapping:
         print("------------------------------------------------------------------")
-        # ข้อความนี้จะแสดงก็ต่อเมื่อ _load_full_doc_mapping พิมพ์ ERROR/FATAL ออกมาแล้ว
         print("------------------------------------------------------------------")
         return
         
-    # Dictionary to store the final grouped mapping
-    mapping_results: Dict[str, Any] = {}
+    # Dictionary to store the final grouped mapping (Target Format: {"1.1.L1": [...]})
+    mapping_results: Dict[str, List[Dict[str, Any]]] = {}
     km_evidence_count = 0
     
     # ------------------------------------------------------
-    # 3. Parsing and Grouping Logic (Iterate over the FULL UUID keys)
+    # 3. Parsing and Grouping Logic 
     # ------------------------------------------------------
     
-    # doc_id_64 คือ Full 64-char Stable UUID
     for doc_id_64, info in full_mapping.items():
         
-        # 🎯 FINAL ROBUST FIX: ตรวจสอบจาก chunk_uuids แทน status
-        # กรองเฉพาะเอกสาร 'evidence' สำหรับ 'KM' ที่มี chunk_uuids (บ่งชี้ว่าถูก Ingest สำเร็จแล้ว)
+        # กรองเฉพาะเอกสาร 'evidence' สำหรับ 'KM' ที่มี chunk_uuids
         if (info.get('doc_type') != 'evidence' or 
             info.get('enabler') != 'KM' or
-            # 🟢 NEW CONDITION: ต้องมี 'chunk_uuids' และต้องมีสมาชิก (array ไม่ว่างเปล่า)
             not info.get('chunk_uuids') or 
             len(info.get('chunk_uuids', [])) == 0):
             continue
 
-        # ✅ FIX: ใช้ 'file_name' ตามตัวอย่าง JSON ล่าสุด
+        # ✅ FIX: ใช้ 'file_name'
         full_filename = info.get('file_name', '') 
         
         # 2. Attempt to extract KM, Sub-ID, and Level from the FILENAME
@@ -86,25 +85,23 @@ def generate_mapping():
             sub_id_raw = match_km.group(1) 
             level_raw = match_km.group(2)  
             
-            # Combine to form the unique mapping key (e.g., "1.1_L1")
-            mapping_key = f"{sub_id_raw}_L{level_raw}"
+            # 🎯 [CHANGE 1] แก้ไข: Key Format เปลี่ยนจาก "1.1_L1" เป็น "1.1.L1"
+            mapping_key = f"{sub_id_raw}.L{level_raw}"
             
-            # Create the evidence dictionary
+            # 🎯 [CHANGE 3] สร้าง Evidence Dictionary ที่มี Field ครบตาม Format เป้าหมาย
             evidence_data = {
-                "doc_id": doc_id_64, # <-- ใช้ FULL 64-char UUID โดยตรง
-                "file_name": full_filename,
-                "notes": "Generated from doc_id_mapping.json (Full UUID, checked via chunk_uuids)."
+                "doc_id": doc_id_64, 
+                "filename": full_filename, # 🎯 เปลี่ยนชื่อ Field เป็น 'filename'
+                "mapper_type": GENERATED_MAPPER_TYPE,
+                "timestamp": GENERATED_TIMESTAMP
             }
             
-            # Initialize the key if it doesn't exist
+            # 🎯 [CHANGE 2] แก้ไข: เปลี่ยน Structure ให้เป็น List โดยตรงภายใต้ Key
             if mapping_key not in mapping_results:
-                mapping_results[mapping_key] = {
-                    "title": f"Mapping for Sub-Criteria {sub_id_raw} Level L{level_raw}",
-                    "evidences": []
-                }
+                mapping_results[mapping_key] = []
             
-            # Append the new evidence
-            mapping_results[mapping_key]['evidences'].append(evidence_data)
+            # เพิ่ม 1 Entry ต่อ 1 เอกสารที่ถูกค้นพบ (ผู้ใช้สามารถทำซ้ำเองได้หากต้องการความเสถียร 3 Entries)
+            mapping_results[mapping_key].append(evidence_data)
             km_evidence_count += 1
         
     # ------------------------------------------------------
@@ -122,7 +119,6 @@ def generate_mapping():
             os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
             
             with open(output_filepath, 'w', encoding='utf-8') as f:
-                # Use ensure_ascii=False for proper Thai character encoding
                 json.dump(mapping_results, f, indent=4, ensure_ascii=False)
             
             print("------------------------------------------------------------------")

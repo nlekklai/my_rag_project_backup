@@ -60,9 +60,9 @@ except Exception as e:
         
     class LcDocument: 
         def __init__(self, page_content, metadata): self.page_content=page_content; self.metadata=metadata
-    DEFAULT_ENABLER = "KM"
-    INITIAL_TOP_K = 10
-    FINAL_K_RERANKED = 3
+    # DEFAULT_ENABLER = "KM"
+    # INITIAL_TOP_K = 10
+    # FINAL_K_RERANKED = 3
     # Define mock prompts to prevent crash if real ones are missing
     SYSTEM_ASSESSMENT_PROMPT = "Assess the statement based on the provided context."
     USER_ASSESSMENT_PROMPT = "Context: {context}\nStatement: {statement_text}"
@@ -128,15 +128,34 @@ def normalize_stable_ids(ids: List[str]) -> List[str]:
 # ------------------------
 # Retrieval
 # ------------------------
-def retrieve_context_by_doc_ids(doc_uuids: List[str], doc_type: str, enabler: Optional[str] = None) -> Dict[str, Any]:
-    if not doc_uuids or VectorStoreManager is None:
+def retrieve_context_by_doc_ids(
+    doc_uuids: List[str], 
+    doc_type: str, 
+    enabler: Optional[str] = None, 
+    # 🟢 เพิ่ม Argument นี้
+    vectorstore_manager: Optional['VectorStoreManager'] = None 
+) -> Dict[str, Any]:
+    
+    # 📌 การตรวจสอบและเตรียม manager
+    if not doc_uuids:
         return {"top_evidences": []}
+    
+    # 🟢 ใช้ VSM ที่ส่งเข้ามา ถ้ามี (Priority) หรือสร้างใหม่/ดึง Instance
+    manager = vectorstore_manager if vectorstore_manager is not None else VectorStoreManager()
+    
+    if manager is None:
+        logger.error("VectorStoreManager is None.")
+        return {"top_evidences": []}
+        
     try:
-        manager = VectorStoreManager()
-        # collection_name = _get_collection_name(doc_type, enabler) # Not strictly needed here
+        # manager = VectorStoreManager() # ❌ ลบหรือคอมเมนต์บรรทัดนี้ออก
+        
         normalized_uuids = normalize_stable_ids(doc_uuids)
+        
         # Note: manager.get_documents_by_id must support list of normalized IDs
         docs: List[LcDocument] = manager.get_documents_by_id(normalized_uuids, doc_type, enabler)
+        
+        # ... (ส่วนที่เหลือของโค้ดเหมือนเดิม) ...
         top_evidences = [{
             "doc_id": d.metadata.get("stable_doc_uuid"),
             "doc_type": d.metadata.get("doc_type"),
@@ -145,186 +164,166 @@ def retrieve_context_by_doc_ids(doc_uuids: List[str], doc_type: str, enabler: Op
             "content": d.page_content.strip(),
             "chunk_index": d.metadata.get("chunk_index")
         } for d in docs]
+        
         return {"top_evidences": top_evidences}
+        
     except Exception as e:
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
 
+import time # 🟢 ต้องมี import time สำหรับ start_time และ duration
+
 def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
                                  top_k: int=FINAL_K_RERANKED, initial_k: int=INITIAL_TOP_K,
-                                 # 🟢 FIX 1: แก้ไข Syntax และเพิ่ม stable_doc_ids (Optional)
+                                 # 📌 NEW ARGUMENT: Persistent Mapping UUIDs
+                                 mapped_uuids: Optional[List[str]]=None,
                                  stable_doc_ids: Optional[List[str]]=None, 
+                                 # 🟢 FIX: เพิ่ม priority_docs_input เข้ามาในลายเซ็นต์หลัก
+                                 priority_docs_input: Optional[List[Any]] = None, 
                                  sub_id: Optional[str]=None, level: Optional[int]=None) -> Dict[str, Any]:
+
     """
-    Retrieves and reranks relevant context from the specified VectorStore collection.
-    
-    Args:
-        query (str): The search query.
-        stable_doc_ids (Optional[List[str]]): List of stable document IDs to filter by.
-        ... (other args)
+    Retrieves and reranks relevant context from the specified VectorStore collection, 
+    GUARANTEEING the inclusion of pre-mapped priority documents in the final set.
     """
+    start_time = time.time()
     try:
-        # 1. จัดการ VSM Instance
-        manager = vectorstore_manager or VectorStoreManager()
-        collection_name = _get_collection_name(doc_type, enabler)
-        
-        # 🟢 FIX C: บังคับเป็นตัวพิมพ์เล็กเสมอเพื่อแก้ Case-Sensitivity 
-        collection_name = collection_name.lower() 
-        
-        retriever_wrapper = None 
-        
-        logger.critical(f"🧭 DEBUG: Attempting to retrieve collection: {collection_name}")
-        
-        # 2. ลองเข้าถึง Retriever ที่ถูกต้องผ่าน MultiDocRetriever (MDR)
-        multi_doc_retriever = None
-        if hasattr(manager, '_multi_doc_retriever'):
-            multi_doc_retriever = manager._multi_doc_retriever
-            
-            # 🟢 FIX 2: แก้ปัญหา 'ModelPrivateAttr' โดยการ unwrap object
-            if not hasattr(multi_doc_retriever, '_all_retrievers') and hasattr(multi_doc_retriever, 'value'):
-                multi_doc_retriever = multi_doc_retriever.value
-                logger.critical("🧭 DEBUG: ModelPrivateAttr unwrapped using .value.")
-
-        if multi_doc_retriever and hasattr(multi_doc_retriever, '_all_retrievers'):
-            retriever_wrapper = multi_doc_retriever._all_retrievers.get(collection_name)
-            if retriever_wrapper:
-                logger.critical("🧭 DEBUG: Access via VSM._multi_doc_retriever._all_retrievers SUCCESS.")
-            elif hasattr(manager, '_all_retrievers'): 
-                 retriever_wrapper = manager._all_retrievers.get(collection_name)
-                 if retriever_wrapper:
-                     logger.critical("🧭 DEBUG: Access via direct MultiDocRetriever SUCCESS (Incorrect instance type passed).")
-        if not retriever_wrapper:
-            if hasattr(manager, 'get_retriever'):
-                 retriever_wrapper = manager.get_retriever(collection_name)
-                 if retriever_wrapper:
-                    logger.critical("🧭 DEBUG: Access via VSM.get_retriever SUCCESS.")
-        
-        # --- 🚨 Unwrap the Core Retriever 🚨 ---
-        retriever = retriever_wrapper
-        if retriever_wrapper and hasattr(retriever_wrapper, 'base_retriever'):
-             retriever = retriever_wrapper.base_retriever
-             logger.critical(f"🧭 DEBUG: Successfully unwrapped base_retriever: {type(retriever).__name__}.")
-        
-        # 🚨 FINAL DEBUG LOGGING BLOCK / Core Retriever Validation 🚨
-        is_valid_retriever_method = callable(getattr(retriever, 'get_relevant_documents', None)) or callable(getattr(retriever, 'invoke', None))
-
-        if not retriever or not is_valid_retriever_method:
-            # --- FINAL RESORT: Check known wrapper structures ---
-            if retriever_wrapper and hasattr(retriever_wrapper, 'vectorstore') and callable(getattr(retriever_wrapper.vectorstore, 'get_relevant_documents', None)):
-                 retriever = retriever_wrapper.vectorstore 
-                 logger.critical(f"🧭 DEBUG: Final Resort: Using .vectorstore as retriever: {type(retriever).__name__}.")
-            elif retriever_wrapper and hasattr(retriever_wrapper, 'retriever') and callable(getattr(retriever_wrapper.retriever, 'get_relevant_documents', None)):
-                 retriever = retriever_wrapper.retriever 
-                 logger.critical(f"🧭 DEBUG: Final Resort: Using .retriever as retriever: {type(retriever).__name__}.")
-            
-            is_valid_retriever_method = callable(getattr(retriever, 'get_relevant_documents', None)) or callable(getattr(retriever, 'invoke', None))
-            if not is_valid_retriever_method:
-                available_keys = "N/A"
-                if hasattr(manager, '_multi_doc_retriever') and hasattr(manager._multi_doc_retriever, '_all_retrievers'):
-                    available_keys = str(list(manager._multi_doc_retriever._all_retrievers.keys()))
-                elif hasattr(manager, '_all_retrievers'): 
-                    available_keys = str(list(manager._all_retrievers.keys()))
-                    
-                logger.error(f"FATAL: Core Retriever not found/lacks 'get_relevant_documents' or 'invoke' for key: {collection_name}. Type: {type(retriever).__name__}")
-                logger.error(f"FATAL: Available keys in VSM/MDR were: {available_keys}")
-                
-                return {"top_evidences": [], "aggregated_context": f"ERROR: Target ChromaRetriever missing for {collection_name} (Object type {type(retriever).__name__} is incorrect)."}
+        # 1-3. Setup & K Setting (โค้ดเดิม)
+        manager = vectorstore_manager
+        if manager is None: raise ValueError("VectorStoreManager is not initialized.")
+        collection_name = _get_collection_name(doc_type, enabler).lower() 
+        retriever = manager.get_retriever(collection_name)
+        if retriever is None: raise ValueError(f"Retriever initialization failed for {collection_name}.")
         
         logger.critical(f"🧭 DEBUG: Successfully retrieved Core Retriever. Starting query...")
         
-        # ----------------------------------------------------
-        # 🚨 RE-ADDING K FORCE (เพื่อพยายาม OVERRIDE HARDCODE 5) 🚨
-        logger.critical(f"🧭 DEBUG: Final k value (initial_k) to use: {initial_k}")
-        logger.critical(f"🧭 DEBUG: k attribute before query: {getattr(retriever, 'k', 'N/A')}")
-        # ----------------------------------------------------
-
-        if hasattr(retriever, 'k'):
-            # ถ้ามี k attribute ให้ตั้งค่า k
-            retriever.k = initial_k
-            logger.critical(f"🧭 DEBUG: Successfully set retriever.k = {retriever.k}")
-
+        if hasattr(retriever, 'k'): retriever.k = initial_k
         if hasattr(retriever, 'search_kwargs') and isinstance(retriever.search_kwargs, dict):
-            # พยายามตั้งค่า k ใน search_kwargs
             retriever.search_kwargs['k'] = initial_k
-            logger.critical(f"🧭 DEBUG: Successfully set search_kwargs['k'] = {retriever.search_kwargs['k']}")
 
-        # 3. Invoke Retrieval
+        # ----------------------------------------------------
+        # 4. 📌 Persistent Mapping (Priority Context Retrieval)
+        # ----------------------------------------------------
+        # 🟢 FIX 1: ประกาศตัวแปรอย่างชัดเจน
+        guaranteed_priority_chunks: List[Any] = [] 
         
-        # 🟢 NEW FIX: ถ้าเป็น Langchain Retriever ที่ซับซ้อน อาจใช้ .search_kwargs
-        search_kwargs = {"k": initial_k} # เตรียม search_kwargs
+        if priority_docs_input:
+            logger.critical(f"🧭 DEBUG: Using {len(priority_docs_input)} pre-calculated priority chunks (Limited Chunks Mode).")
+            guaranteed_priority_chunks = priority_docs_input
+        
+        elif mapped_uuids and manager and collection_name: 
+            # ⚠️ Fallback Logic (โค้ดเดิม - ใช้ mapped_uuids ในการดึงเอกสารเต็ม)
+            normalized_mapped_uuids = normalize_stable_ids(mapped_uuids) 
+            logger.critical(f"🧭 DEBUG: [CHECK] Input mapped_uuids count: {len(normalized_mapped_uuids)}")
+            logger.critical(f"🧭 DEBUG: Retrieving {len(normalized_mapped_uuids)} priority documents by DOCUMENT ID...") 
+            try:
+                if hasattr(manager, 'get_documents_by_id'):
+                    retrieved_mapped_docs = manager.get_documents_by_id(
+                        stable_doc_ids=normalized_mapped_uuids, 
+                        doc_type=doc_type, 
+                        enabler=enabler
+                    )
+                    # 🟢 FIX 2: กำหนดค่าเข้าตัวแปรที่ถูกต้อง
+                    guaranteed_priority_chunks = retrieved_mapped_docs 
+                else:
+                    logger.error("❌ CRITICAL: VSM lacks 'get_documents_by_id' method.")
 
-        # 🟢 FIX 3: เพิ่ม Logic การกรองเอกสารด้วย stable_doc_ids ถ้ามีการส่งมา
+                logger.critical(f"🧭 DEBUG: [CHECK] Retrieved priority_docs count: {len(guaranteed_priority_chunks)}")
+                logger.critical(f"🧭 DEBUG: Retrieved {len(guaranteed_priority_chunks)} documents from persistent mapping (Actual Mapped Docs).")
+            except Exception as e:
+                logger.error(f"Priority retrieval by UUID failed: {e}")
+        
+        # 🟢 FIX 3: ใช้ตัวแปรที่ถูกต้องในการนับ
+        correct_mapped_count = len(guaranteed_priority_chunks) 
+        
+        logger.critical(f"🧭 DEBUG: [CHECK FINAL] priority_docs size BEFORE RAG Search: {correct_mapped_count}") 
+
+        # ----------------------------------------------------
+        # 5. Invoke Retrieval (Standard RAG Search) (โค้ดเดิม)
+        # ----------------------------------------------------
+        search_kwargs = {"k": initial_k} 
         if stable_doc_ids:
-            # สมมติว่า normalize_stable_ids ถูก import มาแล้ว
             normalized_uuids = normalize_stable_ids(stable_doc_ids) 
-            # โครงสร้างการกรองสำหรับ Chroma/LangChain คือ 'where'
-            # Note: ต้องมั่นใจว่า metadata key ใน ChromaDB คือ stable_doc_uuid
             search_kwargs["filter"] = {"stable_doc_uuid": {"$in": normalized_uuids}}
             logger.critical(f"🧭 DEBUG: RAG Filter by Stable Doc IDs activated ({len(normalized_uuids)} IDs).")
 
-
+        retrieved_docs: List[Any] = []
         if callable(getattr(retriever, 'get_relevant_documents', None)):
-            # หาก Retriever พื้นฐานไม่รองรับ 'filter' ตรงๆ ใน get_relevant_documents 
-            # (ซึ่งเป็นไปได้ใน LangChain เวอร์ชันเก่า)
-            # เราอาจต้องใช้ .with_search_kwargs(filter=...) ถ้าเป็น LangChain Retriever object
-            # แต่เพื่อความเรียบง่ายและลดความเสี่ยงการเกิด error ซ้ำซ้อน เราจะใช้การ invoke() ในการส่ง config แทน
-            if "filter" in search_kwargs:
-                logger.warning("⚠️ RAG Filter set but using get_relevant_documents(). Filter may not be applied if Retriever is basic.")
-                retrieved_docs: List[Any] = retriever.get_relevant_documents(query) 
-            else:
-                 retrieved_docs: List[Any] = retriever.get_relevant_documents(query) 
-                 
+            retrieved_docs = retriever.get_relevant_documents(query) 
         elif callable(getattr(retriever, 'invoke', None)):
-            # LangChain ใหม่: ส่ง config เข้าไป
-            retrieved_docs: List[Any] = retriever.invoke(query, config={"retrieval_config": search_kwargs})
+            retrieved_docs = retriever.invoke(query, config={"configurable": {"search_kwargs": search_kwargs}})
         else:
-            raise AttributeError("Retriever object lacks both 'get_relevant_documents' and 'invoke' methods.")
-                
-        # ----------------------------------------------------
-        # 🚨 FIX: Ensure retrieved_docs is List[LcDocument] 🚨
-        # ----------------------------------------------------
-        cleaned_docs: List[LcDocument] = []
+            raise AttributeError("Retriever object lacks methods.")
+
+        # Filter to only clean documents
+        cleaned_rag_docs: List[Any] = [] 
         for doc in retrieved_docs:
-            if isinstance(doc, str):
-                # ถ้าเป็น string ให้แปลงเป็น LcDocument ที่มี metadata พื้นฐาน
-                cleaned_docs.append(LcDocument(page_content=doc, metadata={"source": "RAG_Chunk", "doc_type": doc_type}))
-            elif hasattr(doc, 'page_content') and hasattr(doc, 'metadata'):
-                # ถ้าเป็น Document object อยู่แล้ว ให้ใช้ได้เลย
-                cleaned_docs.append(doc)
-
-        retrieved_docs = cleaned_docs
+            if hasattr(doc, 'page_content') and hasattr(doc, 'metadata'):
+                cleaned_rag_docs.append(doc)
         
+        # ----------------------------------------------------
+        # 6. 🛠️ Rerank Strategy: Guaranteed Inclusion
+        # ----------------------------------------------------
         
-        # 🟢 Reranking Logic (ใช้โค้ดเดิมของคุณ)
-        reranker = get_global_reranker(top_k) 
+        # 6a. Filter RAG Search Results to exclude Priority Chunks (Dedup)
+        # 🟢 FIX 4: ใช้ตัวแปรที่ถูกต้องในการทำ Dedup
+        priority_chunk_uuids = set([d.metadata.get('chunk_uuid') for d in guaranteed_priority_chunks])
         
-        if reranker is None or not hasattr(reranker, 'compress_documents'):
-            logger.error("🚨 CRITICAL FALLBACK: Reranker failed to load (Likely configuration issue). Using simple truncation of retrieved docs.")
-            reranked_docs = retrieved_docs[:top_k]
+        rag_search_results_only = []
+        newly_added_rag_count = 0
+        
+        for doc in cleaned_rag_docs:
+            chunk_uuid = doc.metadata.get('chunk_uuid')
+            if chunk_uuid and chunk_uuid in priority_chunk_uuids:
+                continue # ข้าม Chunks ที่เป็น Priority ไปแล้ว
+            rag_search_results_only.append(doc)
+            newly_added_rag_count += 1
             
-        elif not retrieved_docs:
-            reranked_docs = []
-            
-        else:
-            reranked_docs = reranker.compress_documents(query=query, documents=retrieved_docs, top_n=top_k) 
-        
-        # ... (โค้ดส่วนการจัดรูปแบบผลลัพธ์ที่เหลือเหมือนเดิม) ...
+        logger.info(f"    - Dedup Merged: {correct_mapped_count} Priority Chunks + {newly_added_rag_count} New RAG Chunks.")
 
+
+        # 6b. Determine Reranker Slots
+        slots_available = max(0, top_k - correct_mapped_count) 
+        
+        # 6c. Rerank Logic
+        # 🟢 FIX 5: ใช้ตัวแปรที่ถูกต้องในการเริ่มต้น
+        final_selected_docs: List[Any] = guaranteed_priority_chunks 
+        reranked_rag_results = []
+        
+        if slots_available > 0 and rag_search_results_only:
+            reranker = get_global_reranker(top_k) 
+            
+            if reranker is None or not hasattr(reranker, 'compress_documents'):
+                logger.error("🚨 CRITICAL FALLBACK: Reranker failed to load. Using simple truncation of NEW RAG results.")
+                reranked_rag_results = rag_search_results_only[:slots_available]
+            else:
+                reranked_rag_results = reranker.compress_documents(
+                    query=query, 
+                    documents=rag_search_results_only, 
+                    top_n=slots_available
+                ) 
+                
+            final_selected_docs.extend(reranked_rag_results)
+        
+        # 7. Truncate (Safety measure)
+        final_selected_docs = final_selected_docs[:top_k]
+        
+        # 8. Output Formatting (โค้ดเดิม แต่ใช้ final_selected_docs)
         top_evidences = []
         aggregated_context_list = []
-        for doc in reranked_docs:
+        
+        for doc in final_selected_docs: 
             source = doc.metadata.get("source") or doc.metadata.get("doc_source")
             content = doc.page_content.strip()
             relevance_score_raw = doc.metadata.get("relevance_score")
             
-            if relevance_score_raw is None:
-                 relevance_score_raw = doc.metadata.get("score") 
-            
             relevance_score = f"{float(relevance_score_raw):.4f}" if relevance_score_raw is not None else "N/A"
+            doc_uuid = doc.metadata.get("chunk_uuid") or doc.metadata.get("doc_uuid")
             
             top_evidences.append({
+                "doc_uuid": doc_uuid,
                 "doc_id": doc.metadata.get("stable_doc_uuid"),
                 "doc_type": doc.metadata.get("doc_type"),
                 "chunk_uuid": doc.metadata.get("chunk_uuid"),
@@ -337,8 +336,11 @@ def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[st
             aggregated_context_list.append(f"[SOURCE: {source} (ID:{doc_id_short}...)] {content}")
 
         aggregated_context = "\n\n---\n\n".join(aggregated_context_list)
+        duration = time.time() - start_time 
+        
         if level is not None:
-            logger.critical(f"🧭 DEBUG: Aggregated Context Length for L{level} ({sub_id}) = {len(aggregated_context)}")
+            logger.critical(f"🧭 DEBUG: Aggregated Context Length for L{level} ({sub_id}) = {len(aggregated_context)}. Retrieval Time: {duration:.2f}s")
+
 
         return {
             "top_evidences": top_evidences,
@@ -346,12 +348,15 @@ def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[st
         }
     
     except Exception as e:
-        logger.error(f"retrieve_context_with_filter error: {e}")
+        logger.error(f"retrieve_context_with_filter error: {type(e).__name__}: {e}")
         return {"top_evidences": [], "aggregated_context": f"ERROR: RAG retrieval failed due to {type(e).__name__}: {e}"}
-
+        
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
-                                 top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K, # 🟢 เพิ่ม initial_k เข้ามา
+                                 top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K, 
+                                 # 🟢 NEW: ต้องรับ 2 arguments นี้
+                                 mapped_uuids: Optional[List[str]]=None,
+                                 priority_docs_input: Optional[List[Any]] = None, 
                                  sub_id: Optional[str]=None, level: Optional[int]=None) -> Dict[str, Any]:
     """
     Retrieves a small, focused context for low levels (L1, L2) using a reduced k (LOW_LEVEL_K).
@@ -363,10 +368,14 @@ def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional
         enabler=enabler,
         vectorstore_manager=vectorstore_manager,
         top_k=LOW_LEVEL_K,
-        initial_k=initial_k, # 🟢 ส่งค่า initial_k ลงไป
+        initial_k=initial_k, 
+        # 🟢 NEW: ส่งต่อ arguments
+        mapped_uuids=mapped_uuids, 
+        priority_docs_input=priority_docs_input,
         sub_id=sub_id,
         level=level
     )
+
 # ------------------------
 # Robust JSON
 # ------------------------

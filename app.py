@@ -24,14 +24,14 @@ logger = logging.getLogger("KM-RAG-API")
 # เพิ่ม level ให้ router module ชัดเจน
 logging.getLogger("routers.llm_router").setLevel(logging.INFO)
 logging.getLogger("routers.upload_router").setLevel(logging.INFO)
-logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
+# logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
 
 # -----------------------------
 # Import Routers
 # -----------------------------
 from routers.upload_router import upload_router
 from routers.llm_router import llm_router
-from routers.assessment_router import assessment_router
+# from routers.assessment_router import assessment_router
 
 # -----------------------------
 # Lifespan
@@ -67,7 +67,7 @@ app.add_middleware(
 # -----------------------------
 app.include_router(upload_router)
 app.include_router(llm_router)
-app.include_router(assessment_router)
+# app.include_router(assessment_router)
 
 # -----------------------------
 # Health check endpoints

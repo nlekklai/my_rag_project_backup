@@ -319,7 +319,7 @@ def get_global_reranker(final_k: int) -> Optional[HuggingFaceCrossEncoderCompres
                     
                     # Call the CrossEncoder constructor
                     _CACHED_CROSS_ENCODER = CrossEncoder(
-                        model_name=model_name, 
+                        model_name_or_path=model_name, # <--- **แก้ไขตรงนี้**
                         device=device,
                         # 🟢 FIX: เรียกใช้ชื่อ fields ใหม่
                         max_length=instance.rerank_max_length 
@@ -522,6 +522,150 @@ class VectorStoreManager:
                 except Exception as e:
                     logger.error(f"❌ Error retrieving documents by Stable IDs from collection '{collection_name}': {e}")
                     return []
+
+    def retrieve_by_chunk_ids(self, chunk_ids: List[str], collection_name: str) -> List[LcDocument]:
+            """
+            [NEW] Retrieves a list of LangChain Document objects based on their internal chunk UUIDs 
+            (ซึ่งถูกใช้เป็น internal ID ใน ChromaDB สำหรับ Persistent Mapping).
+
+            Args:
+                chunk_ids: List ของ chunk_uuid strings (Chroma IDs).
+                collection_name: ชื่อของ Collection ที่จะค้นหา.
+                
+            Returns:
+                List of LcDocument objects (หรือรายการว่างถ้าดึงข้อมูลไม่สำเร็จ).
+            """
+            if not chunk_ids:
+                return []
+            
+            try:
+                # 1. โหลด Chroma instance
+                chroma_instance = self._load_chroma_instance(collection_name)
+
+                if not chroma_instance:
+                    logger.error(f"VSM: Collection '{collection_name}' ไม่ถูกโหลดสำหรับดึง chunk IDs.")
+                    return []
+                    
+                # 2. เข้าถึง internal Chroma collection
+                collection = chroma_instance._collection 
+                    
+                # 3. ดึงข้อมูลจาก Vector Store ด้วย ID (ซึ่งคือ chunk_id)
+                retrieval_result = collection.get(
+                    ids=chunk_ids,
+                    # ดึง content, metadata และ IDs ภายในกลับมา
+                    include=['documents', 'metadatas'] 
+                )
+                
+                # 4. ประมวลผลผลลัพธ์ให้อยู่ในรูปแบบ LcDocument
+                retrieved_docs: List[LcDocument] = []
+                
+                documents = retrieval_result.get('documents', [])
+                metadatas = retrieval_result.get('metadatas', [])
+                ids = retrieval_result.get('ids', []) # Internal IDs (chunk_uuid)
+                
+                num_results = len(documents)
+                if num_results != len(chunk_ids):
+                    logger.warning(f"VSM: ดึงเอกสารได้ {num_results} ชิ้น, ร้องขอ {len(chunk_ids)} ชิ้น.")
+                    
+                # วนซ้ำเพื่อสร้าง LcDocument
+                for content, metadata, chunk_id in zip(documents, metadatas, ids):
+                    if content and isinstance(metadata, dict):
+                        
+                        # 📌 ตั้งค่า chunk_uuid (Chroma ID)
+                        metadata['chunk_uuid'] = chunk_id
+                        
+                        # 📌 ค้นหา Stable Doc ID จาก Mapping ที่โหลดไว้ใน __init__
+                        stable_doc_id = self._uuid_to_doc_id.get(chunk_id, metadata.get('stable_doc_uuid', "UNKNOWN"))
+                        metadata["doc_id"] = stable_doc_id 
+                        
+                        # ตั้งค่า doc_type ถ้าไม่มี
+                        metadata["doc_type"] = metadata.get("doc_type", self._re_parse_collection_name(collection_name)[0])
+                            
+                        # สร้าง LcDocument
+                        retrieved_docs.append(LcDocument(
+                            page_content=content,
+                            metadata=metadata
+                        ))
+                    
+                logger.info(f"VSM: ดึงเอกสาร Priority ได้ {len(retrieved_docs)} ชิ้นจาก Persistent Map สำหรับ '{collection_name}'.")
+                return retrieved_docs
+
+            except Exception as e:
+                logger.error(f"VSM: Error ในการดึงข้อมูลตาม chunk ID สำหรับ collection '{collection_name}': {e}")
+                return []
+        
+    def get_limited_chunks_from_doc_ids(
+        self, 
+        stable_doc_ids: Union[str, List[str]], 
+        query: str, # 📌 NEW: รับ Query เพื่อใช้ในการ Search
+        doc_type: str, 
+        enabler: Optional[str] = None, 
+        limit_per_doc: int = 5 # 📌 NEW: จำกัดจำนวน Chunk ต่อ Stable ID (ค่าเริ่มต้น 5)
+    ) -> List[LcDocument]:
+        """
+        Retrieves a limited number of chunks (Documents) for a list of Stable Document IDs 
+        by performing a similarity search on the documents' chunks.
+        
+        Args:
+            stable_doc_ids: List of Stable Document IDs (UUIDs of the source files, e.g., L1 PASS documents).
+            query: The L2 assessment query (used to find the *most relevant* L1 chunks).
+            limit_per_doc: Maximum number of chunks to retrieve per Stable ID.
+        """
+        if isinstance(stable_doc_ids, str):
+            stable_doc_ids = [stable_doc_ids]
+            
+        stable_doc_ids = [uid for uid in stable_doc_ids if uid]
+        if not stable_doc_ids:
+            return []
+            
+        collection_name = _get_collection_name(doc_type, enabler)
+        
+        # 1. โหลด Chroma Instance
+        chroma_instance = self._load_chroma_instance(collection_name) 
+
+        if not chroma_instance:
+            logger.error(f"Collection '{collection_name}' is not loaded.")
+            return []
+
+        all_limited_documents: List[LcDocument] = []
+        total_chunks_retrieved = 0
+        
+        # 2. วนซ้ำเพื่อทำ Similarity Search แยกตาม Stable ID แต่ละตัว
+        for stable_id in stable_doc_ids:
+            stable_id_clean = stable_id.strip()
+
+            # 2.1 สร้าง Filter เพื่อค้นหาเฉพาะ Chunks ภายใน Stable ID นี้
+            doc_filter = {
+                "stable_doc_uuid": stable_id_clean
+            }
+            
+            # 2.2 ใช้ ChromaRetriever เพื่อดึงข้อมูลที่เกี่ยวข้องที่สุด K ชิ้น
+            try:
+                # ใช้ ChromaRetriever เพื่อเข้าถึง similarity_search พร้อม filter
+                custom_retriever = ChromaRetriever(
+                    vectorstore=chroma_instance,
+                    k=limit_per_doc, # K ถูกจำกัดตาม limit_per_doc
+                    filter=doc_filter
+                )
+                
+                # ทำ Similarity Search
+                limited_docs = custom_retriever.get_relevant_documents(query=query)
+
+                # 2.3 เพิ่ม metadata สำหรับ tracking
+                for doc in limited_docs:
+                    doc.metadata['priority_search_type'] = 'limited_vector_search'
+                    doc.metadata['priority_limit'] = limit_per_doc
+                    all_limited_documents.append(doc)
+                    
+                total_chunks_retrieved += len(limited_docs)
+
+            except Exception as e:
+                logger.error(f"❌ Error performing limited vector search for Stable ID '{stable_id_clean}': {e}")
+                # ดำเนินการต่อด้วย Stable ID ถัดไป
+                continue 
+        
+        logger.info(f"✅ Retrieved {total_chunks_retrieved} limited chunks (max {limit_per_doc}/doc) for {len(stable_doc_ids)} Stable IDs from '{collection_name}' using vector search.")
+        return all_limited_documents
 
 # -------------------- Retriever Creation --------------------
     def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, use_rerank: bool = True) -> Any:
