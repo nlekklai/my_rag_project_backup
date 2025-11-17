@@ -1,4 +1,5 @@
 # core/seam_assessment.py
+
 import sys
 import json
 import logging
@@ -77,6 +78,64 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+# =================================================================
+# 🟢 FIX: Helper Function for PDCA Calculation (Priority 1 Part 2 & Priority 2)
+# NOTE: ฟังก์ชันนี้จะทำหน้าที่แปลง llm_score (1-5) เป็น PDCA Breakdown ที่ถูกต้อง
+# =================================================================
+LEVEL_PHASE_MAP = {
+    1: ['P'],
+    2: ['P', 'D'],
+    3: ['P', 'D', 'C'],
+    4: ['P', 'D', 'C', 'A'],
+    5: ['P', 'D', 'C', 'A'] # L5 ใช้ P, D, C, A เช่นเดียวกับ L4 แต่คะแนนเต็มอาจต่างกัน
+}
+
+def calculate_pdca_breakdown_and_pass_status(llm_score: int, level: int) -> Tuple[Dict[str, int], bool, float]:
+    """
+    คำนวณ PDCA breakdown, is_passed status, และ raw_pdca_score 
+    โดยแปลงจาก llm_score (1-5) และ Level ที่กำลังประเมิน 
+    
+    หลักการ:
+    - L1 ต้องใช้ llm_score >= 1
+    - L2 ต้องใช้ llm_score >= 2
+    - L3 ต้องใช้ llm_score >= 3
+    - L4 ต้องใช้ llm_score >= 4
+    - L5 ต้องใช้ llm_score >= 4 
+    """
+    pdca_map: Dict[str, int] = {'P': 0, 'D': 0, 'C': 0, 'A': 0}
+    is_passed: bool = False
+    raw_pdca_score: float = 0.0
+    
+    # 1. ตรวจสอบสถานะ PASS
+    if level == 5:
+        if llm_score >= 4:
+            is_passed = True
+    elif level == 4:
+        if llm_score >= 4:
+            is_passed = True
+    elif level == 3:
+        if llm_score >= 3:
+            is_passed = True
+    elif level == 2:
+        if llm_score >= 2:
+            is_passed = True
+    elif level == 1:
+        if llm_score >= 1:
+            is_passed = True
+
+    # 2. คำนวณ PDCA Breakdown และ raw_pdca_score
+    if is_passed:
+        phases_for_level = LEVEL_PHASE_MAP.get(level, [])
+        score_per_phase = 1 
+        
+        for phase in phases_for_level:
+            pdca_map[phase] = score_per_phase
+            
+        raw_pdca_score = float(sum(pdca_map.values()))
+    
+    return pdca_map, is_passed, raw_pdca_score
 
 
 # =================================================================
@@ -535,7 +594,15 @@ class SEAMPDCAEngine:
 
         llm_duration = time.time() - llm_start
 
-        is_passed = llm_result.get('is_passed', False)
+        # 🟢 FIX: Calculate PDCA breakdown and final pass status based on llm_score (Priority 1 Part 2 & Priority 2)
+        llm_score = llm_result.get('score', 0)
+
+        # 📌 ใช้ฟังก์ชันที่แก้ไขแล้ว
+        pdca_breakdown, is_passed, raw_pdca_score = calculate_pdca_breakdown_and_pass_status(
+            llm_score=llm_score, 
+            level=level
+        )
+        
         pass_status = "✅ PASS" if is_passed else "❌ FAIL"
         
         # 📌 Save on PASS Logic (Auto-Persistence - Idea 2)
@@ -590,9 +657,11 @@ class SEAMPDCAEngine:
             "level": level,
             "statement": statement_text,
             "pdca_phase": pdca_phase,
-            "llm_score": llm_result.get('score', 0),
+            "llm_score": llm_score,
             "reason": llm_result.get('reason', 'N/A'),
-            "is_passed": is_passed,
+            "is_passed": is_passed, # 🟢 FIX: ใช้ค่าที่คำนวณจาก PDCA Logic
+            "pdca_breakdown": pdca_breakdown, # 🟢 NEW FIELD
+            "raw_pdca_score": raw_pdca_score, # 🟢 NEW FIELD
             "rag_query": rag_query,
             "retrieval_duration_s": retrieval_duration,
             "llm_duration_s": llm_duration,
@@ -601,7 +670,7 @@ class SEAMPDCAEngine:
             "aggregated_context_used": aggregated_context
         }
 
-        logger.info(f"    - Result: {pass_status} ({llm_result.get('score', 0)}/1) in {llm_duration:.2f}s. Reason: {llm_result.get('reason', 'N/A')[:50]}...")
+        logger.info(f"    - Result: {pass_status} ({llm_score}/1) in {llm_duration:.2f}s. Reason: {llm_result.get('reason', 'N/A')[:50]}...")
 
         return result
     
@@ -621,169 +690,61 @@ class SEAMPDCAEngine:
         return score
 
     def _calculate_overall_stats(self, target_sub_id: str = "all"):
-        """
-        Calculates the total weighted score, total possible weight, and overall maturity score/level.
-        """
-        total_weighted_score = 0.0
-        total_possible_weight = 0.0
-        assessed_count = 0
-        
-        for result in self.final_subcriteria_results:
-            if target_sub_id.lower() != "all" and result.get('sub_criteria_id') != target_sub_id:
-                continue
+            """
+            Calculates the total weighted score, total possible weight, and overall maturity score/level.
+            """
+            total_weighted_score = 0.0
+            total_possible_weight = 0.0
+            assessed_count = 0
+            
+            for result in self.final_subcriteria_results:
+                if target_sub_id.lower() != "all" and result.get('sub_criteria_id') != target_sub_id:
+                    continue
 
-            weighted_score = result.get('weighted_score', 0.0)
-            weight = result.get('weight', 0)
+                weighted_score = result.get('weighted_score', 0.0)
+                weight = result.get('weight', 0)
+                
+                total_weighted_score += weighted_score
+                total_possible_weight += weight
+                assessed_count += 1
+                
+            overall_maturity_score_avg = 0.0
+            overall_maturity_level = "N/A"
+            overall_progress_percent = 0.0 # ตั้งค่าเริ่มต้นที่ 0.0
             
-            total_weighted_score += weighted_score
-            total_possible_weight += weight
-            assessed_count += 1
-            
-        overall_maturity_score_avg = 0.0
-        overall_maturity_level = "N/A"
-        overall_progress_percent = 0.0 # ตั้งค่าเริ่มต้นที่ 0.0
-        
-        if total_possible_weight > 0:
-            overall_progress_percent = total_weighted_score / total_possible_weight
-            
-            MAX_LEVEL_STATS = 5 
-            overall_maturity_score_avg = overall_progress_percent * MAX_LEVEL_STATS 
+            if total_possible_weight > 0:
+                overall_progress_percent = total_weighted_score / total_possible_weight
+                
+                MAX_LEVEL_STATS = 5 
+                overall_maturity_score_avg = overall_progress_percent * MAX_LEVEL_STATS 
 
-            # Determine Overall Maturity Level (Mapping Placeholder)
-            if overall_maturity_score_avg >= 4.5:
-                overall_maturity_level = "L5"
-            elif overall_maturity_score_avg >= 3.5:
-                overall_maturity_level = "L4"
-            elif overall_maturity_score_avg >= 2.5:
-                overall_maturity_level = "L3"
-            elif overall_maturity_score_avg >= 1.5:
-                overall_maturity_level = "L2"
-            elif overall_maturity_score_avg >= 0.5:
-                overall_maturity_level = "L1"
-            else:
-                overall_maturity_level = "L0"
-        
-        # 📌 ปรับแก้ Key name และคำนวณ % Achieved เป็น 0-100% สำหรับ CLI
-        percentage_achieved_for_cli = overall_progress_percent * 100 
-
-        # Store Results
-        self.total_stats = {
-            "Overall Maturity Score (Avg.)": overall_maturity_score_avg,
-            "Overall Maturity Level (Weighted)": overall_maturity_level,
-            "Number of Sub-Criteria Assessed": assessed_count,
-            "Total Weighted Score Achieved": total_weighted_score,
-            "Total Possible Weight": total_possible_weight,
-            "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percent,
-            # 🟢 KEY ใหม่ที่ CLI ใช้ (ค่า 0-100)
-            "percentage_achieved_run": percentage_achieved_for_cli, 
-            # 🟢 KEY ใหม่ที่ CLI ใช้ (อ้างอิงจาก start_assessment.py)
-            "total_subcriteria": assessed_count, 
-            # 🟢 KEY สำหรับ Target Level
-            "target_level": self.config.target_level,
-        }
-    
-    # -------------------- Export Results --------------------
-    def _export_results(self, data: Dict[str, Any], target_id: str) -> str:
-        """Exports the final results to a JSON file."""
-        
-        # 🟢 1. สร้างชื่อไฟล์ตาม Enabler และ Target ID
-        # ใช้ ID ที่ถูกส่งมาแทนค่า Default
-        file_name = f"assessment_results_{self.config.enabler}_{target_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:4]}.json"
-        
-        # กำหนดที่จัดเก็บ (สมมติว่าเก็บในโฟลเดอร์ 'exports' ที่ Root)
-        export_dir = pathlib.Path(pathlib.Path(__file__).parent.parent, "exports")
-        export_dir.mkdir(exist_ok=True) # สร้างโฟลเดอร์ถ้ายังไม่มี
-        
-        export_path = export_dir / file_name
-        
-        try:
-            with open(export_path, 'w', encoding='utf-8') as f:
-                # ใช้ indent 4 เพื่อให้อ่านง่าย
-                json.dump(data, f, ensure_ascii=False, indent=4)
-            
-            logger.info(f"Successfully exported results for {target_id} to: {export_path}")
-            return str(export_path)
-            
-        except Exception as e:
-            logger.error(f"Error during file export to {export_path}: {e}")
-            return f"EXPORT_FAILED: {e}"
-    
-    def print_detailed_results(self, target_sub_id: str = "all"):
-            """พิมพ์สรุปผลการประเมินโดยละเอียดแบบระดับต่อระดับ"""
-            import sys
-            
-            results_to_print = []
-            if hasattr(self, 'final_subcriteria_results') and isinstance(self.final_subcriteria_results, list):
-                if target_sub_id.lower() == "all":
-                    results_to_print = self.final_subcriteria_results
+                # 🟢 FIX: Completed Logic for Maturity Level Determination
+                if overall_maturity_score_avg >= 4.5:
+                    overall_maturity_level = "L5"
+                elif overall_maturity_score_avg >= 3.5:
+                    overall_maturity_level = "L4"
+                elif overall_maturity_score_avg >= 2.5:
+                    overall_maturity_level = "L3"
+                elif overall_maturity_score_avg >= 1.5:
+                    overall_maturity_level = "L2"
+                elif overall_maturity_score_avg >= 0.5:
+                    overall_maturity_level = "L1"
                 else:
-                    results_to_print = [
-                        res for res in self.final_subcriteria_results 
-                        if res.get('sub_criteria_id') == target_sub_id
-                    ]
-
-            if not results_to_print:
-                print(f"\n[DETAIL] ไม่พบผลลัพธ์สำหรับ Sub-Criteria ID: {target_sub_id} (หรือยังไม่ได้รันการประเมิน)", file=sys.stderr)
-                return
-
-            print("\n\n============================================================")
-            print("                 DETAILED ASSESSMENT RESULTS                  ")
-            print("============================================================")
-
-            for sub_result in results_to_print:
-                sub_id = sub_result.get('sub_criteria_id', 'N/A')
-                sub_name = sub_result.get('sub_criteria_name', 'N/A')
-                achieved_level = sub_result.get('highest_full_level', 0)
-                target_achieved = sub_result.get('target_level_achieved', False)
-                weighted_score = sub_result.get('weighted_score', 0.0)
-                raw_results = sub_result.get('raw_results_ref', []) 
-
-                print(f"\n--- Sub-Criteria ID: {sub_id} - {sub_name} (Weight: {sub_result.get('weight', 0)}) ---")
-                print(f"  > 🏆 Highest Full Level Achieved: L{achieved_level}")
-                print(f"  > ✅ Target Level Achieved (Target L{self.config.target_level}): {'YES' if target_achieved else 'NO'}")
-                print(f"  > 💰 Weighted Score: {weighted_score:.2f}")
-
-                print("\n  >> Level Check Status (L1 -> L5):")
-                for raw_res in raw_results:
-                    level = raw_res.get('level', 'N/A')
-                    status = "✅ PASS" if raw_res.get('is_passed', False) else "❌ FAIL"
-                    reason = raw_res.get('reason', 'N/A')
-                    duration = raw_res.get('llm_duration_s', 0.0)
-
-                    print(f"    - L{level}: {status} (Duration: {duration:.2f}s)")
-                    short_reason = reason[:100] + "..." if len(reason) > 100 else reason
-                    print(f"      - Reason: {short_reason}")
-                
-                # พิมพ์ Action Plan
-                action_plan = sub_result.get('action_plan')
-                if action_plan and isinstance(action_plan, list):
-                    print("\n  >> 🚨 ACTION PLAN (To Achieve Next Level):")
-                    
-                    is_complex_list = action_plan and isinstance(action_plan[0], dict) and 'Phase' in action_plan[0]
-                    
-                    if is_complex_list:
-                        for plan in action_plan:
-                            print(f"    - 🎯 Goal ({plan.get('Phase', 'N/A') or 'N/A'}): {plan.get('Goal', 'N/A')}")
-                            for action in plan.get('Actions', []):
-                                print(f"      • [L{action.get('Failed_Level', 'N/A')}] {action.get('Recommendation', 'N/A')}")
-                    else:
-                        is_simple_list = all(isinstance(item, dict) and 'Recommendation' in item for item in action_plan)
-                        
-                        if is_simple_list:
-                            for action in action_plan:
-                                failed_level = action.get('Failed_Level', 'N/A')
-                                rec = action.get('Recommendation', 'N/A')
-                                print(f"    • [L{failed_level}] {rec}")
-                        else:
-                            print(f"      [WARNING: Unknown AP Structure] {action_plan}")
-                
-                elif action_plan:
-                    print(f"  >> 🚨 ACTION PLAN:")
-                    print(f"      {action_plan}")
-
-                print("-" * 60)
-    
-
+                    overall_maturity_level = "L0"
+            
+            self.total_stats = {
+                "Overall Maturity Score (Avg.)": overall_maturity_score_avg,
+                "Overall Maturity Level (Weighted)": overall_maturity_level,
+                "Number of Sub-Criteria Assessed": assessed_count,
+                "Total Weighted Score Achieved": total_weighted_score,
+                "Total Possible Weight": total_possible_weight,
+                "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percent,
+                "percentage_achieved_run": overall_progress_percent * 100,
+                "total_subcriteria": len(self.rubric),
+                "target_level": self.config.target_level
+            }
+            return self.total_stats
+            
     # -------------------- Multiprocessing Worker Method --------------------
     @staticmethod
     def _assess_single_sub_criteria_worker(
@@ -800,6 +761,8 @@ class SEAMPDCAEngine:
         
         sub_id = sub_criteria['sub_id']
         print(f"[WORKER {os.getpid()}] Starting assessment for {sub_id}...", file=sys.stderr)
+        
+        # 🎯 Action #1: Scoring Weights and Thresholds (REMOVED - now in helper function)
         
         # 1. Re-instantiate Engine and VSM LOCALLY
         try:
@@ -826,7 +789,7 @@ class SEAMPDCAEngine:
 
         # 2. Run sequential Level Check (L1 -> L2 -> L3...)
         highest_full_level = INITIAL_LEVEL - 1
-        is_passed_current_level = True
+        is_passed_current_level = True # Tracks if the previous level passed (for dependency)
         raw_results_for_sub = []
         
         for statement_data in sub_criteria.get('levels', []):
@@ -835,9 +798,16 @@ class SEAMPDCAEngine:
             if level is None or level > config.target_level:
                 continue 
             
-            if not is_passed_current_level:
-                print(f"[WORKER {os.getpid()}] > Skipping L{level}: L{level-1} already failed. Sequential check terminated.", file=sys.stderr)
-                break 
+            # ------------------ Action #5: Sequential Softening (MODIFIED) ------------------
+            # Track dependency status *before* running current level (used for Capping later)
+            dependency_failed = level > 1 and not is_passed_current_level
+            
+            if dependency_failed:
+                 # REMOVE break. Log warning and continue running the assessment.
+                 print(f"[WORKER {os.getpid()}] > L{level-1} failed. **Continuing** to assess L{level} for detailed scoring.", file=sys.stderr)
+            
+            # 🟢 OLD LOGIC REMOVED: if not is_passed_current_level: break 
+            # ------------------ /Action #5 ------------------
 
             result = worker_engine._run_single_assessment(
                 sub_criteria=sub_criteria,
@@ -845,8 +815,35 @@ class SEAMPDCAEngine:
                 vectorstore_manager=worker_vsm 
             )
             
-            raw_results_for_sub.append(result)
-            is_passed_current_level = result.get('is_passed', False)
+            # ------------------ 🟢 Action #1: PDCA Scoring & Capping (FIXED LOGIC) ------------------
+            result_to_process = result 
+            
+            # 1. Retrieve the PASS status calculated in _run_single_assessment (where PDCA logic is correct)
+            is_passed_llm_calculated = result_to_process.get('is_passed', False)
+            
+            # Use the calculated pass status as the default
+            is_passed_level_check = is_passed_llm_calculated
+            
+            # 2. Apply Capping/Penalty if Dependency Failed (Action #5 Capping)
+            if dependency_failed:
+                # If dependency failed, the effective pass status for the sequential flow MUST be FAIL/CAPPED
+                is_passed_level_check = False # FAIL for dependency tracking
+                
+                if is_passed_llm_calculated:
+                    # NOTE: We keep the raw score for reporting, but cap the sequential pass status
+                    print(f"[WORKER {os.getpid()}] > L{level} CAPPED. Dependency L{level-1} failed.", file=sys.stderr)
+
+            # 3. Update the result structure 
+            # NOTE: raw_pdca_score, pdca_breakdown are already correctly populated in result_to_process
+            result_to_process['is_passed'] = is_passed_level_check # Update with dependency-aware status
+            # NOTE: Removed the incorrect re-calculation of weighted_score_achieved/raw_pdca_score/pdca_breakdown
+            
+            # 4. Update status trackers
+            is_passed_current_level = is_passed_level_check # Update tracker for the next iteration
+
+            # ------------------ 🟢 /Action #1 (FIXED) ------------------
+
+            raw_results_for_sub.append(result_to_process)
             
             if is_passed_current_level:
                 highest_full_level = level
@@ -855,7 +852,10 @@ class SEAMPDCAEngine:
         target_plan_level = highest_full_level + 1
         action_plan = []
         
-        if target_plan_level <= MAX_LEVEL and highest_full_level < config.target_level: 
+        # ... (โค้ดการสร้าง Action Plan) ...
+        if target_plan_level <= MAX_LEVEL and highest_full_level < worker_engine.config.target_level: # FIX: Use worker_engine.config
+            print(f"[WORKER {os.getpid()}] > Generating Action Plan: Target L{target_plan_level}...", file=sys.stderr)
+            
             failed_statements_for_plan = [
                 r for r in raw_results_for_sub
                 if r.get("level") == target_plan_level
@@ -865,11 +865,12 @@ class SEAMPDCAEngine:
                 try:
                      action_plan = worker_engine.action_plan_generator(
                         failed_statements_data=failed_statements_for_plan,
-                        sub_id=sub_id, enabler=config.enabler, target_level=target_plan_level 
+                        sub_id=sub_id, enabler=worker_engine.enabler_id, target_level=target_plan_level 
                      )
                 except Exception as e:
                     print(f"[WORKER {os.getpid()}] Action Plan Generation failed for {sub_id}: {e}", file=sys.stderr)
                     action_plan = [{"Phase": "ERROR", "Goal": "Action Plan generation failed."}]
+
 
         # 4. Aggregate Final Results
         final_sub_result = {
@@ -885,7 +886,6 @@ class SEAMPDCAEngine:
         
         print(f"[WORKER {os.getpid()}] Finished assessment for {sub_id}. L{highest_full_level} achieved.", file=sys.stderr)
         return raw_results_for_sub, final_sub_result
-    
 
     # -------------------- Main Execution --------------------
     def run_assessment(
@@ -902,6 +902,8 @@ class SEAMPDCAEngine:
         MAX_L1_ATTEMPTS = 2
 
         
+        # 🎯 Action #1: Scoring Weights and Thresholds (REMOVED - now in helper function)
+
         # 1. Filter Rubric based on target_sub_id
         if target_sub_id.lower() == "all":
             sub_criteria_list = self.rubric
@@ -926,8 +928,16 @@ class SEAMPDCAEngine:
             worker_args = [(sub_data, engine_config_dict) for sub_data in sub_criteria_data_list]
             
             try:
-                with multiprocessing.Pool(processes=max(1, os.cpu_count() - 1)) as pool:
+                # 🟢 FIX: Set context to 'forkserver' or 'spawn' for robust multiprocessing initialization on certain systems (e.g., macOS/Linux)
+                if sys.platform != "win32":
+                    mp_context = multiprocessing.get_context('spawn')
+                    pool = mp_context.Pool(processes=max(1, os.cpu_count() - 1))
+                else:
+                    pool = multiprocessing.Pool(processes=max(1, os.cpu_count() - 1))
+                    
+                with pool:
                     results_tuples = pool.starmap(self._assess_single_sub_criteria_worker, worker_args)
+                    
             except Exception as e:
                 logger.critical(f"Multiprocessing Pool Execution Failed: {e}")
                 logger.exception("FATAL: Multiprocessing pool failed to execute worker functions.")
@@ -941,7 +951,8 @@ class SEAMPDCAEngine:
             run_mode_desc = target_sub_id if target_sub_id.lower() != 'all' else 'All Sub-Criteria (Forced Sequential)'
             logger.info(f"Starting Sequential Assessment for: {run_mode_desc}")
             
-            local_vsm = vectorstore_manager
+            # 🟢 FIX: Initialize local_vsm (แก้ NameError)
+            local_vsm = vectorstore_manager 
             
             if self.config.mock_mode == "none":
                 logger.info("Sequential run: Re-instantiating VectorStoreManager locally in main process for robustness.")
@@ -975,9 +986,15 @@ class SEAMPDCAEngine:
                     if level is None or level > self.target_level:
                         continue 
                     
-                    if not is_passed_current_level:
-                        logger.warning(f"  > Skipping L{level}: L{level-1} already failed. Sequential check terminated.")
-                        break 
+                    # ------------------ Action #5: Sequential Softening (MODIFIED) ------------------
+                    # Track dependency status *before* running current level (used for Capping later)
+                    dependency_failed = level > 1 and not is_passed_current_level
+                    
+                    if dependency_failed:
+                        logger.warning(f"  > L{level-1} failed. **Continuing** to assess L{level} for detailed scoring.")
+                    
+                    # 🟢 OLD LOGIC REMOVED: if not is_passed_current_level: break 
+                    # ------------------ /Action #5 ------------------
 
                     # 📌 NEW LOGIC: Conditional Retry for Level 1 
                     max_attempts = MAX_L1_ATTEMPTS if level == 1 else 1
@@ -986,7 +1003,6 @@ class SEAMPDCAEngine:
                     
                     for attempt in range(max_attempts):
                         
-                        # เพิ่ม Log เพื่อแสดงว่ากำลัง Retry
                         if level == 1 and attempt > 0:
                             logger.warning(f"  > 🔄 RETRYING {sub_id} L1 (Attempt {attempt+1}/{MAX_L1_ATTEMPTS})...")
                         
@@ -996,23 +1012,51 @@ class SEAMPDCAEngine:
                             vectorstore_manager=local_vsm 
                         )
                         
-                        is_passed_current_level = result.get('is_passed', False)
+                        is_passed_llm_raw = result.get('is_passed', False)
                         
-                        # ถ้า PASS: บันทึกผลและหยุด Loop Retry
-                        if is_passed_current_level:
+                        if is_passed_llm_raw:
                             final_result_for_level = result
                             break
                         
-                        # ถ้า FAIL และไม่ใช่ L1 (max_attempts=1) หรือเป็น L1 แต่อยู่ในรอบสุดท้าย
-                        if not is_passed_current_level and (level > 1 or attempt == max_attempts - 1):
+                        if not is_passed_llm_raw and (level > 1 or attempt == max_attempts - 1):
                             final_result_for_level = result
                             break
 
                     # ----------------- END RETRY LOGIC -----------------
                     
-                    self.raw_llm_results.append(result)
-                    raw_results_for_sub_seq.append(result)
-                    is_passed_current_level = result.get('is_passed', False)
+                    result_to_process = final_result_for_level # Use the final result of the level's attempts
+
+                    # ------------------ 🟢 Action #1: PDCA Scoring & Capping (FIXED LOGIC) ------------------
+                    try:
+                        # 1. Retrieve the PASS status calculated in _run_single_assessment (where PDCA logic is correct)
+                        is_passed_llm_calculated = result_to_process.get('is_passed', False)
+                        
+                        # Use the calculated pass status as the default
+                        is_passed_level_check = is_passed_llm_calculated
+                        
+                        # 2. Apply Capping/Penalty if Dependency Failed (Action #5 Capping)
+                        if dependency_failed:
+                            # If dependency failed, the effective pass status for the sequential flow MUST be FAIL/CAPPED
+                            is_passed_level_check = False # FAIL for dependency tracking
+                            
+                            if is_passed_llm_calculated:
+                                logger.warning(f"  > L{level} CAPPED. Dependency L{level-1} failed. Score/PDCA values remain for reporting, but final pass status for sequencing is FAIL.")
+
+                        # 3. Update the result structure (Important for the final JSON export)
+                        # NOTE: raw_pdca_score, pdca_breakdown are already correctly populated in result_to_process
+                        result_to_process['is_passed'] = is_passed_level_check # Update with dependency-aware status
+                        
+                        # 4. Update status trackers
+                        is_passed_current_level = is_passed_level_check # Update tracker for the next iteration
+                        
+                    except Exception as e:
+                        logger.error(f"Error checking dependency status for {sub_id} L{level}: {e}")
+                        is_passed_current_level = False # Default fail if dependency check errors
+
+                    # 5. Append the PROCESSED result
+                    self.raw_llm_results.append(result_to_process)
+                    raw_results_for_sub_seq.append(result_to_process)
+                    # ------------------ 🟢 /Action #1 (FIXED) ------------------
                     
                     if is_passed_current_level:
                         highest_full_level = level
@@ -1059,11 +1103,6 @@ class SEAMPDCAEngine:
         # 6. Calculate Overall Statistics & Finalize
         self._calculate_overall_stats(target_sub_id)
 
-        # # 📌 NEW: Save any successful temporary mappings
-        # if self.temp_map_for_save:
-        #     self._save_evidence_map(self.temp_map_for_save)
-        #     self.temp_map_for_save = {} # เคลียร์ temp map
-        
         final_results = {
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
@@ -1073,11 +1112,53 @@ class SEAMPDCAEngine:
         }
         
         if export:
-             # อัปเดตการเรียกใช้เมธอดให้ส่ง Sub-ID เข้าไปด้วย
-             export_path = self._export_results(
-                 data=final_results, 
-                 target_id=target_sub_id # <--- เพิ่มตัวแปรนี้
-             )
-             final_results["export_path_used"] = export_path
-
+            export_path = self._export_results(
+                results=final_results,
+                enabler=self.enabler_id,
+                sub_criteria_id=target_sub_id,
+                target_level=self.target_level  # หรือระดับที่ต้องการ
+            )
+            final_results["export_path_used"] = export_path
         return final_results
+
+
+    def _export_results(self, results: dict, enabler: str, sub_criteria_id: str, target_level: int, export_dir: str = "assessment_results") -> str:
+        """
+        Exports the final assessment results to a JSON file.
+        
+        Args:
+            results: The dictionary containing the final assessment summary and results.
+            enabler: The enabler ID (e.g., KM).
+            sub_criteria_id: The specific sub-criteria ID being run (e.g., 2.2).
+            target_level: The target level for the assessment.
+            export_dir: The directory to save the output file.
+            
+        Returns:
+            The path to the saved JSON file.
+        """
+        if not os.path.exists(export_dir):
+            os.makedirs(export_dir)
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # สร้างชื่อไฟล์: assessment_results_KM_2.2_YYYYMMDD_HHMMSS.json
+        file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
+        full_path = os.path.join(export_dir, file_name)
+
+        # Note: results dict should contain 'summary' and 'sub_criteria_results' keys
+        # Update summary fields based on the engine data
+        results['summary']['enabler'] = enabler
+        results['summary']['sub_criteria_id'] = sub_criteria_id
+        results['summary']['target_level'] = target_level
+        results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
+
+        try:
+            with open(full_path, 'w', encoding='utf-8') as f:
+                # ใช้ indent=4 เพื่อให้อ่านง่าย
+                json.dump(results, f, ensure_ascii=False, indent=4)
+            
+            logging.info(f"💾 Successfully exported final results to: {full_path}")
+            return full_path
+        
+        except Exception as e:
+            logging.error(f"❌ Failed to export results to {full_path}: {e}")
+            return ""

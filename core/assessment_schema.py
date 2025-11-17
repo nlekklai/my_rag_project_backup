@@ -1,29 +1,57 @@
-#core/assessment_schema.py
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 
 # ====================================================================
-# 1. LLM Assessment Schema (สำหรับ evaluate_with_llm)
-# บังคับให้ LLM ตอบกลับมาในรูปแบบที่กำหนดเพื่อการประมวลผลต่อ
+# 1. Base Assessment Schema
 # ====================================================================
 
-class StatementAssessment(BaseModel):
+class BaseAssessment(BaseModel):
     """
-    Schema สำหรับผลลัพธ์การประเมิน Statement โดย LLM 
+    Base Schema for LLM assessment result.
     """
-    # บังคับให้ LLM ให้คะแนนเป็น 1 (Passed) หรือ 0 (Failed) เท่านั้น
+    # คะแนนรวมของ Level (0-4)
     score: int = Field(
         ..., 
-        description="Must be 1 if the evidence context clearly supports the statement based on the standard, or 0 if it does not."
+        description="The calculated overall maturity score (0-4) for the level being assessed."
     )
-    # คำอธิบายว่าทำไมถึงให้คะแนนนี้
+    # ผลลัพธ์ Pass/Fail 
+    is_passed: bool = Field(
+        ...,
+        description="Boolean indicating if the statement is fully passed (true) or failed (false) based on the evidence."
+    )
+    # คำอธิบายและเหตุผล
     reason: str = Field(
         ..., 
-        description="Detailed reason, in Thai, explaining why the statement received the given score, referencing specific details from the context."
+        description="Detailed reason, in Thai, explaining the scoring and pass/fail decision, referencing specific details and citations from the context (e.g., [SOURCE: filename])."
     )
 
 # ====================================================================
-# 2. LLM Summary Schema (สำหรับ summarize_context_with_llm)
+# 2. Combined Assessment Schema (CRITICAL FIX: Includes PDCA Breakdown)
+# **นี่คือคลาส CombinedAssessment ที่ถูกเรียกใช้และเคยหายไป**
+# ====================================================================
+class CombinedAssessment(BaseAssessment):
+    """
+    Schema สำหรับผลลัพธ์การประเมินสุดท้าย ที่รวมคะแนน PDCA breakdown
+    """
+    P_Plan_Score: int = Field(
+        ..., 
+        description="Plan score (0, 1, or 2). 0=No evidence, 1=Partial/Incomplete, 2=Sufficient/Full."
+    )
+    D_Do_Score: int = Field(
+        ..., 
+        description="Do score (0, 1, or 2). 0=No evidence, 1=Partial/Incomplete, 2=Sufficient/Full."
+    )
+    C_Check_Score: int = Field(
+        ..., 
+        description="Check score (0, 1, or 2). 0=No evidence, 1=Partial/Incomplete, 2=Sufficient/Full."
+    )
+    A_Act_Score: int = Field(
+        ..., 
+        description="Act score (0, 1, or 2). 0=No evidence, 1=Partial/Incomplete, 2=Sufficient/Full."
+    )
+
+# ====================================================================
+# 3. LLM Summary Schema (สำหรับ summarize_context_with_llm)
 # ====================================================================
 
 class EvidenceSummary(BaseModel):
