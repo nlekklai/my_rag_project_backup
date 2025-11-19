@@ -16,6 +16,8 @@ CHUNK_OVERLAP: Final[int] = 250
 QUERY_INITIAL_K = 20
 QUERY_FINAL_K = 5
 
+IS_LOG_L3_CONTEXT = True
+
 
 # ==================== Supported File & Document Types ====================
 SUPPORTED_TYPES: Final[List[str]] = [

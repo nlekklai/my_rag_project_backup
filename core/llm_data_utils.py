@@ -8,11 +8,14 @@ Responsibilities:
 - evaluate_with_llm: produce {score, reason, is_passed, P/D/C/A breakdown}
 - summarize_context_with_llm: produce evidence summary
 - create_structured_action_plan: generate action plan JSON list
+- enhance_query_for_statement: Multi-Query generation for RAG
 - Mock control helper: set_mock_control_mode
 """
 import logging, time, json, json5, random, hashlib, regex as re
-from typing import List, Dict, Any, Optional, TypeVar, Final
-from pydantic import BaseModel, ConfigDict, Field, RootModel # RootModel ถูก Import เพื่อความถูกต้อง
+from typing import List, Dict, Any, Optional, TypeVar, Final, Union
+from pydantic import BaseModel, ConfigDict, Field, RootModel 
+import uuid 
+import sys 
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -57,12 +60,12 @@ except Exception as e:
     def _get_collection_name(doc_type, enabler): return f"{doc_type}_{enabler}"
     class ChromaRetriever: pass
 
-    # 🟢 FIX: Define missing constants here (Action #2, #3 Dependency Fix)
+    # 🟢 FIX: Define missing constants here
     INITIAL_TOP_K: Final[int] = 10
     FINAL_K_RERANKED: Final[int] = 3
     DEFAULT_ENABLER = "KM"
     
-    # 🟢 PLACEHOLDER: NEW COMBINED ASSESSMENT SCHEMA (Action #2 & #3)
+    # 🟢 PLACEHOLDER: NEW COMBINED ASSESSMENT SCHEMA
     class CombinedAssessment(BaseModel):
         model_config = ConfigDict(extra='allow')
         score: int = Field(0, description="Overall Score (0-4)")
@@ -77,7 +80,7 @@ except Exception as e:
     class StatementAssessment(BaseModel): score: int = 0; reason: str = "Mock reason"
     class EvidenceSummary(BaseModel): summary: str; suggestion_for_next_level: str
     
-    # 🟢 FIX: แก้ไข Pydantic V2 Syntax ใน Placeholder (เปลี่ยน __root__ เป็น BaseModel ธรรมดา)
+    # 🟢 FIX: แก้ไข Pydantic V2 Syntax ใน Placeholder
     class ActionPlanActions(BaseModel):
         Phase: str = "Mock Phase"
         Goal: str = "Mock Goal"
@@ -88,45 +91,13 @@ except Exception as e:
     
     # Define mock prompts to prevent crash if real ones are missing
     SYSTEM_ASSESSMENT_PROMPT = "Assess the statement based on the provided context."
-    USER_ASSESSMENT_PROMPT = "Context: {context}\nStatement: {statement_text}"
+    USER_ASSESSMENT_PROMPT = "Context: {context}\nStatement: {statement_text}\nLevel Constraint: {level_constraint}\nContextual Rules: {contextual_rules_prompt}"
     SYSTEM_ACTION_PLAN_PROMPT = "Generate an action plan."
     ACTION_PLAN_PROMPT = "Failed statements: {failed_statements_list}"
     SYSTEM_EVIDENCE_DESCRIPTION_PROMPT = "Summarize evidence."
     EVIDENCE_DESCRIPTION_PROMPT = "Context: {context}"
     SYSTEM_LOW_LEVEL_PROMPT = "Assess L1/L2 simply."
-    USER_LOW_LEVEL_PROMPT = "Context: {context}\nL1/L2 Statement: {statement_text}"
-
-
-try:
-    # Use a mock LLM instance if the real one isn't available
-    from models.llm import llm as llm_instance
-except Exception:
-    logger.warning("Using Mock LLM Instance.")
-    class MockLLM:
-        def invoke(self, messages, config):
-            global _MOCK_COUNTER
-            _MOCK_COUNTER += 1
-            # Simulate a pass/fail pattern for controlled mock
-            is_pass = (_MOCK_COUNTER % 3 != 0) if _MOCK_FLAG else True
-            score = 1 if is_pass else 0
-            reason = f"Mock assessment: {'Passed' if is_pass else 'Failed'} (Count: {_MOCK_COUNTER})"
-            
-            # Simulate JSON output based on the prompt's intent
-            if "JSON ARRAY" in messages[0]['content']: # Action Plan
-                return json.dumps([{"Phase":f"Mock Phase {_MOCK_COUNTER}","Goal":reason}])
-            if "score" in messages[0]['content']: # Assessment (Using Combined Schema now)
-                return json.dumps({
-                    "score": score,
-                    "reason": reason,
-                    "is_passed": is_pass,
-                    "P_Plan_Score": 2 if is_pass else 0, # Mock PDCA
-                    "D_Do_Score": 2 if is_pass else 0,
-                    "C_Check_Score": 2 if is_pass else 0,
-                    "A_Act_Score": 2 if is_pass else 0,
-                })
-            
-            return f"Mock Response {_MOCK_COUNTER}"
-    llm_instance = MockLLM()
+    USER_LOW_LEVEL_PROMPT = "Context: {context}\nL1/L2 Statement: {statement_text}\nLevel Constraint: {level_constraint}\nContextual Rules: {contextual_rules_prompt}"
 
 
 # ------------------------
@@ -179,14 +150,11 @@ def retrieve_context_by_doc_ids(
         return {"top_evidences": []}
 
     try:
-        # manager = VectorStoreManager() # ❌ ลบหรือคอมเมนต์บรรทัดนี้ออก
-
         normalized_uuids = normalize_stable_ids(doc_uuids)
 
         # Note: manager.get_documents_by_id must support list of normalized IDs
         docs: List[LcDocument] = manager.get_documents_by_id(normalized_uuids, doc_type, enabler)
 
-        # ... (ส่วนที่เหลือของโค้ดเหมือนเดิม) ...
         top_evidences = [{
             "doc_id": d.metadata.get("stable_doc_uuid"),
             "doc_type": d.metadata.get("doc_type"),
@@ -202,164 +170,186 @@ def retrieve_context_by_doc_ids(
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
+# -------------------- RAG Retrieval Functions --------------------
 
-def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[str]=None,
-                                 vectorstore_manager: Optional['VectorStoreManager']=None,
-                                 top_k: int=FINAL_K_RERANKED, initial_k: int=INITIAL_TOP_K,
-                                 # 📌 NEW ARGUMENT: Persistent Mapping UUIDs
-                                 mapped_uuids: Optional[List[str]]=None,
-                                 stable_doc_ids: Optional[List[str]]=None,
-                                 # 🟢 FIX: เพิ่ม priority_docs_input เข้ามาในลายเซ็นต์หลัก
-                                 priority_docs_input: Optional[List[Any]] = None,
-                                 sub_id: Optional[str]=None, level: Optional[int]=None) -> Dict[str, Any]:
+def retrieve_context_with_filter(
+    query: Union[str, List[str]], 
+    doc_type: str, 
+    enabler: Optional[str]=None,
+    vectorstore_manager: Optional['VectorStoreManager']=None,
+    top_k: int=FINAL_K_RERANKED, 
+    initial_k: int=INITIAL_TOP_K,
+    mapped_uuids: Optional[List[str]]=None,
+    stable_doc_ids: Optional[List[str]]=None,
+    priority_docs_input: Optional[List[Any]] = None,
+    # 🟢 FIX: เพิ่ม arguments ที่ขาดหายไป (จาก seam_assessment.py)
+    sequential_chunk_uuids: Optional[List[str]] = None, 
+    sub_id: Optional[str]=None, 
+    level: Optional[int]=None,
+    logger: logging.Logger = logging.getLogger(__name__) 
+) -> Dict[str, Any]:
 
     """
     Retrieves and reranks relevant context from the specified VectorStore collection,
-    GUARANTEEING the inclusion of pre-mapped priority documents in the final set.
+    supporting MULTI-QUERY search and GUARANTEEING the inclusion of pre-mapped 
+    priority documents (Hybrid Retrieval).
     """
     start_time = time.time()
+    all_retrieved_chunks: List[Any] = []
+    
+    # 📌 FIX: รวบรวม sequential_chunk_uuids เข้าใน priority_docs_input
+    if sequential_chunk_uuids:
+        if mapped_uuids:
+             mapped_uuids.extend(sequential_chunk_uuids)
+        else:
+             mapped_uuids = sequential_chunk_uuids
+
     try:
-        # 1-3. Setup & K Setting (โค้ดเดิม)
+        # 1. Setup & Query List
         manager = vectorstore_manager
         if manager is None: raise ValueError("VectorStoreManager is not initialized.")
         collection_name = _get_collection_name(doc_type, enabler).lower()
-        retriever = manager.get_retriever(collection_name)
-        if retriever is None: raise ValueError(f"Retriever initialization failed for {collection_name}.")
-
-        logger.critical(f"🧭 DEBUG: Successfully retrieved Core Retriever. Starting query...")
-
-        if hasattr(retriever, 'k'): retriever.k = initial_k
-        if hasattr(retriever, 'search_kwargs') and isinstance(retriever.search_kwargs, dict):
-            retriever.search_kwargs['k'] = initial_k
-
-        # ----------------------------------------------------
-        # 4. 📌 Persistent Mapping (Priority Context Retrieval)
-        # ----------------------------------------------------
-        # 🟢 FIX 1: ประกาศตัวแปรอย่างชัดเจน
+        queries_to_run = [query] if isinstance(query, str) else query
+        
+        # 2. Persistent Mapping (Hybrid Retrieval) SETUP
         guaranteed_priority_chunks: List[Any] = []
-
+        mapped_uuids_for_vsm_search: Optional[List[str]] = None
+        
         if priority_docs_input:
             logger.critical(f"🧭 DEBUG: Using {len(priority_docs_input)} pre-calculated priority chunks (Limited Chunks Mode).")
             guaranteed_priority_chunks = priority_docs_input
-
-        elif mapped_uuids and manager and collection_name:
-            # ⚠️ Fallback Logic (โค้ดเดิม - ใช้ mapped_uuids ในการดึงเอกสารเต็ม)
+            mapped_uuids_for_vsm_search = None 
+        elif mapped_uuids:
+            # 2b. Fallback: ใช้ mapped_uuids เป็นตัวกรองใน VSM Search (Step 3)
             normalized_mapped_uuids = normalize_stable_ids(mapped_uuids)
-            logger.critical(f"🧭 DEBUG: [CHECK] Input mapped_uuids count: {len(normalized_mapped_uuids)}")
-            logger.critical(f"🧭 DEBUG: Retrieving {len(normalized_mapped_uuids)} priority documents by DOCUMENT ID...")
-            try:
-                if hasattr(manager, 'get_documents_by_id'):
-                    retrieved_mapped_docs = manager.get_documents_by_id(
-                        stable_doc_ids=normalized_mapped_uuids,
-                        doc_type=doc_type,
-                        enabler=enabler
-                    )
-                    # 🟢 FIX 2: กำหนดค่าเข้าตัวแปรที่ถูกต้อง
-                    guaranteed_priority_chunks = retrieved_mapped_docs
-                else:
-                    logger.error("❌ CRITICAL: VSM lacks 'get_documents_by_id' method.")
-
-                logger.critical(f"🧭 DEBUG: [CHECK] Retrieved priority_docs count: {len(guaranteed_priority_chunks)}")
-                logger.critical(f"🧭 DEBUG: Retrieved {len(guaranteed_priority_chunks)} documents from persistent mapping (Actual Mapped Docs).")
-            except Exception as e:
-                logger.error(f"Priority retrieval by UUID failed: {e}")
-
-        # 🟢 FIX 3: ใช้ตัวแปรที่ถูกต้องในการนับ
-        correct_mapped_count = len(guaranteed_priority_chunks)
-
-        logger.critical(f"🧭 DEBUG: [CHECK FINAL] priority_docs size BEFORE RAG Search: {correct_mapped_count}")
-
-        # ----------------------------------------------------
-        # 5. Invoke Retrieval (Standard RAG Search) (โค้ดเดิม)
-        # ----------------------------------------------------
-        search_kwargs = {"k": initial_k}
+            mapped_uuids_for_vsm_search = normalized_mapped_uuids
+            logger.critical(f"🧭 DEBUG: [FALLBACK] Using {len(normalized_mapped_uuids)} UUIDs as search filter.")
+            
+        # 3. 🎯 Invoke Retrieval (MULTI-QUERY Standard RAG Search)
+        rag_search_filters = mapped_uuids_for_vsm_search
         if stable_doc_ids:
-            normalized_uuids = normalize_stable_ids(stable_doc_ids)
-            search_kwargs["filter"] = {"stable_doc_uuid": {"$in": normalized_uuids}}
-            logger.critical(f"🧭 DEBUG: RAG Filter by Stable Doc IDs activated ({len(normalized_uuids)} IDs).")
+            additional_uuids = set(normalize_stable_ids(stable_doc_ids))
+            if rag_search_filters:
+                rag_search_filters = list(set(rag_search_filters) | additional_uuids)
+            else:
+                rag_search_filters = list(additional_uuids)
+        
+        retriever = manager.get_retriever(collection_name)
+        if retriever is None: raise ValueError(f"Retriever initialization failed for {collection_name}.")
+        
+        search_kwargs = {"k": initial_k}
+        
+        for q in queries_to_run:
+            search_kwargs_for_query = search_kwargs.copy()
+            
+            # (❌ คอมเมนต์ส่วน Filter ออกไปแล้ว)
 
-        retrieved_docs: List[Any] = []
-        if callable(getattr(retriever, 'get_relevant_documents', None)):
-            retrieved_docs = retriever.get_relevant_documents(query)
-        elif callable(getattr(retriever, 'invoke', None)):
-            retrieved_docs = retriever.invoke(query, config={"configurable": {"search_kwargs": search_kwargs}})
-        else:
-            raise AttributeError("Retriever object lacks methods.")
+            retrieved_docs: List[Any] = []
+            
+            # 📌 เรียกใช้ Retriever
+            if callable(getattr(retriever, 'invoke', None)):
+                retrieved_docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs_for_query}})
+            elif callable(getattr(retriever, 'get_relevant_documents', None)):
+                retrieved_docs = retriever.get_relevant_documents(q)
+            else:
+                raise AttributeError("Retriever object lacks methods.")
 
-        # Filter to only clean documents
-        cleaned_rag_docs: List[Any] = []
-        for doc in retrieved_docs:
-            if hasattr(doc, 'page_content') and hasattr(doc, 'metadata'):
-                cleaned_rag_docs.append(doc)
+            # 📌 รวบรวมผลลัพธ์ทั้งหมด
+            all_retrieved_chunks.extend(retrieved_docs)
+            
+        logger.critical(f"🧭 DEBUG: Total chunks retrieved before dedup: {len(all_retrieved_chunks)}")
 
-        # ----------------------------------------------------
-        # 6. 🛠️ Rerank Strategy: Guaranteed Inclusion
-        # ----------------------------------------------------
+        # 4. 🛠️ Rerank Strategy: Guaranteed Inclusion (รวม Priority Chunks)
 
-        # 6a. Filter RAG Search Results to exclude Priority Chunks (Dedup)
-        # 🟢 FIX 4: ใช้ตัวแปรที่ถูกต้องในการทำ Dedup
-        priority_chunk_uuids = set([d.metadata.get('chunk_uuid') for d in guaranteed_priority_chunks])
+        all_chunks_to_process = all_retrieved_chunks + guaranteed_priority_chunks
 
-        rag_search_results_only = []
-        newly_added_rag_count = 0
-
-        for doc in cleaned_rag_docs:
+        # 4b. FIX: Filter RAG Search Results to exclude Priority Chunks (Dedup)
+        unique_chunks_map = {}
+        for doc in all_chunks_to_process:
             chunk_uuid = doc.metadata.get('chunk_uuid')
-            if chunk_uuid and chunk_uuid in priority_chunk_uuids:
-                continue # ข้าม Chunks ที่เป็น Priority ไปแล้ว
-            rag_search_results_only.append(doc)
-            newly_added_rag_count += 1
-
-        logger.info(f"    - Dedup Merged: {correct_mapped_count} Priority Chunks + {newly_added_rag_count} New RAG Chunks.")
-
-
-        # 6b. Determine Reranker Slots
+            
+            # 🟢 FIX (NameError): ใช้ uuid.uuid4()
+            if not chunk_uuid:
+                # Fallback Dedup: (Content + Source)
+                content_hash = hash(doc.page_content.strip())
+                source_id = doc.metadata.get('doc_uuid') or doc.metadata.get('stable_doc_uuid') or doc.metadata.get('source', 'unknown')
+                dedup_key = f"{source_id}-{content_hash}"
+                
+                if dedup_key not in unique_chunks_map:
+                    # สร้าง UUID จำลองสำหรับ document ที่ไม่มี chunk_uuid
+                    doc.metadata['chunk_uuid'] = str(uuid.uuid4())
+                    unique_chunks_map[dedup_key] = doc
+                    # ใช้ chunk_uuid ที่สร้างใหม่สำหรับ Logic ต่อไป
+                    chunk_uuid = doc.metadata['chunk_uuid']
+                else:
+                    # ถ้าซ้ำกันด้วย content hash ก็ข้ามไป
+                    continue
+            
+            # Logic Dedup:
+            if chunk_uuid and chunk_uuid not in unique_chunks_map:
+                 if doc in guaranteed_priority_chunks and doc.metadata.get('relevance_score') is None:
+                     doc.metadata['relevance_score'] = 1.0 
+                 unique_chunks_map[chunk_uuid] = doc
+            
+        deduplicated_chunks = list(unique_chunks_map.values())
+        
+        # 4c. กำหนดจำนวน Slots Reranker 
+        correct_mapped_count = len([d for d in deduplicated_chunks if d in guaranteed_priority_chunks]) # นับเฉพาะที่ยังอยู่หลัง Dedup
         slots_available = max(0, top_k - correct_mapped_count)
+        
+        logger.info(f"    - Dedup Merged: Total unique chunks = {len(deduplicated_chunks)}. Priority Chunks (Guaranteed) = {correct_mapped_count}.")
 
-        # 6c. Rerank Logic
-        # 🟢 FIX 5: ใช้ตัวแปรที่ถูกต้องในการเริ่มต้น
-        final_selected_docs: List[Any] = guaranteed_priority_chunks
-        reranked_rag_results = []
 
-        if slots_available > 0 and rag_search_results_only:
+        # 4d. Rerank Logic
+        final_selected_docs: List[Any] = [d for d in deduplicated_chunks if d in guaranteed_priority_chunks] # ใช้ Chunks ที่ถูก Guarantee และ Dedup แล้ว
+
+        priority_chunk_uuids = set([d.metadata.get('chunk_uuid') for d in final_selected_docs])
+        rerank_candidates = [d for d in deduplicated_chunks if d.metadata.get('chunk_uuid') not in priority_chunk_uuids]
+
+        if slots_available > 0 and rerank_candidates:
             reranker = get_global_reranker(top_k)
 
             if reranker is None or not hasattr(reranker, 'compress_documents'):
                 logger.error("🚨 CRITICAL FALLBACK: Reranker failed to load. Using simple truncation of NEW RAG results.")
-                reranked_rag_results = rag_search_results_only[:slots_available]
+                # 📌 FIX: ใช้ score ภายใน metadata (ถ้ามี) สำหรับการจัดเรียง Fallback
+                reranked_rag_results = sorted(rerank_candidates, key=lambda x: x.metadata.get('relevance_score', 0.0), reverse=True)[:slots_available]
             else:
+                rerank_query = queries_to_run[0] 
+                
+                # 📌 Reranker จะเพิ่ม score กลับเข้าไปใน metadata
                 reranked_rag_results = reranker.compress_documents(
-                    query=query,
-                    documents=rag_search_results_only,
+                    query=rerank_query,
+                    documents=rerank_candidates,
                     top_n=slots_available
                 )
 
             final_selected_docs.extend(reranked_rag_results)
 
-        # 7. Truncate (Safety measure)
-        final_selected_docs = final_selected_docs[:top_k]
-
-        # 8. Output Formatting (โค้ดเดิม แต่ใช้ final_selected_docs)
+        # 5. Output Formatting
         top_evidences = []
         aggregated_context_list = []
 
-        for doc in final_selected_docs:
+        for doc in final_selected_docs[:top_k]:
             source = doc.metadata.get("source") or doc.metadata.get("doc_source")
             content = doc.page_content.strip()
-            relevance_score_raw = doc.metadata.get("relevance_score")
+            # 🟢 FIX: ใช้ 'relevance_score' จาก Metadata ซึ่งถูกตั้งโดย Reranker
+            relevance_score_raw = doc.metadata.get("relevance_score") 
 
             relevance_score = f"{float(relevance_score_raw):.4f}" if relevance_score_raw is not None else "N/A"
-            doc_uuid = doc.metadata.get("chunk_uuid") or doc.metadata.get("doc_uuid")
+            doc_uuid = doc.metadata.get("doc_uuid") or doc.metadata.get("chunk_uuid")
 
             top_evidences.append({
+                # 🟢 FIX: ใช้ chunk_uuid
                 "doc_uuid": doc_uuid,
                 "doc_id": doc.metadata.get("stable_doc_uuid"),
                 "doc_type": doc.metadata.get("doc_type"),
-                "chunk_uuid": doc.metadata.get("chunk_uuid"),
+                "chunk_uuid": doc.metadata.get("chunk_uuid"), 
                 "source": source,
                 "text": content,
                 "relevance_score": relevance_score,
-                "chunk_index": doc.metadata.get("chunk_index")
+                "chunk_index": doc.metadata.get("chunk_index"),
+                # 🟢 FIX: เพิ่ม 'score' สำหรับใช้ใน Logic ของ _run_single_assessment
+                "score": float(relevance_score_raw) if relevance_score_raw is not None else 0.0 
             })
             doc_id_short = doc.metadata.get('stable_doc_uuid', 'N/A')[:8]
             aggregated_context_list.append(f"[SOURCE: {source} (ID:{doc_id_short}...)] {content}")
@@ -373,19 +363,21 @@ def retrieve_context_with_filter(query: str, doc_type: str, enabler: Optional[st
 
         return {
             "top_evidences": top_evidences,
-            "aggregated_context": aggregated_context
+            "aggregated_context": aggregated_context,
+            "retrieval_time": duration # 🟢 FIX: เพิ่ม retrieval_time กลับมาในผลลัพธ์
         }
 
     except Exception as e:
         logger.error(f"retrieve_context_with_filter error: {type(e).__name__}: {e}")
-        return {"top_evidences": [], "aggregated_context": f"ERROR: RAG retrieval failed due to {type(e).__name__}: {e}"}
+        return {"top_evidences": [], "aggregated_context": f"ERROR: RAG retrieval failed due to {type(e).__name__}: {e}", "retrieval_time": time.time() - start_time}
 
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
                                  top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K,
-                                 # 🟢 NEW: ต้องรับ 2 arguments นี้
+                                 # 🟢 NEW: ส่งต่อ arguments
                                  mapped_uuids: Optional[List[str]]=None,
                                  priority_docs_input: Optional[List[Any]] = None,
+                                 sequential_chunk_uuids: Optional[List[str]] = None, 
                                  sub_id: Optional[str]=None, level: Optional[int]=None) -> Dict[str, Any]:
     """
     Retrieves a small, focused context for low levels (L1, L2) using a reduced k (LOW_LEVEL_K).
@@ -398,12 +390,66 @@ def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional
         vectorstore_manager=vectorstore_manager,
         top_k=LOW_LEVEL_K,
         initial_k=initial_k,
-        # 🟢 NEW: ส่งต่อ arguments
         mapped_uuids=mapped_uuids,
         priority_docs_input=priority_docs_input,
+        sequential_chunk_uuids=sequential_chunk_uuids, 
         sub_id=sub_id,
         level=level
     )
+# -------------------- Query Enhancement Functions --------------------
+def enhance_query_for_statement(
+    statement_text: str,
+    sub_id: str,
+    # 🟢 FIX: Argument list ที่ถูกต้องตามการเรียกใน seam_assessment.py
+    statement_id: str, 
+    level: int,
+    enabler_id: str,
+    focus_hint: str,
+    llm_executor: Any = None
+) -> List[str]:
+    """
+    Generates a list of tailored queries (Multi-Query strategy) based on the statement 
+    and PDCA focus. The logic is hardcoded here to generate P/D, C, and A queries 
+    based on the assessment level (L3+ gets C/A queries).
+    
+    Returns: List[str] of queries.
+    """
+    
+    # Q1: Base Query (P/D Focus)
+    # เน้นที่ statement หลักและข้อจำกัดของ level, เป็นคำค้นหาหลัก
+    base_query = (
+        f"{statement_text}. {focus_hint} หลักฐานแสดงแผน การดำเนินการ และโครงสร้างของ {statement_id} "
+        f"ตามบริบทของ {enabler_id}"
+    )
+    
+    queries = [base_query]
+
+    # Q2 & Q3: เพิ่ม C/A Focus Queries สำหรับระดับ L3 ขึ้นไป
+    # เพื่อให้แน่ใจว่า RAG จะหาหลักฐานการตรวจสอบ (Check) และการปรับปรุง (Act)
+    if level >= 3:
+        
+        # 🟢 C (Check/Evaluation) Focus Query
+        # เน้นหาหลักฐานการวัดผล ประเมินผล
+        c_query = (
+            f"หลักฐานการวัดผล ประเมินผล หรือการตรวจสอบ ว่า {statement_id} "
+            f"ดำเนินการตามแผนหรือไม่ รายงานการตรวจสอบ รายงานการวัดผลความเข้าใจ "
+            f"แบบสอบถามผลตอบรับ การวิเคราะห์ช่องว่าง ผลลัพธ์ของการประเมิน"
+        )
+        queries.append(c_query)
+
+        # 🟢 A (Act/Improvement) Focus Query
+        # เน้นหาหลักฐานการปรับปรุง การทบทวน การเปลี่ยนแปลง
+        a_query = (
+            f"หลักฐานการปรับปรุง การทบทวน หรือการเปลี่ยนแปลงวิธีการดำเนินการของ {statement_id} "
+            f"ตามผลการประเมิน ข้อเสนอแนะ หรือผลตอบรับ การปรับปรุงแผนงาน "
+            f"บทเรียนที่ได้รับ และการวางแผนสำหรับการดำเนินการรอบถัดไป"
+        )
+        queries.append(a_query)
+    
+    # สำหรับ L1/L2 จะคืนค่าเฉพาะ Base Query เดียว
+    logger.info(f"Generated {len(queries)} queries for {sub_id} L{level} (ID: {statement_id}).")
+    return queries
+
 
 # ------------------------
 # Robust JSON
@@ -456,27 +502,33 @@ def _normalize_keys(data: Any) -> Any:
 # ------------------------
 # LLM fetcher
 # ------------------------
-def _fetch_llm_response(system_prompt: str, user_prompt: str, max_retries: int=_MAX_LLM_RETRIES) -> str:
+def _fetch_llm_response(
+    system_prompt: str, 
+    user_prompt: str, 
+    max_retries: int=_MAX_LLM_RETRIES,
+    llm_executor: Any = None 
+) -> str:
     global _MOCK_FLAG
+
+    llm = llm_executor
+    
+    if llm is None and not _MOCK_FLAG: 
+        raise ConnectionError("LLM instance not initialized (Missing llm_executor).")
 
     if _MOCK_FLAG:
         # ใช้ Mock LLM ที่ถูกตั้งค่าไว้
         try:
-             # เรียกใช้ Mock LLM โดยตรง
-             resp = llm_instance.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config={"temperature": 0.0})
+             resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config={"temperature": 0.0})
              if hasattr(resp, "content"): return resp.content.strip()
              return str(resp).strip()
         except Exception as e:
             logger.error(f"Mock LLM invocation failed: {e}")
             raise ConnectionError("Mock LLM failed to respond.")
 
-
-    if llm_instance is None: raise ConnectionError("LLM instance not initialized") # แก้ไขจาก throw เป็น raise แล้ว
-
     config = {"temperature": 0.0}
     for attempt in range(max_retries):
         try:
-            resp = llm_instance.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config=config)
+            resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config=config)
             if hasattr(resp, "content"): return resp.content.strip()
             if isinstance(resp, dict) and "content" in resp: return resp["content"].strip()
             if isinstance(resp, str): return resp.strip()
@@ -484,6 +536,7 @@ def _fetch_llm_response(system_prompt: str, user_prompt: str, max_retries: int=_
         except Exception as e:
             logger.warning(f"LLM attempt {attempt+1} failed: {e}")
             time.sleep(0.5)
+            
     raise ConnectionError("LLM calls failed after retries")
 
 # ------------------------
@@ -526,31 +579,41 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     }
     return result
 
-def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, **kwargs) -> Dict[str, Any]:
+def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
+    """Standard Evaluation for L3+"""
 
     # ตรวจสอบ Context ก่อนส่งให้ LLM
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
 
+    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
+
     # L3+ (Standard Evaluation)
     user_prompt = USER_ASSESSMENT_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, level=level, statement_text=statement_text, sub_id=sub_id,
-        context=context or "ไม่มีหลักฐานที่เกี่ยวข้อง", pdca_phase=kwargs.get("pdca_phase",""), level_constraint=kwargs.get("level_constraint","")
+        sub_criteria_name=sub_criteria_name, 
+        level=level, 
+        statement_text=statement_text, 
+        sub_id=sub_id,
+        context=context or "ไม่มีหลักฐานที่เกี่ยวข้อง", 
+        pdca_phase=kwargs.get("pdca_phase",""), 
+        level_constraint=kwargs.get("level_constraint",""),
+        contextual_rules_prompt=contextual_rules_prompt 
     )
     try:
-        # 🟢 CHANGE: ใช้ CombinedAssessment Schema
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
     except: schema_json = '{"score":0,"reason":"string"}'
 
-    # 🟢 WARNING: SYSTEM_ASSESSMENT_PROMPT MUST BE UPDATED (Action #4)
     system_prompt = SYSTEM_ASSESSMENT_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
     try:
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES)
+        # 1. เรียก LLM และรับ raw response
+        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
+        
+        # 2. Extract และ Normalize JSON
         parsed = _normalize_keys(_robust_extract_json(raw) or {})
-
-        # 🟢 CHANGE: ใช้ Helper function เพื่อ extract scores ทั้งหมด
+        
+        # 3. คืนผลลัพธ์
         return _extract_combined_assessment(parsed, score_default_key="score")
 
     except Exception as e:
@@ -566,8 +629,7 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
             "A_Act_Score": 0,
         }
 
-# NEW: Low-Level Evaluation (Simplified Prompt)
-def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, **kwargs) -> Dict[str, Any]:
+def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
     """
     Uses a simplified prompt for L1/L2 assessment to reduce complexity and cost.
     """
@@ -577,8 +639,8 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
     if failure_result:
         return failure_result
 
-    # 🟢 ดึง Level Constraint ออกจาก kwargs
     level_constraint = kwargs.get("level_constraint", "")
+    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "") 
 
     # L1/L2 (Low-Level Evaluation)
     user_prompt = USER_LOW_LEVEL_PROMPT.format(
@@ -588,22 +650,23 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
         sub_id=sub_id,
         context=context,
         pdca_phase=kwargs.get("pdca_phase", ""),
-        # 🟢 เพิ่ม Level Constraint เข้าไปใน Format
-        level_constraint=level_constraint
+        level_constraint=level_constraint,
+        contextual_rules_prompt=contextual_rules_prompt 
     )
     try:
-        # 🟢 CHANGE: ใช้ CombinedAssessment Schema
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
     except: schema_json = '{"score":0,"reason":"string"}'
 
-    # 🟢 WARNING: SYSTEM_LOW_LEVEL_PROMPT MUST BE UPDATED (Action #4)
     system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
     try:
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES)
+        # 1. เรียก LLM และรับ raw response
+        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
+        
+        # 2. Extract และ Normalize JSON
         parsed = _normalize_keys(_robust_extract_json(raw) or {})
 
-        # 🟢 CHANGE: ใช้ Helper function เพื่อ extract scores ทั้งหมด
+        # 3. คืนผลลัพธ์
         return _extract_combined_assessment(parsed, score_default_key="score")
 
     except Exception as e:
@@ -622,29 +685,79 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
 # ------------------------
 # Summarize
 # ------------------------
-def summarize_context_with_llm(context: str, sub_criteria_name: str, level: int, sub_id: str) -> Dict[str, Any]:
-    if llm_instance is None: return {"summary":"LLM not available","suggestion_for_next_level":"Check LLM"}
+def create_context_summary_llm(
+    context: str, 
+    sub_criteria_name: str, 
+    level: int, 
+    sub_id: str, 
+    llm_executor: Any 
+) -> Dict[str, Any]:
+    """
+    ใช้ LLM เพื่อสรุปเนื้อหา Context...
+    """
+    # 0. ตรวจสอบ llm_executor
+    if llm_executor is None: 
+        logger.error("LLM instance is None. Cannot summarize context.")
+        return {"summary":"LLM not available","suggestion_for_next_level":"Check LLM"}
 
-    # จำกัด Context ให้สั้นลงเพื่อความเร็วและความเสถียร (4000 tokens)
-    human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(sub_criteria_name=sub_criteria_name, level=level, context=(context or "")[:4000], sub_id=sub_id)
+    # 0.1 ตรวจสอบ Context สั้นเกินไป
+    context_limited = (context or "").strip()
+    if not context_limited or len(context_limited) < 50:
+        logger.info(f"Context too short for summarization L{level} {sub_id}. Skipping LLM call.")
+        return {
+            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้อง",
+            "suggestion_for_next_level": "ตรวจสอบแหล่งข้อมูลหรือปรับปรุงคำค้นหา RAG"
+        }
 
-    try: schema_json = json.dumps(EvidenceSummary.model_json_schema(), ensure_ascii=False, indent=2)
-    except: schema_json = "{}"
+    # 1. จำกัด Context ให้สั้นลงเพื่อความเร็วและความเสถียร (4000 tokens)
+    context_to_send = context_limited[:4000]
+    
+    human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
+        sub_criteria_name=sub_criteria_name, 
+        level=level, 
+        context=context_to_send, 
+        sub_id=sub_id
+    )
 
-    system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nRespond only with valid JSON."
+    # 2. สร้าง System Prompt พร้อม JSON Schema
+    try: 
+        schema_json = json.dumps(EvidenceSummary.model_json_schema(), ensure_ascii=False, indent=2)
+    except: 
+        schema_json = '{"summary":"string", "suggestion_for_next_level":"string"}'
 
+    system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+
+    # 3. เรียกใช้ LLM พร้อม Retries
     try:
-        raw = _fetch_llm_response(system_prompt, human_prompt, 2)
-        return _normalize_keys(_robust_extract_json(raw) or {})
+        raw = _fetch_llm_response(system_prompt, human_prompt, 2, llm_executor=llm_executor)
+        
+        # 4. แปลงผลลัพธ์ JSON
+        parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        
+        # 5. ตรวจสอบความถูกต้องของ Schema เบื้องต้น
+        if not all(k in parsed for k in ["summary", "suggestion_for_next_level"]):
+             logger.warning(f"LLM Summary: Missing expected keys in JSON. Raw: {raw[:100]}...")
+             
+        return parsed
+        
     except Exception as e:
-        logger.exception(f"summarize_context_with_llm failed: {e}")
-        return {"summary":"LLM error","suggestion_for_next_level": str(e)}
+        logger.exception(f"create_context_summary_llm failed for {sub_id} L{level}: {e}")
+        # Fallback กรณีเกิดข้อผิดพลาด
+        return {"summary":f"LLM Error during summarization: {e.__class__.__name__}","suggestion_for_next_level": "Manual review required due to LLM failure."}
 
 # ------------------------
 # Action plan
 # ------------------------
-def create_structured_action_plan(failed_statements_data: List[Dict[str,Any]], sub_id:str, enabler:str, target_level:int, max_retries:int=5) -> List[Dict[str,Any]]:
-    if _MOCK_FLAG: return [{"Phase":"MOCK","Goal":f"MOCK plan for {sub_id}","Actions":[]}]
+def create_structured_action_plan(failed_statements_data: List[Dict[str,Any]], sub_id:str, enabler:str, target_level:int, llm_executor: Any, max_retries:int=5) -> List[Dict[str,Any]]:
+    """
+    ใช้ LLM เพื่อสร้าง Action Plan ที่มีโครงสร้างจากรายการ Statement ที่สอบตก
+    """
+    if not failed_statements_data:
+        return []
+
+    if llm_executor is None:
+        logger.error("LLM instance is None. Cannot create action plan.")
+        return []
 
     try:
         # ใช้ .model_json_schema() เพื่อความเข้ากันได้กับ Pydantic v2+
@@ -660,11 +773,13 @@ def create_structured_action_plan(failed_statements_data: List[Dict[str,Any]], s
         rs = (s.get('reason','') or '')[:500]
         statements_text.append(f"Level:{s.get('level','N/A')}\nStatement:{st}\nReason:{rs}")
 
+    # 📌 แก้ไข ACTION_PLAN_PROMPT ให้รองรับ sub_id และ target_level
     human_prompt = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list="\n\n".join(statements_text))
 
     for attempt in range(max_retries+1):
         try:
-            raw = _fetch_llm_response(system_prompt, human_prompt,1)
+            # 🟢 FIX: ส่ง llm_executor เข้าไป
+            raw = _fetch_llm_response(system_prompt, human_prompt, 1, llm_executor=llm_executor)
 
             parsed = _robust_extract_json(raw) or []
             if isinstance(parsed, dict): parsed = [parsed] # แปลง dict เดี่ยวให้เป็น list

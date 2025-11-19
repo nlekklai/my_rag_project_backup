@@ -1,7 +1,7 @@
 # ================================================================
-#  SE-AM Prompt Framework v16  (FINAL VERSION)
+#  SE-AM Prompt Framework v16  (FINAL VERSION - PURE ASCII FIX)
 #  Drop-in Replacement – SAFE, Deterministic, PDCA-consistent
-#  (Includes 0|1|2 Scoring and JSON Escaping Fixes)
+#  (Includes 0|1|2 Scoring and Contextual Rules Integration)
 # ================================================================
 
 import logging
@@ -10,14 +10,13 @@ from langchain_core.prompts import PromptTemplate
 logger = logging.getLogger(__name__)
 
 # =================================================================
-# 0. PDCA PHASE MAP (L5 ปรับปรุง: เน้น Sustainability)
+# 0. PDCA PHASE MAP 
 # -----------------------------------------------------------------
 PDCA_PHASE_MAP = {
     1: "Plan (P)",
     2: "Plan (P) + Do (D)",
     3: "Plan (P) + Do (D) + Check (C)",
     4: "Plan (P) + Do (D) + Check (C) + Act (A)",
-    # L5 ปรับเป็น PDCA ครบวงจร + Sustainability & Innovation
     5: "PDCA ครบวงจร (P + D + C + A) + Sustainability & Innovation"
 }
 
@@ -34,12 +33,19 @@ GLOBAL_RULES = """
     - Score 0: ไม่มีหลักฐานรองรับ
     - Score 1: มีหลักฐานบางส่วน แต่ยังไม่ครบองค์ประกอบสำคัญ
     - Score 2: มีหลักฐานครบถ้วน ชัดเจน และสอดคล้องโดยตรง
-6. หากไม่มีหลักฐานรองรับ → PDCA score = 0
-7. ห้ามใช้ความรู้ภายนอก หรืออนุมานเกินหลักฐานที่ให้
+6. หากไม่มีหลักฐานรองรับ -> PDCA score = 0
+7. เหตุผล (reason) ต้องสอดคล้องเชิงตรรกะกับคะแนน P, D, C, A ที่ถูกให้
+8. ห้ามใช้ความรู้ภายนอก หรืออนุมานเกินหลักฐานที่ให้
+9. **ห้ามลดคะแนน P_Plan_Score และ D_Do_Score ลง หากหลักฐาน C หรือ A ล้มเหลว (C=0 หรือ A=0) โดยคะแนน P และ D ต้องพิจารณาจากความสมบูรณ์ของหลักฐาน P และ D ที่ปรากฏใน Context เท่านั้น**
+กฎเฉพาะของ Level 3 (Check Phase):
+10. C_Check_Score ต้องพิจารณาจากหลักฐานประเภทการตรวจสอบจริงเท่านั้น เช่น audit, review, evaluation, performance analysis
+11. หากพบหลักฐานการตรวจสอบอย่างน้อยหนึ่งรายการ ให้ C_Check_Score มีค่า ≥ 1
+12. ห้ามใช้เอกสาร Plan (P) หรือ Do (D) เป็นหลักฐานแทนการตรวจสอบ
+13. หาก SIMULATED_L3_EVIDENCE อยู่ใน Context ให้ถือว่าเป็น Summary จากไฟล์จริง และใช้เป็นหลักฐาน Check ได้
 """
 
 # =================================================================
-# 1. SYSTEM PROMPT — ASSESSMENT (L1–L5)
+# 1. SYSTEM PROMPT — ASSESSMENT (L3–L5)
 # -----------------------------------------------------------------
 SYSTEM_ASSESSMENT_PROMPT = f"""
 คุณคือผู้ประเมินวุฒิภาวะองค์กรตามกรอบ SE-AM ระดับผู้เชี่ยวชาญ
@@ -48,18 +54,16 @@ SYSTEM_ASSESSMENT_PROMPT = f"""
 {GLOBAL_RULES}
 
 --- กฎ PDCA ---
-- P (Plan): นโยบาย, แผน, ขั้นตอน, การกำหนดทิศทาง
-- D (Do): ดำเนินการจริง, รายงานกิจกรรม, บันทึกประชุม
-- C (Check): ตรวจสอบ, วิเคราะห์ผล, รายงานประเมิน
-- A (Act): ปรับปรุง, บูรณาการ, ขยายผล
-
+...
 --- กฎการประเมินแต่ละ Level (บังคับ Level Constraint) ---
-- การตัดสิน PASS/FAIL ต้องสอดคล้องกับ Level Constraint ที่ให้มา
-- L1 → ต้องมี Plan ชัดเจน
-- L2 → ต้องมี Do ชัดเจน, ห้าม PASS ด้วยแผนหรือนโยบายอย่างเดียว
-- L3 → ต้องมี Check จากหลักฐานจริง
-- L4 → ต้องเห็น Act (ปรับปรุง/บูรณาการจริง)
-- L5 → ต้องเห็นมูลค่า ผลลัพธ์ยั่งยืน (Sustainability), Innovation, หรือ Executive Oversight
+...
+
+--- กฎเฉพาะสำหรับ Level 3 (L3 Priority Rules) ---
+- ต้องให้ความสำคัญกับข้อมูล “Check” เป็นอันดับแรก
+- หากพบหลักฐานใดที่เป็นการตรวจสอบผลลัพธ์ เช่น review, audit, KPI analysis, ให้ตีความเป็น Core Evidence สำหรับ C_Check_Score
+- เอกสารประเภท Plan หรือ Do ห้ามนำมาใช้เป็นหลักฐาน Check
+- หากมี Evidence Check ปรากฏอย่างน้อย 1 รายการ → ต้องเริ่มที่ C ≥ 1
+- Reason ต้องกล่าวถึงว่าพบหลักฐาน Check จากไฟล์ใด
 
 OUTPUT:
 - ต้องเป็น JSON Object เท่านั้น
@@ -74,44 +78,35 @@ Level: L{level} ({pdca_phase})
 --- Statement ---
 {statement_text}
 
---- Level Constraint ---
+--- Level Constraint (Layer 1) ---
 {level_constraint}
 
---- Evidence Context ---
+--- Contextual Rules (Layer 2) ---
+{contextual_rules_prompt} 
+
+--- Evidence Context (Test Example with SIMULATED L3 Evidence) ---
 {context}
 
---- JSON Schema ---
-{{
-  "score": 0,
-  "reason": "",
-  "is_passed": false,
-  "P_Plan_Score": 0,
-  "D_Do_Score": 0,
-  "C_Check_Score": 0,
-  "A_Act_Score": 0
-}}
-
---- ตัวอย่าง JSON Output (เมื่อมีการให้คะแนนจริง) ---
-{{
-  "score": 4, 
-  "reason": "หลักฐานแสดงการวางแผน (P=2) และการดำเนินการ (D=2) ครบถ้วน แต่ขาดหลักฐานการตรวจสอบ (C) และปรับปรุง (A)",
-  "is_passed": false,
-  "P_Plan_Score": 2,
-  "D_Do_Score": 2,
-  "C_Check_Score": 0,
-  "A_Act_Score": 0
-}}
-
---- คำสั่ง ---
-ประเมินตาม Statement และ Context เท่านั้น  
-ตอบเป็น JSON ตาม Schema ด้านบน ห้ามมีข้อความอื่น
+[SIMULATED_L3_EVIDENCE] Check: พบการตรวจสอบ internal audit ในไฟล์ KM1.2L301
+[SIMULATED_L3_EVIDENCE] Act: ปรับปรุงกระบวนการตามผล audit และ feedback ของทีม
 """
 
 ASSESSMENT_PROMPT = PromptTemplate(
-    input_variables=["sub_criteria_name","sub_id","level","pdca_phase","statement_text","context","level_constraint"],
+    input_variables=[
+        "sub_criteria_name",
+        "sub_id",
+        "level",
+        "pdca_phase",
+        "statement_text",
+        "context",
+        "level_constraint",
+        "contextual_rules_prompt"
+    ],
     template=USER_ASSESSMENT_TEMPLATE
 )
+
 USER_ASSESSMENT_PROMPT = ASSESSMENT_PROMPT
+
 
 # =================================================================
 # 2. SYSTEM PROMPT — LOW LEVEL (L1/L2)
@@ -133,8 +128,11 @@ Sub-Criteria: {sub_id} - {sub_criteria_name}
 Level: L{level}
 Statement: {statement_text}
 
---- Constraints ---
+--- Constraints (Layer 1) ---
 {level_constraint}
+
+--- Contextual Rules (Layer 2) ---
+{contextual_rules_prompt} 
 
 --- Evidence Context ---
 {context}
@@ -162,12 +160,20 @@ Statement: {statement_text}
 }}
 
 --- คำสั่ง ---
-ประเมินตามหลักฐานเท่านั้น  
+ประเมินตามหลักฐาน, **Level Constraint** และ **Contextual Rules** เท่านั้น  
 ตอบ JSON ตาม Schema ด้านบน
 """
 
 LOW_LEVEL_PROMPT = PromptTemplate(
-    input_variables=["sub_id","sub_criteria_name","level","statement_text","level_constraint","context"],
+    input_variables=[
+        "sub_id",
+        "sub_criteria_name",
+        "level",
+        "statement_text",
+        "level_constraint",
+        "context",
+        "contextual_rules_prompt" 
+    ],
     template=USER_LOW_LEVEL_PROMPT
 )
 
@@ -176,7 +182,7 @@ LOW_LEVEL_PROMPT = PromptTemplate(
 # -----------------------------------------------------------------
 SYSTEM_ACTION_PLAN_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Strategic Planning
-หน้าที่: สร้าง Action Plan เพื่อยกระดับจากระดับปัจจุบัน → Level ถัดไป
+หน้าที่: สร้าง Action Plan เพื่อยกระดับจากระดับปัจจุบัน -> Level ถัดไป
 Action Plan นี้ต้องเน้นแก้ไข Gap ที่เกิดขึ้นจาก Failed Statements เท่านั้น
 
 กฎความปลอดภัยสำหรับ Action Plan:
@@ -207,7 +213,11 @@ Failed Statements:
 ]
 
 --- คำสั่ง ---
-สร้าง Action Plan ในรูปแบบ JSON Array เท่านั้น
+สร้าง Action Plan ในรูปแบบ JSON Array เท่านั้น โดย:
+1. **วิเคราะห์เชิงลึก** ว่า Failed Statements แต่ละข้อขาดองค์ประกอบ PDCA ใด (P, D, C, หรือ A) โดยดูจาก 'reason' และ 'pdca_breakdown' ในข้อมูลที่ได้รับ
+2. 'Actions' ต้องเน้นการสร้างหลักฐานที่ขาดหายเพื่อปิด Gap ของ PDCA นั้นโดยตรง และจัดลำดับความสำคัญตามความเป็นจริง
+3. 'Goal' ต้องระบุผลลัพธ์ที่วัดได้และเชื่อมโยงกับการปิด Gap ของ Statement ที่ Fail
+4. 'Verification_Outcome' ต้องเป็นหลักฐานที่เป็นรูปธรรมที่คาดหวังว่าจะได้รับ
 """
 
 ACTION_PLAN_PROMPT = PromptTemplate(
@@ -216,11 +226,11 @@ ACTION_PLAN_PROMPT = PromptTemplate(
 )
 
 # =================================================================
-# 4. Evidence Description Prompt (Summary) (แก้ไข JSON Escaping)
+# 4. Evidence Description Prompt (Summary) 
 # -----------------------------------------------------------------
 SYSTEM_EVIDENCE_DESCRIPTION_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Evidence Analysis
-หน้าที่: สรุปหลักฐาน และให้คำแนะนำสำหรับเลื่อนระดับ
+หน้าที่: สรุปหลักฐานโดยอ้างอิงจาก 'Evidence Context' อย่างเคร่งครัด ห้ามแต่งเติม บิดเบือน หรือตีความเกินกว่าหลักฐานที่ระบุ และให้คำแนะนำสำหรับเลื่อนระดับ
 
 {GLOBAL_RULES}
 """
@@ -234,15 +244,21 @@ USER_EVIDENCE_DESCRIPTION_TEMPLATE = """
 
 --- JSON Schema ---
 {{
-  "summary": "",
-  "suggestion_for_next_level": ""
+  "summary": "หลักฐานในเอกสารระบุว่า [ให้สรุปหลักฐานที่พบตามความเป็นจริงจาก Context]",
+  "suggestion_for_next_level": "ควรดำเนินการ [คำแนะนำเชิงปฏิบัติ] เพื่อให้บรรลุ Level ถัดไป"
 }}
 
 --- คำสั่ง ---
-สร้าง JSON Object เท่านั้น ห้ามมีข้อความอื่น
+สร้าง JSON Object เท่านั้น โดย:
+1. 'summary' ต้องขึ้นต้นด้วยวลี "หลักฐานในเอกสารระบุว่า..." และ **ต้องเป็นการเรียบเรียง Context ที่ได้รับให้เป็นประโยคที่สมบูรณ์และต่อเนื่องเพื่อให้อ่านง่ายขึ้นเท่านั้น** ห้ามตีความ, วิเคราะห์, หรือสร้างข้อสรุปใหม่ที่ไม่ปรากฏใน Context โดยตรง
+2. 'suggestion_for_next_level' ให้คำแนะนำที่ชัดเจนเพื่อเลื่อนระดับวุฒิภาวะ
+3. ห้ามมีข้อความอื่นที่ไม่ใช่ JSON Object
+
 """
 
 EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
     input_variables=["sub_criteria_name","level","sub_id","context"],
     template=USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
+
+# end of core/seam_prompts.py

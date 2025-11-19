@@ -14,10 +14,13 @@ import argparse
 import time
 from typing import Optional
 
+
 # -------------------- PATH SETUP --------------------
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
+
+from models.llm import create_llm_instance
 
 try:
     # Import Config & Core Modules
@@ -32,6 +35,7 @@ except Exception as e:
     # บล็อกนี้จะจับข้อผิดพลาดการ Import 
     print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
     raise
+
 
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -78,6 +82,24 @@ def main():
                  logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
                  raise
 
+    # -------------------- 🎯 1.5. Initialize LLM for Classification & Evaluation (MODIFIED) --------------------
+    llm_for_classification = None
+    try:
+        # 📌 เรียกใช้ Factory Function
+        llm_for_classification = create_llm_instance(
+            model_name="llama3.1:8b", # ใช้ค่าคงที่ที่กำหนดไว้ใน models/llm.py
+            temperature=0.0
+        )
+        if not llm_for_classification:
+             raise RuntimeError("LLM Factory returned None.")
+
+        logger.info("✅ LLM Instance initialized for Engine injection.")
+    except Exception as e:
+        logger.error(f"Failed to initialize LLM Inference Engine: {e}")
+        if args.mock == "none":
+            raise
+    # -------------------- 🎯 /1.5 --------------------
+
     # 2. Instantiate Engine
     config = AssessmentConfig(
         enabler=args.enabler, 
@@ -86,7 +108,12 @@ def main():
         # 🟢 PASS THE NEW ARGUMENT
         force_sequential=args.sequential 
     )
-    engine = SEAMPDCAEngine(config=config)
+    engine = SEAMPDCAEngine(
+        config=config,
+        llm_instance=llm_for_classification, # ⬅️ NEW INJECTION (แก้ AttributeError: 'llm')
+        logger_instance=logger,             # ⬅️ NEW INJECTION (แก้ AttributeError: 'logger')
+        # 🚨 NOTE: ต้องมั่นใจว่า __init__ ใน seam_assessment.py รับพารามิเตอร์นี้แล้ว
+    )
 
     # 3. Run Assessment
     try:

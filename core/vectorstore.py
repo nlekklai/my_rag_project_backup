@@ -595,77 +595,82 @@ class VectorStoreManager:
                 return []
         
     def get_limited_chunks_from_doc_ids(
-        self, 
-        stable_doc_ids: Union[str, List[str]], 
-        query: str, # 📌 NEW: รับ Query เพื่อใช้ในการ Search
-        doc_type: str, 
-        enabler: Optional[str] = None, 
-        limit_per_doc: int = 5 # 📌 NEW: จำกัดจำนวน Chunk ต่อ Stable ID (ค่าเริ่มต้น 5)
-    ) -> List[LcDocument]:
-        """
-        Retrieves a limited number of chunks (Documents) for a list of Stable Document IDs 
-        by performing a similarity search on the documents' chunks.
-        
-        Args:
-            stable_doc_ids: List of Stable Document IDs (UUIDs of the source files, e.g., L1 PASS documents).
-            query: The L2 assessment query (used to find the *most relevant* L1 chunks).
-            limit_per_doc: Maximum number of chunks to retrieve per Stable ID.
-        """
-        if isinstance(stable_doc_ids, str):
-            stable_doc_ids = [stable_doc_ids]
-            
-        stable_doc_ids = [uid for uid in stable_doc_ids if uid]
-        if not stable_doc_ids:
-            return []
-            
-        collection_name = _get_collection_name(doc_type, enabler)
-        
-        # 1. โหลด Chroma Instance
-        chroma_instance = self._load_chroma_instance(collection_name) 
-
-        if not chroma_instance:
-            logger.error(f"Collection '{collection_name}' is not loaded.")
-            return []
-
-        all_limited_documents: List[LcDocument] = []
-        total_chunks_retrieved = 0
-        
-        # 2. วนซ้ำเพื่อทำ Similarity Search แยกตาม Stable ID แต่ละตัว
-        for stable_id in stable_doc_ids:
-            stable_id_clean = stable_id.strip()
-
-            # 2.1 สร้าง Filter เพื่อค้นหาเฉพาะ Chunks ภายใน Stable ID นี้
-            doc_filter = {
-                "stable_doc_uuid": stable_id_clean
-            }
-            
-            # 2.2 ใช้ ChromaRetriever เพื่อดึงข้อมูลที่เกี่ยวข้องที่สุด K ชิ้น
-            try:
-                # ใช้ ChromaRetriever เพื่อเข้าถึง similarity_search พร้อม filter
-                custom_retriever = ChromaRetriever(
-                    vectorstore=chroma_instance,
-                    k=limit_per_doc, # K ถูกจำกัดตาม limit_per_doc
-                    filter=doc_filter
-                )
+            self, 
+            stable_doc_ids: Union[str, List[str]], 
+            query: Union[str, List[str]], # 📌 รับได้ทั้ง str และ List[str]
+            doc_type: str, 
+            enabler: Optional[str] = None, 
+            limit_per_doc: int = 5 
+        ) -> List[LcDocument]:
+            """
+            Retrieves a limited number of chunks (Documents) for a list of Stable Document IDs 
+            by performing a similarity search on the documents' chunks.
+            """
+            if isinstance(stable_doc_ids, str):
+                stable_doc_ids = [stable_doc_ids]
                 
-                # ทำ Similarity Search
-                limited_docs = custom_retriever.get_relevant_documents(query=query)
+            stable_doc_ids = [uid for uid in stable_doc_ids if uid]
+            if not stable_doc_ids:
+                return []
+                
+            # 📌 FIX 1: เลือกใช้ Query ตัวแทน (Query แรก) สำหรับ Vector Search
+            if isinstance(query, list):
+                # ใช้ query ตัวแรกเป็นตัวแทนสำหรับ Similarity Search
+                vector_search_query = query[0] if query else ""
+            else:
+                vector_search_query = query
+                
+            if not vector_search_query:
+                logger.warning("Limited chunk search skipped: Query is empty.")
+                return []
+                
+            collection_name = _get_collection_name(doc_type, enabler)
+            
+            # 1. โหลด Chroma Instance
+            chroma_instance = self._load_chroma_instance(collection_name) 
 
-                # 2.3 เพิ่ม metadata สำหรับ tracking
-                for doc in limited_docs:
-                    doc.metadata['priority_search_type'] = 'limited_vector_search'
-                    doc.metadata['priority_limit'] = limit_per_doc
-                    all_limited_documents.append(doc)
+            if not chroma_instance:
+                logger.error(f"Collection '{collection_name}' is not loaded.")
+                return []
+
+            all_limited_documents: List[LcDocument] = []
+            total_chunks_retrieved = 0
+            
+            # 2. วนซ้ำเพื่อทำ Similarity Search แยกตาม Stable ID แต่ละตัว
+            for stable_id in stable_doc_ids:
+                stable_id_clean = stable_id.strip()
+
+                # 2.1 สร้าง Filter เพื่อค้นหาเฉพาะ Chunks ภายใน Stable ID นี้
+                doc_filter = {
+                    "stable_doc_uuid": stable_id_clean
+                }
+                
+                # 2.2 ใช้ ChromaRetriever เพื่อดึงข้อมูลที่เกี่ยวข้องที่สุด K ชิ้น
+                try:
+                    # ใช้ ChromaRetriever เพื่อเข้าถึง similarity_search พร้อม filter
+                    custom_retriever = ChromaRetriever(
+                        vectorstore=chroma_instance,
+                        k=limit_per_doc, # K ถูกจำกัดตาม limit_per_doc
+                        filter=doc_filter
+                    )
                     
-                total_chunks_retrieved += len(limited_docs)
+                    # ทำ Similarity Search โดยใช้ Query ตัวแทน
+                    limited_docs = custom_retriever.get_relevant_documents(query=vector_search_query) # 📌 FIX 2: ใช้ vector_search_query
 
-            except Exception as e:
-                logger.error(f"❌ Error performing limited vector search for Stable ID '{stable_id_clean}': {e}")
-                # ดำเนินการต่อด้วย Stable ID ถัดไป
-                continue 
-        
-        logger.info(f"✅ Retrieved {total_chunks_retrieved} limited chunks (max {limit_per_doc}/doc) for {len(stable_doc_ids)} Stable IDs from '{collection_name}' using vector search.")
-        return all_limited_documents
+                    # 2.3 เพิ่ม metadata สำหรับ tracking
+                    for doc in limited_docs:
+                        doc.metadata['priority_search_type'] = 'limited_vector_search'
+                        doc.metadata['priority_limit'] = limit_per_doc
+                        all_limited_documents.append(doc)
+                        
+                    total_chunks_retrieved += len(limited_docs)
+
+                except Exception as e:
+                    logger.error(f"❌ Error performing limited vector search for Stable ID '{stable_id_clean}': {e}")
+                    continue 
+            
+            logger.info(f"✅ Retrieved {total_chunks_retrieved} limited chunks (max {limit_per_doc}/doc) for {len(stable_doc_ids)} Stable IDs from '{collection_name}' using vector search.")
+            return all_limited_documents
 
 # -------------------- Retriever Creation --------------------
     def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, use_rerank: bool = True) -> Any:

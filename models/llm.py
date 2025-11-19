@@ -1,38 +1,50 @@
 # models/llm.py
 import logging
-from typing import Optional
-
-# ✅ ใช้เวอร์ชันใหม่ของ langchain-ollama
+from typing import Optional, Final
 from langchain_ollama import OllamaLLM
+from langchain_core.language_models.llms import BaseLLM
 
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION CONSTANTS ---
-LLM_MODEL = "llama3.1:8b"  # สามารถเปลี่ยนเป็น "qwen3:latest" ได้
-# LLM_MODEL = "mistral:latest"  # สามารถเปลี่ยนเป็น "qwen3:latest" ได้
-LLM_TEMPERATURE = 0.0       # ตั้งเป็น 0.0 เพื่อความเสถียร
-LLM_CONTEXT_WINDOW = 4096   # เวอร์ชันใหม่ใช้ context_window แทน num_ctx
+LLM_MODEL: Final[str] = "llama3.1:8b"
+LLM_TEMPERATURE: Final[float] = 0.0
+LLM_CONTEXT_WINDOW: Final[int] = 4096
 
 # -----------------------------------------------------
-# --- Global LLM Instance ---
+# 🎯 Global LLM Instance (เพื่อให้ Legacy Code ยังคง Import ได้)
 # -----------------------------------------------------
-llm: Optional[OllamaLLM] = None
+llm: Optional[BaseLLM] = None 
 
-try:
-    logger.warning(f"⚠️ Initializing LLM: model={LLM_MODEL}, temperature={LLM_TEMPERATURE}")
+def create_llm_instance(
+    model_name: str = LLM_MODEL,
+    temperature: float = LLM_TEMPERATURE,
+    context_window: int = LLM_CONTEXT_WINDOW
+) -> Optional[BaseLLM]:
+    """
+    Initializes and returns a new Ollama LLM instance. 
+    It also sets the global 'llm' variable if it's currently None (for compatibility).
+    """
+    global llm # ⬅️ เข้าถึงตัวแปร Global
+    
+    # 1. สร้าง Instance ใหม่
+    try:
+        logger.warning(f"⚠️ Initializing LLM: model={model_name}, temperature={temperature}")
+        llm_instance = OllamaLLM(
+            model=model_name,
+            temperature=temperature,
+            context_window=context_window
+        )
+        logger.info(f"✅ LLM Instance created successfully: {model_name} (Temp: {temperature})")
+        
+        # 2. 🟢 รักษาสภาพแวดล้อม Global: กำหนดค่าให้ตัวแปร Global ถ้ายังว่างอยู่
+        if llm is None:
+            llm = llm_instance
+            logger.debug("Global 'llm' variable set for backward compatibility.")
+            
+        return llm_instance
 
-    # สร้าง LLM instance
-    llm = OllamaLLM(
-        model=LLM_MODEL,
-        temperature=LLM_TEMPERATURE,
-        context_window=LLM_CONTEXT_WINDOW
-    )
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Ollama LLM: {e}")
+        return None
 
-    if llm:
-        logger.info(f"✅ LLM Instance created successfully: {llm.model} (Temp: {llm.temperature})")
-    else:
-        logger.error("❌ OllamaLLM failed to initialize but no exception was raised.")
-
-except Exception as e:
-    logger.error(f"❌ Failed to initialize Ollama LLM: {e}")
-    llm = None
