@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import multiprocessing # NEW: Import for parallel execution
 from core.llm_data_utils import enhance_query_for_statement
 import pathlib, uuid
+from langchain_core.documents import Document as LcDocument
 
 # -------------------- PATH SETUP & IMPORTS --------------------
 try:
@@ -25,7 +26,8 @@ try:
         EVIDENCE_DOC_TYPES, INITIAL_TOP_K,
         EVIDENCE_MAPPING_FILENAME_SUFFIX,
         LIMIT_CHUNKS_PER_PRIORITY_DOC,
-        IS_LOG_L3_CONTEXT
+        IS_LOG_L3_CONTEXT,
+        PRIORITY_CHUNK_LIMIT
     )
     
     from core.llm_data_utils import ( 
@@ -34,9 +36,10 @@ try:
         evaluate_with_llm_low_level, LOW_LEVEL_K, 
         set_mock_control_mode as set_llm_data_mock_mode,
         create_context_summary_llm,
+        retrieve_context_by_doc_ids,
         _fetch_llm_response
     )
-    from core.vectorstore import VectorStoreManager, load_all_vectorstores 
+    from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
     from core.seam_prompts import PDCA_PHASE_MAP 
         
     import assessments.seam_mocking as seam_mocking 
@@ -262,19 +265,28 @@ class SEAMPDCAEngine:
     L1_INITIAL_TOP_K_RAG: int = 50 
     
     def __init__(
-    self, 
-    config: 'AssessmentConfig',
-    # 🟢 FIX: เพิ่มพารามิเตอร์ที่ถูกส่งมาจาก start_assessment.py
-    llm_instance: Any = None, 
-    logger_instance: logging.Logger = None,
-    # 📌 แนะนำ: เพิ่ม rag_retriever_instance ด้วย (ถ้ามีการส่งมา)
-    rag_retriever_instance: Any = None 
+        self, 
+        config: 'AssessmentConfig',
+        llm_instance: Any = None, 
+        logger_instance: logging.Logger = None,
+        rag_retriever_instance: Any = None,
+        # 🟢 FIX #1: เพิ่ม doc_type ที่ใช้แก้ AttributeError ก่อนหน้า
+        doc_type: str = EVIDENCE_DOC_TYPES, 
+        # 🟢 FIX #2: เพิ่ม vectorstore_manager ที่ทำให้เกิด TypeError ล่าสุด
+        vectorstore_manager: Optional['VectorStoreManager'] = None 
     ):
 
             self.config = config
             self.enabler_id = config.enabler
             self.target_level = config.target_level
             self.rubric = self._load_rubric()
+            
+            # 🟢 FIX #3: กำหนดค่า vectorstore_manager และ doc_type
+            self.vectorstore_manager = vectorstore_manager
+            self.doc_type = doc_type
+
+            self.FINAL_K_RERANKED = FINAL_K_RERANKED
+            self.PRIORITY_CHUNK_LIMIT = PRIORITY_CHUNK_LIMIT
 
             # 🟢 NEW: จัดเก็บ LLM และ Logger Instance
             self.llm = llm_instance           # ⬅️ แก้ไข AttributeError: 'llm'
@@ -1043,45 +1055,6 @@ class SEAMPDCAEngine:
             logging.error(f"❌ Failed to export results to {full_path}: {e}")
             return ""
         
-    # -------------------- Export Helper Method (คงไว้ตามเดิม) --------------------
-    def _export_results(self, results: dict, enabler: str, sub_criteria_id: str, target_level: int, export_dir: str = "assessment_results") -> str:
-        """
-        Exports the final assessment results to a JSON file.
-        
-        Args:
-            results: The dictionary containing the final assessment summary and results.
-            enabler: The enabler ID (e.g., KM).
-            sub_criteria_id: The specific sub-criteria ID being run (e.g., 2.2).
-            target_level: The target level for the assessment.
-            export_dir: The directory to save the output file.
-            
-        Returns:
-            The path to the saved JSON file.
-        """
-        # NOTE: จำเป็นต้องมีการ Import os, json, datetime และ logging ในไฟล์ต้นฉบับ
-        if not os.path.exists(export_dir):
-            os.makedirs(export_dir)
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
-        full_path = os.path.join(export_dir, file_name)
-
-        results['summary']['enabler'] = enabler
-        results['summary']['sub_criteria_id'] = sub_criteria_id
-        results['summary']['target_level'] = target_level
-        results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
-
-        try:
-            with open(full_path, 'w', encoding='utf-8') as f:
-                # ใช้ indent=4 เพื่อให้อ่านง่าย
-                json.dump(results, f, ensure_ascii=False, indent=4)
-            
-            logger.info(f"💾 Successfully exported final results to: {full_path}")
-            return full_path
-        
-        except Exception as e:
-            logger.error(f"❌ Failed to export results to {full_path}: {e}")
-            return ""
     
     # -------------------- Main Execution --------------------
     def run_assessment(
@@ -1615,6 +1588,7 @@ class SEAMPDCAEngine:
                         # บันทึกชื่อไฟล์เพื่อให้ mapping file อ่านง่ายขึ้น
                         "filename": source_filename,
                         "mapper_type": "AI_RAG", # ⬅️ เพิ่ม Field นี้
+                        "priority": True,    
                         "timestamp": datetime.now().isoformat() # ⬅️ เพิ่ม Field นี้
                     })
             

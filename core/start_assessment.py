@@ -36,6 +36,7 @@ except Exception as e:
     print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
     raise
 
+from config.global_vars import EVIDENCE_DOC_TYPES
 
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -98,7 +99,6 @@ def main():
         logger.error(f"Failed to initialize LLM Inference Engine: {e}")
         if args.mock == "none":
             raise
-    # -------------------- 🎯 /1.5 --------------------
 
     # 2. Instantiate Engine
     config = AssessmentConfig(
@@ -110,9 +110,11 @@ def main():
     )
     engine = SEAMPDCAEngine(
         config=config,
-        llm_instance=llm_for_classification, # ⬅️ NEW INJECTION (แก้ AttributeError: 'llm')
-        logger_instance=logger,             # ⬅️ NEW INJECTION (แก้ AttributeError: 'logger')
-        # 🚨 NOTE: ต้องมั่นใจว่า __init__ ใน seam_assessment.py รับพารามิเตอร์นี้แล้ว
+        llm_instance=llm_for_classification, 
+        logger_instance=logger,             
+        # 🟢 FIX: แก้ Syntax Error (ส่งเฉพาะชื่อพารามิเตอร์และค่า)
+        doc_type=EVIDENCE_DOC_TYPES, 
+        vectorstore_manager=vsm, 
     )
 
     # 3. Run Assessment

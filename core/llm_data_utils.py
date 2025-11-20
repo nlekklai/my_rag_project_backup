@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional, TypeVar, Final, Union
 from pydantic import BaseModel, ConfigDict, Field, RootModel 
 import uuid 
 import sys 
+import hashlib
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -42,7 +43,12 @@ try:
         class StatementAssessment(BaseModel): score: int; reason: str
 
     from core.action_plan_schema import ActionPlanActions
-    from config.global_vars import DEFAULT_ENABLER, INITIAL_TOP_K, FINAL_K_RERANKED
+    from config.global_vars import (
+        DEFAULT_ENABLER, 
+        FINAL_K_RERANKED, 
+        INITIAL_TOP_K, 
+    )
+
     from langchain_core.documents import Document as LcDocument
 except Exception as e:
     logger.error(f"Missing dependency: {e}")
@@ -60,10 +66,6 @@ except Exception as e:
     def _get_collection_name(doc_type, enabler): return f"{doc_type}_{enabler}"
     class ChromaRetriever: pass
 
-    # 🟢 FIX: Define missing constants here
-    INITIAL_TOP_K: Final[int] = 10
-    FINAL_K_RERANKED: Final[int] = 3
-    DEFAULT_ENABLER = "KM"
     
     # 🟢 PLACEHOLDER: NEW COMBINED ASSESSMENT SCHEMA
     class CombinedAssessment(BaseModel):
@@ -263,42 +265,37 @@ def retrieve_context_with_filter(
 
         all_chunks_to_process = all_retrieved_chunks + guaranteed_priority_chunks
 
-        # 4b. FIX: Filter RAG Search Results to exclude Priority Chunks (Dedup)
-        unique_chunks_map = {}
+        # 4b. 🟢 FIX: Strict Deduplication by chunk_uuid (ใช้คีย์เดียวเท่านั้น)
+        unique_chunks_map: Dict[str, Any] = {}
+        
         for doc in all_chunks_to_process:
-            chunk_uuid = doc.metadata.get('chunk_uuid')
-            
-            # 🟢 FIX (NameError): ใช้ uuid.uuid4()
+            metadata = getattr(doc, 'metadata', {})
+            chunk_uuid = metadata.get('chunk_uuid')
+
+            # 📌 Fallback Logic: สร้าง Key ที่เป็น Deterministic จาก Content Hash
             if not chunk_uuid:
-                # Fallback Dedup: (Content + Source)
-                content_hash = hash(doc.page_content.strip())
-                source_id = doc.metadata.get('doc_uuid') or doc.metadata.get('stable_doc_uuid') or doc.metadata.get('source', 'unknown')
-                dedup_key = f"{source_id}-{content_hash}"
                 
-                if dedup_key not in unique_chunks_map:
-                    # สร้าง UUID จำลองสำหรับ document ที่ไม่มี chunk_uuid
-                    doc.metadata['chunk_uuid'] = str(uuid.uuid4())
-                    unique_chunks_map[dedup_key] = doc
-                    # ใช้ chunk_uuid ที่สร้างใหม่สำหรับ Logic ต่อไป
-                    chunk_uuid = doc.metadata['chunk_uuid']
-                else:
-                    # ถ้าซ้ำกันด้วย content hash ก็ข้ามไป
-                    continue
+                content_hash = hashlib.sha256(doc.page_content.strip().encode('utf-8')).hexdigest()
+                chunk_uuid = f"HASH-{content_hash}" 
             
-            # Logic Dedup:
-            if chunk_uuid and chunk_uuid not in unique_chunks_map:
-                 if doc in guaranteed_priority_chunks and doc.metadata.get('relevance_score') is None:
-                     doc.metadata['relevance_score'] = 1.0 
-                 unique_chunks_map[chunk_uuid] = doc
-            
+            # 📌 Logic Dedup: ใช้ UUID/Hash Key ในการตรวจสอบ
+            if chunk_uuid not in unique_chunks_map:
+                # ถ้าไม่ซ้ำ ให้เก็บไว้
+                
+                # ถ้าเป็น Guaranteed chunk ที่เพิ่งถูกรวม ให้ตั้งค่าคะแนนเริ่มต้นสูง
+                if doc in guaranteed_priority_chunks and doc.metadata.get('relevance_score') is None:
+                    doc.metadata['relevance_score'] = 1.0 
+                
+                unique_chunks_map[chunk_uuid] = doc
+
         deduplicated_chunks = list(unique_chunks_map.values())
         
-        # 4c. กำหนดจำนวน Slots Reranker 
         correct_mapped_count = len([d for d in deduplicated_chunks if d in guaranteed_priority_chunks]) # นับเฉพาะที่ยังอยู่หลัง Dedup
         slots_available = max(0, top_k - correct_mapped_count)
         
         logger.info(f"    - Dedup Merged: Total unique chunks = {len(deduplicated_chunks)}. Priority Chunks (Guaranteed) = {correct_mapped_count}.")
 
+        # ... (โค้ดส่วนที่เหลือของ 4c และ 4d)
 
         # 4d. Rerank Logic
         final_selected_docs: List[Any] = [d for d in deduplicated_chunks if d in guaranteed_priority_chunks] # ใช้ Chunks ที่ถูก Guarantee และ Dedup แล้ว
@@ -748,7 +745,13 @@ def create_context_summary_llm(
 # ------------------------
 # Action plan
 # ------------------------
-def create_structured_action_plan(failed_statements_data: List[Dict[str,Any]], sub_id:str, enabler:str, target_level:int, llm_executor: Any, max_retries:int=5) -> List[Dict[str,Any]]:
+def create_structured_action_plan(
+    failed_statements: List[Dict[str, Any]], 
+    sub_id: str, 
+    target_level: int, 
+    llm_executor: Any, # <-- เพิ่มอาร์กิวเมนต์นี้
+    max_retries: int = 3
+):
     """
     ใช้ LLM เพื่อสร้าง Action Plan ที่มีโครงสร้างจากรายการ Statement ที่สอบตก
     """
