@@ -226,6 +226,11 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor, BaseModel):
         doc_scores = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
         final_docs = []
         for doc, score in doc_scores[:top_n]:
+            # 🟢 FIX: Check and initialize metadata if it is None (prevents TypeError)
+            if doc.metadata is None:
+                doc.metadata = {}
+                logger.warning(f"⚠️ Reranker: Found Document with None metadata. Initializing metadata to {{}}.")
+                
             doc.metadata["relevance_score"] = float(score)
             final_docs.append(doc)
         return final_docs

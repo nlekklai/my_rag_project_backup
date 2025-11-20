@@ -12,7 +12,7 @@ Responsibilities:
 - Mock control helper: set_mock_control_mode
 """
 import logging, time, json, json5, random, hashlib, regex as re
-from typing import List, Dict, Any, Optional, TypeVar, Final, Union
+from typing import List, Dict, Any, Optional, TypeVar, Final, Union, Callable
 from pydantic import BaseModel, ConfigDict, Field, RootModel 
 import uuid 
 import sys 
@@ -172,201 +172,178 @@ def retrieve_context_by_doc_ids(
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
-# -------------------- RAG Retrieval Functions --------------------
-
+# -----------------------
+# retrieve_context_with_filter
+# -----------------------
 def retrieve_context_with_filter(
     query: Union[str, List[str]], 
     doc_type: str, 
     enabler: Optional[str]=None,
     vectorstore_manager: Optional['VectorStoreManager']=None,
-    top_k: int=FINAL_K_RERANKED, 
-    initial_k: int=INITIAL_TOP_K,
+    top_k: int = None,
+    initial_k: int = None,
     mapped_uuids: Optional[List[str]]=None,
     stable_doc_ids: Optional[List[str]]=None,
     priority_docs_input: Optional[List[Any]] = None,
-    # 🟢 FIX: เพิ่ม arguments ที่ขาดหายไป (จาก seam_assessment.py)
     sequential_chunk_uuids: Optional[List[str]] = None, 
     sub_id: Optional[str]=None, 
     level: Optional[int]=None,
+    get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,  # L3 Fallback
     logger: logging.Logger = logging.getLogger(__name__) 
 ) -> Dict[str, Any]:
-
     """
-    Retrieves and reranks relevant context from the specified VectorStore collection,
-    supporting MULTI-QUERY search and GUARANTEEING the inclusion of pre-mapped 
-    priority documents (Hybrid Retrieval).
+    L3-ready retrieval + fallback context + guaranteed-priority-chunks + rerank.
     """
     start_time = time.time()
-    all_retrieved_chunks: List[Any] = []
-    
-    # 📌 FIX: รวบรวม sequential_chunk_uuids เข้าใน priority_docs_input
-    if sequential_chunk_uuids:
-        if mapped_uuids:
-             mapped_uuids.extend(sequential_chunk_uuids)
-        else:
-             mapped_uuids = sequential_chunk_uuids
-
     try:
-        # 1. Setup & Query List
-        manager = vectorstore_manager
-        if manager is None: raise ValueError("VectorStoreManager is not initialized.")
-        collection_name = _get_collection_name(doc_type, enabler).lower()
-        queries_to_run = [query] if isinstance(query, str) else query
-        
-        # 2. Persistent Mapping (Hybrid Retrieval) SETUP
-        guaranteed_priority_chunks: List[Any] = []
-        mapped_uuids_for_vsm_search: Optional[List[str]] = None
-        
-        if priority_docs_input:
-            logger.critical(f"🧭 DEBUG: Using {len(priority_docs_input)} pre-calculated priority chunks (Limited Chunks Mode).")
-            guaranteed_priority_chunks = priority_docs_input
-            mapped_uuids_for_vsm_search = None 
-        elif mapped_uuids:
-            # 2b. Fallback: ใช้ mapped_uuids เป็นตัวกรองใน VSM Search (Step 3)
-            normalized_mapped_uuids = normalize_stable_ids(mapped_uuids)
-            mapped_uuids_for_vsm_search = normalized_mapped_uuids
-            logger.critical(f"🧭 DEBUG: [FALLBACK] Using {len(normalized_mapped_uuids)} UUIDs as search filter.")
-            
-        # 3. 🎯 Invoke Retrieval (MULTI-QUERY Standard RAG Search)
-        rag_search_filters = mapped_uuids_for_vsm_search
-        if stable_doc_ids:
-            additional_uuids = set(normalize_stable_ids(stable_doc_ids))
-            if rag_search_filters:
-                rag_search_filters = list(set(rag_search_filters) | additional_uuids)
+        from core.constants import FINAL_K_RERANKED as CONST_FINAL_K, INITIAL_TOP_K as CONST_INITIAL_K
+    except Exception:
+        CONST_FINAL_K, CONST_INITIAL_K = 5, 25
+    if top_k is None: top_k = CONST_FINAL_K
+    if initial_k is None: initial_k = CONST_INITIAL_K
+
+    all_retrieved_chunks: List[Any] = []
+    used_chunk_uuids: List[str] = []
+
+    # merge sequential_chunk_uuids into mapped_uuids
+    if sequential_chunk_uuids:
+        mapped_uuids = (list(mapped_uuids) if mapped_uuids else []) + list(sequential_chunk_uuids)
+
+    manager = vectorstore_manager
+    if manager is None:
+        raise ValueError("VectorStoreManager is not initialized.")
+
+    collection_name = _get_collection_name(doc_type, enabler).lower()
+    queries_to_run = [query] if isinstance(query, str) else list(query or [])
+
+    # --- L3: Fallback from previous level ---
+    fallback_chunks: List[Any] = []
+    if level == 3 and callable(get_previous_level_docs):
+        try:
+            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
+            logger.critical(f"🧭 DEBUG: Fallback context from previous level: {len(fallback_chunks)} chunks")
+        except Exception as e:
+            logger.warning(f"Fallback previous level docs failed: {e}")
+
+    # --- Priority / mapped UUIDs ---
+    guaranteed_priority_chunks: List[Any] = []
+    mapped_uuids_for_vsm_search: Optional[List[str]] = None
+
+    if priority_docs_input:
+        try:
+            from langchain_core.documents import Document as LcDocument
+        except Exception:
+            priority_docs_input = []
+        else:
+            transformed = []
+            for doc in priority_docs_input:
+                if doc is None: continue
+                if isinstance(doc, dict):
+                    pc = doc.get('page_content') or doc.get('text') or ''
+                    meta = doc.get('metadata') or {}
+                    if pc: transformed.append(LcDocument(page_content=pc, metadata=meta))
+                elif isinstance(doc, LcDocument):
+                    transformed.append(doc)
+            guaranteed_priority_chunks = transformed
+    elif mapped_uuids:
+        mapped_uuids_for_vsm_search = normalize_stable_ids(mapped_uuids)
+        logger.critical(f"🧭 DEBUG: Using {len(mapped_uuids_for_vsm_search)} UUIDs as search filter.")
+
+    # --- Retriever ---
+    retriever = manager.get_retriever(collection_name)
+    if retriever is None:
+        raise ValueError(f"Retriever init failed for collection '{collection_name}'")
+
+    retrieved_chunks: List[Any] = []
+    for q in queries_to_run:
+        try:
+            if callable(getattr(retriever, "invoke", None)):
+                resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": initial_k}}})
+            elif callable(getattr(retriever, "get_relevant_documents", None)):
+                resp = retriever.get_relevant_documents(q)
             else:
-                rag_search_filters = list(additional_uuids)
-        
-        retriever = manager.get_retriever(collection_name)
-        if retriever is None: raise ValueError(f"Retriever initialization failed for {collection_name}.")
-        
-        search_kwargs = {"k": initial_k}
-        
-        for q in queries_to_run:
-            search_kwargs_for_query = search_kwargs.copy()
-            
-            # (❌ คอมเมนต์ส่วน Filter ออกไปแล้ว)
+                resp = []
+        except Exception as e:
+            logger.error(f"Retriever invocation error for query '{q}': {e}")
+            resp = []
+        retrieved_chunks.extend(resp or [])
 
-            retrieved_docs: List[Any] = []
-            
-            # 📌 เรียกใช้ Retriever
-            if callable(getattr(retriever, 'invoke', None)):
-                retrieved_docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs_for_query}})
-            elif callable(getattr(retriever, 'get_relevant_documents', None)):
-                retrieved_docs = retriever.get_relevant_documents(q)
-            else:
-                raise AttributeError("Retriever object lacks methods.")
+    # merge fallback_chunks + retrieved + guaranteed_priority
+    all_chunks_to_process = list(retrieved_chunks) + list(fallback_chunks) + list(guaranteed_priority_chunks)
 
-            # 📌 รวบรวมผลลัพธ์ทั้งหมด
-            all_retrieved_chunks.extend(retrieved_docs)
-            
-        logger.critical(f"🧭 DEBUG: Total chunks retrieved before dedup: {len(all_retrieved_chunks)}")
+    # --- Dedup + PDCA default + truncation ---
+    unique_chunks_map: Dict[str, Any] = {}
+    for doc in all_chunks_to_process:
+        if doc is None: continue
+        # ensure metadata dict
+        md = getattr(doc, "metadata", {}) or {}
+        setattr(doc, "metadata", md)
+        # PDCA default
+        if "pdca_tag" not in md or not md.get("pdca_tag"):
+            md["pdca_tag"] = "Other"
+        # truncated content for L3
+        pc = (getattr(doc, "page_content", None) or getattr(doc, "text", "") or "")
+        if level == 3:
+            pc = pc[:500]
+            setattr(doc, "page_content", pc)
+        # chunk_uuid key
+        chunk_uuid = md.get("chunk_uuid") or md.get("doc_uuid") or f"HASH-{hash(pc)}"
+        if chunk_uuid not in unique_chunks_map:
+            unique_chunks_map[chunk_uuid] = doc
 
-        # 4. 🛠️ Rerank Strategy: Guaranteed Inclusion (รวม Priority Chunks)
+    dedup_chunks = list(unique_chunks_map.values())
+    logger.info(f"    - Dedup Merged: Total unique chunks = {len(dedup_chunks)}. Guaranteed chunks = {len(guaranteed_priority_chunks)}")
 
-        all_chunks_to_process = all_retrieved_chunks + guaranteed_priority_chunks
+    # --- Rerank ---
+    final_selected_docs: List[Any] = list(guaranteed_priority_chunks)
+    slots_available = max(0, top_k - len(final_selected_docs))
+    rerank_candidates = [d for d in dedup_chunks if d not in final_selected_docs]
 
-        # 4b. 🟢 FIX: Strict Deduplication by chunk_uuid (ใช้คีย์เดียวเท่านั้น)
-        unique_chunks_map: Dict[str, Any] = {}
-        
-        for doc in all_chunks_to_process:
-            metadata = getattr(doc, 'metadata', {})
-            chunk_uuid = metadata.get('chunk_uuid')
+    if slots_available > 0 and rerank_candidates:
+        reranker = get_global_reranker(top_k)
+        if reranker and hasattr(reranker, "compress_documents"):
+            try:
+                reranked = reranker.compress_documents(query=queries_to_run[0] if queries_to_run else "", documents=rerank_candidates, top_n=slots_available)
+                final_selected_docs.extend(reranked or [])
+            except Exception:
+                final_selected_docs.extend(rerank_candidates[:slots_available])
+        else:
+            final_selected_docs.extend(rerank_candidates[:slots_available])
 
-            # 📌 Fallback Logic: สร้าง Key ที่เป็น Deterministic จาก Content Hash
-            if not chunk_uuid:
-                
-                content_hash = hashlib.sha256(doc.page_content.strip().encode('utf-8')).hexdigest()
-                chunk_uuid = f"HASH-{content_hash}" 
-            
-            # 📌 Logic Dedup: ใช้ UUID/Hash Key ในการตรวจสอบ
-            if chunk_uuid not in unique_chunks_map:
-                # ถ้าไม่ซ้ำ ให้เก็บไว้
-                
-                # ถ้าเป็น Guaranteed chunk ที่เพิ่งถูกรวม ให้ตั้งค่าคะแนนเริ่มต้นสูง
-                if doc in guaranteed_priority_chunks and doc.metadata.get('relevance_score') is None:
-                    doc.metadata['relevance_score'] = 1.0 
-                
-                unique_chunks_map[chunk_uuid] = doc
+    # --- Prepare outputs ---
+    top_evidences: List[Dict[str, Any]] = []
+    aggregated_list: List[str] = []
 
-        deduplicated_chunks = list(unique_chunks_map.values())
-        
-        correct_mapped_count = len([d for d in deduplicated_chunks if d in guaranteed_priority_chunks]) # นับเฉพาะที่ยังอยู่หลัง Dedup
-        slots_available = max(0, top_k - correct_mapped_count)
-        
-        logger.info(f"    - Dedup Merged: Total unique chunks = {len(deduplicated_chunks)}. Priority Chunks (Guaranteed) = {correct_mapped_count}.")
+    for doc in final_selected_docs[:top_k]:
+        if doc is None: continue
+        md = getattr(doc, "metadata", {}) or {}
+        source = md.get("source") or md.get("filename") or "Unknown"
+        pc = getattr(doc, "page_content", "") or ""
+        chunk_uuid = md.get("chunk_uuid") or f"HASH-{hash(pc)}"
+        used_chunk_uuids.append(chunk_uuid)
+        top_evidences.append({
+            "doc_uuid": md.get("doc_uuid"),
+            "doc_id": md.get("doc_id") or md.get("stable_doc_uuid"),
+            "chunk_uuid": chunk_uuid,
+            "source": source,
+            "text": pc,
+            "pdca_tag": md.get("pdca_tag", "Other"),
+            "score": md.get("relevance_score", 0.0)
+        })
+        aggregated_list.append(f"[{md.get('pdca_tag','Other')}] [SOURCE: {source}] {pc}")
 
-        # ... (โค้ดส่วนที่เหลือของ 4c และ 4d)
+    aggregated_context = "\n\n---\n\n".join(aggregated_list)
+    duration = time.time() - start_time
+    if level is not None:
+        logger.critical(f"🧭 DEBUG: Aggregated Context Length for L{level} ({sub_id}) = {len(aggregated_context)}. Retrieval Time: {duration:.2f}s")
 
-        # 4d. Rerank Logic
-        final_selected_docs: List[Any] = [d for d in deduplicated_chunks if d in guaranteed_priority_chunks] # ใช้ Chunks ที่ถูก Guarantee และ Dedup แล้ว
+    return {
+        "top_evidences": top_evidences,
+        "aggregated_context": aggregated_context,
+        "retrieval_time": duration,
+        "used_chunk_uuids": used_chunk_uuids
+    }
 
-        priority_chunk_uuids = set([d.metadata.get('chunk_uuid') for d in final_selected_docs])
-        rerank_candidates = [d for d in deduplicated_chunks if d.metadata.get('chunk_uuid') not in priority_chunk_uuids]
-
-        if slots_available > 0 and rerank_candidates:
-            reranker = get_global_reranker(top_k)
-
-            if reranker is None or not hasattr(reranker, 'compress_documents'):
-                logger.error("🚨 CRITICAL FALLBACK: Reranker failed to load. Using simple truncation of NEW RAG results.")
-                # 📌 FIX: ใช้ score ภายใน metadata (ถ้ามี) สำหรับการจัดเรียง Fallback
-                reranked_rag_results = sorted(rerank_candidates, key=lambda x: x.metadata.get('relevance_score', 0.0), reverse=True)[:slots_available]
-            else:
-                rerank_query = queries_to_run[0] 
-                
-                # 📌 Reranker จะเพิ่ม score กลับเข้าไปใน metadata
-                reranked_rag_results = reranker.compress_documents(
-                    query=rerank_query,
-                    documents=rerank_candidates,
-                    top_n=slots_available
-                )
-
-            final_selected_docs.extend(reranked_rag_results)
-
-        # 5. Output Formatting
-        top_evidences = []
-        aggregated_context_list = []
-
-        for doc in final_selected_docs[:top_k]:
-            source = doc.metadata.get("source") or doc.metadata.get("doc_source")
-            content = doc.page_content.strip()
-            # 🟢 FIX: ใช้ 'relevance_score' จาก Metadata ซึ่งถูกตั้งโดย Reranker
-            relevance_score_raw = doc.metadata.get("relevance_score") 
-
-            relevance_score = f"{float(relevance_score_raw):.4f}" if relevance_score_raw is not None else "N/A"
-            doc_uuid = doc.metadata.get("doc_uuid") or doc.metadata.get("chunk_uuid")
-
-            top_evidences.append({
-                # 🟢 FIX: ใช้ chunk_uuid
-                "doc_uuid": doc_uuid,
-                "doc_id": doc.metadata.get("stable_doc_uuid"),
-                "doc_type": doc.metadata.get("doc_type"),
-                "chunk_uuid": doc.metadata.get("chunk_uuid"), 
-                "source": source,
-                "text": content,
-                "relevance_score": relevance_score,
-                "chunk_index": doc.metadata.get("chunk_index"),
-                # 🟢 FIX: เพิ่ม 'score' สำหรับใช้ใน Logic ของ _run_single_assessment
-                "score": float(relevance_score_raw) if relevance_score_raw is not None else 0.0 
-            })
-            doc_id_short = doc.metadata.get('stable_doc_uuid', 'N/A')[:8]
-            aggregated_context_list.append(f"[SOURCE: {source} (ID:{doc_id_short}...)] {content}")
-
-        aggregated_context = "\n\n---\n\n".join(aggregated_context_list)
-        duration = time.time() - start_time
-
-        if level is not None:
-            logger.critical(f"🧭 DEBUG: Aggregated Context Length for L{level} ({sub_id}) = {len(aggregated_context)}. Retrieval Time: {duration:.2f}s")
-
-
-        return {
-            "top_evidences": top_evidences,
-            "aggregated_context": aggregated_context,
-            "retrieval_time": duration # 🟢 FIX: เพิ่ม retrieval_time กลับมาในผลลัพธ์
-        }
-
-    except Exception as e:
-        logger.error(f"retrieve_context_with_filter error: {type(e).__name__}: {e}")
-        return {"top_evidences": [], "aggregated_context": f"ERROR: RAG retrieval failed due to {type(e).__name__}: {e}", "retrieval_time": time.time() - start_time}
 
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
@@ -393,6 +370,7 @@ def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional
         sub_id=sub_id,
         level=level
     )
+
 # -------------------- Query Enhancement Functions --------------------
 def enhance_query_for_statement(
     statement_text: str,
@@ -745,17 +723,33 @@ def create_context_summary_llm(
 # ------------------------
 # Action plan
 # ------------------------
+import time
+import logging
+import json
+from typing import List, Dict, Any
+
+# NOTE: ต้องมั่นใจว่ามีการ import logger, SYSTEM_ACTION_PLAN_PROMPT, 
+# ACTION_PLAN_PROMPT, ActionPlanActions และ _fetch_llm_response
+# (สมมติว่ามีการกำหนดไว้ในโค้ดส่วนอื่น)
+
+# Placeholder for required helper functions and constants (for completeness)
+logger = logging.getLogger(__name__)
+# Assuming ActionPlanActions is a Pydantic model defined elsewhere
+# Assuming SYSTEM_ACTION_PLAN_PROMPT, ACTION_PLAN_PROMPT are strings defined elsewhere
+# Assuming _fetch_llm_response, _robust_extract_json are functions defined elsewhere
+
 def create_structured_action_plan(
     failed_statements: List[Dict[str, Any]], 
     sub_id: str, 
     target_level: int, 
     llm_executor: Any, # <-- เพิ่มอาร์กิวเมนต์นี้
     max_retries: int = 3
-):
+) -> List[Dict[str, Any]]:
     """
     ใช้ LLM เพื่อสร้าง Action Plan ที่มีโครงสร้างจากรายการ Statement ที่สอบตก
     """
-    if not failed_statements_data:
+    # 📌 FIX: เปลี่ยน failed_statements_data เป็น failed_statements
+    if not failed_statements: 
         return []
 
     if llm_executor is None:
@@ -764,13 +758,16 @@ def create_structured_action_plan(
 
     try:
         # ใช้ .model_json_schema() เพื่อความเข้ากันได้กับ Pydantic v2+
+        # NOTE: ActionPlanActions ต้องเป็น Pydantic Model
         schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
-    except: schema_json = "{}"
+    except Exception:
+        schema_json = "{}"
 
     system_prompt = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nRespond ONLY with a valid JSON ARRAY."
 
     statements_text = []
-    for s in failed_statements_data:
+    # 📌 FIX: เปลี่ยน failed_statements_data เป็น failed_statements
+    for s in failed_statements: 
         # จำกัดความยาวของ Statement และ Reason เพื่อป้องกันการล้น Token
         st = (s.get('statement','') or '')[:1000]
         rs = (s.get('reason','') or '')[:500]
@@ -779,7 +776,7 @@ def create_structured_action_plan(
     # 📌 แก้ไข ACTION_PLAN_PROMPT ให้รองรับ sub_id และ target_level
     human_prompt = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list="\n\n".join(statements_text))
 
-    for attempt in range(max_retries+1):
+    for attempt in range(max_retries + 1):
         try:
             # 🟢 FIX: ส่ง llm_executor เข้าไป
             raw = _fetch_llm_response(system_prompt, human_prompt, 1, llm_executor=llm_executor)

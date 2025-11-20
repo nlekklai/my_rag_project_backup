@@ -139,29 +139,27 @@ def build_simulated_l3_evidence(check_blocks: list[dict]) -> str:
 """.strip()
 
 def build_ordered_context(level: int,
-                          simulated_l3: str,
                           plan_blocks: list[dict],
                           do_blocks: list[dict],
                           check_blocks: list[dict],
                           act_blocks: list[dict],
                           other_blocks: list[dict]) -> str:
-
     def fmt(blocks):
         return "\n\n".join(
-            f"[{b['file']}]\n{b['content']}" for b in blocks
+            f"[{b.get('file', 'Unknown File')}]\n{b.get('content', b.get('text', ''))}" for b in blocks
         )
 
     if level == 3:
+        # L3: Check/Act Priority 1, Plan/Do/Other ต่อท้าย
         ordered = [
-            simulated_l3,             # Priority 1
-            fmt(check_blocks),        # Priority 2
-            fmt(do_blocks),           # Priority 3
-            fmt(plan_blocks),         # Priority 4
-            fmt(act_blocks),          # Priority 5
-            fmt(other_blocks)         # Priority 6
+            fmt(check_blocks),
+            fmt(act_blocks),
+            fmt(plan_blocks),
+            fmt(do_blocks),
+            fmt(other_blocks)
         ]
     else:
-        # Default ordering for L1/L2/L4/L5
+        # Default: Plan -> Do -> Check -> Act -> Other
         ordered = [
             fmt(plan_blocks),
             fmt(do_blocks),
@@ -1274,8 +1272,11 @@ class SEAMPDCAEngine:
                         try:
                             # NOTE: self.action_plan_generator ต้องถูกกำหนดไว้
                             action_plan = self.action_plan_generator(
-                                failed_statements_data=failed_statements_for_plan,
-                                sub_id=sub_id, enabler=self.config.enabler, target_level=target_plan_level 
+                                failed_statements_for_plan, 
+                                sub_id=sub_id, 
+                                target_level=target_plan_level,
+                                llm_executor=self.llm  # 🟢 NEW: ส่ง LLM instance เข้าไป
+                                # ลบ enabler= ออก เนื่องจากไม่ได้อยู่ใน def ของ create_structured_action_plan แล้ว
                             )
                         except Exception as e:
                             logger.error(f"Action Plan Generation failed for {sub_id}: {e}")
@@ -1482,20 +1483,21 @@ class SEAMPDCAEngine:
                 logger.critical(f"🚨 Activating L{level} Content-Based Reordering.")
 
                 # A. Build simulated evidence (Priority 1) - KEEP FOR NOW
-                simulated_evidence_context = build_simulated_l3_evidence(check_blocks)
+                # simulated_evidence_context = build_simulated_l3_evidence(check_blocks)
+                simulated_evidence_context=""
                 
                 # 🟢 NEW: เพิ่ม SAFETY CAP สำหรับ Simulated Evidence
-                if len(simulated_evidence_context) > MAX_SIMULATED_CONTEXT_LEN:
-                    logger.warning(f"⚠️ L{level} Simulated Context capped from {len(simulated_evidence_context)} to {MAX_SIMULATED_CONTEXT_LEN} chars.")
-                    simulated_evidence_context = simulated_evidence_context[:MAX_SIMULATED_CONTEXT_LEN]
+                # if len(simulated_evidence_context) > MAX_SIMULATED_CONTEXT_LEN:
+                #     logger.warning(f"⚠️ L{level} Simulated Context capped from {len(simulated_evidence_context)} to {MAX_SIMULATED_CONTEXT_LEN} chars.")
+                #     simulated_evidence_context = simulated_evidence_context[:MAX_SIMULATED_CONTEXT_LEN]
                 
-                if IS_LOG_L3_CONTEXT:
-                    logger.info(f"🟢 L{level} simulated evidence created and merged: {len(simulated_evidence_context)} chars.")
+                # if IS_LOG_L3_CONTEXT:
+                #     logger.info(f"🟢 L{level} simulated evidence created and merged: {len(simulated_evidence_context)} chars.")
 
                 # B. Content-Based Ordered Context (ใช้ Blocks ที่จัดกลุ่มตาม Tag แล้ว)
                 final_context_for_llm = build_ordered_context(
                     level=level,
-                    simulated_l3=simulated_evidence_context, 
+                    # simulated_l3=simulated_evidence_context, 
                     plan_blocks=plan_blocks,
                     do_blocks=do_blocks,
                     check_blocks=check_blocks,
