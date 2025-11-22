@@ -723,10 +723,6 @@ def create_context_summary_llm(
 # ------------------------
 # Action plan
 # ------------------------
-import time
-import logging
-import json
-from typing import List, Dict, Any
 
 # NOTE: ต้องมั่นใจว่ามีการ import logger, SYSTEM_ACTION_PLAN_PROMPT, 
 # ACTION_PLAN_PROMPT, ActionPlanActions และ _fetch_llm_response

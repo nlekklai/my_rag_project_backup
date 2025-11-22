@@ -701,7 +701,7 @@ def get_vectorstore(collection_name: str = "default", base_path: str = VECTORSTO
     # Load embeddings model once
     embeddings = _VECTORSTORE_SERVICE_CACHE.get("embeddings_model")
     if not embeddings:
-        embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-large")
+        embeddings = HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-base")
         _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
         
     persist_directory = os.path.join(base_path, collection_name)

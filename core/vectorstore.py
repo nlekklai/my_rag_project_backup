@@ -119,7 +119,7 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
         with _EMBED_LOCK:
             if _CACHED_EMBEDDINGS is None:
                 try:
-                    model_name = "intfloat/multilingual-e5-large"
+                    model_name = "intfloat/multilingual-e5-base"
                     logger.info(f"📦 Creating HuggingFaceEmbeddings (model={model_name}, device={device})")
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
                         model_name=model_name,
