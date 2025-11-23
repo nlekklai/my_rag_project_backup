@@ -1,445 +1,278 @@
 {
     "1.1.L1": [
         {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+            "filename": "ร่างแผนแม่บทด้านการจัดการความรู้  KM 2569 - 2573_ส่.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T13:01:13.854196"
-        },
-        {
-            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
-            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T13:01:13.854270"
-        },
-        {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T13:01:13.854275"
-        }
-    ],
-    "1.1.L2": [
-        {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:05:41.852658"
-        },
-        {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:05:41.852703"
-        },
-        {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:05:41.852710"
-        }
-    ],
-    "1.1.L5": [
-        {
-            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
-            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:21:45.443951"
-        },
-        {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:21:45.443973"
+            "timestamp": "2025-11-23T08:29:02.913077"
         },
         {
             "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
             "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:21:45.443980"
+            "timestamp": "2025-11-23T08:29:02.913199"
         },
         {
             "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
             "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:21:45.443985"
-        },
-        {
-            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:21:45.443991"
+            "timestamp": "2025-11-23T08:29:02.913207"
         }
     ],
     "1.2.L1": [
         {
-            "doc_id": "ee5cd15f60977bcb0528e60ff8a30080ab9aaa5561c11456744ff853531eb63c",
-            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T20:57:10.107913"
-        },
-        {
-            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T20:57:10.107970"
-        },
-        {
             "doc_id": "13dbc874c78ec05f5843c8f5faa53d50d4c927eb52dd835cfef75da958b740a5",
             "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T20:57:10.107977"
-        }
-    ],
-    "1.2.L2": [
-        {
-            "doc_id": "13dbc874c78ec05f5843c8f5faa53d50d4c927eb52dd835cfef75da958b740a5",
-            "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:26:13.410211"
+            "timestamp": "2025-11-23T00:07:45.065335"
         },
         {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:26:13.410250"
+            "timestamp": "2025-11-23T00:07:45.065360"
         },
         {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
+            "doc_id": "9180c09ef9497c2fbae72fe861579d82c1ff166bab9060f3a80983dbdd853e7c",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:26:13.410256"
-        }
-    ],
-    "1.2.L3": [
-        {
-            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:28:51.797249"
-        },
-        {
-            "doc_id": "3bf862da78f82dfbebac982a61e33211a230f0e3cf32e92d5d53107fc8583e6f",
-            "filename": "KM6.1L301 KM_6_3_PEA_Assessment Report.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:28:51.797289"
-        },
-        {
-            "doc_id": "fc301359c0e83c07f22452997d8066005cfed792d3c312cab4d1a3b7c6ee4a32",
-            "filename": "KM4.1L102 KM-QM-01_คู่มือระบบการจัดการความรู้ (PEA-ฝ่ายพัฒนาทรัพยากรบุคคล)2.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:28:51.797296"
-        },
-        {
-            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
-            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:28:51.797301"
-        },
-        {
-            "doc_id": "881bd5ec5a15743e44653207b05bbcaad6e0dc84c6e4a1109a6e0102737550c6",
-            "filename": "KM3.3L202 การตรวจติดตามภายใน ตามกรอบมาตรฐาน ISO 30401.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:28:51.797305"
+            "timestamp": "2025-11-23T00:07:45.065368"
         }
     ],
     "2.1.L1": [
         {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:43:24.840886"
-        },
-        {
-            "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
-            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:43:24.840973"
-        },
-        {
             "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
             "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:43:24.840977"
-        }
-    ],
-    "2.1.L2": [
-        {
-            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:45:30.354068"
+            "timestamp": "2025-11-23T00:25:20.648920"
         },
         {
             "doc_id": "54b3102de86fabe1bba8caa1cbc75c83f1166044ee6de9330f8d9ba41750a566",
             "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:45:30.354085"
+            "timestamp": "2025-11-23T00:25:20.648939"
         },
         {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "doc_id": "9180c09ef9497c2fbae72fe861579d82c1ff166bab9060f3a80983dbdd853e7c",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:45:30.354089"
-        }
-    ],
-    "2.1.L3": [
-        {
-            "doc_id": "56e4fe1a96aaff45f88b81096b2ec336519de76eaa0904a3793b597c2f5c89cc",
-            "filename": "KM3.3L403 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:47:27.685555"
-        },
-        {
-            "doc_id": "0118b74bb157bccab23c04e6505d5d23682e4b4264084eef1624bc394812dfaf",
-            "filename": "KM1.2L502 ผลประเมินผู้บริหาร นำมาปรับปรุง.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:47:27.685640"
-        },
-        {
-            "doc_id": "f6883fd775613ea2c905c70c25376790864b6728bb177936d8ffc6923073698b",
-            "filename": "KM2.1L407 ติดตามผลผ่านระบบ km-survey.png (1).png",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:47:27.685644"
-        },
-        {
-            "doc_id": "369f9e62ec3128244cc7635d2abdae546b032cfcdb25989b339dfef5adcf9815",
-            "filename": "KM2.2L404 km-survey 2.jpg",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:47:27.685653"
-        },
-        {
-            "doc_id": "55dc77558678fbc8d68607945d38e82b89358ea426f607fbe76e2034ff4cd984",
-            "filename": "KM4.1L123 KM-FW-01-08_แบบฟอร์มการคัดเลือกกระบวนการเพื่อนำมาจัดการความรู้.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:47:27.685662"
-        }
-    ],
-    "2.1.L5": [
-        {
-            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:55:52.248266"
-        },
-        {
-            "doc_id": "f6883fd775613ea2c905c70c25376790864b6728bb177936d8ffc6923073698b",
-            "filename": "KM2.1L407 ติดตามผลผ่านระบบ km-survey.png (1).png",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:55:52.248290"
-        },
-        {
-            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:55:52.248295"
-        },
-        {
-            "doc_id": "56e4fe1a96aaff45f88b81096b2ec336519de76eaa0904a3793b597c2f5c89cc",
-            "filename": "KM3.3L403 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:55:52.248298"
-        },
-        {
-            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:55:52.248301"
+            "timestamp": "2025-11-23T00:25:20.648943"
         }
     ],
     "2.2.L1": [
         {
+            "doc_id": "33bff3fdf69a216d825e625b1e316279375fd3c4f9a15915aac11102b56109be",
+            "filename": "KM2.2L504 ความพึงพอใจ จัดสรรงบ IT.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T00:44:12.905771"
+        },
+        {
             "doc_id": "60a8b7e8f74ba5157f1d4f064c781d76d5d1c835dfa3280ce0f68077ecec7baa",
             "filename": "KM2.1L302 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:57:34.874255"
+            "timestamp": "2025-11-23T00:44:12.905794"
         },
         {
-            "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
-            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:57:34.874278"
-        },
-        {
-            "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
-            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:57:34.874284"
+            "timestamp": "2025-11-23T00:44:12.905798"
         }
     ],
-    "2.2.L2": [
+    "3.1.L1": [
         {
-            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
-            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "doc_id": "4bec1c05231e1a85a2866eac3fd6756e895b8c9e1e97e8f64c92a33f899b6b65",
+            "filename": "KM2.2L302 งบประมาณในแผนแม่บท.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:59:56.288272"
+            "timestamp": "2025-11-23T00:57:27.048364"
         },
+        {
+            "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
+            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T00:57:27.048387"
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T00:57:27.048393"
+        }
+    ],
+    "3.2.L1": [
         {
             "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
             "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T10:59:56.288295"
-        },
-        {
-            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T10:59:56.288301"
-        }
-    ],
-    "2.2.L3": [
-        {
-            "doc_id": "56e4fe1a96aaff45f88b81096b2ec336519de76eaa0904a3793b597c2f5c89cc",
-            "filename": "KM3.3L403 การประเมินทักษะการทำงานด้านการจัดการความรู้ (Skill Matrix).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:02:20.405629"
-        },
-        {
-            "doc_id": "7c6cf0466dbd4ca1cf0e2ab2f271f4b8cb6b21c7d758cfe24e11e0110b6031f2",
-            "filename": "KM1.1L201 ตัวอย่าง Skill Matrix.jpg",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:02:20.405661"
-        },
-        {
-            "doc_id": "359a28cfd6f6214a010c8009a1c4488bb504015a82e8d108ac62c05fdc151d83",
-            "filename": "KM3.1L503 ตัวอย่างการปรับเปลี่ยนวิธีการส่งเสริม และสร้างแรงจูงใจให้บุคลากรในการสร้างสรรค์อ.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:02:20.405668"
-        },
-        {
-            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
-            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:02:20.405674"
-        },
-        {
-            "doc_id": "369f9e62ec3128244cc7635d2abdae546b032cfcdb25989b339dfef5adcf9815",
-            "filename": "KM2.2L404 km-survey 2.jpg",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:02:20.405679"
-        }
-    ],
-    "2.2.L4": [
-        {
-            "doc_id": "60a8b7e8f74ba5157f1d4f064c781d76d5d1c835dfa3280ce0f68077ecec7baa",
-            "filename": "KM2.1L302 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:04:55.445057"
-        },
-        {
-            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:04:55.445114"
-        },
-        {
-            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:04:55.445123"
-        },
-        {
-            "doc_id": "fc301359c0e83c07f22452997d8066005cfed792d3c312cab4d1a3b7c6ee4a32",
-            "filename": "KM4.1L102 KM-QM-01_คู่มือระบบการจัดการความรู้ (PEA-ฝ่ายพัฒนาทรัพยากรบุคคล)2.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:04:55.445151"
-        },
-        {
-            "doc_id": "78d81b985f4a1ea9c87052b7d21af7e07424019e0452e9531581b8f33f1f41ab",
-            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:04:55.445155"
-        }
-    ],
-    "2.2.L5": [
-        {
-            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
-            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:07:55.879624"
-        },
-        {
-            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
-            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:07:55.879649"
-        },
-        {
-            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
-            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:07:55.879657"
-        },
-        {
-            "doc_id": "0dab357a50c202dce229455cc8d881c2a0d785425dd5d09e2531ea0a69a436d5",
-            "filename": "KM5.1L502 5.1 ระดับ 3 (5) _ระดับ 5 (2) รายงานการประเมินกระบวนก.pdf",
-            "mapper_type": "AI_RAG",
-            "priority": true,
-            "timestamp": "2025-11-20T11:07:55.879681"
+            "timestamp": "2025-11-23T01:17:13.349154"
         },
         {
             "doc_id": "46e44b1e113db549dfdf05425d5b45f5f934e5b87cc148da4b304b00434c8010",
             "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
             "mapper_type": "AI_RAG",
             "priority": true,
-            "timestamp": "2025-11-20T11:07:55.879688"
+            "timestamp": "2025-11-23T01:17:13.349207"
+        },
+        {
+            "doc_id": "13dbc874c78ec05f5843c8f5faa53d50d4c927eb52dd835cfef75da958b740a5",
+            "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:17:13.349213"
+        }
+    ],
+    "3.3.L1": [
+        {
+            "doc_id": "aacc06419b6f8dfa8c0ef4627e0eeacdf69ec8b7844f685b1254efd068ede3a7",
+            "filename": "แผนแม่บทการจัดการความรู้ ปี 2568 – 2572.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:32:17.471758"
+        },
+        {
+            "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+            "filename": "ร่างแผนแม่บทด้านการจัดการความรู้  KM 2569 - 2573_ส่.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:32:17.471782"
+        },
+        {
+            "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+            "filename": "ร่างแผนแม่บทด้านการจัดการความรู้  KM 2569 - 2573_ส่.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:32:17.471786"
+        }
+    ],
+    "4.1.L1": [
+        {
+            "doc_id": "60a8b7e8f74ba5157f1d4f064c781d76d5d1c835dfa3280ce0f68077ecec7baa",
+            "filename": "KM2.1L302 การวางแผนการดำเนินงาน KM ถ่ายทอดไปยัง Action plan.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:54:43.311094"
+        },
+        {
+            "doc_id": "4bec1c05231e1a85a2866eac3fd6756e895b8c9e1e97e8f64c92a33f899b6b65",
+            "filename": "KM2.2L302 งบประมาณในแผนแม่บท.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:54:43.311126"
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T01:54:43.311132"
+        }
+    ],
+    "4.2.L1": [
+        {
+            "doc_id": "4bec1c05231e1a85a2866eac3fd6756e895b8c9e1e97e8f64c92a33f899b6b65",
+            "filename": "KM2.2L302 งบประมาณในแผนแม่บท.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:15:57.383485"
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:15:57.383508"
+        },
+        {
+            "doc_id": "cbc08da81ed570153617e09a883556d0b92dd75cc9b0b459a7b71eb528f20308",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:15:57.383518"
+        }
+    ],
+    "5.1.L1": [
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:32:40.270296"
+        },
+        {
+            "doc_id": "7184ac6c521e879f615e00f0a07662cad5f933b8efc43649611be121e304ded0",
+            "filename": "ร่างแผนแม่บทด้านการจัดการความรู้  KM 2569 - 2573_ส่.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:32:40.270318"
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T02:32:40.270325"
+        }
+    ],
+    "5.2.L1": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:08:37.484238"
+        },
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:08:37.484263"
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:08:37.484270"
+        }
+    ],
+    "6.1.L1": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:25:11.866341"
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:25:11.866469"
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_RAG",
+            "priority": true,
+            "timestamp": "2025-11-23T03:25:11.866476"
         }
     ]
 }

@@ -1,10 +1,10 @@
-#core/retry_policy.py
+# core/retry_policy.py
 import time
 import random
 from dataclasses import dataclass
 from typing import Any, Optional, Callable
 import math
-
+# logging ถูกนำออกไปตามโครงสร้างเดิมของผู้ใช้
 
 @dataclass
 class RetryResult:
@@ -106,7 +106,6 @@ class RetryPolicy:
 
                 # เปลี่ยนจาก return → raise เพื่อเข้า Adaptive retry logic
                 raise ValueError(last_failure_reason)
-                return RetryResult(success=True, result=result, reason=last_failure_reason, attempts=attempt)
 
 
             except Exception as e:
