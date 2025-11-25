@@ -24,7 +24,7 @@ from models.llm import create_llm_instance
 
 try:
     # Import Config & Core Modules
-    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_ENABLER
+    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, LLM_MODEL_NAME
     # 🎯 VSM: ต้อง import AssessmentConfig ด้วย
     from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
     # VSM: Import เพื่อโหลดและส่ง Instance เข้าไปยัง Engine
@@ -88,7 +88,7 @@ def main():
     try:
         # 📌 เรียกใช้ Factory Function
         llm_for_classification = create_llm_instance(
-            model_name="llama3.1:8b", # ใช้ค่าคงที่ที่กำหนดไว้ใน models/llm.py
+            model_name=LLM_MODEL_NAME, # ใช้ค่าคงที่ที่กำหนดไว้ใน models/llm.py
             temperature=0.0
         )
         if not llm_for_classification:

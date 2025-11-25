@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 import uuid 
 import sys 
 import hashlib
+from datetime import datetime
+import textwrap
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -46,7 +48,8 @@ try:
     from config.global_vars import (
         DEFAULT_ENABLER, 
         FINAL_K_RERANKED, 
-        INITIAL_TOP_K, 
+        INITIAL_TOP_K,
+        MAX_EVAL_CONTEXT_LENGTH 
     )
 
     from langchain_core.documents import Document as LcDocument
@@ -371,6 +374,114 @@ def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional
         level=level
     )
 
+def _summarize_evidence_list_short(evidences: List[Dict[str, Any]], max_sentences: int = 3) -> str:
+    """
+    Create a concise human-readable 1-3 sentence summary of a list of evidence chunks.
+    Use filename + key phrase from text (first 120 chars).
+    """
+    if not evidences:
+        return ""
+    parts = []
+    for ev in evidences[:max(1, min(len(evidences), max_sentences))]:
+        fn = ev.get("source_filename") or ev.get("source") or ev.get("doc_id", "unknown")
+        txt = ev.get("text", "")[:120].replace("\n", " ").strip()
+        if txt:
+            parts.append(f"จากไฟล์ `{fn}`: {txt}...")
+        else:
+            parts.append(f"จากไฟล์ `{fn}`")
+    return " | ".join(parts)
+
+def build_multichannel_context_for_level(
+    level: int,
+    top_evidences: List[Dict[str, Any]],
+    previous_levels_map: Dict[int, List[Dict[str, Any]]],
+    max_main_context_tokens: int = 3000,
+    max_summary_sentences: int = 3
+) -> Dict[str, Any]:
+    """
+    Build structured 'channels' of context for LLM:
+      - baseline_L1_L2: short summary of passed evidence from L1/L2 (separate by level)
+      - direct_Ln_evidence: evidence retrieved specifically for this level (ranked)
+      - aux_other: other evidence (low-priority) but truncated
+
+    Args:
+        level: current evaluating level (int)
+        top_evidences: list of evidence dicts retrieved for this level (already reranked)
+        previous_levels_map: mapping {level: [evidence_dicts]} from passed levels (1..level-1)
+    Returns:
+        dict with keys:
+            - baseline_summary: short text (L1/L2)
+            - direct_context: aggregated text for main evaluation (truncated to max_main_context_tokens chars)
+            - aux_summary: optional other evidences summary
+            - debug_meta: meta info (counts, filenames)
+    """
+    # 1) Baseline summary: gather L1 and L2 passed evidences only (preserve by-level order)
+    baseline_evidence = []
+    for lev in sorted(previous_levels_map.keys()):
+        if lev <= 2:
+            baseline_evidence.extend(previous_levels_map.get(lev, []))
+
+    baseline_summary = _summarize_evidence_list_short(baseline_evidence, max_sentences=max_summary_sentences)
+
+    # 2) Direct evidence: prefer evidences that have PDCA tags relevant to this level
+    # Expect top_evidences already contains pdca_tag or similar; fallback: use first K
+    direct = []
+    aux = []
+    K_MAIN = 5  # how many chunks to include prominently
+    for ev in top_evidences:
+        tag = ev.get("pdca_tag", "").upper()
+        # if this level >=3, prefer C/A blocks for main context
+        if level >= 3 and tag in ("C", "A"):
+            direct.append(ev)
+        else:
+            aux.append(ev)
+
+    # fill direct up to K_MAIN with remaining if needed
+    if len(direct) < K_MAIN:
+        # take from aux to fill
+        take = K_MAIN - len(direct)
+        direct.extend(aux[:take])
+        aux = aux[take:]
+
+    # 3) Build textual aggregated direct_context (ordered)
+    def _join_chunks(chunks: List[Dict[str, Any]], max_chars: int):
+        out = []
+        used = 0
+        for c in chunks:
+            txt = c.get("text") or c.get("content") or ""
+            if not txt: continue
+            piece = txt.strip()
+            # simple truncation to avoid huge contexts
+            if used + len(piece) > max_chars:
+                remaining = max_chars - used
+                if remaining <= 0:
+                    break
+                out.append(piece[:remaining] + "...")
+                used += remaining
+                break
+            out.append(piece)
+            used += len(piece)
+        return "\n\n".join(out)
+
+    direct_context = _join_chunks(direct, max_main_context_tokens)
+    aux_summary = _summarize_evidence_list_short(aux, max_sentences=3)
+
+    debug_meta = {
+        "direct_count": len(direct),
+        "aux_count": len(aux),
+        "baseline_count": len(baseline_evidence),
+        "direct_files": [d.get("source_filename") or d.get("source") or d.get("doc_id") for d in direct][:10],
+        "aux_files": [d.get("source_filename") or d.get("source") or d.get("doc_id") for d in aux][:10]
+    }
+
+    return {
+        "baseline_summary": baseline_summary,
+        "direct_context": direct_context,
+        "aux_summary": aux_summary,
+        "debug_meta": debug_meta
+    }
+
+
 # -------------------- Query Enhancement Functions --------------------
 def enhance_query_for_statement(
     statement_text: str,
@@ -431,48 +542,164 @@ def enhance_query_for_statement(
 # ------------------------
 UUID_PATTERN = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
 
-def _robust_extract_json(text: str) -> Optional[Any]:
-    if not text: return None
-    # ใช้ re.sub เพื่อลบ code fences และปรับปรุงการค้นหา JSON
-    txt = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', text.strip(), flags=re.MULTILINE)
+def _safe_int_parse(value: Any, default: int = 0) -> int:
+    """Safely converts value to an integer."""
+    if value is None:
+        return default
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return default
 
-    # 1. ค้นหารูปแบบ JSON ทั่วไป
-    for pattern in [r'(\{.*\})', r'(\[.*\])']:
-        m = re.search(pattern, txt, flags=re.DOTALL)
-        if m:
-            try: return json.loads(m.group(1))
-            except:
-                try: return json5.loads(m.group(1)) # ลองใช้ json5 เพื่อ handle trailing commas, comments
-                except: pass # ให้ลองไปขั้นตอนต่อไป
 
-    # 2. ลองโหลดทั้งหมดโดยตรง (อาจมีข้อความอื่นปนมาเล็กน้อย)
-    try: return json5.loads(txt)
-    except: return None
+# ------------------------------------------------------------
+# Balanced Extractor (ป้องกัน nested + fenced)
+# ------------------------------------------------------------
+def _extract_balanced_braces(text: str) -> Optional[str]:
+    if not text:
+        return None
+
+    # ตัด scanning หลังจากเจอ ``` (กันการจับ JSON ผิดชุด)
+    fence_pos = text.find("```")
+    scan_text = text if fence_pos == -1 else text[:fence_pos]
+
+    start = scan_text.find('{')
+    if start == -1:
+        return None
+
+    depth = 0
+    for i in range(start, len(scan_text)):
+        if scan_text[i] == '{':
+            depth += 1
+        elif scan_text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return scan_text[start:i+1]
+
+    return None
+
+
+def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
+    """
+    Assessment-specific JSON extraction. Handles P/D/C/A key completion and score calculation.
+    """
+    # 📌 1. กำหนด Fallback Dict ที่สมบูรณ์
+    # ใช้ค่า Fallback นี้หากเกิดข้อผิดพลาดร้ายแรงหรือการดึง JSON ล้มเหลว
+    fallback = {
+        "score": 0,
+        "reason": "LLM Fatal Error in JSON extraction.",
+        "is_passed": False,
+        "P_Plan_Score": 0,
+        "D_Do_Score": 0,
+        "C_Check_Score": 0,
+        "A_Act_Score": 0
+    }
+
+    # Step 1: Extract JSON และ Normalize key ด้วย Helper ตัวใหม่
+    data = _extract_normalized_dict(llm_response)
+    
+    # หากดึง JSON ไม่ได้เลย ให้คืนค่า Fallback ทันที
+    if not data:
+        return fallback 
+        # เราจะไม่ใช้ data = {} เหมือนที่คุณเสนอ เพราะมันขาด keys สำคัญ
+
+    # Step 2: Logic สำหรับ Assessment (Clean and Complete keys)
+    final = {}
+
+    # 2.1 P/D/C/A Scores (ต้องเป็น int)
+    final["P_Plan_Score"] = _safe_int_parse(data.get("P_Plan_Score"))
+    final["D_Do_Score"]   = _safe_int_parse(data.get("D_Do_Score"))
+    final["C_Check_Score"] = _safe_int_parse(data.get("C_Check_Score"))
+    final["A_Act_Score"]   = _safe_int_parse(data.get("A_Act_Score")) # ใช้ A_Act_Score ตาม schema เดิม
+
+    # 2.2 Reason และ is_passed
+    final["reason"] = str(data.get("reason")) if data.get("reason") else "Fallback: Missing reason."
+    isp = data.get("is_passed")
+    final["is_passed"] = (isinstance(isp, str) and isp.lower() == "true") or bool(isp)
+
+    # 2.3 Total Score Logic (สำคัญ: มี Fallback การรวม P+D+C+A)
+    llm_score = data.get("score")
+    
+    if llm_score is None:
+        # Fallback: หาก LLM ไม่ให้ Total Score มา ให้รวมจาก P+D+C+A
+        final["score"] = (
+            final["P_Plan_Score"]
+            + final["D_Do_Score"]
+            + final["C_Check_Score"]
+            + final["A_Act_Score"]
+        )
+    else:
+        # ใช้ score ที่ LLM ให้มา (ต้องเป็น int ตามมาตรฐาน Assessment)
+        final["score"] = _safe_int_parse(llm_score)
+        
+    return final
+
+
+def _extract_normalized_dict(llm_response: str) -> Optional[Dict[str, Any]]:
+    """
+    Performs robust JSON extraction and key normalization ONLY. 
+    It does not perform assessment-specific key completion or scoring logic.
+    """
+    raw = (llm_response or "").strip()
+    if not raw:
+        return None
+
+    # 1) Fenced JSON
+    fence_regex = r'```(?:json|JSON)?\s*(\{.*?})\s*```'
+    fenced = re.search(fence_regex, raw, flags=re.DOTALL)
+    if fenced:
+        json_str = fenced.group(1)
+    else:
+        # 2) Balanced JSON scan
+        json_str = _extract_balanced_braces(raw)
+        if json_str is None:
+            return None
+
+    # 3) JSON Decode (JSON → JSON5 fallback)
+    try:
+        data = json.loads(json_str)
+    except Exception:
+        try:
+            import json5
+            data = json5.loads(json_str)
+        except:
+            return None # Failed both json and json5
+
+    if not isinstance(data, dict):
+        return None
+
+    # 4) Normalize keys
+    return _normalize_keys(data)
 
 def _normalize_keys(data: Any) -> Any:
-    """Recursively normalizes common key variations to a standard set."""
+    mapping = {
+        "llm_score": "score",
+        "reasoning": "reason",
+        "llm_reasoning": "reason",
+        "assessment_reason": "reason",
+        "comment": "reason",
+        "pass": "is_passed",
+        "is_pass": "is_passed",
+
+        "p_score": "P_Plan_Score",
+        "d_score": "D_Do_Score",
+        "c_score": "C_Check_Score",
+        "a_score": "A_Act_Score",
+
+        "p_plan": "P_Plan_Score",
+        "d_do": "D_Do_Score",
+        "c_check": "C_Check_Score",
+        "a_act": "A_Act_Score",
+    }
+
     if isinstance(data, dict):
-        mapping = {
-            "llm_score": "score",
-            "reasoning": "reason",
-            "llm_reasoning": "reason",
-            "assessment_reason": "reason",
-            "comment": "reason",
-            "pass": "is_passed",
-            "is_pass": "is_passed",
-            # 🟢 NEW: Normalize PDCA keys for consistency
-            "p_score": "P_Plan_Score",
-            "d_score": "D_Do_Score",
-            "c_score": "C_Check_Score",
-            "a_score": "A_Act_Score",
-            "p_plan": "P_Plan_Score",
-            "d_do": "D_Do_Score",
-            "c_check": "C_Check_Score",
-            "a_act": "A_Act_Score"
-        }
-        return {mapping.get(k.lower(), k): _normalize_keys(v) for k,v in data.items()}
-    if isinstance(data, list): return [_normalize_keys(x) for x in data]
+        return {mapping.get(k.lower(), k): _normalize_keys(v) for k, v in data.items()}
+
+    if isinstance(data, list):
+        return [_normalize_keys(x) for x in data]
+
     return data
+
 
 # ------------------------
 # LLM fetcher
@@ -520,12 +747,13 @@ def _fetch_llm_response(
 T = TypeVar("T", bound=BaseModel)
 
 def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Optional[Dict[str, Any]]:
-    """Returns Failure result if context is empty or contains known error strings."""
+    """
+    Returns Failure result if context is empty or contains known error strings.
+    Auto-fail with PDCA keys all set to 0.
+    """
     if not context or "ไม่มีหลักฐานที่เกี่ยวข้อง" in context or "ERROR:" in context.upper():
         logger.warning(f"Auto-FAIL L{level} for {sub_id}: Empty or Error Context detected from RAG.")
-        # ป้องกันการแสดง context ยาวๆ ใน log
         context_preview = context.strip()[:100].replace("\n", " ") if context else "Empty Context"
-        # 🟢 NEW: Return all PDCA keys with 0 for consistency with CombinedAssessment
         return {
             "score": 0,
             "reason": f"หลักฐานที่ค้นหาได้ว่างเปล่าหรือไม่เกี่ยวข้อง (Context: {context_preview}).",
@@ -536,6 +764,93 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
             "A_Act_Score": 0,
         }
     return None
+
+
+def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, check_evidence: str = "", act_evidence: str = "", llm_executor: Any = None, **kwargs) -> Dict[str, Any]:
+    """Standard Evaluation for L3+ with robust handling for missing keys."""
+    
+    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else ""
+    # 1. ตรวจสอบ Context ก่อนส่ง LLM
+    failure_result = _check_and_handle_empty_context(context, sub_id, level)
+    if failure_result:
+        return failure_result
+
+    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
+    # inside evaluate_with_llm before formatting
+    baseline_summary = kwargs.get("baseline_summary", "")
+    aux_summary = kwargs.get("aux_summary", "")
+    
+    # 2. Prepare User & System Prompts
+    user_prompt = USER_ASSESSMENT_PROMPT.format(
+        sub_criteria_name=sub_criteria_name, 
+        level=level, 
+        statement_text=statement_text, 
+        sub_id=sub_id,
+        context=context_to_send_eval or "ไม่มีหลักฐานที่เกี่ยวข้อง",
+        pdca_phase=kwargs.get("pdca_phase",""), 
+        level_constraint=kwargs.get("level_constraint",""),
+        contextual_rules_prompt=contextual_rules_prompt,
+        check_evidence=check_evidence, 
+        act_evidence=act_evidence, 
+    )
+
+    # Insert baseline_summary into the prompt explicitly:
+    if baseline_summary:
+        user_prompt = user_prompt + "\n\n--- Baseline summary (จาก L1-L2): ---\n" + baseline_summary
+
+    if aux_summary:
+        user_prompt = user_prompt + "\n\n--- Auxiliary evidence summary (low-priority): ---\n" + aux_summary
+
+    try:
+        schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
+    except:
+        schema_json = '{"score":0,"reason":"string"}'
+
+    system_prompt = SYSTEM_ASSESSMENT_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+
+    try:
+        # 3. เรียก LLM
+        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
+        
+        # 4. Extract JSON และ normalize keys
+        parsed = _normalize_keys(_robust_extract_json(raw) or {})
+
+        # 5. คืนผลลัพธ์, เติม default หาก key ขาด
+        return {
+            "score": int(parsed.get("score", 0)),
+            "reason": parsed.get("reason", "No reason provided by LLM."),
+            "is_passed": parsed.get("is_passed", False),
+            "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
+            "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
+            "C_Check_Score": int(parsed.get("C_Check_Score", 0)),
+            "A_Act_Score": int(parsed.get("A_Act_Score", 0)),
+        }
+
+    except Exception as e:
+        logger.exception(f"evaluate_with_llm failed for {sub_id} L{level}: {e}")
+        return {
+            "score":0,
+            "reason":f"LLM error: {e}",
+            "is_passed":False,
+            "P_Plan_Score": 0,
+            "D_Do_Score": 0,
+            "C_Check_Score": 0,
+            "A_Act_Score": 0,
+        }
+
+
+# =========================
+# Patch for L1-L2 evaluation
+# =========================
+
+# 1️⃣ เพิ่ม context limit สำหรับ L1/L2
+def _get_context_for_level(context: str, level: int) -> str:
+    """Return context string with appropriate length limit for each level."""
+    if not context:
+        return ""
+    if level <= 2:
+        return context[:6000]  # L1-L2 ใช้ context ยาวขึ้น
+    return context[:MAX_EVAL_CONTEXT_LENGTH]  # L3-L5
 
 def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str = "score") -> Dict[str, Any]:
     """Helper to safely extract combined assessment results."""
@@ -554,62 +869,12 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     }
     return result
 
-def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
-    """Standard Evaluation for L3+"""
-
-    # ตรวจสอบ Context ก่อนส่งให้ LLM
-    failure_result = _check_and_handle_empty_context(context, sub_id, level)
-    if failure_result:
-        return failure_result
-
-    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
-
-    # L3+ (Standard Evaluation)
-    user_prompt = USER_ASSESSMENT_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, 
-        level=level, 
-        statement_text=statement_text, 
-        sub_id=sub_id,
-        context=context or "ไม่มีหลักฐานที่เกี่ยวข้อง", 
-        pdca_phase=kwargs.get("pdca_phase",""), 
-        level_constraint=kwargs.get("level_constraint",""),
-        contextual_rules_prompt=contextual_rules_prompt 
-    )
-    try:
-        schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
-    except: schema_json = '{"score":0,"reason":"string"}'
-
-    system_prompt = SYSTEM_ASSESSMENT_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
-
-    try:
-        # 1. เรียก LLM และรับ raw response
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        
-        # 2. Extract และ Normalize JSON
-        parsed = _normalize_keys(_robust_extract_json(raw) or {})
-        
-        # 3. คืนผลลัพธ์
-        return _extract_combined_assessment(parsed, score_default_key="score")
-
-    except Exception as e:
-        logger.exception(f"evaluate_with_llm failed for {sub_id} L{level}: {e}")
-        # 🟢 NEW: Return all PDCA keys with 0 for error case
-        return {
-            "score":0,
-            "reason":f"LLM error: {e}",
-            "is_passed":False,
-            "P_Plan_Score": 0,
-            "D_Do_Score": 0,
-            "C_Check_Score": 0,
-            "A_Act_Score": 0,
-        }
-
+# 3️⃣ ปรับ evaluate_with_llm_low_level ให้เรียกฟังก์ชันใหม่
 def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
     """
-    Uses a simplified prompt for L1/L2 assessment to reduce complexity and cost.
+    Evaluation สำหรับ L1/L2 แบบ robust และ schema uniform
     """
 
-    # ตรวจสอบ Context ก่อนส่งให้ LLM
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
@@ -617,36 +882,35 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
     level_constraint = kwargs.get("level_constraint", "")
     contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "") 
 
-    # L1/L2 (Low-Level Evaluation)
+    # จำกัด context ตาม level
+    context_to_send = _get_context_for_level(context, level)
+
     user_prompt = USER_LOW_LEVEL_PROMPT.format(
         sub_criteria_name=sub_criteria_name,
         level=level,
         statement_text=statement_text,
         sub_id=sub_id,
-        context=context,
-        pdca_phase=kwargs.get("pdca_phase", ""),
+        context=context_to_send,
         level_constraint=level_constraint,
-        contextual_rules_prompt=contextual_rules_prompt 
+        contextual_rules_prompt=contextual_rules_prompt
     )
+
     try:
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
-    except: schema_json = '{"score":0,"reason":"string"}'
+    except:
+        schema_json = '{"score":0,"reason":"string"}'
 
     system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
     try:
-        # 1. เรียก LLM และรับ raw response
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        
-        # 2. Extract และ Normalize JSON
         parsed = _normalize_keys(_robust_extract_json(raw) or {})
 
-        # 3. คืนผลลัพธ์
-        return _extract_combined_assessment(parsed, score_default_key="score")
+        # ใช้ extraction สำหรับ L1/L2
+        return _extract_combined_assessment_low_level(parsed)
 
     except Exception as e:
         logger.exception(f"evaluate_with_llm_low_level failed for {sub_id} L{level}: {e}")
-        # 🟢 NEW: Return all PDCA keys with 0 for error case
         return {
             "score":0,
             "reason":f"LLM error: {e}",
@@ -656,6 +920,36 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
             "C_Check_Score": 0,
             "A_Act_Score": 0,
         }
+
+def _extract_combined_assessment_low_level(parsed: dict) -> dict:
+    """
+    Safely extracts combined assessment results for L1/L2, 
+    ensuring all keys exist AND enforcing the C=0, A=0 rule.
+    """
+    # 1. สร้าง Dictionary ผลลัพธ์โดยดึงค่าจาก LLM และใส่ค่าเริ่มต้น (Default)
+    # ใช้ .get() เพื่อให้โค้ดรันได้แม้ Key จะหายไป
+    result = {
+        "score": int(parsed.get("score", 0)),
+        "reason": parsed.get("reason", "No reason provided by LLM (Low Level)."),
+        "is_passed": parsed.get("is_passed", False),
+        "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
+        "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
+        # ดึงค่า C/A มาก่อน เผื่อใช้ Debug แต่...
+        "C_Check_Score": int(parsed.get("C_Check_Score", 0)),
+        "A_Act_Score": int(parsed.get("A_Act_Score", 0)),
+    }
+    
+    # 2. ENFORCE L1/L2 HARD RULE: C and A must be 0
+    # บังคับค่าให้เป็น 0 เสมอ เพื่อป้องกันการ Over-scoring
+    result["C_Check_Score"] = 0
+    result["A_Act_Score"] = 0
+    
+    # 3. Final check for is_passed default logic
+    # หาก LLM ไม่ได้ให้ is_passed มา ให้ใช้ score >= 1 เป็นเกณฑ์ (ตามที่ทำใน _extract_combined_assessment)
+    if result["is_passed"] == False and result["score"] >= 1:
+         result["is_passed"] = True
+
+    return result
 
 # ------------------------
 # Summarize
@@ -700,14 +994,23 @@ def create_context_summary_llm(
     except: 
         schema_json = '{"summary":"string", "suggestion_for_next_level":"string"}'
 
-    system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+    # system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+    system_prompt = (
+        SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
+        + "\n\n--- JSON SCHEMA ---\n"
+        + schema_json
+        + "\nIMPORTANT: Respond only with valid JSON. เนื้อหาในทุก key ต้องเป็นภาษาไทยเท่านั้น ห้ามใช้ภาษาอังกฤษ."
+    )
+
 
     # 3. เรียกใช้ LLM พร้อม Retries
     try:
         raw = _fetch_llm_response(system_prompt, human_prompt, 2, llm_executor=llm_executor)
         
         # 4. แปลงผลลัพธ์ JSON
-        parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        parsed = _extract_normalized_dict(raw) or {}
+        parsed.setdefault("summary", "Fallback: No summary provided by LLM.")
+        parsed.setdefault("suggestion_for_next_level", "Fallback: No suggestion provided.")
         
         # 5. ตรวจสอบความถูกต้องของ Schema เบื้องต้น
         if not all(k in parsed for k in ["summary", "suggestion_for_next_level"]):
@@ -723,16 +1026,6 @@ def create_context_summary_llm(
 # ------------------------
 # Action plan
 # ------------------------
-
-# NOTE: ต้องมั่นใจว่ามีการ import logger, SYSTEM_ACTION_PLAN_PROMPT, 
-# ACTION_PLAN_PROMPT, ActionPlanActions และ _fetch_llm_response
-# (สมมติว่ามีการกำหนดไว้ในโค้ดส่วนอื่น)
-
-# Placeholder for required helper functions and constants (for completeness)
-logger = logging.getLogger(__name__)
-# Assuming ActionPlanActions is a Pydantic model defined elsewhere
-# Assuming SYSTEM_ACTION_PLAN_PROMPT, ACTION_PLAN_PROMPT are strings defined elsewhere
-# Assuming _fetch_llm_response, _robust_extract_json are functions defined elsewhere
 
 def create_structured_action_plan(
     failed_statements: List[Dict[str, Any]], 

@@ -37,13 +37,13 @@ try:
         set_mock_control_mode as set_llm_data_mock_mode,
         create_context_summary_llm,
         retrieve_context_by_doc_ids,
-        _fetch_llm_response
+        _fetch_llm_response,
+        build_multichannel_context_for_level
     )
     from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
     from core.seam_prompts import PDCA_PHASE_MAP 
         
     import assessments.seam_mocking as seam_mocking 
- 
     
 except ImportError as e:
     print(f"FATAL ERROR: Failed to import required modules. Error: {e}", file=sys.stderr)
@@ -368,6 +368,45 @@ class SEAMPDCAEngine:
         except Exception as e:
             logger.error(f"❌ Failed to load Contextual Rules map. Error: {e}")
             return {}
+
+    def _collect_previous_level_evidences(self, sub_id: str) -> Dict[int, List[Dict[str, Any]]]:
+        """
+        Return mapping {level: [evidence_dicts]} for levels 1..(current-1) from self.evidence_map and temp_map_for_save.
+        Evidence dict: {"doc_id":..., "source_filename":..., "text": "..."} -- text may be empty (VSM retriever can fetch later)
+        """
+        levels_map = {}
+        # temp_map_for_save keys are like "1.1.L1" => list of dicts with doc_id & filename
+        combined_map = {}
+        combined_map.update(self.evidence_map or {})
+        combined_map.update(self.temp_map_for_save or {})
+
+        for key, items in combined_map.items():
+            # expected key format "1.1.L1" or "1.1.L2"
+            try:
+                parts = key.split(".L")
+                if len(parts) != 2:
+                    continue
+                k_sub = parts[0]
+                level_num = int(parts[1])
+                if k_sub != sub_id:
+                    continue
+                evid_list = []
+                for it in items:
+                    # if stored as dict with doc_id, filename
+                    if isinstance(it, dict):
+                        evid_list.append({
+                            "doc_id": it.get("doc_id"),
+                            "source_filename": it.get("filename"),
+                            "text": it.get("snippet", "")  # optional
+                        })
+                    else:
+                        # fallback: doc_id string
+                        evid_list.append({"doc_id": str(it), "source_filename": None, "text": ""})
+                levels_map[level_num] = evid_list
+            except Exception:
+                continue
+        return levels_map
+
 
     def _get_contextual_rules_prompt(self, sub_id: str, level: int) -> str:
         """
@@ -880,137 +919,96 @@ class SEAMPDCAEngine:
             return self.total_stats
             
     # -------------------- Multiprocessing Worker Method --------------------
-    @staticmethod
-    # 📌 สมมติว่านี่คือ Logic ที่ถูกย้ายไปใน _run_single_assessment หรือ _assess_single_statement_logic
-    def _assess_single_sub_criteria_worker( # หรือเปลี่ยนชื่อเป็น _assess_single_statement_logic
-        self, 
-        statement_data: Dict[str, Any], 
-        llm_executor: Any, 
+    def _assess_single_sub_criteria_worker(
+        self,
+        statement_data: Dict[str, Any],
+        llm_executor: Any,
         sub_id: str,
         enabler: str,
         doc_type: str,
-        # 🟢 รับ VSM Instance เข้ามาโดยตรง
-        vectorstore_manager: Any, 
-        # 🟢 NEW: รับ mapped_uuids และ priority_docs_input เข้ามา
-        mapped_uuids: Optional[List[str]] = None, 
+        vectorstore_manager: Any,
+        mapped_uuids: Optional[List[str]] = None,
         priority_docs_input: Optional[List[Any]] = None,
-        # 🟢 NEW: รับ contextual_rules_prompt เข้ามา
-        contextual_rules_prompt: str = "" 
+        contextual_rules_prompt: str = ""
     ) -> Dict[str, Any]:
-        """
-        Worker function to assess a single statement (sub-criteria level) by:
-        1. Determining RAG strategy (Low-level or Standard) based on the level.
-        2. Retrieving context (Hybrid RAG).
-        3. Evaluating context using the appropriate LLM prompt.
-        4. Summarizing the result.
-        """
-        
-        # 1. เตรียมข้อมูล
         level = int(statement_data.get("level", 0))
         statement_text = statement_data.get("statement", "")
         sub_criteria_name = statement_data.get("sub_criteria_name", "")
         pdca_phase = statement_data.get("pdca_phase", "")
         level_constraint = statement_data.get("level_constraint", "")
 
-        # 2. 🎯 กำหนด K และ RAG Function ตาม Level
-        # (สมมติว่า LOW_LEVEL_K, STANDARD_K, INITIAL_TOP_K ถูก Import หรือกำหนดไว้ในคลาส)
-        LOW_LEVEL_K = 3      
-        STANDARD_K = 30      
-        INITIAL_TOP_K = 100  
-        
+        # choose retrieval function based on level (you had this)
         if level <= 2:
-            # L1, L2: Low-Level (Reduced K, Simplified Prompt)
-            top_k = LOW_LEVEL_K # ใช้ K น้อย
-            retrieval_func = retrieve_context_for_low_levels # ต้องมีการ import จาก llm_data_utils
-            evaluation_func = evaluate_with_llm_low_level # ต้องมีการ import จาก llm_data_utils
+            retrieval_func = retrieve_context_for_low_levels
+            evaluation_func = evaluate_with_llm_low_level
         else:
-            # L3, L4, L5: Standard Level (High K, Full Prompt)
-            top_k = STANDARD_K # ใช้ K สูง เพื่อดึงเอกสารจำนวนมาก (รวม 300 ไฟล์)
-            retrieval_func = retrieve_context_with_filter # ต้องมีการ import จาก llm_data_utils
-            evaluation_func = evaluate_with_llm # ต้องมีการ import จาก llm_data_utils
-            
-        logger.info(f"Retrieval strategy for {sub_id} L{level}: K={top_k}, Function={retrieval_func.__name__}")
+            retrieval_func = retrieve_context_with_filter
+            evaluation_func = evaluate_with_llm
 
-        # 3. 🔍 RAG: ดึง Context (ใช้ Hybrid RAG)
+        # retrieval: get top_evidences (list) and aggregated_context (but only used as fallback)
+        retrieval_result = retrieval_func(
+            query=enhance_query_for_statement(...),  # use your existing call
+            doc_type=doc_type,
+            enabler=enabler,
+            vectorstore_manager=vectorstore_manager,
+            top_k=...,
+            mapped_uuids=mapped_uuids,
+            priority_docs_input=priority_docs_input,
+            sub_id=sub_id,
+            level=level
+        )
+
+        top_evidences = retrieval_result.get("top_evidences", [])
+        aggregated_context = retrieval_result.get("aggregated_context", "")
+
+        # Build multichannel context locally (use previous_levels_map from engine)
+        previous_levels_map = {}
         try:
-            # 3.1 สร้าง Queries (Multi-Query)
-            focus_hint = f"Focus: {pdca_phase}, Level Constraint: {level_constraint}"
-            queries_list = enhance_query_for_statement(
-                statement_text=statement_text,      # 1. ข้อความ Statement
-                sub_id=sub_id,                      # 2. FIX: ID เกณฑ์ย่อย (e.g., "1.1")
-                statement_id=sub_id,                # 3. ใช้ sub_id เป็น statement_id ชั่วคราว
-                level=level,                        # 4. Level
-                enabler_id=enabler,                 # 5. Enabler ID
-                focus_hint=focus_hint,              # 6. Focus Hint
-                llm_executor=llm_executor           # 7. NEW: ส่ง LLM Executor เข้าไป (Optional)
-            )
-                    
-            # 3.2 เรียกใช้ฟังก์ชัน Retrieval ที่กำหนด
-            retrieval_result = retrieval_func(
-                query=queries_list, # ส่ง Multi-Query
-                doc_type=doc_type,
-                enabler=enabler,
-                vectorstore_manager=vectorstore_manager, # ใช้ VSM ที่ส่งมา
-                top_k=top_k,
-                initial_k=INITIAL_TOP_K, 
-                # 🟢 ส่งต่อ Hybrid Arguments
-                mapped_uuids=mapped_uuids, 
-                priority_docs_input=priority_docs_input,
-                sub_id=sub_id,
-                level=level
-            )
-            
-            context = retrieval_result.get("context", "")
-            # 🟢 เก็บข้อมูล UUIDs ที่ใช้ในการประเมิน (เพื่อใช้ในการทำ Action Plan/Export)
-            used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
-            
-        except Exception as e:
-            logger.exception(f"RAG failed for {sub_id} L{level}: {e}")
-            # ❌ Fallback กรณี RAG ล้มเหลว: คืนค่า 0 พร้อมเหตุผล Error
-            return {
-                "sub_id": sub_id, "level": level, "is_passed": False, 
-                "score": 0, "reason": f"RAG Error: {e.__class__.__name__}",
-                "P_Plan_Score": 0, "D_Do_Score": 0, "C_Check_Score": 0, "A_Act_Score": 0,
-                "used_chunk_uuids": [],
-                "summary": "RAG process failed.",
-                "suggestion": "Check RAG configuration or source documents."
-            }
+            previous_levels_map = self._collect_previous_level_evidences(sub_id)
+        except Exception:
+            previous_levels_map = {}
 
-        # 4. 🧠 LLM Evaluation: ประเมินผลลัพธ์
+        channels = build_multichannel_context_for_level(level, top_evidences, previous_levels_map)
+
+        # Evaluate using direct_context and baseline_summary
         evaluation_result = evaluation_func(
-            context=context,
+            context=channels.get("direct_context", "") or aggregated_context,
             sub_criteria_name=sub_criteria_name,
             level=level,
             statement_text=statement_text,
             sub_id=sub_id,
             llm_executor=llm_executor,
-            pdca_phase=pdca_phase, 
+            pdca_phase=pdca_phase,
             level_constraint=level_constraint,
-            contextual_rules_prompt=contextual_rules_prompt 
+            contextual_rules_prompt=contextual_rules_prompt,
+            baseline_summary=channels.get("baseline_summary", ""),
+            aux_summary=channels.get("aux_summary", "")
         )
-        
-        # 5. 📝 Summarization 
-        summary_result = create_context_summary_llm( # ต้องมีการ import จาก llm_data_utils
-            context=context,
+
+        # Summarize context for report (use aggregated_context or direct_context)
+        summary_result = create_context_summary_llm(
+            context=channels.get("direct_context", "") or aggregated_context,
             sub_criteria_name=sub_criteria_name,
             level=level,
             sub_id=sub_id,
-            llm_executor=llm_executor 
+            llm_executor=llm_executor
         )
 
-        # 6. สร้างผลลัพธ์รวม
-        final_result = {
-            "sub_id": sub_id,
+        used_doc_ids = [d.get("doc_id") for d in top_evidences if d.get("doc_id")]
+
+        final = {
+            "sub_criteria_id": sub_id,
+            "sub_criteria_name": sub_criteria_name,
             "level": level,
             "statement": statement_text,
             "pdca_phase": pdca_phase,
-            "context": context,
-            "used_chunk_uuids": used_chunk_uuids, 
-            **evaluation_result, 
-            **summary_result     
+            "llm_result": evaluation_result,
+            "used_doc_ids": used_doc_ids,
+            "channels_debug": channels.get("debug_meta", {}),
+            "summary": summary_result
         }
-        
-        return final_result
+        return final
+
 
     def _export_results(self, results: dict, enabler: str, sub_criteria_id: str, target_level: int, export_dir: str = "assessment_results") -> str:
         """
@@ -1052,9 +1050,8 @@ class SEAMPDCAEngine:
         except Exception as e:
             logging.error(f"❌ Failed to export results to {full_path}: {e}")
             return ""
-        
-    
-    # -------------------- Main Execution --------------------
+            
+# --- -------------------- Main Execution (FIXED & MODIFIED) -------------------- ---
     def run_assessment(
         self, 
         target_sub_id: str = "all", 
@@ -1067,7 +1064,7 @@ class SEAMPDCAEngine:
         """
         start_ts = time.time()
         MAX_L1_ATTEMPTS = 2
-        MAX_LEVEL = 5 # สมมติว่า MAX_LEVEL คือ 5
+        MAX_LEVEL = 5 
 
         
         # 1. Filter Rubric based on target_sub_id
@@ -1087,6 +1084,7 @@ class SEAMPDCAEngine:
         run_parallel = (target_sub_id.lower() == "all" and not self.config.force_sequential)
         
         if run_parallel:
+            # ... (Logic Multiprocessing คงเดิม - ต้องตรวจสอบความเข้ากันได้ของ starmap) ...
             logger.info("Starting Parallel Assessment (All Sub-Criteria) with Multiprocessing Pool...")
             
             sub_criteria_data_list = sub_criteria_list 
@@ -1094,16 +1092,14 @@ class SEAMPDCAEngine:
             worker_args = [(sub_data, engine_config_dict) for sub_data in sub_criteria_data_list]
             
             try:
-                # 🟢 FIX: Set context to 'forkserver' or 'spawn' for robust multiprocessing initialization 
                 if sys.platform != "win32":
-                    # NOTE: ในการใช้งานจริง ต้องมั่นใจว่า self._assess_single_sub_criteria_worker ถูกเรียกใช้ในลักษณะที่เหมาะสมกับ multiprocessing
                     mp_context = multiprocessing.get_context('spawn')
                     pool = mp_context.Pool(processes=max(1, os.cpu_count() - 1))
                 else:
                     pool = multiprocessing.Pool(processes=max(1, os.cpu_count() - 1))
                     
                 with pool:
-                    # 📌 NOTE: _assess_single_sub_criteria_worker ที่ให้มาในโจทย์ก่อนหน้า มีพารามิเตอร์ไม่ตรงกับ starmap
+                    # NOTE: _assess_single_sub_criteria_worker ที่ให้มาในโจทย์ก่อนหน้า มีพารามิเตอร์ไม่ตรงกับ starmap
                     # โค้ดส่วนนี้จึงถูกคงไว้ตามเดิม แต่ควรตรวจสอบความถูกต้องในการใช้งานจริง
                     results_tuples = pool.starmap(self._assess_single_sub_criteria_worker, worker_args)
                     
@@ -1115,6 +1111,7 @@ class SEAMPDCAEngine:
             for raw_results_for_sub, final_sub_result in results_tuples:
                 self.raw_llm_results.extend(raw_results_for_sub) 
                 self.final_subcriteria_results.append(final_sub_result)
+
 
         else:
             run_mode_desc = target_sub_id if target_sub_id.lower() != 'all' else 'All Sub-Criteria (Forced Sequential)'
@@ -1237,6 +1234,7 @@ class SEAMPDCAEngine:
                         
                         # 📌 NEW LOGIC: บันทึก Chunk UUIDs ที่ใช้ (used_chunk_uuids) ลงใน Map
                         if is_passed_level_check:
+                            # 🟢 ใช้ 'used_chunk_uuids' ที่ส่งกลับมาจาก _run_single_assessment (List[str] ของ UUIDs)
                             used_uuids = result_to_process.get('used_chunk_uuids')
                             if used_uuids:
                                 passed_chunk_uuids_map[level] = used_uuids
@@ -1329,7 +1327,7 @@ class SEAMPDCAEngine:
         
         return final_results
 
-# -------------------- Core Assessment Logic --------------------
+# -------------------- Core Assessment Logic (FIXED & MODIFIED) --------------------
     def _run_single_assessment(
         self,
         sub_criteria: Dict[str, Any],
@@ -1365,7 +1363,7 @@ class SEAMPDCAEngine:
             statement_text=statement_text,
             level_constraint=level_constraint, 
             vectorstore_manager=vectorstore_manager
-            # ไม่ต้องส่ง sequential_chunk_uuids เพราะ Helper ดึงจาก Map เอง
+            # ไม่ต้องส่ง sequential_chunk_uuids เพราะ Helper ดึงจาก Map เอง (ตามโค้ดเดิม)
         )
         # -------------------- 🛑 NEW LOGIC END 🛑 --------------------
         
@@ -1385,16 +1383,17 @@ class SEAMPDCAEngine:
         rag_query = rag_query_list[0] if rag_query_list else statement_text 
 
         current_final_k = FINAL_K_RERANKED
-        current_rag_retriever = self.rag_retriever 
-        current_llm_evaluator = self.llm_evaluator 
+        # current_rag_retriever = self.rag_retriever # สมมติว่าถูกกำหนดใน __init__
+        current_llm_evaluator = self.llm_evaluator # สมมติว่าถูกกำหนดใน __init__
         initial_k_to_use = INITIAL_TOP_K
+        llm_start = time.time()
 
         # 🟢 PHASE 2 OPTIMIZATION: Use specialized retrieval/evaluation for L1/L2
         # NOTE: L1_INITIAL_TOP_K_RAG ต้องถูกกำหนดใน self (เช่น self.config.L1_INITIAL_TOP_K_RAG)
         if level <= 2:
             current_llm_evaluator = evaluate_with_llm_low_level
             current_final_k = LOW_LEVEL_K 
-            initial_k_to_use = getattr(self, 'L1_INITIAL_TOP_K_RAG', INITIAL_TOP_K)
+            initial_k_to_use = getattr(self.config, 'L1_INITIAL_TOP_K_RAG', INITIAL_TOP_K) # ใช้ config
         else:
             current_final_k = FINAL_K_RERANKED
 
@@ -1424,7 +1423,8 @@ class SEAMPDCAEngine:
                 retrieval_priority_docs = None
 
             try:
-                retrieval_result = current_rag_retriever(
+                # NOTE: สมมติว่า self.rag_retriever ถูกกำหนด
+                retrieval_result = self.rag_retriever(
                     query=rag_query_list, # 📌 ส่ง List[str] (Multi-Query)
                     doc_type=EVIDENCE_DOC_TYPES, 
                     enabler=self.enabler_id,     
@@ -1443,93 +1443,76 @@ class SEAMPDCAEngine:
                 retrieval_result = {"top_evidences": [], "aggregated_context": "ERROR: RAG failure.", "used_chunk_uuids": []}
         
         retrieval_duration = time.time() - retrieval_start
+        # AFTER retrieval_result extracted:
         aggregated_context = retrieval_result.get("aggregated_context", "")
         top_evidences = retrieval_result.get("top_evidences", [])
-        # 🟢 NEW: ดึง used_chunk_uuids ที่ถูก Reranked/ใช้ในการประเมินจริง
-        used_chunk_uuids = retrieval_result.get("used_chunk_uuids", []) 
+        # 🟢 NEW: ดึง used_chunk_uuids (List[str] ของ UUIDs) ที่ RAG Retriever ใช้/Reranked
+        used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
 
-        logger.info(f"    - Retrieval found {len(top_evidences)} evidences in {retrieval_duration:.2f}s (K={current_final_k}).")
-
-        # -------------------- CONTEXT ORDERING LOGIC --------------------
-        # ------------------ Action #6: PDCA Content Classification (NEW) ------------------
-        # 🟢 ติดป้าย PDCA Tag ให้กับ Chunk ที่ถูก Reranked/เลือกมาเป็น Context
-        for doc in top_evidences:
-            chunk_text = doc.get('text', '')
-            if chunk_text:
-                # 📌 เรียกใช้ Classifier ที่เพิ่งเพิ่ม
-                pdca_tag = self._classify_pdca_phase_for_chunk(chunk_text) 
-                doc['pdca_tag'] = pdca_tag 
-            else:
-                doc['pdca_tag'] = "Other"
-        
-        logger.info(f"  > ✅ PDCA Content Tagging complete for {len(top_evidences)} evidences.")
-        # ------------------ /Action #6 ------------------
-
-        # 1) CLASSIFY PDCA BLOCKS FROM EVIDENCE
-        plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = \
-            self._get_pdca_blocks_from_evidences(top_evidences, level)
-
-        final_context_for_llm = aggregated_context  # default
-
-        # 2) APPLY L3 3-TIER ORDERING
-        if level >= 3: 
-            
-            # 📌 การจัดลำดับจะเกิดขึ้นเฉพาะเมื่อมีหลักฐาน C หรือ A เพื่อให้ความสำคัญกับ PDCA Loop 
-            has_check_or_act = check_blocks or act_blocks
-            
-            if not has_check_or_act:
-                logger.warning(f"⚠️ L{level}: No Check/Act blocks detected. Skipping custom ordering.")
-            else:
-                logger.critical(f"🚨 Activating L{level} Content-Based Reordering.")
-
-                # A. Build simulated evidence (Priority 1) - KEEP FOR NOW
-                # simulated_evidence_context = build_simulated_l3_evidence(check_blocks)
-                simulated_evidence_context=""
-                
-                # 🟢 NEW: เพิ่ม SAFETY CAP สำหรับ Simulated Evidence
-                # if len(simulated_evidence_context) > MAX_SIMULATED_CONTEXT_LEN:
-                #     logger.warning(f"⚠️ L{level} Simulated Context capped from {len(simulated_evidence_context)} to {MAX_SIMULATED_CONTEXT_LEN} chars.")
-                #     simulated_evidence_context = simulated_evidence_context[:MAX_SIMULATED_CONTEXT_LEN]
-                
-                # if IS_LOG_L3_CONTEXT:
-                #     logger.info(f"🟢 L{level} simulated evidence created and merged: {len(simulated_evidence_context)} chars.")
-
-                # B. Content-Based Ordered Context (ใช้ Blocks ที่จัดกลุ่มตาม Tag แล้ว)
-                final_context_for_llm = build_ordered_context(
-                    level=level,
-                    # simulated_l3=simulated_evidence_context, 
-                    plan_blocks=plan_blocks,
-                    do_blocks=do_blocks,
-                    check_blocks=check_blocks,
-                    act_blocks=act_blocks,
-                    other_blocks=other_blocks
-                )
-
-                logger.info(f"    - L{level} context reordered successfully based on PDCA Tags.")
-        
-        # ส่งค่าต่อให้ LLM
-        aggregated_context = final_context_for_llm
-
-        # -------------------- CONTEXT ORDERING LOGIC END --------------------
-
-        # 3. LLM Evaluation
-        llm_start = time.time()
-        llm_result = None # เริ่มต้นด้วย None เพื่อให้การจัดการข้อผิดพลาดมีความทนทาน
+        # Build previous_levels_map from temp map (passed_chunk_uuids_map isn't accessible here)
+        previous_levels_map = {}
         try:
-            llm_result = current_llm_evaluator(
-                context=aggregated_context,
-                sub_criteria_name=sub_criteria_name,
-                level=level,
-                statement_text=statement_text,
-                sub_id=sub_id,
-                pdca_phase=pdca_phase,
-                level_constraint=level_constraint,
-                contextual_rules=contextual_rules_prompt, # 🟢 NEW: ส่งกฎเฉพาะเข้า LLM
-                llm_executor=self.llm
-            )
-        except Exception as e:
-            logger.error(f"LLM evaluation failed for {sub_id} L{level}: {e}")
-            llm_result = {"score": 0, "reason": f"LLM Fatal Error: {e}", "is_passed": False}
+            previous_levels_map = self._collect_previous_level_evidences(sub_id)
+        except Exception:
+            previous_levels_map = {}
+
+        # NOTE: สมมติว่า build_multichannel_context_for_level ถูก Import
+        channels = build_multichannel_context_for_level(
+            level=level,
+            top_evidences=top_evidences,
+            previous_levels_map=previous_levels_map,
+            max_main_context_tokens=3000,
+            max_summary_sentences=3
+        )
+
+        # debug log
+        logger.info(f"    - Context channels built: {channels['debug_meta']}")
+
+
+        if level <= 2:
+            # --- LOW LEVEL (L1/L2) ---
+            # ใช้ context ตรง ๆ เท่านั้น ไม่ใช้ summary อะไรทั้งนั้น
+            main_context_for_llm = channels.get("direct_context") or aggregated_context
+
+            # L1/L2 ไม่ใช้ baseline_summary / aux_summary
+            baseline_summary = ""
+            aux_summary = ""
+
+            # ใช้ evaluator แบบ low-level เท่านั้น
+            llm_evaluator_to_use = evaluate_with_llm_low_level
+
+        else:
+            # --- HIGH LEVEL (L3/L4/L5) ---
+            # L3 ต้องใช้ aggregated_context (รวมทุก evidence)
+            # L4–L5 ใช้ direct_context ก่อน ถ้าไม่มีให้ตกไป aggregated
+            if level == 3:
+                main_context_for_llm = aggregated_context
+            else:
+                main_context_for_llm = channels.get("direct_context") or aggregated_context
+
+            # High level ใช้ summary ทั้งคู่ได้
+            baseline_summary = channels.get("baseline_summary", "")
+            aux_summary = channels.get("aux_summary", "")
+
+            # ใช้ evaluator ปกติ
+            llm_evaluator_to_use = self.llm_evaluator
+
+        llm_result = llm_evaluator_to_use(
+            context=main_context_for_llm,
+            sub_criteria_name=sub_criteria_name,
+            level=level,
+            statement_text=statement_text,
+            sub_id=sub_id,
+            pdca_phase=pdca_phase,
+            level_constraint=level_constraint,
+            contextual_rules=contextual_rules_prompt,
+            llm_executor=self.llm,
+            baseline_summary=baseline_summary,
+            aux_summary=aux_summary,
+            check_evidence="", 
+            act_evidence=""
+        )
+
 
         llm_duration = time.time() - llm_start
 
@@ -1559,7 +1542,7 @@ class SEAMPDCAEngine:
             llm_score = llm_result.get('score', 0)
         else:
             # เพิ่มการจัดการหาก LLM ตอบกลับมาเป็น None หรือไม่ใช่ Dictionary
-            self.logger.error(f"LLM returned None or invalid result for assessment {sub_id} L{level}. Setting score=0.")
+            logger.error(f"LLM returned None or invalid result for assessment {sub_id} L{level}. Setting score=0.")
         # -------------------- 🛑 สิ้นสุดการแก้ไข 🛑 --------------------
 
         # 📌 ใช้ฟังก์ชันที่แก้ไขแล้ว
@@ -1580,68 +1563,54 @@ class SEAMPDCAEngine:
             uuids_to_save = []
             
             # 🟢 NEW LOGIC: บันทึก doc_id และ filename เป็น dictionary
-            for doc in top_evidences:
-                doc_id = doc.get('doc_id', None)
-                source_filename = doc.get('source_filename', doc.get('source', None)) # ใช้ 'source' เป็น fallback
-                
-                if doc_id is not None:
+            # ใช้ used_chunk_uuids ที่ส่งกลับมาจาก RAG Retriever ซึ่งควรเป็น UUIDs ที่ถูก Reranked
+            for doc_uuid in used_chunk_uuids:
+                 # NOTE: ต้องมี helper method เพื่อดึง source_filename จาก UUID
+                 # ในกรณีนี้ เราจะใช้ข้อมูลจาก top_evidences แทนเพื่อความง่าย
+                 doc_info = next((d for d in top_evidences if d.get('doc_id') == doc_uuid), None)
+                 
+                 if doc_info:
+                    doc_id = doc_info.get('doc_id')
+                    source_filename = doc_info.get('source_filename', doc_info.get('source', None))
                     uuids_to_save.append({
                         "doc_id": doc_id,
-                        # บันทึกชื่อไฟล์เพื่อให้ mapping file อ่านง่ายขึ้น
                         "filename": source_filename,
-                        "mapper_type": "AI_RAG", # ⬅️ เพิ่ม Field นี้
+                        "mapper_type": "AI_RAG", 
                         "priority": True,    
-                        "timestamp": datetime.now().isoformat() # ⬅️ เพิ่ม Field นี้
+                        "timestamp": datetime.now().isoformat()
                     })
+                 # ถ้าไม่เจอใน top_evidences อาจจะต้องใช้ VSM ในการดึงข้อมูลเพิ่ม (แต่เราใช้ top_evidences เป็นตัวกรองหลัก)
+
             
             if uuids_to_save:
-                # ตรวจสอบเพื่อปรับปรุงข้อความ Log (ว่าเป็นการสร้างใหม่หรืออัปเดต)
                 is_new_mapping = map_key_current not in self.evidence_map
                 
                 # ... (โค้ดสำหรับพิมพ์ Log ที่เหลือเหมือนเดิม) ...
                 # ใช้ sys.stderr/sys.stdout ในการพิมพ์ Log (ถ้าจำเป็น)
-                print(f"\n[MAP 💾 {map_key_current}] ✅ PASS: Saved {len(uuids_to_save)} evidence info to temp map. Details:", file=sys.stderr)
-                
-                # แสดงแค่ชื่อไฟล์หรือ ID ที่อ่านง่าย
-                for i, doc in enumerate(top_evidences[:3]): # แสดง 3 อันดับแรก
-                    doc_id = doc.get('doc_id', 'N/A')
-                    source = doc.get('source_filename', doc.get('source', 'N/A')) # <--- ใช้ 'source' เป็น fallback
-                    score = doc.get('score', 0.0)
-                    
-                    # ใช้ stderr เพื่อแยกจาก Log ปกติ
-                    print(f"  > [Top {i+1} | Score: {score:.3f}] File: **{source}** (ID: {doc_id})", file=sys.stderr)
-                
-                # บันทึก/อัปเดต Mapping ชั่วคราว (จะ OVERWRITE ข้อมูลเก่าสำหรับ Key นั้น)
-                self.temp_map_for_save[map_key_current] = uuids_to_save
-                
-                action_desc = "🆕 Temporarily stored new mapping" if is_new_mapping else "💾 Updated temporary mapping"
-                logger.info(f"{action_desc} for {map_key_current} after successful PASS. ({len(uuids_to_save)} evidence items)")
 
-        result = {
+                # อัปเดต self.temp_map_for_save
+                self.temp_map_for_save[map_key_current] = uuids_to_save
+        
+        # 📌 Final Result Construction
+        final_result = {
             "sub_criteria_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
+            "statement_id": statement_id,
             "level": level,
             "statement": statement_text,
             "pdca_phase": pdca_phase,
             "llm_score": llm_score,
-            "reason": llm_result.get('reason', 'N/A'),
-            "is_passed": is_passed, # 🟢 FIX: ใช้ค่าที่คำนวณจาก PDCA Logic
-            "pdca_breakdown": pdca_breakdown, # 🟢 NEW FIELD
-            "raw_pdca_score": raw_pdca_score, # 🟢 NEW FIELD
-            "rag_query": rag_query,
+            "pdca_score_required": raw_pdca_score,
+            "pdca_breakdown": pdca_breakdown,
+            "is_passed": is_passed,
+            "is_capped": False, # ถูกตั้งค่าจริงใน run_assessment
+            "llm_result_full": llm_result,
+            "context_summary": summary_for_save,
             "retrieval_duration_s": retrieval_duration,
             "llm_duration_s": llm_duration,
-            "retrieved_evidences_count": len(top_evidences),
-            "retrieved_full_source_info": top_evidences,
-            "aggregated_context_used": aggregated_context,
-            # ✅ NEW FIELD: สรุปบริบทโดย LLM (ข้อความ)
-            "llm_summarized_context": llm_summary_text, 
-            # ✅ NEW FIELD: ผลลัพธ์ LLM Summary เต็ม (รวม suggestion)
-            "llm_summary_full_result": summary_for_save,
-            # 🟢 NEW: ส่ง UUIDs ที่ใช้ในการประเมินกลับไป (เพื่อใช้ในการทำ Hybrid RAG ของ Level ถัดไป)
+            "top_evidences_ref": [{"doc_id": d.get("doc_id"), "filename": d.get("source_filename", d.get("source"))} for d in top_evidences],
+            # 🟢 NEW: ส่ง Used Chunk UUIDs กลับไปเพื่อใช้ใน Sequential Flow
             "used_chunk_uuids": used_chunk_uuids 
         }
 
-        logger.info(f"    - Result: {pass_status} ({llm_score}/1) in {llm_duration:.2f}s. Reason: {llm_result.get('reason', 'N/A')[:50]}...")
-
-        return result
+        logger.info(f"  > Assessment {sub_id} L{level} completed. Status: {pass_status} (Score: {llm_score:.2f})")
+        return final_result

@@ -1,6 +1,5 @@
 # ================================================================
-#  SE-AM Prompt Framework v16  (B++ VERSION, PURE ASCII FIX)
-#  ปรับปรุงจาก B+ เพื่อ force L4/L5 inference Check/Act และ JSON full example
+#  SE-AM Prompt Framework v16 B++  (PATCHED FOR L1/L2 + L3–L5)
 # ================================================================
 import logging
 from langchain_core.prompts import PromptTemplate
@@ -18,14 +17,15 @@ PDCA_PHASE_MAP = {
 }
 
 # =================================================================
-# GLOBAL HARD RULES (เหมือน B+)
+# GLOBAL HARD RULES
+# =================================================================
 GLOBAL_RULES = """
 กฎความปลอดภัย (ต้องปฏิบัติตาม 100%):
 1. ห้ามสร้างชื่อไฟล์, แหล่งที่มา, หรือ content ที่ไม่มีใน Context
 2. ทุก citation ต้องอ้างอิงไฟล์ที่ “มีอยู่จริงใน context เท่านั้น”
 3. ห้ามมีข้อความก่อนหรือหลัง JSON Object
 4. เหตุผล reason ไม่เกิน 120 คำ
-5. คะแนน P, D, C, A ต้องอยู่ระหว่าง 0–2 เท่านั้น และสะท้อนหลักฐานจริง
+5. คะแนน P, D, C, A ต้องอยู่ระหว่าง 0-2 เท่านั้น และสะท้อนหลักฐานจริง
 6. หากไม่มีหลักฐานรองรับ → PDCA score = 0
 7. Reason ต้องสอดคล้องกับคะแนน P, D, C, A
 8. ห้ามใช้ความรู้ภายนอก หรืออนุมานเกินหลักฐาน
@@ -34,36 +34,35 @@ GLOBAL_RULES = """
 11. หากพบ Evidence Check ≥1 → C_Check_Score ≥1
 12. ห้ามใช้ Plan/Do เป็นหลักฐาน Check
 13. หาก SIMULATED_L3_EVIDENCE อยู่ใน Context → ถือเป็น Summary จากไฟล์จริง
+14. หากไม่มี Check/Act blocks → assign C_Check_Score=0 และ A_Act_Score=0
+15. หาก PDCA score >10 → cap ที่ 10
 """
 
 # =================================================================
 # 1. SYSTEM PROMPT — ASSESSMENT (L3–L5)
+# =================================================================
 SYSTEM_ASSESSMENT_PROMPT = f"""
-คุณคือผู้ประเมิน SE-AM ระดับผู้เชี่ยวชาญ
+คุณคือผู้ประเมิน SE-AM ระดับผู้เชี่ยวชาญ (L3-L5)
 หน้าที่: ประเมิน Statement ตามหลักฐาน (Context) เท่านั้น
 
 {GLOBAL_RULES}
 
-⚠️ ใหม่ v16 B++: หาก evidence ไม่มี Check หรือ Act ให้ **infer ขั้นตอนตรวจสอบและ corrective action** ที่เหมาะสมจาก context
+⚠️ ใหม่ v16 B++: หาก evidence ไม่มี Check หรือ Act ให้ infer ขั้นตอนตรวจสอบและ corrective action ที่เหมาะสมจาก context, 
+หรือ assign C/A=0 หากไม่มีหลักฐานจริง
+
+⚠️ L3–L5 เท่านั้น — ห้ามใช้กฎของ L1/L2
 
 --- JSON Output Rules (บังคับ) ---
 1. ต้องตอบ JSON Object เท่านั้น
 2. ห้ามมีข้อความใด ๆ นอก JSON
-3. JSON ต้องมี key ครบ: score (0–10), reason (≤120 words), is_passed (true/false), P_Plan_Score, D_Do_Score, C_Check_Score, A_Act_Score (0–2)
+3. JSON ต้องมี key ครบทั้งหมด:
+   score, reason, is_passed,
+   P_Plan_Score, D_Do_Score, C_Check_Score, A_Act_Score
 4. หากไม่มีหลักฐาน → score=0, is_passed=false
-5. Reason ต้องสอดคล้องกับ PDCA
-6. ห้ามอนุมานเกินหลักฐาน
-7. ให้ใช้ตัวอย่าง JSON ต่อไปนี้เป็น reference:
-
-{{
-  "score": 8,
-  "reason": "หลักฐานมีแผนชัดเจน (P=2), ดำเนินการตามแผน (D=2), พบ audit และ corrective action (C=2, A=2)",
-  "is_passed": true,
-  "P_Plan_Score": 2,
-  "D_Do_Score": 2,
-  "C_Check_Score": 2,
-  "A_Act_Score": 2
-}}
+5. หากไม่มี Check → C_Check_Score=0
+6. หากไม่มี Act → A_Act_Score=0
+7. Reason ต้องสอดคล้องกับ PDCA
+8. score = sum(P+D+C+A) + bonus 0-2 (สูงสุด 10)
 """
 
 USER_ASSESSMENT_TEMPLATE = """
@@ -83,8 +82,11 @@ Level: L{level} ({pdca_phase})
 --- Evidence Context ---
 {context}
 
-[SIMULATED_L3_EVIDENCE] Check: พบการตรวจสอบ internal audit ในไฟล์ KM1.2L301
-[SIMULATED_L3_EVIDENCE] Act: ปรับปรุงกระบวนการตามผล audit และ feedback ของทีม
+# NOTE (L3-L5):
+# - หากไม่มี Check → C_Check_Score=0
+# - หากไม่มี Act → A_Act_Score=0
+# - ห้ามใช้กฎ L1/L2
+
 """
 
 ASSESSMENT_PROMPT = PromptTemplate(
@@ -103,22 +105,22 @@ ASSESSMENT_PROMPT = PromptTemplate(
 
 USER_ASSESSMENT_PROMPT = ASSESSMENT_PROMPT
 
+
 # =================================================================
 # 2. SYSTEM PROMPT — LOW LEVEL (L1/L2)
+# =================================================================
+
 SYSTEM_LOW_LEVEL_PROMPT = f"""
 คุณคือผู้ประเมิน SE-AM ระดับ L1/L2
 
 {GLOBAL_RULES}
 
 กฎพิเศษ:
-- L1: ต้องยืนยัน “Plan” เท่านั้น
-- L2: ต้องยืนยัน “Do” เท่านั้น
-- L2 ห้ามใช้เอกสารนโยบาย/แผน/วิสัยทัศน์ เป็นหลักฐาน PASS
-
---- JSON Output Rules ---
-1. JSON Object เท่านั้น
-2. Key ครบ schema: score, reason, is_passed, P_Plan_Score, D_Do_Score, C_Check_Score, A_Act_Score
-3. หากไม่มีหลักฐาน → score=0, is_passed=false
+- L1: ยืนยัน “Plan” เท่านั้น → D/C/A = 0
+- L2: ยืนยัน “Do” เท่านั้น → C/A = 0
+- L2 ห้ามใช้เอกสารนโยบาย/วิสัยทัศน์ เป็นหลักฐาน PASS
+- L1/L2 ต้องใช้เฉพาะ Evidence Context เท่านั้น
+- L1/L2 ห้ามใช้ baseline_summary, aux_summary หรือสรุปอื่นๆ ทั้งหมด
 """
 
 USER_LOW_LEVEL_PROMPT = """
@@ -136,6 +138,12 @@ Statement: {statement_text}
 --- Evidence Context ---
 {context}
 
+# NOTE:
+# - ห้ามใช้ baseline_summary หรือ aux_summary
+# - L1: P=1-2, D/C/A=0
+# - L2: P=1-2, D=1-2, C/A=0
+# - หากไม่มีหลักฐาน → score=0, is_passed=false
+
 --- JSON Schema ---
 {{
   "score": 0,
@@ -147,19 +155,8 @@ Statement: {statement_text}
   "A_Act_Score": 0
 }}
 
---- ตัวอย่าง JSON Output ---
-{{
-  "score": 3,
-  "reason": "หลักฐานแสดงแผนชัดเจน (P=2) และมีบันทึกการดำเนินการบางส่วน (D=1) ซึ่งผ่านเกณฑ์ L2",
-  "is_passed": true,
-  "P_Plan_Score": 2,
-  "D_Do_Score": 1,
-  "C_Check_Score": 0,
-  "A_Act_Score": 0
-}}
-
 --- คำสั่ง ---
-ประเมินตามหลักฐาน, Level Constraint และ Contextual Rules เท่านั้น
+ประเมินตาม Evidence Context, Level Constraints เท่านั้น
 ตอบ JSON ตาม Schema ด้านบน
 """
 
@@ -176,20 +173,21 @@ LOW_LEVEL_PROMPT = PromptTemplate(
     template=SYSTEM_LOW_LEVEL_PROMPT + USER_LOW_LEVEL_PROMPT
 )
 
+
 # =================================================================
 # 3. SYSTEM PROMPT — ACTION PLAN
+# =================================================================
 SYSTEM_ACTION_PLAN_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Strategic Planning และ SEAM PDCA Maturity ระดับองค์กร
 หน้าที่:
 - วิเคราะห์ Failed Statements
 - ระบุ PDCA Gap จาก reason + pdca_breakdown
-- สร้าง Action Plan ที่ปฏิบัติได้จริง
-- ยกระดับจาก Level ปัจจุบันไปสู่เป้าหมาย
+- สร้าง Action Plan แบบ Actionable
 
-⚠ กฎสำคัญ:
+กฎ:
 1. JSON Array เท่านั้น
-2. Actionable Steps ต้องชัดเจน, ระบุตำแหน่งงาน, Key_Metric, Verification_Outcome
-3. ห้ามสร้าง reason ใหม่
+2. ห้ามปรับ reason เดิม
+3. ต้องระบุ Responsible, Key Metric, Verification Evidence
 """
 
 ACTION_PLAN_TEMPLATE = """
@@ -214,14 +212,9 @@ Failed Statements:
 ]
 
 --- คำสั่ง ---
-1. วิเคราะห์ Failed Statements ทีละข้อ
-2. ระบุ PDCA Phase ที่ขาด
-3. Goal ต้องวัดผลได้
-4. Actions ต้อง Actionable, ขั้นตอนจริง
-5. Responsible ระบุเป็นตำแหน่งงาน
-6. Key_Metric วัดได้
-7. Verification_Outcome เป็นหลักฐานไฟล์
-8. JSON Array เท่านั้น
+- วิเคราะห์ Failed Statements ทีละข้อ
+- ระบุ Gap PDCA
+- เขียน Action Plan ที่ปฏิบัติได้จริง
 """
 
 ACTION_PLAN_PROMPT = PromptTemplate(
@@ -229,11 +222,14 @@ ACTION_PLAN_PROMPT = PromptTemplate(
     template=ACTION_PLAN_TEMPLATE
 )
 
+
 # =================================================================
-# 4. EVIDENCE DESCRIPTION
+# 4. EVIDENCE DESCRIPTION PROMPT
+# =================================================================
 SYSTEM_EVIDENCE_DESCRIPTION_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Evidence Analysis
-หน้าที่: สรุปหลักฐานจาก 'Evidence Context' อย่างเคร่งครัด
+หน้าที่: สรุป Evidence Context อย่างเคร่งครัด
+ผลลัพธ์ทุกส่วนต้องเป็นภาษาไทยเท่านั้น
 
 {GLOBAL_RULES}
 """
@@ -247,18 +243,21 @@ USER_EVIDENCE_DESCRIPTION_TEMPLATE = """
 
 --- JSON Schema ---
 {{
-  "summary": "หลักฐานในเอกสารระบุว่า [เรียบเรียง Context ให้เป็นประโยคสมบูรณ์]",
-  "suggestion_for_next_level": "ควรดำเนินการ [Actionable Steps] เพื่อให้บรรลุ Level ถัดไป"
+  "summary": "",
+  "suggestion_for_next_level": ""
 }}
 
 --- คำสั่ง ---
-1. summary ต้องเรียบเรียง Context ที่ได้รับ
-2. suggestion_for_next_level ให้ actionable, ไม่กว้าง
-3. JSON Object เท่านั้น
+1. summary ต้องเรียบเรียง context เป็นภาษาไทยเท่านั้น
+2. suggestion_for_next_level ต้อง actionable และต้องเขียนเป็นภาษาไทยเท่านั้น
+3. ต้องคืนค่าเป็น JSON Object ตรงตาม schema เท่านั้น ห้ามเพิ่ม field อื่น
 """
 
 EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
     input_variables=["sub_criteria_name","level","sub_id","context"],
     template=USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
-# end of core/seam_prompts.py
+
+# =================================================================
+# END OF PATCHED v16 B++ PROMPTS
+# =================================================================

@@ -7,16 +7,27 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
 MAPPING_FILE_PATH = os.path.join(DATA_DIR, "doc_id_mapping.json")
-INITIAL_TOP_K: Final[int] = 30
-FINAL_K_RERANKED: Final[int] = 5
-FINAL_K_NON_RERANKED: Final[int] = 7
+
+# -------------------- Retrieval / Evaluation --------------------
+# L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
+INITIAL_TOP_K: Final[int] = 40             # ใช้สำหรับ retrieval ก่อน rerank
+FINAL_K_RERANKED: Final[int] = 12          # สำหรับ L1–L2; L3–L5 ใช้ 5
+FINAL_K_NON_RERANKED: Final[int] = 7       # สำหรับ non-reranked
+
 CHUNK_SIZE: Final[int] = 1500
 CHUNK_OVERLAP: Final[int] = 250
+STANDARD_K: Final[int] = 5
 
 QUERY_INITIAL_K = 20
 QUERY_FINAL_K = 5
 
 IS_LOG_L3_CONTEXT = True
+
+# LLM Model (ใช้ตัวเดียว)
+LLM_MODEL_NAME = "llama3.1:8b"
+# LLM_MODEL_NAME = "llama3:8b-instruct-q4_0"
+LLM_TEMPERATURE: Final[float] = 0.0
+LLM_CONTEXT_WINDOW: Final[int] = 4096
 
 
 # ==================== Supported File & Document Types ====================
@@ -31,7 +42,6 @@ SUPPORTED_DOC_TYPES: Final[List[str]] = [
 EVIDENCE_DOC_TYPES: Final[str] = "evidence"
 DEFAULT_DOC_TYPES: Final[str] = "document"
 
-
 # ==================== Enabler Configuration ====================
 DEFAULT_ENABLER: Final[str] = "KM"
 SUPPORTED_ENABLERS: Final[List[str]] = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
@@ -39,7 +49,6 @@ SUPPORTED_ENABLERS: Final[List[str]] = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM",
 # ------------------------------------------------------------------
 # SE-AM Reference Document Mapping (Updated from latest ingestion)
 # ------------------------------------------------------------------
-
 SEAM_ENABLER_MAP: Final[dict] = {
     "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร (Corporate Governance & Leadership)",
     "SP": "2 การวางแผนเชิงยุทธศาสตร์ (Strategic Planning)",
@@ -53,15 +62,15 @@ SEAM_ENABLER_MAP: Final[dict] = {
     "IA": "8 การตรวจสอบภายใน (Internal Audit)"
 }
 
-# --- Assessment Constants (ถูกนำกลับเข้ามา) ---
+# --- Assessment Constants ---
 MAX_LEVEL: Final[int] = 5 
 INITIAL_LEVEL: Final[int] = 1
-MAX_PARALLEL_WORKERS: Final[int] = 4 # แนะนำ 4 สำหรับ Mac เพื่อความเสถียร
-LIMIT_CHUNKS_PER_PRIORITY_DOC = 7
+MAX_PARALLEL_WORKERS: Final[int] = 4   # แนะนำ 4 สำหรับ Mac
+LIMIT_CHUNKS_PER_PRIORITY_DOC = 5
+MAX_EVAL_CONTEXT_LENGTH = 4500
+PRIORITY_CHUNK_LIMIT: Final[int] = 30
 
-PRIORITY_CHUNK_LIMIT: Final[int] = 50 # หรือจำนวนสูงสุดที่ต้องการ (เช่น 30, 50)
-
-# 💡 ค่าคงที่ใหม่สำหรับ Rubric แบบแยกไฟล์
+# 💡 Rubric / Export Paths
 RUBRIC_FILENAME_PATTERN: Final[str] = "{enabler}_rubric.json"
 RUBRIC_CONFIG_DIR: Final[str] = "config"
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")

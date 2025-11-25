@@ -8,10 +8,8 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION CONSTANTS ---
 # LLM_MODEL: Final[str] = "mistral:latest"
-LLM_MODEL: Final[str] = "llama3.1:8b"
-
-LLM_TEMPERATURE: Final[float] = 0.0
-LLM_CONTEXT_WINDOW: Final[int] = 4096
+# LLM_MODEL: Final[str] = LLM_MODEL_NAME
+from config.global_vars import LLM_MODEL_NAME, LLM_CONTEXT_WINDOW, LLM_TEMPERATURE
 
 # -----------------------------------------------------
 # 🎯 Global LLM Instance (เพื่อให้ Legacy Code ยังคง Import ได้)
@@ -19,7 +17,7 @@ LLM_CONTEXT_WINDOW: Final[int] = 4096
 llm: Optional[BaseLLM] = None 
 
 def create_llm_instance(
-    model_name: str = LLM_MODEL,
+    model_name: str = LLM_MODEL_NAME,
     temperature: float = LLM_TEMPERATURE,
     context_window: int = LLM_CONTEXT_WINDOW
 ) -> Optional[BaseLLM]:
