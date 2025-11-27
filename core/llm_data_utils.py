@@ -139,35 +139,38 @@ def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
     doc_type: str,
     enabler: Optional[str] = None,
-    # 🟢 เพิ่ม Argument นี้
     vectorstore_manager: Optional['VectorStoreManager'] = None
 ) -> Dict[str, Any]:
 
-    # 📌 การตรวจสอบและเตรียม manager
+    # ไม่มี Doc UUID → ไม่มี evidence
     if not doc_uuids:
         return {"top_evidences": []}
 
-    # 🟢 ใช้ VSM ที่ส่งเข้ามา ถ้ามี (Priority) หรือสร้างใหม่/ดึง Instance
-    manager = vectorstore_manager if vectorstore_manager is not None else VectorStoreManager()
-
+    # ใช้ manager ที่ส่งเข้ามา (ถ้ามี) หรือสร้างใหม่
+    manager = vectorstore_manager if vectorstore_manager else VectorStoreManager()
     if manager is None:
         logger.error("VectorStoreManager is None.")
         return {"top_evidences": []}
 
     try:
-        normalized_uuids = normalize_stable_ids(doc_uuids)
+        # 🎯 FIX: ลบ normalize_stable_ids ออก เพราะ doc_uuids คือ Chunk UUIDs ที่เสถียรแล้ว
+        lookup_ids = doc_uuids
+        
+        # ดึง document chunk ตาม stable_doc_uuid หรือ chunk_uuid
+        docs: List[LcDocument] = manager.get_documents_by_id(lookup_ids, doc_type, enabler)
 
-        # Note: manager.get_documents_by_id must support list of normalized IDs
-        docs: List[LcDocument] = manager.get_documents_by_id(normalized_uuids, doc_type, enabler)
-
-        top_evidences = [{
-            "doc_id": d.metadata.get("stable_doc_uuid"),
-            "doc_type": d.metadata.get("doc_type"),
-            "chunk_uuid": d.metadata.get("chunk_uuid"),
-            "source": d.metadata.get("source") or d.metadata.get("doc_source"),
-            "content": d.page_content.strip(),
-            "chunk_index": d.metadata.get("chunk_index")
-        } for d in docs]
+        top_evidences = []
+        for d in docs:
+            md = getattr(d, "metadata", {}) or {}
+            top_evidences.append({
+                "doc_id": md.get("stable_doc_uuid"),
+                "chunk_uuid": md.get("chunk_uuid"),
+                "doc_type": md.get("doc_type"),
+                "source": md.get("source") or md.get("doc_source"),
+                "source_filename": md.get("source") or md.get("doc_source"),  # ✅
+                "content": getattr(d, "page_content", "").strip(),
+                "chunk_index": md.get("chunk_index")
+            })
 
         return {"top_evidences": top_evidences}
 
@@ -176,7 +179,7 @@ def retrieve_context_by_doc_ids(
         return {"top_evidences": []}
 
 # -----------------------
-# retrieve_context_with_filter
+# retrieve_context_with_filter (Final Corrected Version)
 # -----------------------
 def retrieve_context_with_filter(
     query: Union[str, List[str]], 
@@ -186,40 +189,46 @@ def retrieve_context_with_filter(
     top_k: int = None,
     initial_k: int = None,
     mapped_uuids: Optional[List[str]]=None,
-    stable_doc_ids: Optional[List[str]]=None,
+    stable_doc_ids: Optional[List[str]] = None, 
     priority_docs_input: Optional[List[Any]] = None,
     sequential_chunk_uuids: Optional[List[str]] = None, 
     sub_id: Optional[str]=None, 
     level: Optional[int]=None,
-    get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,  # L3 Fallback
+    get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None, 
     logger: logging.Logger = logging.getLogger(__name__) 
 ) -> Dict[str, Any]:
     """
     L3-ready retrieval + fallback context + guaranteed-priority-chunks + rerank.
+    Uses stable_doc_uuid and chunk_uuid directly; no normalize/hashing.
     """
     start_time = time.time()
+    
+    # Default constants (Assumes import from core.constants or local definition)
     try:
         from core.constants import FINAL_K_RERANKED as CONST_FINAL_K, INITIAL_TOP_K as CONST_INITIAL_K
     except Exception:
         CONST_FINAL_K, CONST_INITIAL_K = 5, 25
+
     if top_k is None: top_k = CONST_FINAL_K
     if initial_k is None: initial_k = CONST_INITIAL_K
 
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
 
-    # merge sequential_chunk_uuids into mapped_uuids
+    # Merge sequential_chunk_uuids into mapped_uuids
     if sequential_chunk_uuids:
         mapped_uuids = (list(mapped_uuids) if mapped_uuids else []) + list(sequential_chunk_uuids)
 
+    # Manager check
     manager = vectorstore_manager
     if manager is None:
         raise ValueError("VectorStoreManager is not initialized.")
 
-    collection_name = _get_collection_name(doc_type, enabler).lower()
+    # Assuming _get_collection_name is defined and accessible
+    collection_name = _get_collection_name(doc_type, enabler).lower() 
     queries_to_run = [query] if isinstance(query, str) else list(query or [])
 
-    # --- L3: Fallback from previous level ---
+    # --- L3 Fallback from previous level ---
     fallback_chunks: List[Any] = []
     if level == 3 and callable(get_previous_level_docs):
         try:
@@ -230,8 +239,6 @@ def retrieve_context_with_filter(
 
     # --- Priority / mapped UUIDs ---
     guaranteed_priority_chunks: List[Any] = []
-    mapped_uuids_for_vsm_search: Optional[List[str]] = None
-
     if priority_docs_input:
         try:
             from langchain_core.documents import Document as LcDocument
@@ -249,7 +256,8 @@ def retrieve_context_with_filter(
                     transformed.append(doc)
             guaranteed_priority_chunks = transformed
     elif mapped_uuids:
-        mapped_uuids_for_vsm_search = normalize_stable_ids(mapped_uuids)
+        # 🎯 FIX: ลบ normalize_stable_ids ออก เพราะ mapped_uuids คือ Chunk UUIDs ที่เสถียรแล้ว
+        mapped_uuids_for_vsm_search = [uuid for uuid in mapped_uuids if uuid]
         logger.critical(f"🧭 DEBUG: Using {len(mapped_uuids_for_vsm_search)} UUIDs as search filter.")
 
     # --- Retriever ---
@@ -271,27 +279,26 @@ def retrieve_context_with_filter(
             resp = []
         retrieved_chunks.extend(resp or [])
 
-    # merge fallback_chunks + retrieved + guaranteed_priority
+    # Merge fallback_chunks + retrieved + guaranteed_priority
     all_chunks_to_process = list(retrieved_chunks) + list(fallback_chunks) + list(guaranteed_priority_chunks)
 
     # --- Dedup + PDCA default + truncation ---
     unique_chunks_map: Dict[str, Any] = {}
     for doc in all_chunks_to_process:
         if doc is None: continue
-        # ensure metadata dict
         md = getattr(doc, "metadata", {}) or {}
         setattr(doc, "metadata", md)
         # PDCA default
         if "pdca_tag" not in md or not md.get("pdca_tag"):
             md["pdca_tag"] = "Other"
-        # truncated content for L3
+        # truncate content for L3
         pc = (getattr(doc, "page_content", None) or getattr(doc, "text", "") or "")
         if level == 3:
             pc = pc[:500]
             setattr(doc, "page_content", pc)
-        # chunk_uuid key
-        chunk_uuid = md.get("chunk_uuid") or md.get("doc_uuid") or f"HASH-{hash(pc)}"
-        if chunk_uuid not in unique_chunks_map:
+        # use actual chunk_uuid
+        chunk_uuid = md.get("chunk_uuid") or md.get("doc_uuid") or f"HASH-{hash(pc)}" # Fallback hash kept for safety
+        if chunk_uuid and chunk_uuid not in unique_chunks_map:
             unique_chunks_map[chunk_uuid] = doc
 
     dedup_chunks = list(unique_chunks_map.values())
@@ -302,6 +309,7 @@ def retrieve_context_with_filter(
     slots_available = max(0, top_k - len(final_selected_docs))
     rerank_candidates = [d for d in dedup_chunks if d not in final_selected_docs]
 
+    # Assuming get_global_reranker is defined and accessible
     if slots_available > 0 and rerank_candidates:
         reranker = get_global_reranker(top_k)
         if reranker and hasattr(reranker, "compress_documents"):
@@ -320,19 +328,22 @@ def retrieve_context_with_filter(
     for doc in final_selected_docs[:top_k]:
         if doc is None: continue
         md = getattr(doc, "metadata", {}) or {}
-        source = md.get("source") or md.get("filename") or "Unknown"
         pc = getattr(doc, "page_content", "") or ""
         chunk_uuid = md.get("chunk_uuid") or f"HASH-{hash(pc)}"
         used_chunk_uuids.append(chunk_uuid)
+        source = md.get("source") or md.get("filename") or "Unknown"
+        
         top_evidences.append({
             "doc_uuid": md.get("doc_uuid"),
             "doc_id": md.get("doc_id") or md.get("stable_doc_uuid"),
             "chunk_uuid": chunk_uuid,
             "source": source,
+            "source_filename": source, # ✅ เพิ่ม
             "text": pc,
             "pdca_tag": md.get("pdca_tag", "Other"),
             "score": md.get("relevance_score", 0.0)
         })
+
         aggregated_list.append(f"[{md.get('pdca_tag','Other')}] [SOURCE: {source}] {pc}")
 
     aggregated_context = "\n\n---\n\n".join(aggregated_list)
@@ -346,7 +357,6 @@ def retrieve_context_with_filter(
         "retrieval_time": duration,
         "used_chunk_uuids": used_chunk_uuids
     }
-
 
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
@@ -374,84 +384,89 @@ def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional
         level=level
     )
 
-def _summarize_evidence_list_short(evidences: List[Dict[str, Any]], max_sentences: int = 3) -> str:
+# ----------------------------------------------------
+# Helper function: Summarize evidence list (minimal stub)
+# ----------------------------------------------------
+def _summarize_evidence_list_short(evidences: list, max_sentences: int = 3) -> str:
     """
-    Create a concise human-readable 1-3 sentence summary of a list of evidence chunks.
-    Use filename + key phrase from text (first 120 chars).
+    Provides a concise summary of evidence items.
     """
     if not evidences:
         return ""
+    
     parts = []
     for ev in evidences[:max(1, min(len(evidences), max_sentences))]:
-        fn = ev.get("source_filename") or ev.get("source") or ev.get("doc_id", "unknown")
-        txt = ev.get("text", "")[:120].replace("\n", " ").strip()
-        if txt:
-            parts.append(f"จากไฟล์ `{fn}`: {txt}...")
+        if isinstance(ev, dict):
+            fn = ev.get("source_filename") or ev.get("source") or ev.get("doc_id", "unknown")
+            txt = ev.get("text") or ev.get("content") or ""
+        else:
+            fn = str(ev)
+            txt = str(ev)
+        txt_short = txt[:120].replace("\n", " ").strip()
+        if txt_short:
+            parts.append(f"จากไฟล์ `{fn}`: {txt_short}...")
         else:
             parts.append(f"จากไฟล์ `{fn}`")
     return " | ".join(parts)
 
+
+# ----------------------------------------------------
+# Main function: build_multichannel_context_for_level
+# ----------------------------------------------------
 def build_multichannel_context_for_level(
     level: int,
-    top_evidences: List[Dict[str, Any]],
-    previous_levels_map: Dict[int, List[Dict[str, Any]]],
+    top_evidences: list,
+    previous_levels_map: dict,
     max_main_context_tokens: int = 3000,
     max_summary_sentences: int = 3
-) -> Dict[str, Any]:
-    """
-    Build structured 'channels' of context for LLM:
-      - baseline_L1_L2: short summary of passed evidence from L1/L2 (separate by level)
-      - direct_Ln_evidence: evidence retrieved specifically for this level (ranked)
-      - aux_other: other evidence (low-priority) but truncated
+) -> dict:
 
-    Args:
-        level: current evaluating level (int)
-        top_evidences: list of evidence dicts retrieved for this level (already reranked)
-        previous_levels_map: mapping {level: [evidence_dicts]} from passed levels (1..level-1)
-    Returns:
-        dict with keys:
-            - baseline_summary: short text (L1/L2)
-            - direct_context: aggregated text for main evaluation (truncated to max_main_context_tokens chars)
-            - aux_summary: optional other evidences summary
-            - debug_meta: meta info (counts, filenames)
-    """
-    # 1) Baseline summary: gather L1 and L2 passed evidences only (preserve by-level order)
+    # --- 1) Baseline: previous L1/L2 ---
     baseline_evidence = []
-    for lev in sorted(previous_levels_map.keys()):
-        if lev <= 2:
-            baseline_evidence.extend(previous_levels_map.get(lev, []))
+    for key, items in previous_levels_map.items():
+        # Case 1: key is level number (int) and items is list of dicts
+        if isinstance(key, int) and key <= 2 and isinstance(items, list):
+            baseline_evidence.extend(items)
+        # Case 2: key is UUID (str) and items is filename (str)
+        elif isinstance(key, str) and isinstance(items, str):
+            baseline_evidence.append({"text": "", "source_filename": items})
 
-    baseline_summary = _summarize_evidence_list_short(baseline_evidence, max_sentences=max_summary_sentences)
+    baseline_summary = _summarize_evidence_list_short(
+        baseline_evidence, max_sentences=max_summary_sentences
+    )
 
-    # 2) Direct evidence: prefer evidences that have PDCA tags relevant to this level
-    # Expect top_evidences already contains pdca_tag or similar; fallback: use first K
-    direct = []
-    aux = []
-    K_MAIN = 5  # how many chunks to include prominently
+    # --- 2) Direct / Aux classification ---
+    direct, aux = [], []
+    K_MAIN = 5
     for ev in top_evidences:
-        tag = ev.get("pdca_tag", "").upper()
-        # if this level >=3, prefer C/A blocks for main context
+        if isinstance(ev, dict):
+            tag = ev.get("pdca_tag") or ev.get("PDCA") or "Other"
+            tag = tag.upper()
+        else:
+            tag = "OTHER"
+
         if level >= 3 and tag in ("C", "A"):
             direct.append(ev)
         else:
             aux.append(ev)
 
-    # fill direct up to K_MAIN with remaining if needed
+    # Fill direct up to K_MAIN from aux if needed
     if len(direct) < K_MAIN:
-        # take from aux to fill
         take = K_MAIN - len(direct)
         direct.extend(aux[:take])
         aux = aux[take:]
 
-    # 3) Build textual aggregated direct_context (ordered)
-    def _join_chunks(chunks: List[Dict[str, Any]], max_chars: int):
-        out = []
-        used = 0
+    # --- 3) Join text chunks into string ---
+    def _join_chunks(chunks, max_chars):
+        out, used = [], 0
         for c in chunks:
-            txt = c.get("text") or c.get("content") or ""
-            if not txt: continue
+            if isinstance(c, dict):
+                txt = c.get("text") or c.get("content") or str(c)
+            else:
+                txt = str(c)
+            if not txt:
+                continue
             piece = txt.strip()
-            # simple truncation to avoid huge contexts
             if used + len(piece) > max_chars:
                 remaining = max_chars - used
                 if remaining <= 0:
@@ -466,19 +481,27 @@ def build_multichannel_context_for_level(
     direct_context = _join_chunks(direct, max_main_context_tokens)
     aux_summary = _summarize_evidence_list_short(aux, max_sentences=3)
 
+    # --- 4) Prepare debug metadata ---
     debug_meta = {
         "direct_count": len(direct),
         "aux_count": len(aux),
         "baseline_count": len(baseline_evidence),
-        "direct_files": [d.get("source_filename") or d.get("source") or d.get("doc_id") for d in direct][:10],
-        "aux_files": [d.get("source_filename") or d.get("source") or d.get("doc_id") for d in aux][:10]
+        "direct_files": [
+            d.get("source_filename") if isinstance(d, dict) else str(d)
+            for d in direct
+        ][:10],
+        "aux_files": [
+            d.get("source_filename") if isinstance(d, dict) else str(d)
+            for d in aux
+        ][:10],
     }
 
+    # --- 5) Return assembled context ---
     return {
         "baseline_summary": baseline_summary,
         "direct_context": direct_context,
         "aux_summary": aux_summary,
-        "debug_meta": debug_meta
+        "debug_meta": debug_meta,
     }
 
 
@@ -1026,28 +1049,37 @@ def create_context_summary_llm(
 # ------------------------
 # Action plan
 # ------------------------
-
 def create_structured_action_plan(
     failed_statements: List[Dict[str, Any]], 
     sub_id: str, 
     target_level: int, 
-    llm_executor: Any, # <-- เพิ่มอาร์กิวเมนต์นี้
+    llm_executor: Any, 
     max_retries: int = 3
 ) -> List[Dict[str, Any]]:
-    """
-    ใช้ LLM เพื่อสร้าง Action Plan ที่มีโครงสร้างจากรายการ Statement ที่สอบตก
-    """
-    # 📌 FIX: เปลี่ยน failed_statements_data เป็น failed_statements
-    if not failed_statements: 
-        return []
+
+    # ถ้าไม่มี failed statement → สร้าง template default
+    if not failed_statements:
+        return [{
+            "Phase": f"L{target_level}",
+            "Goal": f"Reach Level {target_level} for {sub_id}",
+            "Actions": [
+                {"Statement_ID": "TEMPLATE", "Recommendation": "Review documentation and implement missing practices."}
+            ]
+        }]
 
     if llm_executor is None:
         logger.error("LLM instance is None. Cannot create action plan.")
-        return []
+        # ใช้ template แทน fallback
+        return [{
+            "Phase": f"L{target_level}",
+            "Goal": f"Reach Level {target_level} for {sub_id}",
+            "Actions": [
+                {"Statement_ID": "TEMPLATE", "Recommendation": "Manual review required due to missing LLM."}
+            ]
+        }]
 
+    # สร้าง JSON schema
     try:
-        # ใช้ .model_json_schema() เพื่อความเข้ากันได้กับ Pydantic v2+
-        # NOTE: ActionPlanActions ต้องเป็น Pydantic Model
         schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
     except Exception:
         schema_json = "{}"
@@ -1055,31 +1087,31 @@ def create_structured_action_plan(
     system_prompt = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nRespond ONLY with a valid JSON ARRAY."
 
     statements_text = []
-    # 📌 FIX: เปลี่ยน failed_statements_data เป็น failed_statements
-    for s in failed_statements: 
-        # จำกัดความยาวของ Statement และ Reason เพื่อป้องกันการล้น Token
+    for s in failed_statements:
         st = (s.get('statement','') or '')[:1000]
         rs = (s.get('reason','') or '')[:500]
         statements_text.append(f"Level:{s.get('level','N/A')}\nStatement:{st}\nReason:{rs}")
 
-    # 📌 แก้ไข ACTION_PLAN_PROMPT ให้รองรับ sub_id และ target_level
-    human_prompt = ACTION_PLAN_PROMPT.format(sub_id=sub_id, target_level=target_level, failed_statements_list="\n\n".join(statements_text))
+    human_prompt = ACTION_PLAN_PROMPT.format(
+        sub_id=sub_id, 
+        target_level=target_level, 
+        failed_statements_list="\n\n".join(statements_text)
+    )
 
-    for attempt in range(max_retries + 1):
+    for attempt in range(max_retries):
         try:
-            # 🟢 FIX: ส่ง llm_executor เข้าไป
             raw = _fetch_llm_response(system_prompt, human_prompt, 1, llm_executor=llm_executor)
-
-            parsed = _robust_extract_json(raw) or []
-            if isinstance(parsed, dict): parsed = [parsed] # แปลง dict เดี่ยวให้เป็น list
+            logger.debug(f"[ActionPlan RAW LLM OUTPUT]\n{raw}")
+            parsed = _extract_json_array_for_action_plan(raw) or []
+            if isinstance(parsed, dict): parsed = [parsed]
+            logger.debug(f"[ActionPlan PARSED]\n{parsed}")
 
             valid_items = []
             for item in parsed:
                 if not isinstance(item, dict): continue
-                # ใช้ .get() เพื่อให้โค้ดรันได้แม้ไม่มี key
-                item.setdefault("Phase",f"Fallback L{target_level}")
-                item.setdefault("Goal","N/A")
-                item.setdefault("Actions",[])
+                item.setdefault("Phase",f"L{target_level}")
+                item.setdefault("Goal", f"Reach Level {target_level} for {sub_id}")
+                item.setdefault("Actions", [{"Statement_ID": "TEMPLATE", "Recommendation": "Review practices."}])
                 valid_items.append(item)
 
             if valid_items: return valid_items
@@ -1088,5 +1120,39 @@ def create_structured_action_plan(
             logger.warning(f"Action plan attempt {attempt+1} failed: {e}")
             time.sleep(0.5)
 
-    # Fallback กรณีล้มเหลวทุกครั้ง
-    return [{"Phase":f"Fallback L{target_level}","Goal":f"Manual review for {sub_id}","Actions":[{"Statement_ID":"LLM_ERROR","Recommendation":"Manual review required"}]}]
+    # Fallback template ถ้า LLM fail ทุกครั้ง
+    return [{
+        "Phase": f"L{target_level}",
+        "Goal": f"Reach Level {target_level} for {sub_id}",
+        "Actions": [
+            {"Statement_ID": "TEMPLATE", "Recommendation": "Manual review required due to LLM failure."}
+        ]
+    }]
+
+def _extract_json_array_for_action_plan(llm_response: str):
+    """
+    Extract JSON ARRAY safely for Action Plan.
+    Not PDCA logic. No score, reason, PDCA fields required.
+    """
+    try:
+        # หา JSON array ตรง ๆ
+        start = llm_response.find("[")
+        end = llm_response.rfind("]") + 1
+
+        if start == -1 or end == -1:
+            raise ValueError("JSON array not found.")
+
+        json_str = llm_response[start:end]
+        data = json.loads(json_str)
+
+        # ต้องเป็น list
+        if not isinstance(data, list):
+            return []
+
+        # list ของ dict เท่านั้น
+        cleaned = [x for x in data if isinstance(x, dict)]
+        return cleaned
+
+    except Exception as e:
+        logger.error(f"[ActionPlan JSON Parse Error] {e}")
+        return []

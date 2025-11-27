@@ -581,7 +581,10 @@ def load_and_chunk_document(
         d.metadata["version"] = version
         # d.metadata["doc_id"] = stable_doc_uuid 
         d.metadata["stable_doc_uuid"] = stable_doc_uuid
-        d.metadata["source"] = d.metadata.get("source_file", os.path.basename(file_path))
+        base_filename = os.path.basename(file_path)
+        d.metadata["source_filename"] = base_filename
+        d.metadata["source"] = base_filename # กำหนดทับเพื่อให้มั่นใจว่าเป็นชื่อไฟล์ล้วนๆ
+        # d.metadata["source"] = d.metadata.get("source_file", os.path.basename(file_path))
         d.metadata = _safe_filter_complex_metadata(d.metadata) # Final filter
 
     # 3. Split into Chunks

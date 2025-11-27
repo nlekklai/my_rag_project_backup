@@ -123,7 +123,8 @@ def main():
         final = engine.run_assessment(
             target_sub_id=args.sub, 
             export=args.export, 
-            vectorstore_manager=vsm
+            vectorstore_manager=vsm,
+            sequential=args.sequential  # <-- เพิ่มบรรทัดนี้
         )
     except Exception as e:
         logger.exception(f"Engine run failed: {e}")
