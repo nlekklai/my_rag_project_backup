@@ -106,7 +106,9 @@ def main():
         target_level=args.target_level,
         mock_mode=args.mock,
         # 🟢 PASS THE NEW ARGUMENT
-        force_sequential=args.sequential 
+        force_sequential=args.sequential,
+        model_name=LLM_MODEL_NAME,
+        temperature=0.0 # ใช้ 0.0 ตามที่กำหนดไว้ในการเรียก llm_instance 
     )
     engine = SEAMPDCAEngine(
         config=config,
