@@ -1,6 +1,6 @@
 # core/llm_guardrails.py
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 # =============================
 #    Intent Detection (ฉลาด + แม่นสุด ๆ)
@@ -17,38 +17,33 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
         "is_evidence": False
     }
 
-    # 1. จาก doc_type (priority สูง)
-    if doc_type in ["faq", "qa", "question"]:
-        intent["is_faq"] = True
-        return intent
-    if doc_type in ["document", "rubric", "evidence", "feedback"]:
-        intent["is_evidence"] = True
-
-    # 2. Keyword + Pattern matching (เรียงจากความสำคัญสูง → ต่ำ)
+    # --------------------
+    # 1. Intent จาก Keyword + Pattern matching (Priority สูงสุด)
+    # --------------------
+    
+    # Synthesis/Compare Signals (เฉพาะคำที่บ่งชี้การเปรียบเทียบที่ชัดเจนเท่านั้น)
+    # ✅ FIX: ลบ "และ", "หรือ", "กับ" ออกเพื่อป้องกันไม่ให้คำถาม Evidence ยาวๆ ถูกเข้าใจผิดเป็น Synthesis
     synthesis_signals = [
         "เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "ความต่าง", "เทียบ", "vs", "versus",
-        "compare", "difference", "ต่างกันยังไง", "ต่างกันอย่างไร", "เทียบกับ", "กับ",
-        "และ", "สรุปความเหมือน", "สรุปความต่าง", "ไฮไลต์", "highlight"
+        "compare", "difference", "ต่างกันยังไง", "ต่างกันอย่างไร", "เทียบกับ",
+        "สรุปความเหมือน", "สรุปความต่าง", "ไฮไลต์", "highlight"
     ]
-
-    # ถ้ามีคำว่า "กับ" หรือ "และ" แล้วคำถามไม่ยาวเกินไป → น่าจะเปรียบเทียบ
+    
     has_compare_word = any(word in q for word in synthesis_signals)
-    has_and_connector = bool(re.search(r"\b(กับ|และ|vs|versus)\b", q))
-    is_short_compare = len(q.split()) <= 30
-
-    if has_compare_word or (has_and_connector and is_short_compare):
+    
+    if has_compare_word:
         intent["is_synthesis"] = True
-        return intent  # Synthesis มี priority สูงสุด
-
-    # FAQ signals
+        return intent # Synthesis มี priority สูงสุด
+        
+    # FAQ/Definition Signals (ถ้าไม่ใช่ Synthesis)
     faq_signals = [
         "คืออะไร", "คือ", "อะไร", "ใคร", "เมื่อไร", "ที่ไหน", "อย่างไร", "ทำไม", "หมายถึง",
-        "what ", "who ", "when ", "where ", "why ", "how ", "faq", "คือยังไง", "แปลว่า"
+        "what ", "who ", "when ", "where ", "why ", "how ", "faq", "คือยังไง", "แปลว่า", "แปลว่าอะไร"
     ]
     if any(sig in q for sig in faq_signals):
         intent["is_faq"] = True
-
-    # Evidence signals
+        
+    # Evidence signals (ถ้าไม่ใช่ Synthesis หรือ FAQ)
     evidence_signals = [
         "ตามเอกสาร", "ในเอกสาร", "เอกสารบอก", "หลักฐาน", "อ้างอิง", "source", "reference",
         "จากไฟล์", "ระบุแหล่ง", "อิงจาก", "ตามที่ระบุ"
@@ -56,11 +51,32 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
     if any(sig in q for sig in evidence_signals):
         intent["is_evidence"] = True
 
+    # --------------------
+    # 2. Intent จาก doc_type (Default/Fallback)
+    # --------------------
+    
+    # 2.1 Fallback สำหรับ FAQ Doc Types
+    if doc_type in ["faq"]:
+        # ถ้ามาจาก FAQ doc type และไม่ได้ถูกจับเป็น Synthesis
+        if not intent["is_synthesis"]:
+             intent["is_faq"] = True
+             
+    # 2.2 Fallback สำหรับ Evidence Doc Types (RAG หลัก)
+    # doc_type ที่มีอยู่จริง: document, evidence, seam
+    elif doc_type in ["document", "evidence", "seam"]:
+        # ถ้ามาจาก Evidence doc type และไม่ได้ถูกจับเป็น Synthesis/FAQ
+        if not intent["is_synthesis"] and not intent["is_faq"]:
+            intent["is_evidence"] = True
+            
+    # Fallback สุดท้าย: ถ้ายังไม่มี Intent ใดถูกจับได้เลย ให้ถือว่าเป็น Evidence ทั่วไป (RAG Default)
+    if not any(intent.values()):
+        intent["is_evidence"] = True
+        
     return intent
 
 
 # =============================
-#    Prompt Builder (สวย + LLM ตอบตรงเป๊ะ)
+#    Prompt Builder
 # =============================
 def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
     sections = []
@@ -72,6 +88,7 @@ def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
     elif intent["is_faq"]:
         role = "คุณคือผู้ช่วยที่ตอบคำถามแบบ FAQ ให้กระชับ อ่านง่าย ใช้ภาษาเป็นมิตร"
     else:
+        # 🎯 บทบาทหลักสำหรับการค้นหา Evidence/KM/SEAM
         role = ("คุณคือผู้ช่วยวิเคราะห์ที่ตอบคำถามโดยยึดหลักฐานจากเอกสารเท่านั้น "
                 "ห้ามแต่งข้อมูลเพิ่ม ห้ามสรุปเกินกว่าที่มี")
 

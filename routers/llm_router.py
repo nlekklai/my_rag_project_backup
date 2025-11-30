@@ -113,8 +113,9 @@ async def query_llm(
                 enabler=enabler,
                 vectorstore_manager=vsm,
                 stable_doc_ids=doc_ids,
-                top_k=QUERY_FINAL_K,
-                initial_k=QUERY_INITIAL_K
+                # ลบ top_k และ initial_k ออก เพราะ retrieve_context_with_filter ใช้ Global Var โดยตรงแล้ว
+                # top_k=QUERY_FINAL_K,
+                # initial_k=QUERY_INITIAL_K
             )
             for d_type in doc_types
         ]

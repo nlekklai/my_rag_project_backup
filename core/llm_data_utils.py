@@ -186,8 +186,6 @@ def retrieve_context_with_filter(
     doc_type: str, 
     enabler: Optional[str]=None,
     vectorstore_manager: Optional['VectorStoreManager']=None,
-    top_k: int = None,
-    initial_k: int = None,
     mapped_uuids: Optional[List[str]]=None,
     stable_doc_ids: Optional[List[str]] = None, 
     priority_docs_input: Optional[List[Any]] = None,
@@ -203,14 +201,9 @@ def retrieve_context_with_filter(
     """
     start_time = time.time()
     
-    # Default constants (Assumes import from core.constants or local definition)
-    try:
-        from core.constants import FINAL_K_RERANKED as CONST_FINAL_K, INITIAL_TOP_K as CONST_INITIAL_K
-    except Exception:
-        CONST_FINAL_K, CONST_INITIAL_K = 5, 25
-
-    if top_k is None: top_k = CONST_FINAL_K
-    if initial_k is None: initial_k = CONST_INITIAL_K
+    # กำหนดค่า K โดยใช้ Global Variable โดยตรง
+    # final_k_val = FINAL_K_RERANKED # <-- ลบออก
+    # initial_k_val = INITIAL_TOP_K # <-- ลบออก
 
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
@@ -268,8 +261,9 @@ def retrieve_context_with_filter(
     retrieved_chunks: List[Any] = []
     for q in queries_to_run:
         try:
+            # ใช้ INITIAL_TOP_K โดยตรง
             if callable(getattr(retriever, "invoke", None)):
-                resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": initial_k}}})
+                resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K}}})
             elif callable(getattr(retriever, "get_relevant_documents", None)):
                 resp = retriever.get_relevant_documents(q)
             else:
@@ -306,12 +300,14 @@ def retrieve_context_with_filter(
 
     # --- Rerank ---
     final_selected_docs: List[Any] = list(guaranteed_priority_chunks)
-    slots_available = max(0, top_k - len(final_selected_docs))
+    # ใช้ FINAL_K_RERANKED โดยตรง
+    slots_available = max(0, FINAL_K_RERANKED - len(final_selected_docs))
     rerank_candidates = [d for d in dedup_chunks if d not in final_selected_docs]
 
     # Assuming get_global_reranker is defined and accessible
     if slots_available > 0 and rerank_candidates:
-        reranker = get_global_reranker(top_k)
+        # ใช้ FINAL_K_RERANKED โดยตรง
+        reranker = get_global_reranker(FINAL_K_RERANKED)
         if reranker and hasattr(reranker, "compress_documents"):
             try:
                 reranked = reranker.compress_documents(query=queries_to_run[0] if queries_to_run else "", documents=rerank_candidates, top_n=slots_available)
@@ -325,7 +321,8 @@ def retrieve_context_with_filter(
     top_evidences: List[Dict[str, Any]] = []
     aggregated_list: List[str] = []
 
-    for doc in final_selected_docs[:top_k]:
+    # ใช้ FINAL_K_RERANKED โดยตรง
+    for doc in final_selected_docs[:FINAL_K_RERANKED]:
         if doc is None: continue
         md = getattr(doc, "metadata", {}) or {}
         pc = getattr(doc, "page_content", "") or ""
@@ -338,7 +335,7 @@ def retrieve_context_with_filter(
             "doc_id": md.get("doc_id") or md.get("stable_doc_uuid"),
             "chunk_uuid": chunk_uuid,
             "source": source,
-            "source_filename": source, # ✅ เพิ่ม
+            "source_filename": source, 
             "text": pc,
             "pdca_tag": md.get("pdca_tag", "Other"),
             "score": md.get("relevance_score", 0.0)
