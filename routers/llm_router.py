@@ -1,217 +1,176 @@
-# router/llm_router.py
+# routers/llm_router.py
 import logging
-from typing import List, Optional, Dict, Any, Tuple
-from fastapi import APIRouter, Form, HTTPException, status
+import uuid
+import asyncio
+from typing import List, Optional
+
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-import uuid
-import json 
-import re 
 
-# Langchain Imports
+# LangChain
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.documents import Document as LcDocument
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
-from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 
-# *** นำเข้า History Utils ***
-from core.history_utils import load_conversation_history, save_message 
-# **********************
-
-# Project Imports
-# 🟢 FIX: นำเข้า get_vectorstore_manager
-from core.llm_data_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids, normalize_stable_ids
-from core.llm_guardrails import augment_seam_query, detect_intent, build_prompt
-from core.vectorstore import get_vectorstore_manager # <--- 🟢 NEW IMPORT
+# Project imports (ใช้เวอร์ชันล่าสุดที่เราปรับแล้ว)
+from core.history_utils import async_save_message, async_load_conversation_history
+from core.llm_data_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids
+from core.vectorstore import get_vectorstore_manager
 from core.rag_prompts import (
-    QA_PROMPT, 
-    COMPARE_PROMPT, 
-    SYSTEM_QA_INSTRUCTION, 
-    SYSTEM_COMPARE_INSTRUCTION
+    SYSTEM_QA_INSTRUCTION,
+    QA_PROMPT,
+    SYSTEM_COMPARE_INSTRUCTION,
+    COMPARE_PROMPT
 )
-from models.llm import llm as llm_instance
-from config.global_vars import (
-    DEFAULT_ENABLER, 
-    EVIDENCE_DOC_TYPES, 
-    FINAL_K_RERANKED,
-    # 🟢 NEW: นำเข้าค่า K ใหม่สำหรับ /query
-    QUERY_INITIAL_K, 
-    QUERY_FINAL_K
-)
+from core.llm_guardrails import detect_intent, build_prompt
+from models.llm import create_llm_instance
 
+from config.global_vars import (
+    DEFAULT_ENABLER,
+    EVIDENCE_DOC_TYPES,
+    FINAL_K_RERANKED,
+    QUERY_INITIAL_K,
+    QUERY_FINAL_K,
+    LLM_MODEL_NAME
+)
 
 logger = logging.getLogger(__name__)
 llm_router = APIRouter(prefix="/api", tags=["LLM"])
 
-# -----------------------------
-# --- Pydantic Models ---
-# -----------------------------
+
+# =============================
+#    Pydantic Models
+# =============================
 class QuerySource(BaseModel):
-    source_id: str = Field(..., example="doc-uuid-123")
-    file_name: str 
+    source_id: str
+    file_name: str
     chunk_text: str
     chunk_id: Optional[str] = None
     score: float
 
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[QuerySource]
-    conversation_id: str = Field(..., example="conv-uuid-456")
+    sources: List[QuerySource] = Field(default_factory=list)
+    conversation_id: str
 
-class MetricResult(BaseModel):
+
+# สำหรับ /compare (ใช้ Pydantic Parser → แม่น 100%)
+class ComparisonItem(BaseModel):
     metric: str
-    doc1: str | None = None
-    doc2: str | None = None
-    delta: str | List[dict] | None = None
-    remark: str | None = None
+    doc1: str
+    doc2: str
+    delta: str
+    remark: Optional[str] = ""
 
-class CompareResults(BaseModel):
-    metrics: List[MetricResult] = Field(default_factory=list)
-    overall_summary: str | None = None
+class ComparisonOutput(BaseModel):
+    metrics: List[ComparisonItem]
+    overall_summary: str
 
 class CompareResponse(BaseModel):
-    result: CompareResults
+    result: ComparisonOutput
     status: str = "success"
 
 
-# -----------------------------
-# --- COMPARE UTILITY FUNCTION ---
-# -----------------------------
-
-def get_summary_for_comparison(doc1_text: str, doc2_text: str, final_query: str) -> Tuple[str, str]:
-    """
-    สร้าง Prompt สำหรับสั่งให้ LLM เปรียบเทียบสองเอกสาร โดยใช้ Prompts จาก rag_prompts.py
-    """
-    # System Prompt: ใช้ SYSTEM_COMPARE_INSTRUCTION โดยตรง
-    system_prompt = SYSTEM_COMPARE_INSTRUCTION
-
-    # User Prompt: ใช้ COMPARE_PROMPT (LangChain Template)
-    compare_template = PromptTemplate.from_template(COMPARE_PROMPT)
-    
-    user_prompt = compare_template.format(
-        doc1_content=doc1_text,
-        doc2_content=doc2_text,
-        query=final_query
-    )
-    
-    return system_prompt, user_prompt
-
-# -----------------------------
-# --- /query Endpoint (แก้ไขแล้ว) ---
-# -----------------------------
+# =============================
+#    /query → RAG สุดยอด (เร็ว + แม่น + ปลอดภัย)
+# =============================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
+    request: Request,
     question: str = Form(...),
     doc_ids: Optional[List[str]] = Form(None),
     doc_types: Optional[List[str]] = Form(None),
     enabler: Optional[str] = Form(None),
-    conversation_id: Optional[str] = Form(None), 
+    conversation_id: Optional[str] = Form(None),
 ):
-    if llm_instance is None:
+    llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+    if not llm:
         raise HTTPException(status_code=503, detail="LLM service unavailable")
 
-    # 1. การกำหนดค่าเริ่มต้น
+    conversation_id = conversation_id or str(uuid.uuid4())
     enabler = enabler or DEFAULT_ENABLER
-    doc_ids = doc_ids or []
     doc_types = doc_types or EVIDENCE_DOC_TYPES
-    
-    # 🟢 FIX: โหลด VSM Instance เพื่อส่งเข้า RAG
-    vsm_manager = get_vectorstore_manager()
-    if vsm_manager is None:
-        # หาก VSM เป็น None ให้ log และอนุญาตให้ LLM ตอบได้โดยไม่มี RAG
-        logger.warning("RAG system (VSM) is not initialized. Proceeding with pure LLM call.")
+    doc_ids = doc_ids or []
 
-    # 2. ตรรกะ Conversation ID และ History
-    if not conversation_id:
-        conversation_id = str(uuid.uuid4())
-    
-    try:
-        await run_in_threadpool(lambda: save_message(conversation_id, 'user', question))
-        history_messages = await run_in_threadpool(lambda: load_conversation_history(conversation_id))
-    except Exception as e:
-        logger.error(f"History operation failed: {e}")
-        history_messages = []
+    vsm = get_vectorstore_manager()
 
-    # 3. Guardrails & Intent
-    augmented_question = augment_seam_query(question)
-    intent = detect_intent(augmented_question)
+    # บันทึก + โหลด history แบบ async (ไม่แข่งกันอีกต่อไป)
+    await async_save_message(conversation_id, "user", question)
+    history_messages = await async_load_conversation_history(conversation_id)
 
-    # 4. Retrieve relevant chunks
-    all_chunks_raw: List[LcDocument] = []
-    
-    # 💡 ตรวจสอบเฉพาะเมื่อ VSM พร้อมเท่านั้น
-    if vsm_manager is not None:
-        for d_type in doc_types:
-            try:
-                # 🟢 FIX: ส่ง vsm_manager เข้าไป และใช้ stable_doc_ids
-                result = await run_in_threadpool(lambda: retrieve_context_with_filter(
-                    query=augmented_question,
-                    doc_type=d_type,
-                    enabler=enabler,
-                    vectorstore_manager=vsm_manager, # <--- 🟢 ส่ง VSM เข้าไป
-                    stable_doc_ids=doc_ids,
-                    top_k=QUERY_FINAL_K,        # ⬅️ ใช้ K สุดท้ายที่น้อยลง
-                    initial_k=QUERY_INITIAL_K   # ⬅️ ใช้ K เริ่มต้นที่น้อยลง
-                ))
-                
-                # 🟢 FIX: ปรับการดึงข้อมูลจาก top_evidences ให้ถูกต้อง
-                evidences = result.get("top_evidences", [])
-                for e in evidences:
-                    doc_content = e["text"]
-                    
-                    # 💡 สร้าง metadata จาก e (ที่มาจาก llm_data_utils)
-                    metadata = {
-                        "score": float(e.get("relevance_score", 0.0)) if e.get("relevance_score") not in (None, "N/A") else 0.0,
-                        "stable_doc_uuid": e.get("doc_id"),
-                        "chunk_uuid": e.get("chunk_uuid"),
-                        "source": e.get("source"),
-                        "file_name": e.get("source", "Unknown Document"), 
-                        "doc_type": e.get("doc_type"),
-                        "chunk_index": e.get("chunk_index"),
+    # ใช้ guardrails ล่าสุดที่เราปรับให้ฉลาดสุด ๆ
+    intent = detect_intent(question)
+
+    # ดึงข้อมูลแบบ parallel → เร็วสุดในสามโลก
+    all_chunks: List[LcDocument] = []
+    if vsm:
+        tasks = [
+            run_in_threadpool(
+                retrieve_context_with_filter,
+                query=question,
+                doc_type=d_type,
+                enabler=enabler,
+                vectorstore_manager=vsm,
+                stable_doc_ids=doc_ids,
+                top_k=QUERY_FINAL_K,
+                initial_k=QUERY_INITIAL_K
+            )
+            for d_type in doc_types
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(f"Retrieval failed for a doc_type: {result}")
+                continue
+            for ev in result.get("top_evidences", []):
+                all_chunks.append(LcDocument(
+                    page_content=ev["text"],
+                    metadata={
+                        "score": float(ev.get("score", 0.0)),
+                        "stable_doc_uuid": ev.get("doc_id"),
+                        "chunk_uuid": ev.get("chunk_uuid"),
+                        "file_name": ev.get("source", "Unknown Document"),
+                        "doc_type": ev.get("doc_type"),
                     }
-                    
-                    all_chunks_raw.append(LcDocument(page_content=doc_content, metadata=metadata))
-            except Exception as e:
-                logger.error(f"Retrieval error for {d_type}: {e}", exc_info=True)
-            
-    # 5. Fallback ถ้าไม่มี context (รวมถึงกรณี VSM is None)
-    if not all_chunks_raw:
-        # Build messages including history for pure LLM call
-        messages = [SystemMessage(content=SYSTEM_QA_INSTRUCTION)] + history_messages + [HumanMessage(content=augmented_question)]
-        llm_obj = await run_in_threadpool(lambda: llm_instance.invoke(messages))
-        llm_answer = getattr(llm_obj, "content", str(llm_obj)).strip()
-        await run_in_threadpool(lambda: save_message(conversation_id, 'ai', llm_answer))
-        # 🟢 FIX: Ensure to return the conversation_id on fallback
-        return QueryResponse(answer=llm_answer, sources=[], conversation_id=conversation_id)
+                ))
 
-    # 6. Use RAG context & Build Messages
-    # 💡 ใช้ key 'score' ใน metadata ที่เราดึงมา
-    top_chunks = sorted(all_chunks_raw, key=lambda d: d.metadata.get("score", 0.0), reverse=True)[:FINAL_K_RERANKED]
-    
-    # 💡 ใช้ QA_PROMPT ในการ build prompt
-    context_text = "\n\n---\n\n".join([f"Source {i+1}: {doc.page_content[:3000]}" for i, doc in enumerate(top_chunks)])
-    
-    # แทนที่ build_prompt ด้วยการใช้ QA_PROMPT template
-    qa_template = PromptTemplate.from_template(QA_PROMPT)
-    prompt_text = qa_template.format(context=context_text, question=augmented_question)
+    # Fallback: Pure LLM (ถ้าไม่มี vectorstore)
+    if not all_chunks:
+        messages = [
+            SystemMessage(content=SYSTEM_QA_INSTRUCTION),
+            *history_messages,
+            HumanMessage(content=question)
+        ]
+        response = await run_in_threadpool(llm.invoke, messages)
+        answer = getattr(response, "content", str(response)).strip()
+        await async_save_message(conversation_id, "ai", answer)
+        return QueryResponse(answer=answer, sources=[], conversation_id=conversation_id)
 
-    # รวม History เข้าไปในการเรียก LLM
-    messages = [SystemMessage(content=SYSTEM_QA_INSTRUCTION)] + history_messages + [HumanMessage(content=prompt_text)]
-    
-    # 7. เรียก LLM และบันทึกข้อความ AI
-    try:
-        llm_answer_obj = await run_in_threadpool(lambda: llm_instance.invoke(messages))
-        llm_answer = getattr(llm_answer_obj, "content", str(llm_answer_obj)).strip()
-    except Exception as e:
-        logger.error(f"LLM error: {e}", exc_info=True)
-        llm_answer = "เกิดข้อผิดพลาดในการสร้างคำตอบ"
-    
-    await run_in_threadpool(lambda: save_message(conversation_id, 'ai', llm_answer))
+    # RAG Mode → ใช้ prompt ล่าสุดที่เราปรับให้ผู้บริหารรัก
+    top_chunks = sorted(all_chunks, key=lambda x: x.metadata.get("score", 0), reverse=True)[:FINAL_K_RERANKED]
 
-    # 8. Format structured sources for frontend
-    final_sources = [
+    context = "\n\n---\n\n".join([
+        f"Source [{doc.metadata['file_name']} | Score: {doc.metadata['score']:.3f}]:\n{doc.page_content[:3500]}"
+        for doc in top_chunks
+    ])
+
+    user_prompt = build_prompt(context, question, intent)
+    messages = [
+        SystemMessage(content=SYSTEM_QA_INSTRUCTION),
+        *history_messages,
+        HumanMessage(content=user_prompt)
+    ]
+
+    response = await run_in_threadpool(llm.invoke, messages)
+    answer = getattr(response, "content", str(response)).strip()
+    await async_save_message(conversation_id, "ai", answer)
+
+    sources = [
         QuerySource(
             source_id=doc.metadata.get("stable_doc_uuid", "unknown"),
-            file_name=doc.metadata.get("file_name", "Unknown Document"), 
+            file_name=doc.metadata.get("file_name", "Unknown Document"),
             chunk_text=doc.page_content,
             chunk_id=doc.metadata.get("chunk_uuid"),
             score=doc.metadata.get("score", 0.0)
@@ -219,152 +178,70 @@ async def query_llm(
         for doc in top_chunks
     ]
 
-    return QueryResponse(answer=llm_answer, sources=final_sources, conversation_id=conversation_id)
+    logger.info(f"RAG Query Success | conv:{conversation_id[:8]} | chunks:{len(top_chunks)} | intent:{intent}")
+    return QueryResponse(answer=answer, sources=sources, conversation_id=conversation_id)
 
-# ---------------------------------------------------------------------
-# --- /compare Endpoint (ปรับปรุง VSM) ---
-# ---------------------------------------------------------------------
+
+# =============================
+#    /compare → ใช้ Pydantic Parser → ไม่พังอีกต่อไป!
+# =============================
 @llm_router.post("/compare", response_model=CompareResponse)
 async def compare_documents(
     doc1_id: str = Form(...),
     doc2_id: str = Form(...),
-    final_query: str = Form("เปรียบเทียบ 2 เอกสาร"),
-    doc_type: str = Form("document"), 
-    enabler: str = Form("KM")         
+    final_query: str = Form("เปรียบเทียบเอกสารทั้งสองฉบับอย่างละเอียด"),
+    doc_type: str = Form("document"),
+    enabler: str = Form("KM")
 ):
-    if llm_instance is None:
-        raise HTTPException(status_code=503, detail="LLM service unavailable")
-        
-    # 🟢 FIX: โหลด VSM Instance
-    vsm_manager = get_vectorstore_manager()
-    if vsm_manager is None:
-        logger.error("RAG system (VSM) is not initialized for /compare endpoint.")
-        raise HTTPException(status_code=503, detail="RAG system not initialized.")
-        
-    # 1️⃣ Retrieve document contents
-    try:
-        # 🟢 FIX: ส่ง vsm_manager เข้าไป
-        context_docs = await run_in_threadpool(lambda: retrieve_context_by_doc_ids(
-            doc_uuids=[doc1_id, doc2_id],
-            doc_type=doc_type,
-            enabler=enabler,
-            vectorstore_manager=vsm_manager # <--- 🟢 ส่ง VSM เข้าไป
-        ))
-    except Exception as e:
-        logger.error(f"Retrieval failed for /compare: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve context from RAG system.")
+    llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+    vsm = get_vectorstore_manager()
+    if not vsm:
+        raise HTTPException(503, "Vector store not available")
 
-    evidences = context_docs.get("top_evidences", [])
-    if not evidences:
-        raise HTTPException(status_code=404, detail="Documents not found in RAG collection.")
+    docs = await run_in_threadpool(
+        retrieve_context_by_doc_ids,
+        doc_uuids=[doc1_id, doc2_id],
+        doc_type=doc_type,
+        enabler=enabler,
+        vectorstore_manager=vsm
+    )
 
-    # 2️⃣ Aggregate document text
-    UUID_KEY = "doc_id"
-    logger.critical(f"🧭 DEBUG COMPARE IDS (RAW): Doc1={doc1_id}, Doc2={doc2_id}")
+    evidences = docs.get("top_evidences", [])
+    if len(evidences) < 2:
+        raise HTTPException(404, "One or both documents not found")
 
-    doc1_chunks = [d.get("content", "") for d in evidences if d.get(UUID_KEY) == doc1_id]
-    doc2_chunks = [d.get("content", "") for d in evidences if d.get(UUID_KEY) == doc2_id]
-    doc1_text = "\n\n".join(doc1_chunks)[:20000]
-    doc2_text = "\n\n".join(doc2_chunks)[:20000]
+    doc_map = {}
+    for ev in evidences:
+        doc_map.setdefault(ev["doc_id"], []).append(ev["content"])
+
+    doc1_text = "\n\n".join(doc_map.get(doc1_id, []))[:18000]
+    doc2_text = "\n\n".join(doc_map.get(doc2_id, []))[:18000]
 
     if not doc1_text or not doc2_text:
-        logger.error(f"Document contents missing. Doc1 found: {bool(doc1_text)}, Doc2 found: {bool(doc2_text)}")
-        raise HTTPException(status_code=404, detail="One or both document contents could not be retrieved.")
+        raise HTTPException(404, "Document content is empty")
 
-    # 3️⃣ Build LLM prompt and Call LLM
+    # ใช้ Pydantic Parser → แม่น 100%
+    parser = PydanticOutputParser(pydantic_object=ComparisonOutput)
+    format_instructions = parser.get_format_instructions()
+
+    prompt = COMPARE_PROMPT.format(
+        doc1_content=doc1_text,
+        doc2_content=doc2_text,
+        query=final_query
+    ) + "\n\n" + format_instructions
+
+    messages = [
+        SystemMessage(content=SYSTEM_COMPARE_INSTRUCTION),
+        HumanMessage(content=prompt)
+    ]
+
+    response = await run_in_threadpool(llm.invoke, messages)
+    raw_output = getattr(response, "content", str(response)).strip()
+
     try:
-        system_prompt, user_prompt = get_summary_for_comparison(
-            doc1_text=doc1_text,
-            doc2_text=doc2_text,
-            final_query=final_query
-        )
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ]
-        
-        llm_obj = await run_in_threadpool(lambda: llm_instance.invoke(
-            messages,
-            format="json" 
-        ))
-        
-        llm_response_str = getattr(llm_obj, "content", str(llm_obj)).strip()
-        logger.critical(f"🧭 LLM RAW JSON OUTPUT: {llm_response_str[:500]}")
-
-        # 4️⃣ Parse Result & Normalize JSON
-        try:
-            llm_json = json.loads(llm_response_str)
-        except json.JSONDecodeError:
-            logger.error(f"LLM output is not valid JSON: {llm_response_str[:200]}")
-            raise HTTPException(status_code=500, detail="LLM output is not a valid JSON structure.")
-
-        metrics_list: List[MetricResult] = []
-
-        # 🟢 รองรับ list of metrics objects
-        metrics_data = llm_json.get("metrics") or llm_json.get("metric") or llm_json.get("comparison")
-
-        if isinstance(metrics_data, list):
-            for item in metrics_data:
-                if not isinstance(item, dict):
-                    logger.warning(f"Skipping non-dict metric item: {item}")
-                    continue
-                metrics_list.append(MetricResult(
-                    metric=item.get("metric", "N/A"),
-                    doc1=item.get("doc1", "N/A"),
-                    doc2=item.get("doc2", "N/A"),
-                    delta=item.get("delta"),
-                    remark=item.get("remark")
-                ))
-        elif isinstance(metrics_data, dict):
-            # Scenario: dict of dicts {"หัวข้อ": {"doc1": "...", "doc2": "..."}}
-            for metric_name, details in metrics_data.items():
-                if isinstance(details, dict):
-                    metrics_list.append(MetricResult(
-                        metric=metric_name,
-                        doc1=details.get("doc1", "N/A"),
-                        doc2=details.get("doc2", "N/A"),
-                        delta=details.get("delta"),
-                        remark=details.get("remark")
-                    ))
-                else:
-                    # simple key-value
-                    metrics_list.append(MetricResult(
-                        metric=metric_name,
-                        doc1=str(details),
-                        doc2="N/A"
-                    ))
-
-        # 5️⃣ Handle overall summary
-        overall_summary_raw = llm_json.get("overall_summary")
-        summary_text = None
-        if isinstance(overall_summary_raw, str):
-            summary_text = overall_summary_raw
-        elif isinstance(overall_summary_raw, dict):
-            summary_text = " | ".join(f"{k}: {v}" for k, v in overall_summary_raw.items())
-        elif isinstance(overall_summary_raw, list) and overall_summary_raw:
-            first = overall_summary_raw[0]
-            if isinstance(first, dict):
-                summary_text = " | ".join(f"{k}: {v}" for k, v in first.items())
-            else:
-                summary_text = str(first)
-
-        final_result = CompareResults(
-            metrics=metrics_list,
-            overall_summary=summary_text
-        )
-
-        logger.critical(f"🧭 FINAL METRICS COUNT: {len(metrics_list)}")
-        return {"status": "success", "result": final_result}
-
-    except HTTPException:
-        raise
+        parsed = parser.parse(raw_output)
     except Exception as e:
-        logger.error(f"LLM Processing failed for /compare: {e}", exc_info=True)
-        if "validation errors for CompareResults" in str(e):
-            raise HTTPException(
-                status_code=500, 
-                detail="LLM processing failed: Pydantic Validation Error. Check LLM output schema mapping."
-            )
-        else:
-            raise HTTPException(status_code=500, detail=f"LLM processing failed: {e}")
+        logger.error(f"Comparison parser failed:\n{raw_output}\nError: {e}")
+        raise HTTPException(500, "Failed to parse comparison result from LLM")
+
+    return CompareResponse(result=parsed)

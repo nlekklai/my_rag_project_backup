@@ -836,7 +836,8 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
         
         # 4. Extract JSON และ normalize keys
-        parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        # parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        parsed = _robust_extract_json(raw)
 
         # 5. คืนผลลัพธ์, เติม default หาก key ขาด
         return {
@@ -927,7 +928,8 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
 
     try:
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        # parsed = _normalize_keys(_robust_extract_json(raw) or {})
+        parsed = _robust_extract_json(raw)  # ใช้ตัวเดียวกันทั้งโปรเจกต์!
 
         # ใช้ extraction สำหรับ L1/L2
         return _extract_combined_assessment_low_level(parsed)

@@ -1,111 +1,105 @@
-#core/llm_guardrails.py
+# core/llm_guardrails.py
 import re
 from typing import Dict
 
-# -----------------------------
-# --- Intent Detection ---
-# -----------------------------
+# =============================
+#    Intent Detection (ฉลาด + แม่นสุด ๆ)
+# =============================
 def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
     """
-    Detect user intent for LLM query.
-    Intent types:
-      - FAQ: general questions or FAQs
-      - Synthesis: compare / summarize multiple sources
-      - Evidence: refer to documents or provide evidence-based answer
+    ตรวจจับ intent ได้แม่นยำสูงมาก รองรับภาษาไทยเต็มรูปแบบ + คำพูดจริงของคน
     """
-    question_lower = question.lower()
-    intent = {"is_faq": False, "is_synthesis": False, "is_evidence": False}
+    q = question.strip().lower()
 
-    # 1️⃣ Base on doc_type
-    if doc_type in ["faq", "qa"]:
+    intent = {
+        "is_faq": False,
+        "is_synthesis": False,
+        "is_evidence": False
+    }
+
+    # 1. จาก doc_type (priority สูง)
+    if doc_type in ["faq", "qa", "question"]:
         intent["is_faq"] = True
-    elif doc_type in ["document", "rubrics", "feedback", "evidence"]:
+        return intent
+    if doc_type in ["document", "rubric", "evidence", "feedback"]:
         intent["is_evidence"] = True
 
-    # 2️⃣ Override / refine based on question keywords
-    synthesis_keywords = ["compare", "difference", "highlight", "สรุป", "เปรียบเทียบ"]
-    faq_keywords = ["what", "who", "when", "how", "อะไร", "ใคร", "เมื่อไร", "อย่างไร", "faq"]
-    evidence_keywords = ["document", "evidence", "เอกสาร", "หลักฐาน", "source", "reference"]
+    # 2. Keyword + Pattern matching (เรียงจากความสำคัญสูง → ต่ำ)
+    synthesis_signals = [
+        "เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "ความต่าง", "เทียบ", "vs", "versus",
+        "compare", "difference", "ต่างกันยังไง", "ต่างกันอย่างไร", "เทียบกับ", "กับ",
+        "และ", "สรุปความเหมือน", "สรุปความต่าง", "ไฮไลต์", "highlight"
+    ]
 
-    if any(k in question_lower for k in synthesis_keywords):
+    # ถ้ามีคำว่า "กับ" หรือ "และ" แล้วคำถามไม่ยาวเกินไป → น่าจะเปรียบเทียบ
+    has_compare_word = any(word in q for word in synthesis_signals)
+    has_and_connector = bool(re.search(r"\b(กับ|และ|vs|versus)\b", q))
+    is_short_compare = len(q.split()) <= 30
+
+    if has_compare_word or (has_and_connector and is_short_compare):
         intent["is_synthesis"] = True
+        return intent  # Synthesis มี priority สูงสุด
 
-    if any(k in question_lower for k in faq_keywords):
+    # FAQ signals
+    faq_signals = [
+        "คืออะไร", "คือ", "อะไร", "ใคร", "เมื่อไร", "ที่ไหน", "อย่างไร", "ทำไม", "หมายถึง",
+        "what ", "who ", "when ", "where ", "why ", "how ", "faq", "คือยังไง", "แปลว่า"
+    ]
+    if any(sig in q for sig in faq_signals):
         intent["is_faq"] = True
 
-    if any(k in question_lower for k in evidence_keywords):
+    # Evidence signals
+    evidence_signals = [
+        "ตามเอกสาร", "ในเอกสาร", "เอกสารบอก", "หลักฐาน", "อ้างอิง", "source", "reference",
+        "จากไฟล์", "ระบุแหล่ง", "อิงจาก", "ตามที่ระบุ"
+    ]
+    if any(sig in q for sig in evidence_signals):
         intent["is_evidence"] = True
-
-    # Synthesis dominates for compare questions
-    if intent["is_synthesis"]:
-        intent["is_faq"] = False
 
     return intent
 
 
-# -----------------------------
-# --- SEAM Query Augmentation ---
-# -----------------------------
-SEAM_CODE_PATTERN = r"\b(SEAM\s*\d{1,3})\b"
-
-def augment_seam_query(question: str) -> str:
-    """
-    Add SEAM code references to question if found.
-    For example: "How to handle risk? SEAM 101" -> add context to guide LLM
-    """
-    matches = re.findall(SEAM_CODE_PATTERN, question, flags=re.IGNORECASE)
-    if matches:
-        seam_context = "Please consider the following SEAM codes: " + ", ".join(matches)
-        return f"{seam_context}\n\n{question}"
-    return question
-
-
-# -----------------------------
-# --- Prompt Builder ---
-# -----------------------------
+# =============================
+#    Prompt Builder (สวย + LLM ตอบตรงเป๊ะ)
+# =============================
 def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
-    """
-    Build LLM prompt based on context, question, and detected intent
-    """
     sections = []
 
-    # 1️⃣ Instruction based on intent
-    if intent.get("is_synthesis"):
-        sections.append("You are asked to compare the provided documents and synthesize key differences and insights.")
-    elif intent.get("is_faq"):
-        sections.append("You are asked to answer a FAQ-style question concisely, using the context if needed.")
-    elif intent.get("is_evidence"):
-        sections.append("You are asked to answer based on the provided evidence and documents, citing sources where applicable.")
+    # 1. บทบาทหลัก
+    if intent["is_synthesis"]:
+        role = ("คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์และเปรียบเทียบเอกสารอย่างละเอียด "
+                "โปรดตอบอย่างเป็นระบบ ระบุความเหมือน ความต่าง และข้อสรุปที่ชัดเจน")
+    elif intent["is_faq"]:
+        role = "คุณคือผู้ช่วยที่ตอบคำถามแบบ FAQ ให้กระชับ อ่านง่าย ใช้ภาษาเป็นมิตร"
+    else:
+        role = ("คุณคือผู้ช่วยวิเคราะห์ที่ตอบคำถามโดยยึดหลักฐานจากเอกสารเท่านั้น "
+                "ห้ามแต่งข้อมูลเพิ่ม ห้ามสรุปเกินกว่าที่มี")
 
-    # 2️⃣ Add context if available
-    if context:
-        sections.append(f"Context from documents:\n{context}")
+    sections.append(role)
 
-    # 3️⃣ Add question
-    sections.append(f"User question:\n{question}")
+    # 2. ข้อมูลอ้างอิง
+    if context.strip():
+        sections.append(f"ข้อมูลจากเอกสาร:\n{context}")
 
-    # 4️⃣ Guidance for structured answer
-    if intent.get("is_synthesis"):
-        sections.append(
-            "Provide a structured comparison if relevant. Highlight differences, similarities, and references to sources."
-        )
-    elif intent.get("is_evidence"):
-        sections.append(
-            "If applicable, include sources with filename and chunk reference for any information you use."
-        )
+    # 3. คำถามผู้ใช้
+    sections.append(f"คำถาม:\n{question.strip()}")
+
+    # 4. กฎการตอบเฉพาะเจาะจง
+    if intent["is_synthesis"]:
+        sections.append("""
+รูปแบบคำตอบที่ต้องการ:
+• ใช้หัวข้อชัดเจน เช่น "ความเหมือน", "ความแตกต่าง", "ข้อสรุป"
+• อ้างอิงแหล่งที่มาเสมอ เช่น (Source 1: SEAM 101.pdf)
+• ตอบเป็นข้อ ๆ อ่านง่าย
+""")
+    elif intent["is_evidence"]:
+        sections.append("""
+กฎสำคัญ:
+• ทุกข้อมูลที่ใช้ ต้องระบุแหล่งที่มาในวงเล็บท้ายประโยค เช่น (Source 2)
+• ถ้าไม่พบข้อมูลในเอกสารที่ให้มา ให้ตอบว่า "ไม่พบข้อมูลในเอกสารที่เกี่ยวข้อง"
+• ห้ามเดา ห้ามแต่งข้อมูล
+""")
+    else:
+        sections.append("โปรดตอบให้กระชับ สุภาพ และเป็นธรรมชาติ")
 
     return "\n\n".join(sections)
-
-
-# -----------------------------
-# --- Example Usage ---
-# -----------------------------
-if __name__ == "__main__":
-    q = "เปรียบเทียบเอกสาร SEAM 101 กับ SEAM 102 เรื่องการจัดสรรทรัพยากร"
-    doc_type = "document"
-    augmented_q = augment_seam_query(q)
-    intent = detect_intent(augmented_q, doc_type)
-    context = "Source 1: ...\nSource 2: ..."
-    prompt = build_prompt(context, augmented_q, intent)
-    print("Intent:", intent)
-    print("Prompt:\n", prompt)

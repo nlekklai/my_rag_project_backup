@@ -1315,56 +1315,51 @@ class SEAMPDCAEngine:
 
         return raw_results_for_sub, final_sub_result, level_evidences
 
-
     def _run_sub_criteria_assessment_worker(
-        self, 
-        sub_criteria: Dict[str, Any], 
-    ) -> Dict[str, Any]:
+        self,
+        sub_criteria: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        Runs the full L1-L5 sequential assessment for a single sub-criteria 
-        and returns the final result, including temp_map_ref for aggregation 
-        in the main process.
+        รันการประเมิน L1-L5 แบบ sequential สำหรับ sub-criteria หนึ่งตัว
+        และส่ง evidence map กลับไปให้ main process รวม
         """
         sub_id = sub_criteria['sub_id']
         sub_criteria_name = sub_criteria['sub_criteria_name']
         sub_weight = sub_criteria.get('weight', 0)
-        
-        MAX_L1_ATTEMPTS = 2 # จำนวนครั้งสูงสุดที่พยายามสำหรับ L1/L2
-        
-        # Worker-local storage for results and new evidence
-        # NOTE: INITIAL_LEVEL คือ 1
-        highest_full_level = INITIAL_LEVEL - 1 
+
+        MAX_L1_ATTEMPTS = 2
+        highest_full_level = 0
         is_passed_current_level = True
-        raw_results_for_sub_seq = [] 
-        passed_chunk_uuids_map: Dict[int, List[Dict]] = {}
-        # แผนที่ Evidence ชั่วคราวของ Worker สำหรับส่งกลับไปรวมกับ Main Evidence Map
-        worker_temp_map_for_sub_criteria: Dict[str, Any] = {} 
+        raw_results_for_sub_seq: List[Dict[str, Any]] = []
 
         self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
 
-        # 1. Loop L1-L5 (Sequential Assessment)
+        # รีเซ็ต temp_map_for_save เฉพาะ worker นี้ (สำคัญมากสำหรับ Parallel!)
+        self.temp_map_for_save = {}
+
+        # 1. Loop ผ่านทุก Level (L1 → L5)
         for statement_data in sub_criteria.get('levels', []):
             level = statement_data.get('level')
             if level is None or level > self.config.target_level:
                 continue
 
-            # ตรวจสอบ Dependency: ถ้าไม่ใช่ L1 และ Level ก่อนหน้าสอบไม่ผ่าน ให้ถือว่า Dependency Failed
+            # Dependency check: ถ้า level ก่อนหน้า fail → cap ที่นี่
             dependency_failed = level > 1 and not is_passed_current_level
             previous_level = level - 1
             persistence_key = f"{sub_id}.L{previous_level}"
-            
-            # ดึง Evidence จาก Level ที่ผ่านแล้วมาใช้ใน Level ถัดไป
             sequential_chunk_uuids = self.evidence_map.get(persistence_key, [])
 
-            final_result_for_level = None
-            
-            # --- Logic for running L3-L5 (with RetryPolicy) ---
+            level_result = {}
+            level_temp_map: List[Dict[str, Any]] = []
+
+            # --- เรียก _run_single_assessment (รับ 2 ค่า: result, temp_map) ---
             if level >= 3:
-                final_result_for_level = self.retry_policy.run(
+                # L3-L5: ใช้ RetryPolicy
+                wrapper = self.retry_policy.run(
                     fn=lambda attempt: self._run_single_assessment(
                         sub_criteria=sub_criteria,
                         statement_data=statement_data,
-                        vectorstore_manager=self.vectorstore_manager, # ใช้ VSM ของ Worker
+                        vectorstore_manager=self.vectorstore_manager,
                         sequential_chunk_uuids=sequential_chunk_uuids
                     ),
                     level=level,
@@ -1372,83 +1367,71 @@ class SEAMPDCAEngine:
                     context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
                     logger=self.logger
                 )
-            
-            # --- Logic for running L1-L2 (without RetryPolicy, simple retry) ---
-            else: 
+
+                # สำคัญ: wrapper.result ตอนนี้เป็น tuple (result, temp_map)
+                if isinstance(wrapper, RetryResult) and wrapper.result is not None:
+                    level_result = wrapper.result
+                    level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา
+                else:
+                    level_result = {}
+                    level_temp_map = []
+
+            else:
+                # L1-L2: ลองสูงสุด 2 ครั้ง
                 for attempt in range(MAX_L1_ATTEMPTS):
-                    result = self._run_single_assessment(
+                    level_result = self._run_single_assessment(
                         sub_criteria=sub_criteria,
                         statement_data=statement_data,
-                        vectorstore_manager=self.vectorstore_manager, # ใช้ VSM ของ Worker
+                        vectorstore_manager=self.vectorstore_manager,
                         sequential_chunk_uuids=sequential_chunk_uuids
                     )
-                    if result.get('is_passed', False):
-                        final_result_for_level = result
+                    level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา
+                    if level_result.get('is_passed', False):
                         break
-                if final_result_for_level is None:
-                    final_result_for_level = result # ใช้ผลลัพธ์การลองครั้งสุดท้าย
 
-            # ดึงผลลัพธ์ออกมา (จัดการกรณีที่เป็น RetryResult หรือผลลัพธ์ตรง)
-            result_to_process = final_result_for_level.result if isinstance(final_result_for_level, RetryResult) else final_result_for_level or {}
-            result_to_process.setdefault("used_chunk_uuids", result_to_process.get("used_chunk_uuids", []))
+            # ใช้ result ที่ได้มา
+            result_to_process = level_result or {}
+            result_to_process.setdefault("used_chunk_uuids", [])
 
-            # PDCA scoring & dependency capping
-            is_passed_llm_calculated = result_to_process.get('is_passed', False)
-            is_passed_level_check = is_passed_llm_calculated
-            # NOTE: get_correct_pdca_required_score ต้องถูก Import/นิยาม
-            result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level) 
-            
-            # Capping: ถ้า Dependency Failed ให้ถือว่าไม่ผ่าน ถึงแม้ LLM จะบอกว่าผ่าน
-            if dependency_failed:
-                is_passed_level_check = False
-            
-            is_capped = is_passed_llm_calculated and not is_passed_level_check
-            result_to_process['is_capped'] = is_capped
-            result_to_process['is_passed'] = is_passed_level_check
-            is_passed_current_level = is_passed_level_check
+            # ตัดสิน pass/fail สุดท้าย (รวม dependency cap)
+            is_passed_llm = result_to_process.get('is_passed', False)
+            is_passed_final = is_passed_llm and not dependency_failed
 
-            if is_passed_level_check:
-                # บันทึก Evidence หาก Level นี้ผ่าน
-                used_evidence = result_to_process.get('supporting_evidence')
-                if used_evidence:
-                    passed_chunk_uuids_map[level] = used_evidence
-                    persistence_key_current = f"{sub_id}.L{level}"
-                    worker_temp_map_for_sub_criteria[persistence_key_current] = used_evidence
-                    # ใช้ temp_map_ref จาก _run_single_assessment (Worker-local evidence map)
-                    # if result_to_process.get("temp_map_ref"):
-                    #     worker_temp_map_for_sub_criteria[persistence_key_current] = result_to_process["temp_map_ref"]
+            result_to_process['is_passed'] = is_passed_final
+            result_to_process['is_capped'] = is_passed_llm and not is_passed_final
+            result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level)
 
-                    self.logger.info(f"💾 Worker added new evidence to map: {persistence_key_current} -> {len(used_evidence)} items")
+            # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
+            if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
+                current_key = f"{sub_id}.L{level}"
+                self.temp_map_for_save[current_key] = level_temp_map
+                self.logger.info(f"[EVIDENCE SAVED] {current_key} → {len(level_temp_map)} chunks")
 
+            # อัปเดตสถานะสำหรับ level ถัดไป
+            is_passed_current_level = is_passed_final
 
-            # Append processed result
+            # เพิ่มลง raw results
             result_to_process.setdefault("level", level)
             result_to_process["execution_index"] = len(raw_results_for_sub_seq)
             raw_results_for_sub_seq.append(result_to_process)
-            
-            # Update highest_full_level & check for sequential failure
-            if is_passed_current_level:
+
+            # อัปเดต highest level
+            if is_passed_final:
                 highest_full_level = level
             else:
-                 # หยุดการประเมิน Sequential ทันทีเมื่อ Level ใด Level หนึ่งไม่ผ่าน
-                self.logger.info(f"[WORKER STOP] Sub-Criteria {sub_id} failed level {level} (Highest full: {highest_full_level}). Stopping sequential check.")
-                break 
+                self.logger.info(f"[WORKER STOP] {sub_id} failed at L{level}. Highest achieved: L{highest_full_level}")
+                break  # หยุดทันทีเมื่อ fail
 
-        # Finalize Sub-Criteria Summary
-        target_plan_level = highest_full_level + 1
-        action_plan = [] 
-        
+        # สรุปผล sub-criteria
+        weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
+        num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False))
+
         sub_summary = {
             "num_statements": len(raw_results_for_sub_seq),
-            "num_passed": sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False)),
-            "num_failed": sum(1 for r in raw_results_for_sub_seq if not r.get("is_passed", False)),
-            "pass_rate": (sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False)) / len(raw_results_for_sub_seq)) if raw_results_for_sub_seq else 0.0
+            "num_passed": num_passed,
+            "num_failed": len(raw_results_for_sub_seq) - num_passed,
+            "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
         }
-        # NOTE: _calculate_weighted_score ต้องถูก Import/นิยาม
-        weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight) 
-
-        # final_temp_map = worker_temp_map_for_sub_criteria
-        final_temp_map = self.temp_map_for_save
 
         final_sub_result = {
             "sub_criteria_id": sub_id,
@@ -1457,75 +1440,68 @@ class SEAMPDCAEngine:
             "weight": sub_weight,
             "target_level_achieved": highest_full_level >= self.config.target_level,
             "weighted_score": weighted_score,
-            "action_plan": action_plan,
+            "action_plan": [],
             "raw_results_ref": raw_results_for_sub_seq,
             "sub_summary": sub_summary,
-            "temp_map_ref": final_temp_map # ส่ง Evidence Map ที่สร้างกลับไป
         }
-        
-        self.logger.info(f"[WORKER END] Sub-Criteria: {sub_id} | Highest Level: {highest_full_level} | New Evidence Keys: {len(final_temp_map)}")
-        self.logger.critical(f"👀 DEBUG WORKER FINAL: temp_map_ref keys={list(final_temp_map.keys())}") # ✅ ตรวจสอบ final_temp_map ที่มีข้อมูล
 
-        return final_sub_result
+        final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
+
+        self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Evidence keys: {len(final_temp_map)}")
+        self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
+
+        return final_sub_result, final_temp_map
+
 
     def run_assessment(
-            self, 
-            target_sub_id: str = "all", 
-            export: bool = False, 
+            self,
+            target_sub_id: str = "all",
+            export: bool = False,
             vectorstore_manager: Optional['VectorStoreManager'] = None,
             sequential: bool = False
         ) -> Dict[str, Any]:
         """
-        Main runner for the assessment engine.
-        Implements sequential maturity check (L1 -> L2 -> L3...) and multiprocessing.
+        Main runner ของ Assessment Engine
+        รองรับทั้ง Parallel (multiprocessing) และ Sequential อย่างสมบูรณ์
         """
         start_ts = time.time()
-        MAX_L1_ATTEMPTS = 2
-        MAX_LEVEL = 5 
-
         self.is_sequential = sequential
 
-        # 1. Filter Rubric based on target_sub_id (📌 FIX: ต้องกำหนดตัวแปรนี้ก่อนใช้งาน)
+        # ============================== 1. Filter Rubric ==============================
         if target_sub_id.lower() == "all":
             sub_criteria_list = self.rubric
         else:
-            sub_criteria_list = [s for s in self.rubric if s.get('sub_id') == target_sub_id]
+            sub_criteria_list = [
+                s for s in self.rubric if s.get('sub_id') == target_sub_id
+            ]
             if not sub_criteria_list:
                 logger.error(f"Sub-Criteria ID '{target_sub_id}' not found in rubric.")
                 return {"error": f"Sub-Criteria ID '{target_sub_id}' not found."}
 
-        # Reset temp_map_for_save and results
-        self.temp_map_for_save = {}
-        logger.debug(f"PATCH: temp_map_for_save reset -> {self.temp_map_for_save}")
+        # Reset states
+        if not sequential:
+            self.temp_map_for_save = {}  # Worker แต่ละตัวเริ่มจากศูนย์
+            self.logger.info("[PARALLEL] Cleared temp_map_for_save before spawning workers")
+
         self.raw_llm_results = []
         self.final_subcriteria_results = []
 
-        # Core Logic Switch for Parallel Execution
+        # ============================== 2. Decide Execution Mode ==============================
         run_parallel = (target_sub_id.lower() == "all" and not self.config.force_sequential)
 
         if run_parallel:
-            # --- PARALLEL EXECUTION BLOCK ---
-            logger.info("Starting Parallel Assessment (All Sub-Criteria) with Multiprocessing Pool...")
-            sub_criteria_data_list = sub_criteria_list 
-            # 🔴 OLD: engine_config_dict = self.config.__dict__ 
-            
-            # 🟢 FIX: ดึงค่า Primitives จาก Config แทนการใช้ .__dict__
-            enabler = self.config.enabler
-            target_level = self.config.target_level
-            mock_mode = self.config.mock_mode
-            model_name = self.config.model_name 
-            temperature = self.config.temperature
-            
-            # 📌 FIX: สร้าง worker_args โดยส่งค่า Primitives
+            # ============================== PARALLEL MODE ==============================
+            logger.info("Starting Parallel Assessment (All Sub-Criteria) with Multiprocessing...")
+
             worker_args = [(
-                sub_data, 
-                enabler, 
-                target_level, 
-                mock_mode, 
+                sub_data,
+                self.config.enabler,
+                self.config.target_level,
+                self.config.mock_mode,
                 self.evidence_map_path,
-                model_name,   # 🟢 NEW LLM Parameter
-                temperature   # 🟢 NEW LLM Parameter
-            ) for sub_data in sub_criteria_data_list]
+                self.config.model_name,
+                self.config.temperature
+            ) for sub_data in sub_criteria_list]
 
             try:
                 if sys.platform != "win32":
@@ -1535,179 +1511,94 @@ class SEAMPDCAEngine:
                     pool = multiprocessing.Pool(processes=max(1, os.cpu_count() - 1))
 
                 with pool:
-                    # เรียกใช้ Worker (ซึ่งจะรัน Logic L1-L5 และ Return ผลลัพธ์)
-                    results_list = pool.map(_static_worker_process, worker_args) 
+                    results_list = pool.map(_static_worker_process, worker_args)  # ← รับ [(result, temp_map), ...]
 
             except Exception as e:
-                logger.critical(f"Multiprocessing Pool Execution Failed: {e}")
-                logger.exception("FATAL: Multiprocessing pool failed to execute worker functions.")
+                logger.critical(f"Multiprocessing failed: {e}")
+                logger.exception("FATAL: Pool execution error")
                 raise
 
-            # Normalize parallel worker outputs
-            for final_sub_result in results_list:
-                
-                # Logic สำหรับ Persistent Evidence Map Aggregation
-                temp_map_from_worker = final_sub_result.pop("temp_map_ref", None) # Renamed for clarity
-                
-                # 🟢 FINAL FIX: แก้ไข logic การรวมเพื่อให้จัดการกับโครงสร้างข้อมูลที่ซ้อนกัน 3 ชั้น
-                if temp_map_from_worker and isinstance(temp_map_from_worker, dict):
-                    self.logger.debug(f"Aggregating {len(temp_map_from_worker)} keys from parallel worker.")
-                    
-                    for level_key, evidence_container in temp_map_from_worker.items():
-                        
-                        evidence_list = None
-                        
-                        # 1. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 1
-                        # โครงสร้าง: {level_key: {'highest_level': X, 'supporting_evidence': {??? : [list]}}}
-                        if isinstance(evidence_container, dict):
-                            nested_map = evidence_container.get("supporting_evidence") 
-                            
-                            # 2. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 2 (ซึ่ง log บอกว่าเป็น dict)
-                            if isinstance(nested_map, dict):
-                                # 💡 Assumption: Key ที่ถือ List คือ level_key เอง (เช่น '1.1.L1')
-                                evidence_list = nested_map.get(level_key)
-                                
-                                # 💡 Fallback: หาก level_key ไม่ใช่ Key, ลองดึงค่าแรกและค่าเดียวใน Dictionary นั้น
-                                if evidence_list is None and len(nested_map) == 1:
-                                    evidence_list = next(iter(nested_map.values()))
-                            
-                            # Fallback: หาก 'supporting_evidence' ดันเป็น List โดยตรง
-                            elif isinstance(nested_map, list):
-                                evidence_list = nested_map
+            # ============================== Aggregate Parallel Results ==============================
+            for sub_result, temp_map_from_worker in results_list:  # สำคัญ: รับ 2 ค่า!
+                # 1. รวม Evidence Map
+                if isinstance(temp_map_from_worker, dict) and temp_map_from_worker:
+                    for level_key, evidence_list in temp_map_from_worker.items():
+                        if isinstance(evidence_list, list) and evidence_list:
+                            self.evidence_map.setdefault(level_key, []).extend(evidence_list)
+                            self.logger.info(f"AGGREGATED: +{len(evidence_list)} → {level_key} "
+                                        f"(total: {len(self.evidence_map[level_key])})")
 
-                        # 3. VALIDATION: ตรวจสอบว่าเป็น List และมีข้อมูลอยู่จริง
-                        if evidence_list and isinstance(evidence_list, list):
-                            self.logger.info(f"✅ AGGREGATION SUCCESS: Merging {len(evidence_list)} items for {level_key}")
-                            
-                            # 4. ตรวจสอบและสร้าง List เปล่าหาก Key นั้นยังไม่มีใน self.evidence_map 
-                            if level_key not in self.evidence_map or not isinstance(self.evidence_map[level_key], list):
-                                self.evidence_map[level_key] = []
-                            
-                            # 5. ผนวกรายการหลักฐานเข้าสู่รายการหลัก (self.evidence_map)
-                            self.evidence_map[level_key].extend(evidence_list)
-                        else:
-                            # 🛑 WARNINGS: แสดง Warning เมื่อดึงข้อมูลไม่สำเร็จ
-                            self.logger.warning(f"⚠️ Worker evidence for {level_key} was not found or not in expected list format during aggregation. Found type: {type(evidence_list)}")
+                # 2. รวม LLM Results + sub_summary
+                raw_refs = sub_result.get("raw_results_ref", [])
+                self.raw_llm_results.extend(raw_refs if isinstance(raw_refs, list) else [raw_refs])
 
-                # Aggregate raw_results_ref and sub_summary
-                sub_id = final_sub_result["sub_criteria_id"]
-                raw_results_for_sub = final_sub_result.get("raw_results_ref", [])
-                if not isinstance(raw_results_for_sub, list):
-                    raw_results_for_sub = [raw_results_for_sub] if raw_results_for_sub else []
-
-                self.raw_llm_results.extend(raw_results_for_sub)
-                if "raw_results_ref" not in final_sub_result:
-                    final_sub_result["raw_results_ref"] = raw_results_for_sub
-                if "sub_summary" not in final_sub_result:
-                    num_statements = len(final_sub_result["raw_results_ref"])
-                    num_passed = sum(1 for r in final_sub_result["raw_results_ref"] if r.get("is_passed", False))
-                    final_sub_result["sub_summary"] = {
-                        "num_statements": num_statements,
+                # ตรวจสอบและสร้าง sub_summary
+                if "sub_summary" not in sub_result:
+                    num_passed = sum(1 for r in raw_refs if r.get("is_passed"))
+                    sub_result["sub_summary"] = {
+                        "num_statements": len(raw_refs),
                         "num_passed": num_passed,
-                        "num_failed": num_statements - num_passed,
-                        "pass_rate": (num_passed / num_statements) if num_statements else 0.0
+                        "num_failed": len(raw_refs) - num_passed,
+                        "pass_rate": round(num_passed / len(raw_refs), 4) if raw_refs else 0.0
                     }
-                self.final_subcriteria_results.append(final_sub_result)
+
+                self.final_subcriteria_results.append(sub_result)
 
         else:
-            # --- SEQUENTIAL EXECUTION BLOCK ---
-            run_mode_desc = target_sub_id if target_sub_id.lower() != 'all' else 'All Sub-Criteria (Forced Sequential)'
-            self.logger.info(f"Starting Sequential Assessment for: {run_mode_desc}")
+            # ============================== SEQUENTIAL MODE ==============================
+            mode_desc = target_sub_id if target_sub_id != "all" else "All Sub-Criteria (Sequential)"
+            self.logger.info(f"Starting Sequential Assessment: {mode_desc}")
 
-            # VSM Initialization 
-            local_vsm = vectorstore_manager 
+            # VSM สำหรับ Sequential
+            local_vsm = vectorstore_manager
             if self.config.mock_mode == "none" and not local_vsm:
-                self.logger.info("Sequential run: Re-instantiating VectorStoreManager locally in main process for robustness.")
                 try:
-                    # NOTE: load_all_vectorstores ต้องถูก Import
-                    local_vsm = load_all_vectorstores( 
-                        doc_types=[EVIDENCE_DOC_TYPES], 
+                    local_vsm = load_all_vectorstores(
+                        doc_types=[EVIDENCE_DOC_TYPES],
                         evidence_enabler=self.config.enabler
                     )
-                    self.vectorstore_manager = local_vsm 
+                    self.vectorstore_manager = local_vsm
                 except Exception as e:
-                    self.logger.error(f"FATAL: Local VSM Re-instantiation Failed: {e}")
+                    logger.error(f"Failed to load VectorStoreManager: {e}")
                     raise
             elif local_vsm:
-                 self.vectorstore_manager = local_vsm
+                self.vectorstore_manager = local_vsm
 
-
+            # รันทีละ Sub-Criteria
             for sub_criteria in sub_criteria_list:
-                # 📌 Sequential run calls the worker method directly
-                sub_result = self._run_sub_criteria_assessment_worker(sub_criteria)
-                
-                # 📌 Aggregate results in the main process
-                temp_map_from_worker = sub_result.pop('temp_map_ref', {}) # Renamed for clarity
-                self.logger.critical(f"👀 DEBUG MAIN: temp_map_from_worker type={type(temp_map_from_worker)} keys={list(temp_map_from_worker.keys())}")
+                sub_result, temp_map_from_worker = self._run_sub_criteria_assessment_worker(sub_criteria)
 
-                # 🟢 FINAL FIX (Confirmed by DEBUG AGG log):
-                if temp_map_from_worker and isinstance(temp_map_from_worker, dict):
-                    # temp_map_from_worker keys are "1.1.L1", "1.1.L2", etc.
-                    for level_key, evidence_container in temp_map_from_worker.items():
-                        
-                        evidence_list = None
-                        
-                        # 1. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 1
-                        # โครงสร้าง: {level_key: {'highest_level': X, 'supporting_evidence': {??? : [list]}}}
-                        if isinstance(evidence_container, dict):
-                            nested_map = evidence_container.get("supporting_evidence") 
-                            
-                            # 2. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 2 (ซึ่ง log บอกว่าเป็น dict)
-                            if isinstance(nested_map, dict):
-                                # 💡 Assumption: Key ที่ถือ List คือ level_key เอง (เช่น '1.1.L1')
-                                evidence_list = nested_map.get(level_key)
-                                
-                                # 💡 Fallback: หาก level_key ไม่ใช่ Key, ลองดึงค่าแรกและค่าเดียวใน Dictionary นั้น
-                                if evidence_list is None and len(nested_map) == 1:
-                                    evidence_list = next(iter(nested_map.values()))
-                            
-                            # Fallback: หาก 'supporting_evidence' ดันเป็น List โดยตรง (ไม่น่าจะเกิดแต่กันไว้)
-                            elif isinstance(nested_map, list):
-                                evidence_list = nested_map
+                # รวม Evidence Map
+                if isinstance(temp_map_from_worker, dict) and temp_map_from_worker:
+                    for level_key, evidence_list in temp_map_from_worker.items():
+                        if isinstance(evidence_list, list) and evidence_list:
+                            self.evidence_map.setdefault(level_key, []).extend(evidence_list)
+                            self.logger.info(f"AGGREGATED: +{len(evidence_list)} → {level_key} "
+                                        f"(total: {len(self.evidence_map[level_key])})")
 
-                        # 3. VALIDATION: ตรวจสอบว่าเป็น List และมีข้อมูลอยู่จริง
-                        if evidence_list and isinstance(evidence_list, list):
-                            # 🟢 Log เพื่อยืนยันว่าการรวมข้อมูลทำงาน
-                            self.logger.info(f"✅ AGGREGATION SUCCESS: Merging {len(evidence_list)} items for {level_key}")
-                            
-                            # 4. ตรวจสอบและสร้าง List เปล่าหาก Key นั้นยังไม่มีใน self.evidence_map 
-                            if level_key not in self.evidence_map or not isinstance(self.evidence_map[level_key], list):
-                                self.evidence_map[level_key] = []
-                            
-                            # 5. ผนวกรายการหลักฐานเข้าสู่รายการหลัก (self.evidence_map)
-                            self.evidence_map[level_key].extend(evidence_list)
-                        else:
-                            # 🛑 WARNINGS: แสดง Warning เมื่อดึงข้อมูลไม่สำเร็จ
-                            self.logger.warning(f"⚠️ Worker evidence for {level_key} was not found or not in expected list format during aggregation. Found type: {type(evidence_list)}")
-                
+                # รวมผลลัพธ์
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
-    
-        # ====================================================================
-        # 🟢 FINAL CENTRALIZED EVIDENCE MAP SAVE BLOCK (FIXED LOCATION)
-        # ====================================================================
+
+        # ============================== 3. Final Evidence Map Save ==============================
         if self.evidence_map:
-            # ใช้ _save_evidence_map ที่คุณเขียนไว้เพื่อทำ Deduplication และ Atomic Write
-            self._save_evidence_map(map_to_save=self.evidence_map) 
-            self.logger.info(f"💾 Persisted final evidence map after run. Total keys: {len(self.evidence_map)}")
-        else:
-            # Warning นี้ควรจะหายไป หากรันสำเร็จ
-            self.logger.warning("⚠️ Evidence map is empty, skipping final save (Worker found no evidence).")
+            self._save_evidence_map(map_to_save=self.evidence_map)
+            total_items = sum(len(v) for v in self.evidence_map.values())
+            self.logger.info(f"Persisted final evidence map | Keys: {len(self.evidence_map)} | "
+                            f"Items: {total_items} | Size: ~{total_items * 0.35:.1f} KB")
 
+        # ============================== 4. Calculate Stats & Export ==============================
+        self._calculate_overall_stats(target_sub_id)
 
-        # --- Overall Stats & Export
-        # NOTE: _calculate_overall_stats ต้องถูกนิยามในคลาส
-        self._calculate_overall_stats(target_sub_id) 
         final_results = {
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "raw_llm_results": self.raw_llm_results,
-            "run_time_seconds": time.time() - start_ts,
+            "run_time_seconds": round(time.time() - start_ts, 2),
             "timestamp": datetime.now().isoformat(),
         }
 
         if export:
-            # NOTE: _export_results ต้องถูกนิยามในคลาส
             export_path = self._export_results(
                 results=final_results,
                 enabler=self.config.enabler,
@@ -1715,7 +1606,8 @@ class SEAMPDCAEngine:
                 target_level=self.config.target_level
             )
             final_results["export_path_used"] = export_path
-            final_results['evidence_map'] = deepcopy(self.evidence_map) 
+            final_results["evidence_map"] = deepcopy(self.evidence_map)
+            self.logger.info(f"Exported full results → {export_path}")
 
         return final_results
 
@@ -1985,10 +1877,11 @@ class SEAMPDCAEngine:
 
             if evidence_for_save:
                 # สร้าง temp_map สำหรับ Sequential / Worker
-                temp_map_for_result = {
-                    "highest_level": level,
-                    "supporting_evidence": {map_key_current: evidence_for_save}
-                }
+                # temp_map_for_result = {
+                #     "highest_level": level,
+                #     "supporting_evidence": {map_key_current: evidence_for_save}
+                # }
+                temp_map_for_result = evidence_for_save
 
                 # ถ้าเป็น Sequential Mode เขียนลง self.temp_map_for_save ทันที
                 if self.is_sequential:
@@ -2031,7 +1924,8 @@ class SEAMPDCAEngine:
                 }
                 for d in top_evidences
             ],
-            "used_chunk_uuids": used_chunk_uuids
+            "used_chunk_uuids": used_chunk_uuids,
+            "temp_map_for_level": temp_map_for_result 
         }
 
         logger.info(f"  > Assessment {sub_id} L{level} completed. Status: {pass_status} (Score: {llm_score:.2f})")
