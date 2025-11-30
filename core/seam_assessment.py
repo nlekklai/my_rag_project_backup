@@ -240,17 +240,6 @@ def get_correct_pdca_required_score(level: int) -> int:
     # กรณี Level ผิดพลาด
     return 8
 
-def _worker_wrapper(assessment_instance, worker_input_tuple):
-    """
-    Wrapper function for multiprocessing pool map. 
-    It executes the assessment for a single sub-criteria in a new process 
-    by calling the dedicated worker method on the passed assessment_instance.
-    """
-    sub_criteria_data, config_dict, evidence_map_path = worker_input_tuple
-    
-    # We assume the SeamAssessment class has a method to run a single sub-criteria
-    # which encapsulates the logic of the sequential loop in a worker-safe manner.
-    return assessment_instance._run_sub_criteria_assessment_worker(sub_criteria_data, config_dict, evidence_map_path)
 
 # 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม LLM parameters (7 elements)
 def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, str, str, str, float]) -> Dict[str, Any]:
@@ -323,6 +312,24 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
     # 3. Execute the worker logic
     # เมธอดนี้จะรัน Logic L1-L5 สำหรับ Sub-Criteria เดี่ยว
     return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
+
+
+def merge_evidence_mappings(results_list: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    รวม evidence_mapping dictionaries ที่ได้จาก Worker ทุกตัว 
+    """
+    merged_mapping = defaultdict(list)
+    for result in results_list:
+        # ตรวจสอบว่าผลลัพธ์จาก Worker มี Key 'evidence_mapping' หรือไม่
+        if 'evidence_mapping' in result and isinstance(result['evidence_mapping'], dict):
+            # วนลูปผ่าน Key/Value ของ Worker แต่ละตัว
+            for level_key, evidence_list in result['evidence_mapping'].items():
+                # ใช้ .extend() เพื่อผนวกรายการหลักฐานทั้งหมดอย่างปลอดภัย
+                if isinstance(evidence_list, list):
+                    merged_mapping[level_key].extend(evidence_list)
+    
+    # แปลง defaultdict กลับเป็น dict ธรรมดา
+    return dict(merged_mapping)
 
 # =================================================================
 # Configuration Class
@@ -1309,21 +1316,6 @@ class SEAMPDCAEngine:
         return raw_results_for_sub, final_sub_result, level_evidences
 
 
-    def _worker_wrapper(self, args):
-        sub_data, engine_config_dict = args
-        return self._assess_single_sub_criteria_worker(
-            statement_data=sub_data,
-            llm_executor=self.llm_executor,
-            sub_id=sub_data.get("sub_id"),
-            enabler=engine_config_dict.get("enabler"),
-            doc_type=engine_config_dict.get("doc_type", ""),
-            vectorstore_manager=self.vectorstore_manager,
-            mapped_uuids=None,
-            priority_docs_input=None,
-            contextual_rules_prompt=""
-        )
-
-    # --- -------------------- Main Execution (CLEANED & FIXED V17) -------------------- ---
     def _run_sub_criteria_assessment_worker(
         self, 
         sub_criteria: Dict[str, Any], 
@@ -1421,10 +1413,10 @@ class SEAMPDCAEngine:
                 if used_evidence:
                     passed_chunk_uuids_map[level] = used_evidence
                     persistence_key_current = f"{sub_id}.L{level}"
-
+                    worker_temp_map_for_sub_criteria[persistence_key_current] = used_evidence
                     # ใช้ temp_map_ref จาก _run_single_assessment (Worker-local evidence map)
-                    if result_to_process.get("temp_map_ref"):
-                        worker_temp_map_for_sub_criteria[persistence_key_current] = result_to_process["temp_map_ref"]
+                    # if result_to_process.get("temp_map_ref"):
+                    #     worker_temp_map_for_sub_criteria[persistence_key_current] = result_to_process["temp_map_ref"]
 
                     self.logger.info(f"💾 Worker added new evidence to map: {persistence_key_current} -> {len(used_evidence)} items")
 
@@ -1454,7 +1446,10 @@ class SEAMPDCAEngine:
         }
         # NOTE: _calculate_weighted_score ต้องถูก Import/นิยาม
         weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight) 
-        
+
+        # final_temp_map = worker_temp_map_for_sub_criteria
+        final_temp_map = self.temp_map_for_save
+
         final_sub_result = {
             "sub_criteria_id": sub_id,
             "sub_criteria_name": sub_criteria_name,
@@ -1465,14 +1460,14 @@ class SEAMPDCAEngine:
             "action_plan": action_plan,
             "raw_results_ref": raw_results_for_sub_seq,
             "sub_summary": sub_summary,
-            "temp_map_ref": worker_temp_map_for_sub_criteria # ส่ง Evidence Map ที่สร้างกลับไป
+            "temp_map_ref": final_temp_map # ส่ง Evidence Map ที่สร้างกลับไป
         }
         
-        self.logger.info(f"[WORKER END] Sub-Criteria: {sub_id} | Highest Level: {highest_full_level} | New Evidence Keys: {len(worker_temp_map_for_sub_criteria)}")
-        
+        self.logger.info(f"[WORKER END] Sub-Criteria: {sub_id} | Highest Level: {highest_full_level} | New Evidence Keys: {len(final_temp_map)}")
+        self.logger.critical(f"👀 DEBUG WORKER FINAL: temp_map_ref keys={list(final_temp_map.keys())}") # ✅ ตรวจสอบ final_temp_map ที่มีข้อมูล
+
         return final_sub_result
 
-    # -------------------- Main Execution (CLEANED & FIXED) --------------------
     def run_assessment(
             self, 
             target_sub_id: str = "all", 
@@ -1552,12 +1547,47 @@ class SEAMPDCAEngine:
             for final_sub_result in results_list:
                 
                 # Logic สำหรับ Persistent Evidence Map Aggregation
-                worker_temp_map = final_sub_result.pop("temp_map_ref", None)
+                temp_map_from_worker = final_sub_result.pop("temp_map_ref", None) # Renamed for clarity
                 
-                if worker_temp_map and isinstance(worker_temp_map, dict):
-                    self.logger.debug(f"Aggregating {len(worker_temp_map)} keys from parallel worker.")
-                    # รวม Evidence Map จาก Worker เข้าสู่ self.evidence_map (แผนที่หลัก)
-                    self.evidence_map.update(worker_temp_map)
+                # 🟢 FINAL FIX: แก้ไข logic การรวมเพื่อให้จัดการกับโครงสร้างข้อมูลที่ซ้อนกัน 3 ชั้น
+                if temp_map_from_worker and isinstance(temp_map_from_worker, dict):
+                    self.logger.debug(f"Aggregating {len(temp_map_from_worker)} keys from parallel worker.")
+                    
+                    for level_key, evidence_container in temp_map_from_worker.items():
+                        
+                        evidence_list = None
+                        
+                        # 1. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 1
+                        # โครงสร้าง: {level_key: {'highest_level': X, 'supporting_evidence': {??? : [list]}}}
+                        if isinstance(evidence_container, dict):
+                            nested_map = evidence_container.get("supporting_evidence") 
+                            
+                            # 2. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 2 (ซึ่ง log บอกว่าเป็น dict)
+                            if isinstance(nested_map, dict):
+                                # 💡 Assumption: Key ที่ถือ List คือ level_key เอง (เช่น '1.1.L1')
+                                evidence_list = nested_map.get(level_key)
+                                
+                                # 💡 Fallback: หาก level_key ไม่ใช่ Key, ลองดึงค่าแรกและค่าเดียวใน Dictionary นั้น
+                                if evidence_list is None and len(nested_map) == 1:
+                                    evidence_list = next(iter(nested_map.values()))
+                            
+                            # Fallback: หาก 'supporting_evidence' ดันเป็น List โดยตรง
+                            elif isinstance(nested_map, list):
+                                evidence_list = nested_map
+
+                        # 3. VALIDATION: ตรวจสอบว่าเป็น List และมีข้อมูลอยู่จริง
+                        if evidence_list and isinstance(evidence_list, list):
+                            self.logger.info(f"✅ AGGREGATION SUCCESS: Merging {len(evidence_list)} items for {level_key}")
+                            
+                            # 4. ตรวจสอบและสร้าง List เปล่าหาก Key นั้นยังไม่มีใน self.evidence_map 
+                            if level_key not in self.evidence_map or not isinstance(self.evidence_map[level_key], list):
+                                self.evidence_map[level_key] = []
+                            
+                            # 5. ผนวกรายการหลักฐานเข้าสู่รายการหลัก (self.evidence_map)
+                            self.evidence_map[level_key].extend(evidence_list)
+                        else:
+                            # 🛑 WARNINGS: แสดง Warning เมื่อดึงข้อมูลไม่สำเร็จ
+                            self.logger.warning(f"⚠️ Worker evidence for {level_key} was not found or not in expected list format during aggregation. Found type: {type(evidence_list)}")
 
                 # Aggregate raw_results_ref and sub_summary
                 sub_id = final_sub_result["sub_criteria_id"]
@@ -1578,15 +1608,6 @@ class SEAMPDCAEngine:
                         "pass_rate": (num_passed / num_statements) if num_statements else 0.0
                     }
                 self.final_subcriteria_results.append(final_sub_result)
-
-            # 📌 บันทึก Evidence Map หลังจบ Parallel Run
-            if self.evidence_map:
-                # NOTE: _save_evidence_map ต้องถูกนิยามในคลาส
-                self._save_evidence_map(map_to_save=self.evidence_map) 
-                self.logger.info(f"💾 Persisted final evidence map after parallel run. Total keys: {len(self.evidence_map)}")
-            else:
-                 self.logger.warning("⚠️ Evidence map is empty, skipping final save in parallel mode.")
-
 
         else:
             # --- SEQUENTIAL EXECUTION BLOCK ---
@@ -1616,20 +1637,63 @@ class SEAMPDCAEngine:
                 sub_result = self._run_sub_criteria_assessment_worker(sub_criteria)
                 
                 # 📌 Aggregate results in the main process
-                temp_map = sub_result.pop('temp_map_ref', {})
-                self.evidence_map.update(temp_map) 
+                temp_map_from_worker = sub_result.pop('temp_map_ref', {}) # Renamed for clarity
+                self.logger.critical(f"👀 DEBUG MAIN: temp_map_from_worker type={type(temp_map_from_worker)} keys={list(temp_map_from_worker.keys())}")
+
+                # 🟢 FINAL FIX (Confirmed by DEBUG AGG log):
+                if temp_map_from_worker and isinstance(temp_map_from_worker, dict):
+                    # temp_map_from_worker keys are "1.1.L1", "1.1.L2", etc.
+                    for level_key, evidence_container in temp_map_from_worker.items():
+                        
+                        evidence_list = None
+                        
+                        # 1. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 1
+                        # โครงสร้าง: {level_key: {'highest_level': X, 'supporting_evidence': {??? : [list]}}}
+                        if isinstance(evidence_container, dict):
+                            nested_map = evidence_container.get("supporting_evidence") 
+                            
+                            # 2. RETRIEVAL: เจาะเข้า Dictionary ชั้นที่ 2 (ซึ่ง log บอกว่าเป็น dict)
+                            if isinstance(nested_map, dict):
+                                # 💡 Assumption: Key ที่ถือ List คือ level_key เอง (เช่น '1.1.L1')
+                                evidence_list = nested_map.get(level_key)
+                                
+                                # 💡 Fallback: หาก level_key ไม่ใช่ Key, ลองดึงค่าแรกและค่าเดียวใน Dictionary นั้น
+                                if evidence_list is None and len(nested_map) == 1:
+                                    evidence_list = next(iter(nested_map.values()))
+                            
+                            # Fallback: หาก 'supporting_evidence' ดันเป็น List โดยตรง (ไม่น่าจะเกิดแต่กันไว้)
+                            elif isinstance(nested_map, list):
+                                evidence_list = nested_map
+
+                        # 3. VALIDATION: ตรวจสอบว่าเป็น List และมีข้อมูลอยู่จริง
+                        if evidence_list and isinstance(evidence_list, list):
+                            # 🟢 Log เพื่อยืนยันว่าการรวมข้อมูลทำงาน
+                            self.logger.info(f"✅ AGGREGATION SUCCESS: Merging {len(evidence_list)} items for {level_key}")
+                            
+                            # 4. ตรวจสอบและสร้าง List เปล่าหาก Key นั้นยังไม่มีใน self.evidence_map 
+                            if level_key not in self.evidence_map or not isinstance(self.evidence_map[level_key], list):
+                                self.evidence_map[level_key] = []
+                            
+                            # 5. ผนวกรายการหลักฐานเข้าสู่รายการหลัก (self.evidence_map)
+                            self.evidence_map[level_key].extend(evidence_list)
+                        else:
+                            # 🛑 WARNINGS: แสดง Warning เมื่อดึงข้อมูลไม่สำเร็จ
+                            self.logger.warning(f"⚠️ Worker evidence for {level_key} was not found or not in expected list format during aggregation. Found type: {type(evidence_list)}")
                 
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
-                
                 self.final_subcriteria_results.append(sub_result)
+    
+        # ====================================================================
+        # 🟢 FINAL CENTRALIZED EVIDENCE MAP SAVE BLOCK (FIXED LOCATION)
+        # ====================================================================
+        if self.evidence_map:
+            # ใช้ _save_evidence_map ที่คุณเขียนไว้เพื่อทำ Deduplication และ Atomic Write
+            self._save_evidence_map(map_to_save=self.evidence_map) 
+            self.logger.info(f"💾 Persisted final evidence map after run. Total keys: {len(self.evidence_map)}")
+        else:
+            # Warning นี้ควรจะหายไป หากรันสำเร็จ
+            self.logger.warning("⚠️ Evidence map is empty, skipping final save (Worker found no evidence).")
 
-            # 📌 บันทึก Evidence Map หลังจบ Sequential Run
-            if self.evidence_map:
-                self._save_evidence_map(map_to_save=self.evidence_map)
-                self.logger.info(f"💾 Persisted final evidence map after sequential run. Total keys: {len(self.evidence_map)}")
-            else:
-                 self.logger.warning("⚠️ Evidence map is empty, skipping final save in sequential mode.")
-                
 
         # --- Overall Stats & Export
         # NOTE: _calculate_overall_stats ต้องถูกนิยามในคลาส
@@ -1655,7 +1719,6 @@ class SEAMPDCAEngine:
 
         return final_results
 
-    # -------------------- Core Assessment Logic (FINAL ROBUST FIX) --------------------
     def _run_single_assessment(
         self,
         sub_criteria: Dict[str, Any],
