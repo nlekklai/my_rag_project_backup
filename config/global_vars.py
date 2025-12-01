@@ -2,6 +2,9 @@
 import os
 from typing import Final, List
 
+# RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
+RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
+
 # ==================== Project Paths ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")

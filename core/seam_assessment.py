@@ -2039,6 +2039,22 @@ class SEAMPDCAEngine:
                         "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename
                     }
 
+        # ==================== เพิ่ม Evidence Strength & AI Confidence (ฆ่า Consultant ได้ใน 1 วินาที) ====================
+        direct_count = len([d for d in top_evidences if d.get("pdca_tag") in ["P", "D", "C", "A"]])
+        total_chunks = len(top_evidences)
+        pdca_coverage = len({d.get("pdca_tag") for d in top_evidences if d.get("pdca_tag")})
+
+        evidence_strength = min(10.0, 
+            (direct_count * 1.8) + 
+            (2.0 if total_chunks >= 20 else 1.0 if total_chunks >= 10 else 0.0) +
+            (pdca_coverage * 1.5)
+        )
+
+        ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
+                       "MEDIUM" if evidence_strength >= 5.5 else "LOW"
+
+        evidence_count_for_level = len(evidence_entries) if is_passed and 'evidence_entries' in locals() else 0
+
         final_result = {
             "sub_criteria_id": sub_id,
             "statement_id": statement_id,
@@ -2054,7 +2070,12 @@ class SEAMPDCAEngine:
             "retrieval_duration_s": round(retrieval_duration, 2),
             "llm_duration_s": round(llm_duration, 2),
             "top_evidences_ref": list(unique_refs.values()),
-            "temp_map_for_level": temp_map_for_level  # สำหรับ worker ส่งกลับ
+            "temp_map_for_level": temp_map_for_level,  # สำหรับ worker ส่งกลับ
+            "evidence_strength": round(evidence_strength, 1),
+            "ai_confidence": ai_confidence,
+            "evidence_count": evidence_count_for_level,
+            "pdca_coverage": pdca_coverage,
+            "direct_evidence_count": direct_count
         }
 
         logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f})")
