@@ -201,10 +201,8 @@ def retrieve_context_with_filter(
     """
     start_time = time.time()
     
-    # กำหนดค่า K โดยใช้ Global Variable โดยตรง
-    # final_k_val = FINAL_K_RERANKED # <-- ลบออก
-    # initial_k_val = INITIAL_TOP_K # <-- ลบออก
-
+    # NOTE: Assume FINAL_K_RERANKED and INITIAL_TOP_K are available globally or passed implicitly.
+    
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
 
@@ -263,7 +261,8 @@ def retrieve_context_with_filter(
         try:
             # ใช้ INITIAL_TOP_K โดยตรง
             if callable(getattr(retriever, "invoke", None)):
-                resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K}}})
+                # NOTE: Assuming INITIAL_TOP_K is available in the global scope
+                resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K}}}) 
             elif callable(getattr(retriever, "get_relevant_documents", None)):
                 resp = retriever.get_relevant_documents(q)
             else:
@@ -282,18 +281,31 @@ def retrieve_context_with_filter(
         if doc is None: continue
         md = getattr(doc, "metadata", {}) or {}
         setattr(doc, "metadata", md)
+        
         # PDCA default
         if "pdca_tag" not in md or not md.get("pdca_tag"):
             md["pdca_tag"] = "Other"
+            
         # truncate content for L3
         pc = (getattr(doc, "page_content", None) or getattr(doc, "text", "") or "")
         if level == 3:
             pc = pc[:500]
             setattr(doc, "page_content", pc)
-        # use actual chunk_uuid
-        chunk_uuid = md.get("chunk_uuid") or md.get("doc_uuid") or f"HASH-{hash(pc)}" # Fallback hash kept for safety
-        if chunk_uuid and chunk_uuid not in unique_chunks_map:
-            unique_chunks_map[chunk_uuid] = doc
+            
+        # 🚩🚩🚩 FIX 1: แก้ไข Logic การสร้าง chunk_uuid Fallback ID ที่ใช้สำหรับ Dedup 🚩🚩🚩
+        # 1. พยายามใช้ Stable ID (chunk_uuid หรือ doc_uuid)
+        stable_id = md.get("chunk_uuid") or md.get("doc_uuid")
+        
+        # 2. ใช้ ID ที่จะใช้ในการ Dedup (ถ้ามี Stable ID ก็ใช้ Stable ID, ถ้าไม่มีให้สร้าง HASH- ID ชั่วคราว)
+        chunk_uuid_for_dedup = stable_id
+        if not chunk_uuid_for_dedup:
+            # ใช้เนื้อหาในการสร้าง Hash ชั่วคราวสำหรับการทำ Dedup เท่านั้น (ใช้ SHA256 เพื่อความเสถียร)
+            chunk_uuid_for_dedup = f"HASH-{hashlib.sha256(pc.encode()).hexdigest()[:16]}"
+        
+        if chunk_uuid_for_dedup and chunk_uuid_for_dedup not in unique_chunks_map:
+            # 🚩 สิ่งสำคัญ: เก็บ ID ที่ใช้ในการทำ Dedup ไว้ใน metadata เพื่อให้ส่งออกได้อย่างถูกต้อง
+            md["dedup_chunk_uuid"] = chunk_uuid_for_dedup
+            unique_chunks_map[chunk_uuid_for_dedup] = doc
 
     dedup_chunks = list(unique_chunks_map.values())
     logger.info(f"    - Dedup Merged: Total unique chunks = {len(dedup_chunks)}. Guaranteed chunks = {len(guaranteed_priority_chunks)}")
@@ -310,6 +322,7 @@ def retrieve_context_with_filter(
         reranker = get_global_reranker(FINAL_K_RERANKED)
         if reranker and hasattr(reranker, "compress_documents"):
             try:
+                # NOTE: Assuming FINAL_K_RERANKED is available in the global scope
                 reranked = reranker.compress_documents(query=queries_to_run[0] if queries_to_run else "", documents=rerank_candidates, top_n=slots_available)
                 final_selected_docs.extend(reranked or [])
             except Exception:
@@ -326,14 +339,26 @@ def retrieve_context_with_filter(
         if doc is None: continue
         md = getattr(doc, "metadata", {}) or {}
         pc = getattr(doc, "page_content", "") or ""
-        chunk_uuid = md.get("chunk_uuid") or f"HASH-{hash(pc)}"
-        used_chunk_uuids.append(chunk_uuid)
+
+        # 🚩🚩🚩 FIX 2: ดึง ID ที่ใช้ในการ Dedup/Mapping ซึ่งมีความเสถียรที่สุด 🚩🚩🚩
+        # 1. พยายามใช้ Stable ID เป็นหลัก
+        stable_doc_id_output = md.get("doc_id") or md.get("stable_doc_uuid")
+        
+        # 2. ใช้ Chunk UUID ที่ถูกดึงมา หรือ ID ที่ใช้ในการ Dedup
+        chunk_uuid_output = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        
+        # 3. Fallback สุดท้าย (ควรไม่เกิดขึ้นถ้า Dedup ทำงานถูกต้อง)
+        if not chunk_uuid_output:
+             chunk_uuid_output = f"HASH-OUTPUT-FALLBACK-{hashlib.sha256(pc.encode()).hexdigest()[:8]}"
+
+
+        used_chunk_uuids.append(chunk_uuid_output)
         source = md.get("source") or md.get("filename") or "Unknown"
         
         top_evidences.append({
             "doc_uuid": md.get("doc_uuid"),
-            "doc_id": md.get("doc_id") or md.get("stable_doc_uuid"),
-            "chunk_uuid": chunk_uuid,
+            "doc_id": stable_doc_id_output, # Stable Document ID
+            "chunk_uuid": chunk_uuid_output, # Stable Chunk ID หรือ HASH- ID ที่เสถียร
             "source": source,
             "source_filename": source, 
             "text": pc,

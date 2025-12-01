@@ -529,47 +529,91 @@ class SEAMPDCAEngine:
             logger.error(f"❌ Failed to load Contextual Rules map. Error: {e}")
             return {}
 
-    def _collect_previous_level_evidences(self, sub_id: str) -> Dict[str, List[Dict]]:
+
+    def _collect_previous_level_evidences(self, sub_id: str, current_level: int, vectorstore_manager: Optional['VectorStoreManager'] = None) -> Dict[str, List[Dict]]:
+        """
+        ดึงหลักฐาน (Metadata/DocIDs) ที่ผ่านจาก Level ก่อนหน้าทั้งหมด 
+        เพื่อนำมาใช้เป็น Context (Baseline) สำหรับ Level ปัจจุบัน
+        
+        มีการทำ Hydration (ดึง Text) จาก VSM ในโหมด Parallel (เมื่อเรียกจาก Main Process เพื่อเตรียม Context)
+        
+        Args:
+            sub_id (str): Sub-Criteria ID ปัจจุบัน (เช่น "3.1").
+            current_level (int): Level ปัจจุบันที่กำลังประเมิน (เช่น L2).
+            vectorstore_manager (Optional['VectorStoreManager']): VSM สำหรับดึงเนื้อหา (Text) 
+                                                                 ในโหมด Parallel/Worker (ถ้า Main Process เตรียม Context)
+        Returns:
+            Dict[str, List[Dict]]: Dictionary ของหลักฐานที่รวบรวมได้, โดย Key คือ "sub_id.L#".
+                                   อาจมี Text รวมอยู่ด้วยหากมีการทำ Hydration.
+        """
         collected = {}
 
-        if self.is_sequential:
-            source_map = self.evidence_map
-            source_name = "evidence_map (Sequential)"
-        else:
-            source_map = getattr(self, "temp_map_for_save", {})
-            source_name = "temp_map_for_save (Parallel)"
+        # 1. กำหนดแหล่งข้อมูลหลัก
+        # ใน Sequential Mode หรือ Parallel Main Process เราใช้ self.evidence_map 
+        # (ซึ่งใน Sequential มันจะถูกอัปเดตไปเรื่อยๆ)
+        source_map = self.evidence_map
+        source_name = "evidence_map (SEQ/PAR Main)"
 
+        # 2. กรองและรวบรวม Metadata (DocID/Filename)
         for key, evidence_list in source_map.items():
+            # กรองเฉพาะ Key ที่ขึ้นต้นด้วย sub_id และเป็น Level
             if key.startswith(f"{sub_id}.L") and isinstance(evidence_list, list):
                 try:
                     level_num = int(key.split(".L")[-1])
-                    current = getattr(self, "current_level", 999)
-                    if level_num < current:
-                        collected[key] = evidence_list
+                    
+                    # <<< จุดสำคัญ: ตรวจสอบว่า Level ก่อนหน้าหรือไม่
+                    if level_num < current_level: 
+                        collected[key] = evidence_list 
                 except:
                     continue
+        
+        # 3. HYDRATION (การดึง Text): ในโหมด Parallel (is_sequential=False) 
+        #    ถ้ามีการส่ง vectorstore_manager มา (หมายถึง Main Process กำลังเตรียม Context) 
+        #    เราจะดึงเนื้อหาเต็มๆ เพื่อส่งไปให้ Worker ใช้เป็น Baseline Context
+        
+        is_worker_context_preparation = not self.is_sequential and vectorstore_manager is not None
 
-        # Fallback สำหรับ Parallel
-        if not collected and not self.is_sequential:
-            for key, evidence_list in self.evidence_map.items():
-                if key.startswith(f"{sub_id}.L") and isinstance(evidence_list, list):
-                    try:
-                        level_num = int(key.split(".L")[-1])
-                        if level_num < getattr(self, "current_level", 999):
-                            collected[key] = evidence_list
-                    except:
-                        continue
+        if is_worker_context_preparation and collected and vectorstore_manager:
+            all_uuids = [ev['doc_id'] for ev_list in collected.values() for ev in ev_list if 'doc_id' in ev]
+            
+            try:
+                # ดึง Chunks เต็มๆ จาก VSM
+                full_chunks = vectorstore_manager.retrieve_chunks_by_uuids(all_uuids) 
+            except Exception as e:
+                self.logger.error(f"Failed to retrieve full chunks for baseline in PAR mode: {e}")
+                full_chunks = []
 
-        logger.info(
+            full_chunk_map = {c.get('doc_id') or c.get('chunk_uuid'): c for c in full_chunks}
+            
+            hydrated_collected = {}
+            for key, ev_list in collected.items():
+                hydrated_list = []
+                for ev_metadata in ev_list:
+                    doc_id = ev_metadata.get('doc_id')
+                    full_chunk = full_chunk_map.get(doc_id)
+                    
+                    if full_chunk and full_chunk.get('text'):
+                        # รวม Metadata เดิมเข้ากับ Text ที่ดึงมา
+                        chunk_to_add = full_chunk.copy()
+                        chunk_to_add.update(ev_metadata) 
+                        hydrated_list.append(chunk_to_add)
+                
+                if hydrated_list:
+                    hydrated_collected[key] = hydrated_list
+            
+            collected = hydrated_collected # ใช้ข้อมูลที่มี Text เพื่อเป็น Baseline Context
+        
+        # 4. Debug Log
+        total_files = sum(len(v) for v in collected.values())
+        self.logger.info(
             f"BASELINE LOADED → Mode: {'SEQ' if self.is_sequential else 'PAR'} | "
             f"Source: {source_name} | "
             f"Found {len(collected)} levels | "
             f"Keys: {sorted(collected.keys())} | "
-            f"Total files: {sum(len(v) for v in collected.values())}"
+            f"Total files: {total_files}"
         )
 
         return collected
-
 
     def _get_contextual_rules_prompt(self, sub_id: str, level: int) -> str:
         """
@@ -996,120 +1040,126 @@ class SEAMPDCAEngine:
 
         return plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks
 
-# --------------------------------------------------------------------------------------
-# เมธอด: _get_mapped_uuids_and_priority_chunks (ใน seam_assessment.py)
-# --------------------------------------------------------------------------------------
+
     def _get_mapped_uuids_and_priority_chunks(
-        self, 
-        sub_id: str, 
-        level: int, 
-        statement_text: str, 
-        level_constraint: str,
-        vectorstore_manager: Optional['VectorStoreManager']
-    ) -> Tuple[List[str], List[Dict[str, Any]]]:
-        """
-        1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
-        2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
-        based on the gathered Chunk UUIDs.
-        
-        Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
-        """
-        
-        all_priority_items: List[Dict[str, Any]] = [] 
-        
-        # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
-        for prev_level in range(1, level): 
-            prev_map_key = f"{sub_id}.L{prev_level}"
-            # 🎯 ตอนนี้ self.evidence_map และ self.temp_map_for_save เก็บ Chunk UUIDs จริง
-            all_priority_items.extend(self.evidence_map.get(prev_map_key, []))
-            all_priority_items.extend(self.temp_map_for_save.get(prev_map_key, []))
+            self, 
+            sub_id: str, 
+            level: int, 
+            statement_text: str, 
+            level_constraint: str,
+            vectorstore_manager: Optional['VectorStoreManager']
+        ) -> Tuple[List[str], List[Dict[str, Any]]]:
+            """
+            1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
+            2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
+            based on the gathered Chunk UUIDs.
             
-        
-        # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
-        doc_ids_for_dedup: List[str] = [
-            # 🎯 FIX: ดึง doc_id โดยตรง (ตอนนี้คือ Chunk UUID จริง)
-            item.get('doc_id') 
-            for item in all_priority_items
-            if isinstance(item, dict) and item.get('doc_id')
-        ]
-
-        # 🎯 FIX: เปลี่ยนชื่อตัวแปรให้สื่อถึง Chunk UUIDs
-        mapped_chunk_uuids: List[str] = list(set(doc_ids_for_dedup))
-        num_historical_chunks = len(mapped_chunk_uuids)
-
-        priority_docs = [] 
-        
-        if num_historical_chunks > 0:
-            levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
-            logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
-            logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
+            Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
+            """
             
-            if vectorstore_manager:
-                try:
-                    # Assuming enhance_query_for_statement is available
-                    rag_queries_for_vsm = enhance_query_for_statement(
-                        statement_text=statement_text,
-                        sub_id=sub_id, 
-                        statement_id=sub_id, 
-                        level=level, 
-                        enabler_id=self.enabler_id,
-                        focus_hint=level_constraint 
-                    )
-                    
-                    doc_type = self.doc_type 
-                    
-                    # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
-                    # retrieve_context_by_doc_ids ได้รับการแก้ไขให้ใช้ UUIDs โดยตรงแล้ว
-                    retrieved_docs_result = retrieve_context_by_doc_ids(
-                        doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk UUIDs
-                        doc_type=doc_type,
-                        enabler=self.enabler_id,
-                        vectorstore_manager=vectorstore_manager
-                    )
-                    
-                    initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
-                    
-                    if initial_priority_chunks:
-                        # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
-                        reranker = get_global_reranker(self.FINAL_K_RERANKED) 
-                        rerank_query = rag_queries_for_vsm[0] 
-                        
-                        # สร้าง LcDocument list สำหรับ Rerank
-                        lc_docs_for_rerank = [
-                            LcDocument(
-                                page_content=d.get('content') or d.get('text', ''), 
-                                metadata={
-                                    **d, 
-                                    'relevance_score': 1.0 
-                                }
-                            ) 
-                            for d in initial_priority_chunks
-                        ]
-                        
-                        if reranker and hasattr(reranker, 'compress_documents'):
-                            reranked_docs = reranker.compress_documents(
-                                query=rerank_query,
-                                documents=lc_docs_for_rerank,
-                                top_n=self.PRIORITY_CHUNK_LIMIT 
-                            )
-                            # แปลงกลับเป็น Dict
-                            priority_docs = [{
-                                **d.metadata, 
-                                'content': d.page_content,
-                                'text': d.page_content, 
-                                'score': d.metadata.get('relevance_score', 1.0) 
-                            } for d in reranked_docs]
-                        else:
-                            priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
+            all_priority_items: List[Dict[str, Any]] = [] 
+            
+            # 📌 DEBUG: ตรวจสอบสถานะของ evidence_map ก่อนเริ่มดึง
+            logger.info(f"DEBUG: EVIDENCE MAP KEYS BEFORE PRIORITY SEARCH (L{level}): {sorted(self.evidence_map.keys())}")
+            
+            # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
+            for prev_level in range(1, level): 
+                prev_map_key = f"{sub_id}.L{prev_level}"
+                
+                # 🎯 ดึงจาก self.evidence_map (แหล่งข้อมูลหลักที่ถูกอัปเดตใน Sequential)
+                items_from_map = self.evidence_map.get(prev_map_key, [])
+                all_priority_items.extend(items_from_map)
+                
+                # [การปรับปรุง]: ลบการดึงจาก self.temp_map_for_save ออกในโหมด Sequential เพื่อความชัดเจน
+                # แต่ถ้าเป็นโหมด Parallel, Main Process ต้องรวมผลลัพธ์จาก self.temp_map_for_save 
+                # เข้ามาใน all_priority_items ด้วย (ซึ่ง Logic นี้ควรอยู่ใน Main Loop ของ run_assessment)
+                # เราจะคงไว้แค่การดึงจาก evidence_map เพื่อให้สอดคล้องกับ Sequential mode ที่กำลังรันอยู่
 
-                        logger.critical(f"🧭 DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+            
+            # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
+            doc_ids_for_dedup: List[str] = [
+                item.get('doc_id') 
+                for item in all_priority_items
+                if isinstance(item, dict) and item.get('doc_id')
+            ]
 
-                except Exception as e:
-                    logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
-                    priority_docs = [] 
-        
-        # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
-        return mapped_chunk_uuids, priority_docs
+            mapped_chunk_uuids: List[str] = list(set(doc_ids_for_dedup))
+            num_historical_chunks = len(mapped_chunk_uuids)
+
+            priority_docs = [] 
+            
+            if num_historical_chunks > 0:
+                levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
+                logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
+                logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
+                
+                if vectorstore_manager:
+                    try:
+                        # Assuming enhance_query_for_statement is available
+                        rag_queries_for_vsm = enhance_query_for_statement(
+                            statement_text=statement_text,
+                            sub_id=sub_id, 
+                            statement_id=sub_id, 
+                            level=level, 
+                            enabler_id=self.enabler_id,
+                            focus_hint=level_constraint 
+                        )
+                        
+                        doc_type = self.doc_type 
+                        
+                        # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
+                        retrieved_docs_result = retrieve_context_by_doc_ids(
+                            doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk UUIDs
+                            doc_type=doc_type,
+                            enabler=self.enabler_id,
+                            vectorstore_manager=vectorstore_manager
+                        )
+                        
+                        initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
+                        
+                        if initial_priority_chunks:
+                            # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
+                            reranker = get_global_reranker(self.FINAL_K_RERANKED) 
+                            rerank_query = rag_queries_for_vsm[0] 
+                            
+                            # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
+                            from langchain_core.documents import Document as LcDocument
+
+                            lc_docs_for_rerank = [
+                                LcDocument(
+                                    page_content=d.get('content') or d.get('text', ''), 
+                                    metadata={
+                                        **d, 
+                                        'relevance_score': 1.0 
+                                    }
+                                ) 
+                                for d in initial_priority_chunks
+                            ]
+                            
+                            if reranker and hasattr(reranker, 'compress_documents'):
+                                reranked_docs = reranker.compress_documents(
+                                    query=rerank_query,
+                                    documents=lc_docs_for_rerank,
+                                    top_n=self.PRIORITY_CHUNK_LIMIT 
+                                )
+                                # แปลงกลับเป็น Dict
+                                priority_docs = [{
+                                    **d.metadata, 
+                                    'content': d.page_content,
+                                    'text': d.page_content, 
+                                    'score': d.metadata.get('relevance_score', 1.0) 
+                                } for d in reranked_docs]
+                            else:
+                                priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
+
+                            logger.critical(f"🧭 DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+
+                    except Exception as e:
+                        logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
+                        priority_docs = [] 
+            
+            # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
+            return mapped_chunk_uuids, priority_docs
 
     # -------------------- Calculation Helpers (ADDED) --------------------
     def _calculate_weighted_score(self, highest_full_level: int, weight: int) -> float:
@@ -1182,16 +1232,61 @@ class SEAMPDCAEngine:
             }
             return self.total_stats
             
+    def _export_results(self, results: dict, enabler: str, sub_criteria_id: str, target_level: int, export_dir: str = "assessment_results") -> str:
+        """
+        Exports the final assessment results to a JSON file.
+        
+        Args:
+            results: The dictionary containing the final assessment summary and results.
+            enabler: The enabler ID (e.g., KM).
+            sub_criteria_id: The specific sub-criteria ID being run (e.g., 2.2).
+            target_level: The target level for the assessment.
+            export_dir: The directory to save the output file.
+            
+        Returns:
+            The path to the saved JSON file.
+        """
+        if not os.path.exists(export_dir):
+            os.makedirs(export_dir)
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # สร้างชื่อไฟล์: assessment_results_KM_2.2_YYYYMMDD_HHMMSS.json
+        file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
+        full_path = os.path.join(export_dir, file_name)
+
+        # Note: results dict should contain 'summary' and 'sub_criteria_results' keys
+        # Update summary fields based on the engine data
+        results['summary']['enabler'] = enabler
+        results['summary']['sub_criteria_id'] = sub_criteria_id
+        results['summary']['target_level'] = target_level
+        results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
+
+        try:
+            with open(full_path, 'w', encoding='utf-8') as f:
+                # ใช้ indent=4 เพื่อให้อ่านง่าย
+                json.dump(results, f, ensure_ascii=False, indent=4)
+            
+            logging.info(f"💾 Successfully exported final results to: {full_path}")
+            return full_path
+        
+        except Exception as e:
+            logging.error(f"❌ Failed to export results to {full_path}: {e}")
+            return ""
+        
     # -------------------- Multiprocessing Worker Method --------------------
     def _assess_single_sub_criteria_worker(self, args) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        Worker function for multiprocessing.
-        args: tuple(statement_data, engine_config_dict)
+        Worker function for multiprocessing. 
+        ฟังก์ชันนี้ถูกออกแบบมาเพื่อรันใน Worker Process แยกต่างหาก (True Parallel) 
+        ดังนั้นจึงต้องรับ Baseline Evidence มาจาก Main Process โดยตรง
+        
+        Args:
+            args: tuple(statement_data, engine_config_dict)
         Returns:
             - raw_results_for_sub: list of final results for each level
             - final_sub_result: summary of sub-criteria evaluation
-            - level_evidences: dict of evidences to merge later in main process
-                Format: { "1.1.L1": [ { "doc_id": ..., "filename": ..., "text": ... }, ... ] }
+            - level_evidences: dict of evidences to merge later in main process (เฉพาะ Metadata)
+                Format: { "1.1.L1": [ { "doc_id": ..., "filename": ... }, ... ] }
         """
         statement_data, engine_config_dict = args
 
@@ -1203,6 +1298,11 @@ class SEAMPDCAEngine:
         mapped_uuids = engine_config_dict.get('mapped_uuids')
         priority_docs_input = engine_config_dict.get('priority_docs_input')
         contextual_rules_prompt = engine_config_dict.get('contextual_rules_prompt', "")
+        
+        # <<< จุดสำคัญ: ดึง Baseline Context ที่ถูก Hydrate (มี Text) จาก Main Process
+        # Main Process ต้องดึงหลักฐาน L1-L(n-1) ใส่เข้ามาใน Dict นี้แล้ว
+        previous_levels_evidence_full = engine_config_dict.get('previous_levels_evidence_full', []) 
+        # >>>
 
         # Statement metadata
         level = int(statement_data.get("level", 0))
@@ -1250,15 +1350,17 @@ class SEAMPDCAEngine:
         top_evidences = retrieval_result.get("top_evidences", [])
         aggregated_context = retrieval_result.get("aggregated_context", "")
 
-        # Collect previous level evidences (from main process map)
-        previous_levels_map = {}
-        try:
-            previous_levels_map = self._collect_previous_level_evidences(sub_id)
-        except Exception:
-            previous_levels_map = {}
+        # Collect previous level evidences (ถูกลบออกแล้ว)
+        # เนื่องจาก worker function นี้ไม่ควรเรียกเมธอดของ Engine class โดยตรง
 
         # Build multichannel context
-        channels = build_multichannel_context_for_level(level, top_evidences, previous_levels_map)
+        # <<< ใช้ previous_levels_evidence_full ที่รับมาจาก args โดยตรง
+        channels = build_multichannel_context_for_level(
+            level=level, 
+            top_evidences=top_evidences, 
+            previous_levels_evidence=previous_levels_evidence_full # <<< ส่งหลักฐานเต็มๆ เข้าไป
+        )
+        # >>>
 
         # Evaluate statement
         evaluation_result = evaluation_func(
@@ -1285,17 +1387,20 @@ class SEAMPDCAEngine:
         )
 
         # Prepare evidences to return (for main process to merge)
+        # <<< ส่งกลับเฉพาะ Metadata เพื่อลดภาระการส่งผ่าน Process
         level_key = f"{sub_id}.L{level}"
         level_evidences = {
             level_key: [
                 {
                     "doc_id": ev.get("doc_id"),
                     "filename": ev.get("filename"),
-                    "text": ev.get("snippet", "")
+                    "mapper_type": "AI_GENERATED", 
+                    "timestamp": datetime.now().isoformat() # เพิ่ม timestamp เพื่อความสมบูรณ์
                 }
                 for ev in top_evidences if ev.get("doc_id")
             ]
         }
+        # >>>
 
         # Final result dict
         final_sub_result = {
@@ -1463,6 +1568,12 @@ class SEAMPDCAEngine:
         รองรับทั้ง Parallel และ Sequential 100%
         และรับประกันว่า evidence_map ครบทุกกรณี
         """
+
+        if export:
+            logger.info("EXPORT DETECTED → FORCING SEQUENTIAL MODE...")
+            sequential = True
+            run_parallel = False
+            
         start_ts = time.time()
         self.is_sequential = sequential
 
@@ -1485,7 +1596,8 @@ class SEAMPDCAEngine:
         if not sequential:
             self.logger.info("[PARALLEL MODE] Starting parallel assessment...")
 
-        run_parallel = (target_sub_id.lower() == "all" and not self.config.force_sequential)
+        # run_parallel = (target_sub_id.lower() == "all" and not self.config.force_sequential)
+        run_parallel = (target_sub_id.lower() == "all") and not (sequential or export)
 
         # ============================== 2. Run Assessment ==============================
         if run_parallel:
@@ -1579,7 +1691,7 @@ class SEAMPDCAEngine:
             self.logger.info(f"Exported full results → {export_path}")
 
         return final_results
-    
+
 
     def _run_single_assessment(
         self,
@@ -1646,258 +1758,8 @@ class SEAMPDCAEngine:
                 level=level,
                 vectorstore_manager=vectorstore_manager,
                 mapped_uuids=mapped_stable_doc_ids,
-                priority_docs_input=priority_docs
-            )
-        except Exception as e:
-            logger.error(f"RAG retrieval failed for {sub_id} L{level}: {e}")
-            retrieval_result = {"top_evidences": [], "aggregated_context": "ERROR: RAG failure.", "used_chunk_uuids": []}
-
-        retrieval_duration = time.time() - retrieval_start
-        top_evidences = retrieval_result.get("top_evidences", [])
-        used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
-
-        # ==================== 6. ดึงหลักฐานจาก Level ก่อนหน้า (สำคัญที่สุด!) ====================
-        self.current_level = level  # สำคัญมาก! ตอนนี้มีแล้ว
-        previous_levels_raw = self._collect_previous_level_evidences(sub_id)
-
-        # สร้าง list ของ evidence dicts เต็ม ๆ (ที่มี text, doc_id, filename)
-        previous_levels_evidence_full = []
-        previous_levels_filename_map = {}  # {doc_id: filename} สำหรับ fallback
-
-        # ดึงจากทั้ง temp_map_for_save และ evidence_map (ตามลำดับความสำคัญ)
-        for ev_list in previous_levels_raw.values():
-            if not isinstance(ev_list, list):
-                continue
-            for ev in ev_list:
-                # ใช้ doc_id เป็นหลัก (stable ID)
-                doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
-                if not doc_id or str(doc_id).startswith("HASH-"):
-                    continue
-
-                # เพิ่ม evidence เต็ม dict (ที่มี text!)
-                previous_levels_evidence_full.append(ev)
-
-                # สร้าง map ชื่อไฟล์สำหรับ fallback
-                filename = (
-                    ev.get("source_filename") or
-                    ev.get("source") or
-                    ev.get("filename") or
-                    "UNKNOWN_FILE"
-                )
-                previous_levels_filename_map[doc_id] = filename
-
-        # LOG ที่จะทำให้พี่น้ำตาไหลด้วยความสุข
-        logger.info(
-            f"LOADED {len(previous_levels_evidence_full)} previous evidences "
-            f"from {len(previous_levels_raw)} passed levels (L1-L{level-1}) for baseline context"
-        )
-        if previous_levels_evidence_full:
-            sample_files = [
-                (ev.get("source_filename") or ev.get("filename") or "?.pdf").split("/")[-1][-30:]
-                for ev in previous_levels_evidence_full[:3]
-            ]
-            logger.info(f"   Sample baseline files: {sample_files}")
-
-        # ==================== 6a. Sequential fallback (เพิ่มหลักฐานเก่าที่ขาด) ====================
-        if level > 1 and self.is_sequential:
-            current_ids = {d.get("doc_id") or d.get("chunk_uuid") for d in top_evidences}
-            added_count = 0
-            for ev in previous_levels_evidence_full:
-                old_id = ev.get("doc_id") or ev.get("chunk_uuid")
-                if old_id and old_id not in current_ids:
-                    fallback_ev = ev.copy()
-                    fallback_ev["pdca_tag"] = "Baseline"
-                    top_evidences.append(fallback_ev)
-                    added_count += 1
-            if added_count:
-                logger.info(f"   Added {added_count} baseline evidences from previous levels into top_evidences")
-
-        # ==================== 7. สร้าง Multi-Channel Context (สำคัญที่สุด) ====================
-        channels = build_multichannel_context_for_level(
-            level=level,
-            top_evidences=top_evidences,
-            previous_levels_evidence=previous_levels_evidence_full,  # สำคัญที่สุด!
-            max_main_context_tokens=3000,
-            max_summary_sentences=4
-        )
-
-        # Debug log สุดท้าย
-        debug = channels.get("debug_meta", {})
-        logger.info(
-            f"Context L{level} READY → "
-            f"Direct: {debug.get('direct_count', 0)} | "
-            f"Aux: {debug.get('aux_count', 0)} | "
-            f"Baseline: {len(previous_levels_evidence_full)} evidences "
-            f"from {len(previous_levels_raw)} previous levels"
-        )
-
-        # ==================== 8. LLM Evaluation ====================
-        context_parts = [
-            f"--- DIRECT EVIDENCE (L{level}) ---\n{channels.get('direct_context','')}",
-            f"--- AUXILIARY EVIDENCE ---\n{channels.get('aux_summary','')}",
-            f"--- BASELINE FROM PREVIOUS LEVELS ---\n{channels.get('baseline_summary','ไม่มี')}"
-        ]
-        final_llm_context = "\n\n".join([p for p in context_parts if p.strip()])
-
-        llm_start = time.time()
-        llm_result = llm_evaluator_to_use(
-            context=final_llm_context,
-            sub_criteria_name=sub_criteria_name,
-            level=level,
-            statement_text=statement_text,
-            sub_id=sub_id,
-            pdca_phase=pdca_phase,
-            level_constraint=level_constraint,
-            contextual_rules=contextual_rules_prompt,
-            llm_executor=self.llm
-        )
-        llm_duration = time.time() - llm_start
-
-        # ==================== 9-10. Scoring & Pass/Fail ====================
-        llm_score = llm_result.get('score', 0) if llm_result else 0
-        pdca_breakdown, is_passed, _ = calculate_pdca_breakdown_and_pass_status(llm_score, level)
-        status = "PASS" if is_passed else "FAIL"
-
-        # ==================== 11. บันทึก Evidence Map (เฉพาะ PASS) ====================
-        temp_map_for_level = None
-        if is_passed and top_evidences:
-            seen = set()
-            evidence_entries = []
-            for ev in top_evidences:
-                doc_id = ev.get("doc_id")
-                if not doc_id or str(doc_id).startswith("HASH-") or doc_id in seen:
-                    continue
-                seen.add(doc_id)
-                filename = (
-                    ev.get("source_filename") or
-                    ev.get("source") or
-                    ev.get("filename") or
-                    previous_levels_filename_map.get(doc_id) or
-                    "UNKNOWN_FILE"
-                )
-                evidence_entries.append({
-                    "doc_id": doc_id,
-                    "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename,
-                    "mapper_type": "AI_GENERATED",
-                    "timestamp": datetime.now().isoformat(),
-                    "text": ev.get("text") or ev.get("content") or ""  # เพิ่ม text เพื่อให้ baseline มีบริบทครบ
-                })
-
-            if evidence_entries:
-                temp_map_for_level = evidence_entries
-                key = f"{sub_id}.L{level}"
-                if self.is_sequential:
-                    # Sequential: บันทึกตรงเข้า evidence_map
-                    current_list = self.evidence_map.setdefault(key, [])
-                    current_list.extend(evidence_entries)
-                    logger.info(f"DIRECT SAVE TO evidence_map → {key} (+{len(evidence_entries)} files)")
-                else:
-                    # Parallel: ใช้ temp_map_for_save
-                    if not hasattr(self, "temp_map_for_save"):
-                        self.temp_map_for_save = {}
-                    self.temp_map_for_save[key] = evidence_entries
-                logger.info(f"  > [EVIDENCE SAVED] {key} → {len(evidence_entries)} files")
-
-        # ==================== 12. สร้างผลลัพธ์สุดท้าย ====================
-        unique_refs = {}
-        for ev in top_evidences:
-            doc_id = ev.get("doc_id")
-            if doc_id and not str(doc_id).startswith("HASH-"):
-                filename = previous_levels_filename_map.get(doc_id) or "UNKNOWN"
-                if doc_id not in unique_refs:
-                    unique_refs[doc_id] = {
-                        "doc_id": doc_id,
-                        "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename
-                    }
-
-        final_result = {
-            "sub_criteria_id": sub_id,
-            "statement_id": statement_id,
-            "level": level,
-            "statement": statement_text,
-            "pdca_phase": pdca_phase,
-            "llm_score": llm_score,
-            "pdca_breakdown": pdca_breakdown,
-            "is_passed": is_passed,
-            "status": status,
-            "score": llm_score,
-            "llm_result_full": llm_result,
-            "retrieval_duration_s": round(retrieval_duration, 2),
-            "llm_duration_s": round(llm_duration, 2),
-            "top_evidences_ref": list(unique_refs.values()),
-            "temp_map_for_level": temp_map_for_level  # สำหรับ worker ส่งกลับ
-        }
-
-        logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f})")
-        return final_result
-        
-
-    def _run_single_assessment(
-        self,
-        sub_criteria: Dict[str, Any],
-        statement_data: Dict[str, Any],
-        vectorstore_manager: Optional['VectorStoreManager'],
-        sequential_chunk_uuids: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
-        """
-        รันการประเมิน Level เดียว (L1-L5) อย่างสมบูรณ์
-        - ใช้หลักฐานจาก Level ก่อนหน้าทั้งหมด (baseline)
-        - บันทึก evidence map ครบทุก Level
-        - รองรับ Sequential & Parallel 100%
-        """
-
-        sub_id = sub_criteria['sub_id']
-        level = statement_data['level']
-        statement_text = statement_data['statement']
-        sub_criteria_name = sub_criteria['sub_criteria_name']
-        statement_id = statement_data.get('statement_id', sub_id)
-
-        logger.info(f"  > Starting assessment for {sub_id} L{level}...")
-
-        # ==================== 1. PDCA & Level Prompt ====================
-        pdca_phase = self._get_pdca_phase(level)
-        level_constraint = self._get_level_constraint_prompt(level)
-        contextual_rules_prompt = self._get_contextual_rules_prompt(sub_id, level)
-        full_focus_hint = level_constraint + contextual_rules_prompt
-
-        # ==================== 2. Hybrid Retrieval Setup ====================
-        mapped_stable_doc_ids, priority_docs = self._get_mapped_uuids_and_priority_chunks(
-            sub_id=sub_id,
-            level=level,
-            statement_text=statement_text,
-            level_constraint=level_constraint,
-            vectorstore_manager=vectorstore_manager
-        )
-
-        # ==================== 3. Enhance Query ====================
-        rag_query_list = enhance_query_for_statement(
-            statement_text=statement_text,
-            sub_id=sub_id,
-            statement_id=statement_id,
-            level=level,
-            enabler_id=self.enabler_id,
-            focus_hint=full_focus_hint,
-            llm_executor=self.llm
-        )
-        rag_query = rag_query_list[0] if rag_query_list else statement_text
-
-        # ==================== 4. LLM Evaluator Setup ====================
-        llm_evaluator_to_use = self.llm_evaluator
-        if level <= 2:
-            llm_evaluator_to_use = evaluate_with_llm_low_level
-
-        # ==================== 5. RAG Retrieval ====================
-        retrieval_start = time.time()
-        try:
-            retrieval_result = self.rag_retriever(
-                query=rag_query_list,
-                doc_type=EVIDENCE_DOC_TYPES,
-                enabler=self.enabler_id,
-                sub_id=sub_id,
-                level=level,
-                vectorstore_manager=vectorstore_manager,
-                mapped_uuids=mapped_stable_doc_ids,
-                priority_docs_input=priority_docs
+                priority_docs_input=priority_docs,
+                sequential_chunk_uuids=sequential_chunk_uuids
             )
         except Exception as e:
             logger.error(f"RAG retrieval failed for {sub_id} L{level}: {e}")
@@ -1909,23 +1771,31 @@ class SEAMPDCAEngine:
 
         # ==================== 6. ดึงหลักฐานจาก Level ก่อนหน้า (เต็ม ๆ มี text) ====================
         try:
-            previous_levels_raw = self._collect_previous_level_evidences(sub_id)
+            previous_levels_raw = self._collect_previous_level_evidences(
+                sub_id, 
+                current_level=level, 
+                vectorstore_manager=vectorstore_manager
+            )
         except Exception as e:
             logger.error(f"Failed to collect previous evidences: {e}")
             previous_levels_raw = {}
 
-        # สร้าง list ของ evidence dicts เต็ม ๆ (ที่มี text, doc_id, filename)
         previous_levels_evidence_full = []
-        previous_levels_filename_map = {}  # {doc_id: filename} สำหรับ fallback
+        previous_levels_filename_map = {} 
 
         for ev_list in previous_levels_raw.values():
             for ev in ev_list:
                 doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
+                # 🚩 (6) ยังคงกรอง HASH- ID ออกตาม Business Logic
                 if not doc_id or str(doc_id).startswith("HASH-"):
                     continue
-                previous_levels_evidence_full.append(ev)
+                
+                # if ev.get("text"):
+                previous_levels_evidence_full.append(ev) 
+                
                 filename = ev.get("source_filename") or ev.get("source") or ev.get("filename") or "UNKNOWN"
                 previous_levels_filename_map[doc_id] = filename
+
 
         # ==================== 6a. Sequential fallback (เพิ่มหลักฐานเก่าที่ขาด) ====================
         if level > 1 and self.is_sequential:
@@ -1940,7 +1810,7 @@ class SEAMPDCAEngine:
         channels = build_multichannel_context_for_level(
             level=level,
             top_evidences=top_evidences,
-            previous_levels_evidence=previous_levels_evidence_full,  # ส่งเต็ม ๆ มี text
+            previous_levels_evidence=previous_levels_evidence_full,
             max_main_context_tokens=3000,
             max_summary_sentences=4
         )
@@ -1983,27 +1853,48 @@ class SEAMPDCAEngine:
 
         # ==================== 11. บันทึก Evidence Map (เฉพาะ PASS) ====================
         temp_map_for_level = None
+        
+        logger.critical(f"🧭 DEBUG: Entering Evidence Save Logic for {sub_id}.L{level}. Passed: {is_passed}, Top Evidences: {len(top_evidences) if top_evidences else 0}") 
+
+
         if is_passed and top_evidences:
             seen = set()
             evidence_entries = []
+            
+            discarded_ids = []
+
             for ev in top_evidences:
-                doc_id = ev.get("doc_id")
-                if not doc_id or str(doc_id).startswith("HASH-") or doc_id in seen:
+                # 🚩 (11) การแก้ไขเพื่อดึง doc_id: ใช้ chunk_uuid หาก doc_id เป็น None/ว่าง
+                doc_id = ev.get("doc_id") or ev.get("chunk_uuid") 
+                
+                # 🚩 Logic การกรอง: ต้องมีค่า, ต้องไม่ใช่ HASH- ID (ตามที่คุณร้องขอ), ต้องไม่ซ้ำ
+                is_valid_id = bool(doc_id) and not str(doc_id).startswith("HASH-") and doc_id not in seen
+                
+                if not is_valid_id:
+                    # แก้ไขการแสดงผลเพื่อแสดงเหตุผลการกรอง
+                    is_hash = str(doc_id).startswith("HASH-") if doc_id else "N/A"
+                    discarded_ids.append(f"'{doc_id}' (Invalid: {not bool(doc_id)}, Hash: {is_hash}, Seen: {doc_id in seen if doc_id else 'N/A'})")
                     continue
+                    
                 seen.add(doc_id)
+                
                 filename = (
                     ev.get("source_filename") or
                     ev.get("source") or
                     ev.get("filename") or
                     previous_levels_filename_map.get(doc_id) or
-                    "UNKNOWN_FILE"
+                    "UNKNOWN_FILE.pdf"
                 )
+                
                 evidence_entries.append({
                     "doc_id": doc_id,
                     "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename,
                     "mapper_type": "AI_GENERATED",
                     "timestamp": datetime.now().isoformat()
                 })
+            
+            logger.critical(f"🧭 DEBUG: Discarded {len(discarded_ids)}/{len(top_evidences)} Evidences for L{level}. Sample: {discarded_ids[:5]}...")
+            logger.critical(f"🧭 DEBUG: Evidence entries prepared for L{level}: {len(evidence_entries)}")
 
             if evidence_entries:
                 key = f"{sub_id}.L{level}"
@@ -2030,16 +1921,27 @@ class SEAMPDCAEngine:
         # ==================== 12. สร้างผลลัพธ์สุดท้าย ====================
         unique_refs = {}
         for ev in top_evidences:
-            doc_id = ev.get("doc_id")
-            if doc_id and not str(doc_id).startswith("HASH-"):
-                filename = previous_levels_filename_map.get(doc_id) or "UNKNOWN"
+            # 🚩 ใช้ Logic การดึง doc_id แบบเดียวกับส่วนที่ 11
+            doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
+            
+            # NOTE: การแสดงผลลัพธ์สุดท้ายยังคงไม่ใช้ HASH- ID
+            if doc_id and not str(doc_id).startswith("HASH-"): 
+                filename = (
+                    ev.get("source_filename") or
+                    ev.get("source") or
+                    ev.get("filename") or
+                    ev.get("metadata", {}).get("source") or
+                    previous_levels_filename_map.get(doc_id) or
+                    "UNKNOWN_FILE.pdf"
+                )
+
                 if doc_id not in unique_refs:
                     unique_refs[doc_id] = {
                         "doc_id": doc_id,
                         "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename
                     }
 
-        # ==================== เพิ่ม Evidence Strength & AI Confidence (ฆ่า Consultant ได้ใน 1 วินาที) ====================
+        # ==================== เพิ่ม Evidence Strength & AI Confidence ====================
         direct_count = len([d for d in top_evidences if d.get("pdca_tag") in ["P", "D", "C", "A"]])
         total_chunks = len(top_evidences)
         pdca_coverage = len({d.get("pdca_tag") for d in top_evidences if d.get("pdca_tag")})
@@ -2051,9 +1953,11 @@ class SEAMPDCAEngine:
         )
 
         ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
-                       "MEDIUM" if evidence_strength >= 5.5 else "LOW"
+                    "MEDIUM" if evidence_strength >= 5.5 else "LOW"
 
+        # NOTE: ใช้ 'evidence_entries' ใน locals() เป็นตัวตรวจสอบความปลอดภัยสำหรับ scope
         evidence_count_for_level = len(evidence_entries) if is_passed and 'evidence_entries' in locals() else 0
+
 
         final_result = {
             "sub_criteria_id": sub_id,
@@ -2070,7 +1974,7 @@ class SEAMPDCAEngine:
             "retrieval_duration_s": round(retrieval_duration, 2),
             "llm_duration_s": round(llm_duration, 2),
             "top_evidences_ref": list(unique_refs.values()),
-            "temp_map_for_level": temp_map_for_level,  # สำหรับ worker ส่งกลับ
+            "temp_map_for_level": temp_map_for_level,
             "evidence_strength": round(evidence_strength, 1),
             "ai_confidence": ai_confidence,
             "evidence_count": evidence_count_for_level,
@@ -2080,44 +1984,3 @@ class SEAMPDCAEngine:
 
         logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f})")
         return final_result
-    
-    def _export_results(self, results: dict, enabler: str, sub_criteria_id: str, target_level: int, export_dir: str = "assessment_results") -> str:
-        """
-        Exports the final assessment results to a JSON file.
-        
-        Args:
-            results: The dictionary containing the final assessment summary and results.
-            enabler: The enabler ID (e.g., KM).
-            sub_criteria_id: The specific sub-criteria ID being run (e.g., 2.2).
-            target_level: The target level for the assessment.
-            export_dir: The directory to save the output file.
-            
-        Returns:
-            The path to the saved JSON file.
-        """
-        if not os.path.exists(export_dir):
-            os.makedirs(export_dir)
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # สร้างชื่อไฟล์: assessment_results_KM_2.2_YYYYMMDD_HHMMSS.json
-        file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
-        full_path = os.path.join(export_dir, file_name)
-
-        # Note: results dict should contain 'summary' and 'sub_criteria_results' keys
-        # Update summary fields based on the engine data
-        results['summary']['enabler'] = enabler
-        results['summary']['sub_criteria_id'] = sub_criteria_id
-        results['summary']['target_level'] = target_level
-        results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
-
-        try:
-            with open(full_path, 'w', encoding='utf-8') as f:
-                # ใช้ indent=4 เพื่อให้อ่านง่าย
-                json.dump(results, f, ensure_ascii=False, indent=4)
-            
-            logging.info(f"💾 Successfully exported final results to: {full_path}")
-            return full_path
-        
-        except Exception as e:
-            logging.error(f"❌ Failed to export results to {full_path}: {e}")
-            return ""
