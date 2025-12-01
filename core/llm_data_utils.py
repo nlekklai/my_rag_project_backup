@@ -408,99 +408,101 @@ def _summarize_evidence_list_short(evidences: list, max_sentences: int = 3) -> s
 
 
 # ----------------------------------------------------
-# Main function: build_multichannel_context_for_level
+# ULTIMATE FINAL VERSION: build_multichannel_context_for_level
+# รับทั้ง evidence dicts เต็ม ๆ และรองรับของเก่าด้วย
 # ----------------------------------------------------
 def build_multichannel_context_for_level(
     level: int,
     top_evidences: list,
-    previous_levels_map: dict,
+    previous_levels_map: dict | None = None,                    # เก่า: {key: list[dict]} หรือ {doc_id: filename}
+    previous_levels_evidence: list | None = None,               # ใหม่: list[dict] ที่มี text เต็ม ๆ
     max_main_context_tokens: int = 3000,
-    max_summary_sentences: int = 3
+    max_summary_sentences: int = 4
 ) -> dict:
 
-    # --- 1) Baseline: previous L1/L2 ---
-    baseline_evidence = []
-    for key, items in previous_levels_map.items():
-        # Case 1: key is level number (int) and items is list of dicts
-        if isinstance(key, int) and key <= 2 and isinstance(items, list):
-            baseline_evidence.extend(items)
-        # Case 2: key is UUID (str) and items is filename (str)
-        elif isinstance(key, str) and isinstance(items, str):
-            baseline_evidence.append({"text": "", "source_filename": items})
+    # --- 1) Baseline: ใช้ previous_levels_evidence เป็นหลัก (มี text!) ---
+    baseline_evidence = previous_levels_evidence or []
+
+    # Fallback เก่า: ถ้ายังส่งแบบเดิมมา (เช่นจาก _run_single_assessment เก่า)
+    if not baseline_evidence and previous_levels_map:
+        for items in previous_levels_map.values():
+            if isinstance(items, list):
+                baseline_evidence.extend(items)
+            elif isinstance(items, dict) and (items.get("text") or items.get("content")):
+                baseline_evidence.append(items)
+
+    # กรองเฉพาะที่มี text
+    summarizable_baseline = [
+        item for item in baseline_evidence
+        if isinstance(item, dict) and (item.get("text") or item.get("content"))
+    ]
+
+    # ถ้าไม่มีจริง ๆ ให้ใส่ข้อความแทน
+    if not summarizable_baseline:
+        summarizable_baseline = [{"text": "ไม่มีหลักฐานจาก Level ก่อนหน้า"}]
 
     baseline_summary = _summarize_evidence_list_short(
-        baseline_evidence, max_sentences=max_summary_sentences
+        summarizable_baseline,
+        max_sentences=max_summary_sentences
     )
 
-    # --- 2) Direct / Aux classification ---
+    # --- 2) Direct / Aux classification (เหมือนเดิม) ---
     direct, aux = [], []
     K_MAIN = 5
-    for ev in top_evidences:
-        if isinstance(ev, dict):
-            tag = ev.get("pdca_tag") or ev.get("PDCA") or "Other"
-            tag = tag.upper()
-        else:
-            tag = "OTHER"
 
-        if level >= 3 and tag in ("C", "A"):
+    for ev in top_evidences:
+        if not isinstance(ev, dict):
+            aux.append(ev)
+            continue
+        tag = (ev.get("pdca_tag") or ev.get("PDCA") or "P").upper()
+        if tag in ("P", "D", "C", "A"):
             direct.append(ev)
         else:
             aux.append(ev)
 
-    # Fill direct up to K_MAIN from aux if needed
     if len(direct) < K_MAIN:
-        take = K_MAIN - len(direct)
-        direct.extend(aux[:take])
-        aux = aux[take:]
+        need = K_MAIN - len(direct)
+        direct.extend(aux[:need])
+        aux = aux[need:]
 
-    # --- 3) Join text chunks into string ---
+    direct_for_context = direct[:K_MAIN]
+
+    # --- 3) Join text ---
     def _join_chunks(chunks, max_chars):
         out, used = [], 0
         for c in chunks:
-            if isinstance(c, dict):
-                txt = c.get("text") or c.get("content") or str(c)
-            else:
-                txt = str(c)
+            txt = (c.get("text") or c.get("content") or "").strip()
             if not txt:
                 continue
-            piece = txt.strip()
-            if used + len(piece) > max_chars:
-                remaining = max_chars - used
-                if remaining <= 0:
-                    break
-                out.append(piece[:remaining] + "...")
-                used += remaining
+            if used + len(txt) > max_chars:
+                remain = max_chars - used
+                if remain > 0:
+                    out.append(txt[:remain] + "...")
                 break
-            out.append(piece)
-            used += len(piece)
+            out.append(txt)
+            used += len(txt)
         return "\n\n".join(out)
 
-    direct_context = _join_chunks(direct, max_main_context_tokens)
-    aux_summary = _summarize_evidence_list_short(aux, max_sentences=3)
+    direct_context = _join_chunks(direct_for_context, max_main_context_tokens)
+    aux_summary = _summarize_evidence_list_short(aux, max_sentences=3) if aux else "ไม่มีหลักฐานรอง"
 
-    # --- 4) Prepare debug metadata ---
+    # --- 4) Debug ---
     debug_meta = {
-        "direct_count": len(direct),
+        "level": level,
+        "direct_count": len(direct_for_context),
         "aux_count": len(aux),
-        "baseline_count": len(baseline_evidence),
-        "direct_files": [
-            d.get("source_filename") if isinstance(d, dict) else str(d)
-            for d in direct
-        ][:10],
-        "aux_files": [
-            d.get("source_filename") if isinstance(d, dict) else str(d)
-            for d in aux
-        ][:10],
+        "baseline_count": len(summarizable_baseline),
+        "baseline_source": "previous_levels_evidence" if previous_levels_evidence else "fallback_map",
     }
 
-    # --- 5) Return assembled context ---
+    logger.info(f"Context L{level} → Direct:{len(direct_for_context)} | Aux:{len(aux)} | Baseline:{len(summarizable_baseline)}")
+
     return {
         "baseline_summary": baseline_summary,
         "direct_context": direct_context,
         "aux_summary": aux_summary,
         "debug_meta": debug_meta,
     }
-
 
 # -------------------- Query Enhancement Functions --------------------
 def enhance_query_for_statement(
@@ -1056,19 +1058,39 @@ def create_structured_action_plan(
     max_retries: int = 3
 ) -> List[Dict[str, Any]]:
 
-    # ถ้าไม่มี failed statement → สร้าง template default
+    # --- 1. Handle Case: No failed statement (Optimization/Maintenance Focus) ---
     if not failed_statements:
+        
+        # 🟢 Logic สำหรับ Level 5: เน้นการปรับปรุงอย่างต่อเนื่อง (Optimization)
+        if target_level == 5:
+            recommendation_text = "Focus on continuous process optimization and innovation using quantitative methods (e.g., Causal Analysis and Resolution)."
+            goal_text = f"Sustain and Optimize Level 5 for {sub_id}"
+            statement_id = "OPTIMIZE_L5"
+        
+        # Logic สำหรับ Level อื่นๆ ที่ผ่านแล้ว: เน้นการรักษาระดับและการเตรียมตัวขึ้น Level ถัดไป
+        elif target_level < 5:
+             recommendation_text = f"Maintain Level {target_level} status and prepare for the next level (L{target_level+1})."
+             goal_text = f"Sustain Level {target_level} for {sub_id}"
+             statement_id = "MAINTAIN"
+        
+        # Default Template กรณีอื่นๆ ที่ไม่ควรเกิดขึ้น
+        else:
+             recommendation_text = "Review documentation and implement missing practices."
+             goal_text = f"Reach Level {target_level} for {sub_id}"
+             statement_id = "TEMPLATE"
+
+
         return [{
             "Phase": f"L{target_level}",
-            "Goal": f"Reach Level {target_level} for {sub_id}",
+            "Goal": goal_text,
             "Actions": [
-                {"Statement_ID": "TEMPLATE", "Recommendation": "Review documentation and implement missing practices."}
+                {"Statement_ID": statement_id, "Recommendation": recommendation_text}
             ]
         }]
 
+    # --- 2. Handle Case: LLM Missing (Fallback) ---
     if llm_executor is None:
         logger.error("LLM instance is None. Cannot create action plan.")
-        # ใช้ template แทน fallback
         return [{
             "Phase": f"L{target_level}",
             "Goal": f"Reach Level {target_level} for {sub_id}",
@@ -1077,11 +1099,11 @@ def create_structured_action_plan(
             ]
         }]
 
-    # สร้าง JSON schema
+    # --- 3. Prepare Prompts and Schema (For Failed Statements) ---
     try:
         schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
     except Exception:
-        schema_json = "{}"
+        schema_json = '{"Phase": "string", "Goal": "string", "Actions": [{"Statement_ID": "string", "Recommendation": "string"}]}'
 
     system_prompt = SYSTEM_ACTION_PLAN_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nRespond ONLY with a valid JSON ARRAY."
 
@@ -1089,37 +1111,55 @@ def create_structured_action_plan(
     for s in failed_statements:
         st = (s.get('statement','') or '')[:1000]
         rs = (s.get('reason','') or '')[:500]
-        statements_text.append(f"Level:{s.get('level','N/A')}\nStatement:{st}\nReason:{rs}")
+        # 🟢 ปรับปรุงการ Format prompt ให้ LLM ทำงานง่ายขึ้น
+        statements_text.append(f"Statement ID: {s.get('sub_id','N/A')}, Level: {s.get('level','N/A')}\nStatement: {st}\nReason: {rs}")
 
     human_prompt = ACTION_PLAN_PROMPT.format(
         sub_id=sub_id, 
         target_level=target_level, 
-        failed_statements_list="\n\n".join(statements_text)
+        failed_statements_list="\n\n---\n\n".join(statements_text)
     )
 
+    # --- 4. Invoke LLM and Parse Response ---
     for attempt in range(max_retries):
         try:
             raw = _fetch_llm_response(system_prompt, human_prompt, 1, llm_executor=llm_executor)
             logger.debug(f"[ActionPlan RAW LLM OUTPUT]\n{raw}")
-            parsed = _extract_json_array_for_action_plan(raw) or []
-            if isinstance(parsed, dict): parsed = [parsed]
-            logger.debug(f"[ActionPlan PARSED]\n{parsed}")
+            
+            # ใช้ฟังก์ชัน Helper ที่แข็งแรงในการดึง JSON Array
+            parsed_list = _extract_json_array_for_action_plan(raw) or []
 
+            if not isinstance(parsed_list, list):
+                if isinstance(parsed_list, dict):
+                    parsed_list = [parsed_list]
+                else:
+                    parsed_list = []
+            
             valid_items = []
-            for item in parsed:
+            for item in parsed_list:
                 if not isinstance(item, dict): continue
-                item.setdefault("Phase",f"L{target_level}")
+                
+                # เติมค่า Default
+                item.setdefault("Phase", f"L{target_level}")
                 item.setdefault("Goal", f"Reach Level {target_level} for {sub_id}")
-                item.setdefault("Actions", [{"Statement_ID": "TEMPLATE", "Recommendation": "Review practices."}])
+                
+                # ตรวจสอบและเติม Default Actions
+                actions = item.get("Actions")
+                if not isinstance(actions, list) or not actions:
+                    item["Actions"] = [{"Statement_ID": "UNKNOWN", "Recommendation": "Implement necessary improvements."}]
+                
                 valid_items.append(item)
 
-            if valid_items: return valid_items
+            if valid_items: 
+                logger.info(f"Successfully generated Action Plan with {len(valid_items)} top-level items.")
+                return valid_items
 
         except Exception as e:
-            logger.warning(f"Action plan attempt {attempt+1} failed: {e}")
+            logger.warning(f"Action plan attempt {attempt+1} failed: {e.__class__.__name__}: {e}")
             time.sleep(0.5)
 
-    # Fallback template ถ้า LLM fail ทุกครั้ง
+    # --- 5. Final Fallback ---
+    logger.error(f"Action plan generation failed after {max_retries} attempts. Returning hardcoded template.")
     return [{
         "Phase": f"L{target_level}",
         "Goal": f"Reach Level {target_level} for {sub_id}",
@@ -1134,24 +1174,27 @@ def _extract_json_array_for_action_plan(llm_response: str):
     Not PDCA logic. No score, reason, PDCA fields required.
     """
     try:
-        # หา JSON array ตรง ๆ
+        # หา JSON array ตรง ๆ โดยการหาตำแหน่งของ '[' แรก และ ']' สุดท้าย
         start = llm_response.find("[")
         end = llm_response.rfind("]") + 1
 
+        # หากไม่พบเครื่องหมายเปิด/ปิด JSON Array
         if start == -1 or end == -1:
             raise ValueError("JSON array not found.")
 
+        # ตัดเอาเฉพาะส่วนที่เป็น JSON string
         json_str = llm_response[start:end]
         data = json.loads(json_str)
 
-        # ต้องเป็น list
+        # ต้องเป็น list เท่านั้น
         if not isinstance(data, list):
             return []
 
-        # list ของ dict เท่านั้น
+        # กรองเพื่อให้แน่ใจว่าเป็น list ของ dictionary เท่านั้น
         cleaned = [x for x in data if isinstance(x, dict)]
         return cleaned
 
     except Exception as e:
+        # หากเกิดข้อผิดพลาดในการโหลด JSON (เช่น Syntax Error)
         logger.error(f"[ActionPlan JSON Parse Error] {e}")
         return []
