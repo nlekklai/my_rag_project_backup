@@ -8,45 +8,44 @@ from fastapi.middleware.cors import CORSMiddleware
 # -----------------------------
 # Environment setup
 # -----------------------------
-os.environ.pop("TRANSFORMERS_CACHE", None)  # ลบตัวแปรเก่า
+os.environ.pop("TRANSFORMERS_CACHE", None)
 os.environ["HF_HOME"] = os.path.expanduser("~/.cache/huggingface")
 
 # -----------------------------
 # Logging config
 # -----------------------------
 logging.basicConfig(
-    level=logging.INFO,  # DEBUG สำหรับรายละเอียดมากขึ้น
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger("KM-RAG-API")
 
-# เพิ่ม level ให้ router module ชัดเจน
-logging.getLogger("routers.llm_router").setLevel(logging.INFO)
-logging.getLogger("routers.upload_router").setLevel(logging.INFO)
-# logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
+# เปิด log ให้เห็น assessment ด้วย (แนะนำ)
+logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
 
 # -----------------------------
-# Import Routers
+# Import Routers ← เพิ่มบรรทัดนี้!!!
 # -----------------------------
 from routers.upload_router import upload_router
 from routers.llm_router import llm_router
-# from routers.assessment_router import assessment_router
+from routers.assessment_router import assessment_router   # เพิ่มบรรทัดนี้!
 
 # -----------------------------
 # Lifespan
 # -----------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 KM-RAG API starting up...")
+    logger.info("KM-RAG API starting up...")
     yield
-    logger.info("🛑 KM-RAG API shutting down...")
+    logger.info("KM-RAG API shutting down...")
 
 # -----------------------------
 # FastAPI App
 # -----------------------------
 app = FastAPI(
-    title="KM RAG API",
+    title="SEAM Insight API",
+    description="ระบบประเมินวุฒิภาวะการจัดการความรู้ด้วย AI",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -56,18 +55,18 @@ app = FastAPI(
 # -----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ปรับเป็น domain ที่ต้องการได้
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # -----------------------------
-# Routers
+# Routers ← เพิ่มบรรทัดนี้!!!
 # -----------------------------
 app.include_router(upload_router)
 app.include_router(llm_router)
-# app.include_router(assessment_router)
+app.include_router(assessment_router)   # เพิ่มบรรทัดนี้!
 
 # -----------------------------
 # Health check endpoints
@@ -78,4 +77,4 @@ async def health_check():
 
 @app.get("/api/status")
 async def api_status():
-    return {"status": "ok", "message": "KM RAG API is running"}
+    return {"status": "ok", "message": "SEAM Insight API is running"}

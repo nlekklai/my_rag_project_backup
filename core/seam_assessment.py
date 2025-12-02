@@ -18,6 +18,9 @@ from core.retry_policy import RetryPolicy, RetryResult
 from copy import deepcopy
 import tempfile
 import shutil
+# from json_extractor import _robust_extract_json
+from .json_extractor import _robust_extract_json
+from filelock import FileLock  # ต้องติดตั้ง: pip install filelock
 
 
 # -------------------- PATH SETUP & IMPORTS --------------------
@@ -693,11 +696,12 @@ class SEAMPDCAEngine:
     # -------------------- Persistent Mapping Handlers (FIXED) --------------------
     def _process_temp_map_to_final_map(self, temp_map: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Converts the temporary map into the final map format for saving.
-        temp_map: optional external map (worker-safe)
+        Converts the temporary map into the final map format for saving, 
+        and filters out temporary/unresolvable evidence IDs.
         """
         working_map = temp_map or self.temp_map_for_save or {}
         final_map_for_save = {}
+        total_cleaned_items = 0
 
         for sub_level_key, evidence_list in working_map.items():
             if isinstance(evidence_list, dict):
@@ -710,17 +714,29 @@ class SEAMPDCAEngine:
             seen_ids = set()
             for ev in evidence_list:
                 doc_id = ev.get("doc_id")
-                if not doc_id or doc_id.startswith("HASH-") or doc_id in seen_ids:
+                
+                if not doc_id:
                     continue
+                
+                # 1. FIX: กรอง ID ชั่วคราว (TEMP-) ออก
+                if doc_id.startswith("TEMP-"):
+                    # ID ที่ไม่สามารถแปลงกลับเป็น Stable Document ID ได้ ถือว่าใช้ไม่ได้
+                    logger.debug(f"[EVIDENCE] Filtering out unresolvable TEMP- ID: {doc_id} for {sub_level_key}.")
+                    continue 
+                
+                # 2. Logic เดิม: กรอง HASH- (Placeholder) และรายการซ้ำ
+                if doc_id.startswith("HASH-") or doc_id in seen_ids:
+                    continue
+                    
                 seen_ids.add(doc_id)
                 clean_list.append(ev)
+                total_cleaned_items += 1 
 
             if clean_list:
                 final_map_for_save[sub_level_key] = clean_list
 
-        logger.info(f"[EVIDENCE] Processed {len(final_map_for_save)} sub-level keys with total {sum(len(v) for v in final_map_for_save.values())} evidence items")
+        logger.info(f"[EVIDENCE] Processed {len(final_map_for_save)} sub-level keys with total {total_cleaned_items} evidence items")
         return final_map_for_save
-
 
     def _clean_map_for_json(self, data: Union[Dict, List, Set, Any]) -> Union[Dict, List, Any]:
         """Recursively converts objects that cannot be serialized (like sets) into lists."""
@@ -732,81 +748,141 @@ class SEAMPDCAEngine:
             return [self._clean_map_for_json(v) for v in data]
         return data
 
+    def _clean_temp_entries(self, evidence_map: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
+        """
+        กรอง TEMP-, HASH-, และ Unknown ออกจาก evidence map ทั้งหมด
+        ใช้ทั้งตอน merge และก่อน save เพื่อความสะอาด 100%
+        """
+        if not evidence_map:
+            return {}
+
+        cleaned_map = {}
+        total_removed = 0
+        total_unknown_fixed = 0
+
+        for key, entries in evidence_map.items():
+            valid_entries = []
+            for entry in entries:
+                doc_id = entry.get("doc_id", "")
+
+                # 1. กรอง TEMP- และ HASH- ออกเด็ดขาด
+                if str(doc_id).startswith("TEMP-") or str(doc_id).startswith("HASH-"):
+                    total_removed += 1
+                    continue
+
+                # 2. ถ้า doc_id ว่าง หรือไม่มีเลย → ทิ้ง
+                if not doc_id or doc_id == "Unknown":
+                    total_removed += 1
+                    continue
+
+                # 3. แก้ filename ที่เป็น Unknown / None / ว่าง
+                filename = entry.get("filename", "").strip()
+                if not filename or filename == "Unknown" or filename.lower() == "unknown_file.pdf":
+                    # ใช้ doc_id สั้น ๆ ตั้งชื่อชั่วคราว (ดูดีกว่าว่างเปล่า)
+                    short_id = doc_id[:8]
+                    entry["filename"] = f"เอกสารอ้างอิง_{short_id}.pdf"
+                    total_unknown_fixed += 1
+                else:
+                    # เอา path ออก ให้เหลือแค่ชื่อไฟล์
+                    entry["filename"] = os.path.basename(filename)
+
+                valid_entries.append(entry)
+
+            if valid_entries:
+                cleaned_map[key] = valid_entries
+            else:
+                logger.debug(f"[CLEAN] Key {key} กลายเป็นว่างหลังกรอง → ถูกลบออก")
+
+        logger.info(f"[CLEANUP] ลบ TEMP-/HASH- ออก {total_removed} รายการ | "
+                    f"แก้ Unknown filename {total_unknown_fixed} รายการ | "
+                    f"เหลือ {len(cleaned_map)} keys")
+
+        return cleaned_map
+
+
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
         """
-        Saves the evidence map to a persistent JSON file using atomic write.
-        Ensures directory exists, validates data, and provides verbose debug logging.
+        Saves the evidence map to a persistent JSON file using atomic write + FileLock.
         """
         map_file_path = self.evidence_map_path
+        lock_path = map_file_path + ".lock"
         tmp_path = None
 
         logger.info(f"[EVIDENCE] Evidence map target path: {map_file_path}")
 
         try:
-            # ใช้ map ที่ส่งเข้ามา หรือ merge กับ existing
-            if map_to_save is not None:
-                final_map_to_write = map_to_save
-                logger.debug("[EVIDENCE] Using passed map_to_save for immediate persistence write.")
-            else:
-                existing_map = self._load_evidence_map(is_for_merge=True) or {}
-                cleaned_map = self._process_temp_map_to_final_map() or {}
-                for key, ev_list in cleaned_map.items():
-                    if key not in existing_map:
-                        existing_map[key] = ev_list
-                    else:
-                        if not isinstance(existing_map[key], list):
-                            logger.warning(f"[EVIDENCE] Map key '{key}' in existing_map is not a list, converting to list.")
-                            existing_map[key] = [existing_map[key]] if existing_map[key] else []
-                        existing_ids = {x.get("doc_id") for x in existing_map[key] if isinstance(x, dict)}
-                        for ev in ev_list:
-                            if isinstance(ev, dict) and ev.get("doc_id") not in existing_ids:
-                                existing_map[key].append(ev)
-                final_map_to_write = existing_map
+            # 1. ใช้ FileLock ป้องกันการเขียนพร้อมกัน
+            logger.debug(f"[EVIDENCE] Acquiring file lock: {lock_path}")
+            with FileLock(lock_path, timeout=60):
+                logger.debug("[EVIDENCE] Lock acquired. Proceeding with save...")
 
-            # ตรวจสอบ map ก่อนเขียน
-            if not final_map_to_write:
-                logger.warning("[EVIDENCE] final_map_to_write is empty. Skipping save.")
-                return
+                # === เริ่ม FIX LOGIC MERGE & FILTER ===
+                if map_to_save is not None:
+                    # กรณีมีการส่ง map เข้ามาโดยตรง (ใช้กรณีพิเศษ)
+                    final_map_to_write = map_to_save
+                    logger.debug("[EVIDENCE] Using passed map_to_save. Skipping deep merge/filter logic.")
+                else:
+                    # 1. โหลด Map ที่มีอยู่เดิมจาก Disk (ตอนนี้คือ 3.1.L1-L5)
+                    existing_map_from_disk = self._load_evidence_map(is_for_merge=True) or {}
+                    
+                    # 2. Map ที่เพิ่งรันเสร็จในหน่วยความจำ (Worker Process เพิ่งอัปเดต 3.1.L1-L5)
+                    map_from_runtime = deepcopy(self.evidence_map)
+                    
+                    # 3. [FIXED] ผสาน (Merge): เริ่มต้นด้วย Map เก่า และรวม Map ปัจจุบัน เข้าไป
+                    # final_map_to_write จะมีข้อมูลทั้งหมด (3.1 + 1.1)
+                    final_map_to_write = existing_map_from_disk
+                    final_map_to_write.update(map_from_runtime) # 👈 การแก้ไขหลัก: รวม Map ทั้งหมด
 
-            logger.info(f"[DEBUG] Preparing to write evidence map to: {map_file_path}")
-            logger.info(f"[DEBUG] Map keys count: {len(final_map_to_write)}, sample keys: {list(final_map_to_write.keys())[:5]}")
-            for k, v in list(final_map_to_write.items())[:5]:
-                sample_doc_ids = [ev.get("doc_id") for ev in v[:5]]
-                logger.debug(f"[DEBUG] Key: {k}, sample doc_ids: {sample_doc_ids}, total items: {len(v)}")
+                    # 4. [FIXED] กรอง TEMP- ID จาก Map ที่ถูกรวมแล้ว
+                    final_map_to_write = self._process_temp_map_to_final_map(final_map_to_write)
+                    # หลังจาก merge เสร็จ
+                    final_map_to_write = self._clean_temp_entries(final_map_to_write)
+                    
+                    logger.debug(f"[DEBUG] Final Map keys count: {len(final_map_to_write.keys())}") # 👈 Log ยืนยัน
+                # === สิ้นสุด FIX LOGIC MERGE & FILTER ===
+                
+                if not final_map_to_write:
+                    logger.warning("[EVIDENCE] final_map_to_write is empty. Skipping save.")
+                    return
 
-            # แปลง data เป็น serializable
-            map_to_write_cleaned = self._clean_map_for_json(deepcopy(final_map_to_write))
-            target_dir = os.path.dirname(map_file_path)
-            if not target_dir:
-                raise ValueError(f"[EVIDENCE] Invalid evidence_map_path: '{map_file_path}'")
-            if not os.path.exists(target_dir):
+                # เตรียม directory
+                target_dir = os.path.dirname(map_file_path)
                 os.makedirs(target_dir, exist_ok=True)
-                logger.warning(f"[EVIDENCE] Created directory: {target_dir}")
 
-            # สร้าง temp file ก่อน move
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding="utf-8", dir=target_dir) as tmp_file:
-                json.dump(map_to_write_cleaned, tmp_file, indent=4, ensure_ascii=False)
-                tmp_path = tmp_file.name
-            if not os.path.exists(tmp_path):
-                raise IOError(f"[EVIDENCE] Temp file creation failed: {tmp_path}")
-            logger.info(f"[DEBUG] Temp file created: {tmp_path}, size: {os.path.getsize(tmp_path)} bytes")
-            logger.debug(f"[DEBUG] Temp file sample content: {json.dumps(map_to_write_cleaned, indent=2)[:500]}...")
+                # เขียนไฟล์ชั่วคราวก่อน (Atomic Write)
+                with tempfile.NamedTemporaryFile(
+                    mode='w', delete=False, encoding="utf-8", dir=target_dir
+                ) as tmp_file:
+                    map_to_write_cleaned = self._clean_map_for_json(final_map_to_write)
+                    json.dump(map_to_write_cleaned, tmp_file, indent=4, ensure_ascii=False)
+                    tmp_path = tmp_file.name
 
-            # Move temp file ไป path จริง
-            shutil.move(tmp_path, map_file_path)
-            logger.info(f"[EVIDENCE] ✅ Evidence map saved successfully to: {map_file_path}")
-            logger.info(f"[DEBUG] Final file size: {os.path.getsize(map_file_path)} bytes")
+                # ย้ายไฟล์จริง (atomic)
+                shutil.move(tmp_path, map_file_path)
+                tmp_path = None
 
+                logger.info(f"[EVIDENCE] Evidence map saved successfully to: {map_file_path}")
+                logger.info(f"[DEBUG] Final file size: {os.path.getsize(map_file_path)} bytes")
+                
+                items_count = sum(len(v) for v in final_map_to_write.values())
+                logger.info(f"Persisted final evidence map | Keys: {len(final_map_to_write.keys())} | Items: {items_count} | Size: ~{(os.path.getsize(map_file_path) / 1024):.1f} KB")
+
+        except TimeoutError:
+            logger.critical(f"[EVIDENCE] Could not acquire lock within 60s: {lock_path}")
+            logger.critical("[EVIDENCE] Another process is holding the lock — possible stuck process!")
+            raise
         except Exception as e:
-            logger.critical("🚨 FATAL FILE WRITE ERROR - CHECK LOG TRACE")
-            logger.exception(f"[EVIDENCE] ❌ Failed to save map at {map_file_path}: {e}")
+            logger.critical("FATAL FILE WRITE ERROR - CHECK LOG TRACE")
+            logger.exception(f"[EVIDENCE] Failed to save map: {e}")
+            raise
+        finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
-                    logger.warning(f"[EVIDENCE] Cleaned up temporary file: {tmp_path}")
-                except Exception as clean_e:
-                    logger.critical(f"[EVIDENCE] Failed to clean up temp file: {clean_e}")
-
+                    logger.debug(f"[EVIDENCE] Cleaned up temp file: {tmp_path}")
+                except Exception:
+                    pass
+            logger.debug(f"[EVIDENCE] File lock released: {lock_path}")
 
     def _load_evidence_map(self, is_for_merge: bool = False):
         """
@@ -884,67 +960,77 @@ class SEAMPDCAEngine:
         """
         ใช้ LLM ในการจัดประเภทข้อความหลักฐานให้อยู่ในระยะใดระยะหนึ่งของ PDCA หรือ 'Other'
         """
-        # 🟢 กำหนดเฟส PDCA
+        # กำหนดเฟส PDCA
         pdca_phases_th = ["วางแผน", "ปฏิบัติ", "ตรวจสอบ", "ปรับปรุง"]
-        pdca_phases_en = ["Plan", "Do", "Check", "Act"]
         
-        # 1. 🛠️ System Prompt ภาษาไทย: กำหนดบทบาทและรูปแบบผลลัพธ์
+        # 1. System Prompt ภาษาไทย: บังคับให้ตอบ JSON 100%
         system_prompt = (
-            "คุณคือผู้เชี่ยวชาญด้านการจัดประเภท PDCA ภารกิจของคุณคือการวิเคราะห์ข้อความหลักฐาน "
-            "และจัดประเภทว่าเนื้อหานั้นเน้นไปที่ขั้นตอนใดของวงจร PDCA "
-            f"โดยต้องจัดประเภทให้อยู่ในหนึ่งในสี่หมวดหมู่หลัก: {', '.join(pdca_phases_th)} หรือ 'อื่นๆ' เท่านั้น "
-            "ให้ตอบกลับด้วย **JSON Object ที่ถูกต้องเท่านั้น** ในรูปแบบ: {'phase': 'ผลลัพธ์การจัดประเภท (ภาษาไทย)'} "
-            "โดย 'ผลลัพธ์การจัดประเภท' ต้องเป็นคำว่า 'วางแผน', 'ปฏิบัติ', 'ตรวจสอบ', 'ปรับปรุง' หรือ 'อื่นๆ' เท่านั้น"
+            "คุณคือผู้เชี่ยวชาญด้าน PDCA Cycle\n"
+            "ภารกิจของคุณคือวิเคราะห์ข้อความหลักฐาน แล้วจัดประเภทว่าเน้นขั้นตอนใดของ PDCA\n"
+            f"ต้องเลือกเพียงหนึ่งใน: {', '.join(pdca_phases_th)} หรือ 'อื่นๆ'\n\n"
+            "ตอบกลับด้วย **JSON Object ที่ถูกต้องเท่านั้น** รูปแบบ:\n"
+            "{\"phase\": \"วางแผน\"}\n"
+            "หรือ {\"phase\": \"อื่นๆ\"}\n"
+            "ห้ามมีข้อความนอก JSON เด็ดขาด"
         )
 
-        # 2. 📝 User Prompt ภาษาไทย: ป้อนข้อมูลและคำนิยาม
+        # 2. User Prompt: ให้บริบทชัดเจน + ตัวอย่าง
         user_prompt = (
-            f"โปรดจัดประเภทข้อความหลักฐานต่อไปนี้ตามวงจร PDCA:\n\n"
-            f"ข้อความหลักฐาน: \"{chunk_text}\"\n\n"
-            f"คำนิยามเกณฑ์:\n"
-            f"- วางแผน (Plan): วิสัยทัศน์, นโยบาย, กลยุทธ์, แผนหลัก, การกำหนดเป้าหมาย, การแต่งตั้งคณะกรรมการ\n"
-            f"- ปฏิบัติ (Do): การนำไปใช้, การดำเนินการ, การจัดสรรทรัพยากร, การสื่อสาร, การฝึกอบรม, การพัฒนาระบบ\n"
-            f"- ตรวจสอบ (Check): การติดตาม, การวัดผล, การตรวจสอบภายใน, การทบทวนผลการดำเนินงาน, การวิเคราะห์ข้อมูล, การรายงาน\n"
-            f"- ปรับปรุง (Act): การดำเนินการแก้ไข, แผนการปรับปรุง, การจัดทำมาตรฐาน, การเปรียบเทียบภายนอก, การปิดวงจร\n"
+            f"ข้อความหลักฐาน:\n\"\"\"\n{chunk_text.strip()}\n\"\"\"\n\n"
+            "คำนิยามแต่ละเฟส:\n"
+            "- วางแผน: นโยบาย, กลยุทธ์, เป้าหมาย, แผนงาน, คณะกรรมการ\n"
+            "- ปฏิบัติ: ดำเนินการ, ฝึกอบรม, สื่อสาร, พัฒนาระบบ, ใช้งานจริง\n"
+            "- ตรวจสอบ: ติดตามผล, วัดผล, รายงาน, ตรวจสอบภายใน, วิเคราะห์ข้อมูล\n"
+            "- ปรับปรุง: แก้ไข, ปรับปรุง, มาตรฐานใหม่, Lesson Learned, ปิดช่องว่าง\n\n"
+            "ตอบเฉพาะ JSON:"
         )
-        
-        raw_response = "" 
         
         try:
-            # 3. 🟢 เรียกใช้ LLM โดยใช้ Prompt ภาษาไทยที่ถูกต้อง
             raw_response = _fetch_llm_response(
-                system_prompt=system_prompt, 
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_retries=1, 
-                llm_executor=self.llm 
+                temperature=0.0,  # สำคัญมาก! ต้องแน่นอน
+                max_retries=2,
+                llm_executor=self.llm
             )
+
+            if not raw_response:
+                return "Other"
+
+            # ดึง JSON ออกมาอย่างแข็งแกร่ง (ใช้ _robust_extract_json ที่คุณมีอยู่แล้ว!)
+            parsed = _robust_extract_json(raw_response)
             
-            # 4. 📌 Parse JSON response อย่างปลอดภัย
-            classification_data = {}
-            # (ใช้ logic การ Parse JSON ที่คุณมีอยู่ เช่น _robust_extract_json หรือ regex/json5)
-            # ... (ใส่ logic การ Parse JSON ตรงนี้) ...
-            
-            # 5. 📌 Validate result (ต้องตรวจสอบผลลัพธ์ภาษาไทย)
-            if isinstance(classification_data, dict):
-                # ดึงผลลัพธ์ภาษาไทยออกมา
-                phase_th = classification_data.get('phase', classification_data.get('classification', 'อื่นๆ'))
+            # ถ้า _robust_extract_json ไม่ได้ ให้ fallback ด้วยวิธีเบสิก
+            if not parsed or not isinstance(parsed, dict):
+                # ลองดึงด้วย regex ง่าย ๆ
+                import re
+                match = re.search(r'"phase"\s*:\s*"([^"]+)"', raw_response, re.IGNORECASE)
+                if match:
+                    phase_th = match.group(1).strip()
+                else:
+                    phase_th = "อื่นๆ"
+            else:
+                phase_th = parsed.get("phase", parsed.get("classification", "อื่นๆ"))
                 phase_th = str(phase_th).strip()
 
-                # แปลงผลลัพธ์ภาษาไทยกลับเป็นค่า Literal ภาษาอังกฤษที่ฟังก์ชันต้องการคืนค่า
-                if phase_th == "วางแผน":
-                    return "Plan"
-                elif phase_th == "ปฏิบัติ":
-                    return "Do"
-                elif phase_th == "ตรวจสอบ":
-                    return "Check"
-                elif phase_th == "ปรับปรุง":
-                    return "Act"
+            # แปลงเป็น Literal ที่ต้องการ
+            mapping = {
+                "วางแผน": "Plan",
+                "ปฏิบัติ": "Do",
+                "ตรวจสอบ": "Check",
+                "ปรับปรุง": "Act",
+                "อื่นๆ": "Other",
+                "อื่น": "Other",
+                "other": "Other"
+            }
+            result = mapping.get(phase_th, "Other")
             
-            return "Other"
-            
+            self.logger.debug(f"PDCA Classification: '{phase_th}' → {result}")
+            return result
+
         except Exception as e:
-            self.logger.error(f"PDCA Classification failed: {e}. Raw Response: {raw_response[:50]}")
-            return "Other" # ค่าเริ่มต้นเมื่อจัดประเภทไม่สำเร็จ
+            self.logger.error(f"PDCA Classification failed: {e}\nRaw: {raw_response[:200]}")
+            return "Other"
 
     # -------------------- Statement Preparation & Filtering Helpers --------------------
     def _flatten_rubric_to_statements(self) -> List[Dict[str, Any]]:
@@ -1549,7 +1635,17 @@ class SEAMPDCAEngine:
             "sub_summary": sub_summary,
         }
 
-        final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
+        # final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
+        # เป็น
+        final_temp_map = {}
+        if self.is_sequential:
+            # ใน sequential เราใช้ self.evidence_map โดยตรงอยู่แล้ว
+            # แต่ส่ง snapshot กลับไปเพื่อความปลอดภัย
+            for key in self.evidence_map:
+                if key.startswith(sub_criteria['sub_id'] + "."):
+                    final_temp_map[key] = self.evidence_map[key]
+        else:
+            final_temp_map = self.temp_map_for_save.copy()
 
         self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Evidence keys: {len(final_temp_map)}")
         self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
@@ -1569,10 +1665,10 @@ class SEAMPDCAEngine:
         และรับประกันว่า evidence_map ครบทุกกรณี
         """
 
-        if export:
-            logger.info("EXPORT DETECTED → FORCING SEQUENTIAL MODE...")
-            sequential = True
-            run_parallel = False
+        # if export:
+        #     logger.info("EXPORT DETECTED → FORCING SEQUENTIAL MODE...")
+        #     sequential = True
+        #     run_parallel = False
             
         start_ts = time.time()
         self.is_sequential = sequential
@@ -1591,7 +1687,18 @@ class SEAMPDCAEngine:
         # Reset states
         self.raw_llm_results = []
         self.final_subcriteria_results = []
-        self.evidence_map.clear()  # เคลียร์ทุกครั้งก่อนเริ่มใหม่
+        # self.evidence_map.clear()  # เคลียร์ทุกครั้งก่อนเริ่มใหม่
+
+        # แทนที่ด้วย:
+        if os.path.exists(self.evidence_map_path):
+            loaded = self._load_evidence_map()
+            if loaded:
+                self.evidence_map = loaded
+                self.logger.info(f"Resumed from existing evidence map: {len(self.evidence_map)} keys")
+            else:
+                self.evidence_map = {}
+        else:
+            self.evidence_map = {}
 
         if not sequential:
             self.logger.info("[PARALLEL MODE] Starting parallel assessment...")
@@ -1692,7 +1799,6 @@ class SEAMPDCAEngine:
 
         return final_results
 
-
     def _run_single_assessment(
         self,
         sub_criteria: Dict[str, Any],
@@ -1705,6 +1811,7 @@ class SEAMPDCAEngine:
         - ใช้หลักฐานจาก Level ก่อนหน้าทั้งหมด (baseline)
         - บันทึก evidence map ครบทุก Level
         - รองรับ Sequential & Parallel 100%
+        - ไม่มี TEMP-, HASH-, Unknown อีกต่อไป
         """
 
         sub_id = sub_criteria['sub_id']
@@ -1769,44 +1876,38 @@ class SEAMPDCAEngine:
         top_evidences = retrieval_result.get("top_evidences", [])
         used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
 
-        # ==================== 6. ดึงหลักฐานจาก Level ก่อนหน้า (เต็ม ๆ มี text) ====================
+        # ==================== 6. ดึงหลักฐานจาก Level ก่อนหน้า ====================
         try:
             previous_levels_raw = self._collect_previous_level_evidences(
-                sub_id, 
-                current_level=level, 
-                vectorstore_manager=vectorstore_manager
+                sub_id, current_level=level, vectorstore_manager=vectorstore_manager
             )
         except Exception as e:
             logger.error(f"Failed to collect previous evidences: {e}")
             previous_levels_raw = {}
 
         previous_levels_evidence_full = []
-        previous_levels_filename_map = {} 
+        previous_levels_filename_map = {}
 
         for ev_list in previous_levels_raw.values():
             for ev in ev_list:
                 doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
-                # 🚩 (6) ยังคงกรอง HASH- ID ออกตาม Business Logic
                 if not doc_id or str(doc_id).startswith("HASH-"):
                     continue
-                
-                # if ev.get("text"):
-                previous_levels_evidence_full.append(ev) 
-                
+                previous_levels_evidence_full.append(ev)
                 filename = ev.get("source_filename") or ev.get("source") or ev.get("filename") or "UNKNOWN"
                 previous_levels_filename_map[doc_id] = filename
 
-
-        # ==================== 6a. Sequential fallback (เพิ่มหลักฐานเก่าที่ขาด) ====================
+        # ==================== 6a. Sequential fallback ====================
         if level > 1 and self.is_sequential:
             current_ids = {d.get("doc_id") or d.get("chunk_uuid") for d in top_evidences}
             for ev in previous_levels_evidence_full:
-                if (ev.get("doc_id") or ev.get("chunk_uuid")) not in current_ids:
+                ev_id = ev.get("doc_id") or ev.get("chunk_uuid")
+                if ev_id not in current_ids:
                     fallback_ev = ev.copy()
                     fallback_ev["pdca_tag"] = "Baseline"
                     top_evidences.append(fallback_ev)
 
-        # ==================== 7. สร้าง Multi-Channel Context (สำคัญที่สุด) ====================
+        # ==================== 7. สร้าง Multi-Channel Context ====================
         channels = build_multichannel_context_for_level(
             level=level,
             top_evidences=top_evidences,
@@ -1815,7 +1916,6 @@ class SEAMPDCAEngine:
             max_summary_sentences=4
         )
 
-        # Debug log
         debug = channels.get("debug_meta", {})
         logger.info(
             f"  > Context built → Direct: {debug.get('direct_count',0)}, "
@@ -1853,95 +1953,58 @@ class SEAMPDCAEngine:
 
         # ==================== 11. บันทึก Evidence Map (เฉพาะ PASS) ====================
         temp_map_for_level = None
-        
-        logger.critical(f"🧭 DEBUG: Entering Evidence Save Logic for {sub_id}.L{level}. Passed: {is_passed}, Top Evidences: {len(top_evidences) if top_evidences else 0}") 
-
+        evidence_entries = []  # ใช้ตัวนี้ทั้งบันทึกและแสดงผล
+        logger.critical(f"🧭 DEBUG: Entering Evidence Save Logic for {sub_id}.L{level}. Passed: {is_passed}, Top Evidences: {len(top_evidences)}")
 
         if is_passed and top_evidences:
             seen = set()
-            evidence_entries = []
-            
             discarded_ids = []
 
             for ev in top_evidences:
-                # 🚩 (11) การแก้ไขเพื่อดึง doc_id: ใช้ chunk_uuid หาก doc_id เป็น None/ว่าง
-                doc_id = ev.get("doc_id") or ev.get("chunk_uuid") 
-                
-                # 🚩 Logic การกรอง: ต้องมีค่า, ต้องไม่ใช่ HASH- ID (ตามที่คุณร้องขอ), ต้องไม่ซ้ำ
-                is_valid_id = bool(doc_id) and not str(doc_id).startswith("HASH-") and doc_id not in seen
-                
-                if not is_valid_id:
-                    # แก้ไขการแสดงผลเพื่อแสดงเหตุผลการกรอง
-                    is_hash = str(doc_id).startswith("HASH-") if doc_id else "N/A"
-                    discarded_ids.append(f"'{doc_id}' (Invalid: {not bool(doc_id)}, Hash: {is_hash}, Seen: {doc_id in seen if doc_id else 'N/A'})")
+                doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
+                if not doc_id or str(doc_id).startswith("TEMP-") or str(doc_id).startswith("HASH-"):
+                    discarded_ids.append(f"Skipped: {doc_id}")
                     continue
-                    
+                if doc_id in seen:
+                    continue
                 seen.add(doc_id)
-                
+
                 filename = (
                     ev.get("source_filename") or
                     ev.get("source") or
                     ev.get("filename") or
                     previous_levels_filename_map.get(doc_id) or
-                    "UNKNOWN_FILE.pdf"
+                    f"เอกสารอ้างอิง_{doc_id[:8]}.pdf"
                 )
-                
-                evidence_entries.append({
+
+                entry = {
                     "doc_id": doc_id,
-                    "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename,
+                    "filename": os.path.basename(filename),
                     "mapper_type": "AI_GENERATED",
                     "timestamp": datetime.now().isoformat()
-                })
-            
-            logger.critical(f"🧭 DEBUG: Discarded {len(discarded_ids)}/{len(top_evidences)} Evidences for L{level}. Sample: {discarded_ids[:5]}...")
-            logger.critical(f"🧭 DEBUG: Evidence entries prepared for L{level}: {len(evidence_entries)}")
+                }
+                evidence_entries.append(entry)
+
+            logger.critical(f"🧭 DEBUG: Discarded {len(discarded_ids)} invalid entries. "
+                            f"Valid entries: {len(evidence_entries)}")
 
             if evidence_entries:
                 key = f"{sub_id}.L{level}"
-                
                 if self.is_sequential:
-                    # Sequential: บันทึกตรงเข้า evidence_map ทันที!
                     current_list = self.evidence_map.setdefault(key, [])
-                    # ป้องกัน duplicate ด้วย doc_id
                     existing_ids = {item["doc_id"] for item in current_list}
                     new_entries = [e for e in evidence_entries if e["doc_id"] not in existing_ids]
                     current_list.extend(new_entries)
                     logger.info(f"DIRECT SAVE evidence_map[{key}] +{len(new_entries)} files → total {len(current_list)}")
                 else:
-                    # Parallel: ใช้ temp_map_for_save
                     if not hasattr(self, "temp_map_for_save"):
                         self.temp_map_for_save = {}
                     self.temp_map_for_save[key] = evidence_entries
 
-                logger.info(f"  > [EVIDENCE SAVED] {key} → {len(evidence_entries)} files (unique: {len(new_entries) if self.is_sequential else len(evidence_entries)})")
-
-                # สำหรับ worker ส่งกลับ (เฉพาะ Parallel)
+                logger.info(f"  > [EVIDENCE SAVED] {key} → {len(evidence_entries)} files")
                 temp_map_for_level = evidence_entries if not self.is_sequential else None
 
-        # ==================== 12. สร้างผลลัพธ์สุดท้าย ====================
-        unique_refs = {}
-        for ev in top_evidences:
-            # 🚩 ใช้ Logic การดึง doc_id แบบเดียวกับส่วนที่ 11
-            doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
-            
-            # NOTE: การแสดงผลลัพธ์สุดท้ายยังคงไม่ใช้ HASH- ID
-            if doc_id and not str(doc_id).startswith("HASH-"): 
-                filename = (
-                    ev.get("source_filename") or
-                    ev.get("source") or
-                    ev.get("filename") or
-                    ev.get("metadata", {}).get("source") or
-                    previous_levels_filename_map.get(doc_id) or
-                    "UNKNOWN_FILE.pdf"
-                )
-
-                if doc_id not in unique_refs:
-                    unique_refs[doc_id] = {
-                        "doc_id": doc_id,
-                        "filename": os.path.basename(filename) if '/' in filename or '\\' in filename else filename
-                    }
-
-        # ==================== เพิ่ม Evidence Strength & AI Confidence ====================
+        # ==================== 12. Evidence Strength & Confidence ====================
         direct_count = len([d for d in top_evidences if d.get("pdca_tag") in ["P", "D", "C", "A"]])
         total_chunks = len(top_evidences)
         pdca_coverage = len({d.get("pdca_tag") for d in top_evidences if d.get("pdca_tag")})
@@ -1953,12 +2016,11 @@ class SEAMPDCAEngine:
         )
 
         ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
-                    "MEDIUM" if evidence_strength >= 5.5 else "LOW"
+                        "MEDIUM" if evidence_strength >= 5.5 else "LOW"
 
-        # NOTE: ใช้ 'evidence_entries' ใน locals() เป็นตัวตรวจสอบความปลอดภัยสำหรับ scope
-        evidence_count_for_level = len(evidence_entries) if is_passed and 'evidence_entries' in locals() else 0
+        evidence_count_for_level = len(evidence_entries)
 
-
+        # ==================== 13. สร้างผลลัพธ์สุดท้าย ====================
         final_result = {
             "sub_criteria_id": sub_id,
             "statement_id": statement_id,
@@ -1973,7 +2035,7 @@ class SEAMPDCAEngine:
             "llm_result_full": llm_result,
             "retrieval_duration_s": round(retrieval_duration, 2),
             "llm_duration_s": round(llm_duration, 2),
-            "top_evidences_ref": list(unique_refs.values()),
+            "top_evidences_ref": evidence_entries,  # ใช้ตัวเดียวกัน → ตรงกัน 100%
             "temp_map_for_level": temp_map_for_level,
             "evidence_strength": round(evidence_strength, 1),
             "ai_confidence": ai_confidence,
