@@ -238,46 +238,40 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor, BaseModel):
 _CACHED_RERANKER_INSTANCE: Optional[HuggingFaceCrossEncoderCompressor] = None
 _CACHED_CROSS_ENCODER: Any = None
 
-def get_global_reranker(final_k: int) -> Optional[HuggingFaceCrossEncoderCompressor]:
+def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
     """
-    Returns a cached HuggingFaceCrossEncoderCompressor instance.
-    If sentence-transformers is not installed or initialization fails, returns None.
+    Returns a cached HuggingFaceCrossEncoderCompressor instance (singleton).
     """
     global _CACHED_RERANKER_INSTANCE, _CACHED_CROSS_ENCODER
 
     if _CACHED_RERANKER_INSTANCE is None:
         try:
             if not _HAS_SENT_TRANS:
-                logging.warning("⚠️ sentence-transformers not installed. Cross-Encoder reranker disabled.")
+                logging.warning("sentence-transformers not installed. Cross-Encoder reranker disabled.")
                 return None
 
-            # 1️⃣ สร้าง compressor instance
             instance = HuggingFaceCrossEncoderCompressor(
                 rerank_model="mixedbread-ai/mxbai-rerank-xsmall-v1"
             )
 
-            # 2️⃣ สร้าง CrossEncoder จริง
             from sentence_transformers import CrossEncoder
             cross_encoder_model = CrossEncoder(
                 instance.rerank_model,
                 device=instance.rerank_device
             )
 
-            # 3️⃣ ตั้งค่าให้ compressor ใช้งานได้
             instance.set_encoder_instance(cross_encoder_model)
 
-            # 4️⃣ เก็บ cache global
             _CACHED_RERANKER_INSTANCE = instance
             _CACHED_CROSS_ENCODER = cross_encoder_model
 
-            logging.info(f"✅ Initialized global Cross-Encoder reranker: {instance.rerank_model} on {instance.rerank_device}")
+            logging.info(f"Initialized global Cross-Encoder reranker: {instance.rerank_model} on {instance.rerank_device}")
 
         except Exception as e:
             logging.warning(f"Failed to initialize global reranker: {e}")
             return None
 
     return _CACHED_RERANKER_INSTANCE
-
 
 
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
@@ -494,32 +488,97 @@ class VectorStoreManager:
             return None
 
         # Build wrapper that supports config with filter and reranking
-        def make_invoke_with_rerank(base_retriever, top_k, final_k):
+        def make_invoke_with_rerank(base_retriever, top_k: int, final_k: int):
+            """
+            Wrapper สำหรับ retriever + filter + rerank
+            """
             def invoke_with_rerank(query: str, config: Optional[Dict] = None):
                 docs = []
                 chroma_filter = None
                 if config and isinstance(config, dict):
                     chroma_filter = config.get("configurable", {}).get("search_kwargs", {}).get("filter")
+
+                # --- 1. Retrieval ---
                 try:
-                    if chroma_filter:
-                        new_config = {"configurable": {"search_kwargs": {"k": top_k, "filter": chroma_filter}}}
-                        docs = base_retriever.invoke(query, config=new_config)
-                    else:
+                    if hasattr(base_retriever, "get_relevant_documents"):
+                        # LangChain style
+                        docs = base_retriever.get_relevant_documents(query)
+                        if top_k:
+                            docs = docs[:top_k]
+                    elif hasattr(base_retriever, "invoke"):
+                        # fallback to original invoke
                         docs = base_retriever.invoke(query, config=config)
+                    else:
+                        raise AttributeError("Retriever has no valid retrieval method")
                 except Exception as e:
                     logger.error(f"❌ Retrieval failed before rerank: {e}")
                     return []
-                # Reranking
+
+                # --- 2. Reranking ---
                 try:
-                    reranker = get_global_reranker(final_k)
+                    reranker = get_global_reranker()
                     if reranker and hasattr(reranker, "compress_documents"):
-                        # return top_k after reranking
-                        return reranker.compress_documents(docs, query, top_n=top_k)
-                    logger.warning("⚠️ Reranker not available. Returning base docs truncated.")
-                    return docs[:top_k]
+                        logger.info(f"Applying Cross-Encoder reranking → top {final_k}")
+                        reranked_docs = reranker.compress_documents(
+                            documents=docs,
+                            query=query,
+                            top_n=final_k
+                        )
+                        
+                        final_docs_with_score = []
+                        scores_from_reranker = getattr(reranker, "scores", [])
+
+                        # 1. Iterate over reranked documents and find the score
+                        for i, doc in enumerate(reranked_docs):
+                            score_float = 0.0
+                            
+                            # Priority 1: Check document metadata (LangChain standard output)
+                            score = doc.metadata.get("relevance_score") or doc.metadata.get("score")
+                            if score is not None:
+                                try:
+                                    score_float = float(score)
+                                except (ValueError, TypeError):
+                                    pass
+                                
+                            # Priority 2: Fallback to the Reranker's internal scores list (ถ้า P1 ไม่ได้)
+                            if score_float == 0.0 and scores_from_reranker and i < len(scores_from_reranker):
+                                try:
+                                    score_float = float(scores_from_reranker[i])
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            # --- START: HIDDEN KEY INJECTION FIX (The Last Metadata Stand) ---
+                            # 1. Inject into standard keys (as fallbacks)
+                            doc.metadata["relevance_score"] = score_float
+                            doc.metadata["rerank_score"] = score_float
+                            doc.metadata["score"] = score_float
+                            
+                            # 2. Inject into a dedicated 'force' key (Most critical Metadata Key)
+                            doc.metadata["_rerank_score_force"] = score_float 
+                            
+                            # 3. Inject into filename (CRITICAL for extraction)
+                            original_filename = doc.metadata.get("source_filename", "UNKNOWN_FILE")
+                            doc.metadata["source_filename"] = f"{original_filename}|SCORE:{score_float:.4f}"
+                            
+                            # --- END: HIDDEN KEY INJECTION FIX (The Last Metadata Stand) ---
+                            
+                            final_docs_with_score.append(doc)
+                        
+                        # DEBUG: Log the score being injected
+                        if final_docs_with_score:
+                             score_val = final_docs_with_score[0].metadata.get("rerank_score")
+                             force_val = final_docs_with_score[0].metadata.get("_rerank_score_force")
+                             logger.critical(f"DEBUG VECTORSTORE FINAL INJECTED (RE-CHECK): Doc[0] Score: {score_val:.4f} | ForceKey: {force_val:.4f}")
+                        
+                        logger.info(f"Reranking completed → kept top {len(final_docs_with_score)} documents")
+                        return final_docs_with_score
+                    else:
+                        logger.warning("Reranker not available. Returning base docs.")
+                        return docs[:final_k]
                 except Exception as e:
-                    logger.warning(f"⚠️ Rerank failed: {e}. Returning base docs truncated to {top_k}")
-                    return docs[:top_k]
+                    logger.warning(f"Rerank failed: {e}. Falling back to original results.")
+                    return docs[:final_k]
+
             return invoke_with_rerank
 
         if use_rerank:

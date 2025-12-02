@@ -21,6 +21,7 @@ import shutil
 # from json_extractor import _robust_extract_json
 from .json_extractor import _robust_extract_json
 from filelock import FileLock  # ต้องติดตั้ง: pip install filelock
+import re
 
 
 # -------------------- PATH SETUP & IMPORTS --------------------
@@ -799,90 +800,98 @@ class SEAMPDCAEngine:
 
         return cleaned_map
 
-
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
         """
-        Saves the evidence map to a persistent JSON file using atomic write + FileLock.
+        บันทึก evidence map อย่างปลอดภัย 100% - Atomic + Lock + Clean + Sort + Score
         """
         map_file_path = self.evidence_map_path
         lock_path = map_file_path + ".lock"
         tmp_path = None
 
-        logger.info(f"[EVIDENCE] Evidence map target path: {map_file_path}")
+        logger.info(f"[EVIDENCE] Saving evidence map → {map_file_path}")
 
         try:
-            # 1. ใช้ FileLock ป้องกันการเขียนพร้อมกัน
-            logger.debug(f"[EVIDENCE] Acquiring file lock: {lock_path}")
             with FileLock(lock_path, timeout=60):
-                logger.debug("[EVIDENCE] Lock acquired. Proceeding with save...")
+                logger.debug("[EVIDENCE] Lock acquired.")
 
-                # === เริ่ม FIX LOGIC MERGE & FILTER ===
                 if map_to_save is not None:
-                    # กรณีมีการส่ง map เข้ามาโดยตรง (ใช้กรณีพิเศษ)
                     final_map_to_write = map_to_save
-                    logger.debug("[EVIDENCE] Using passed map_to_save. Skipping deep merge/filter logic.")
                 else:
-                    # 1. โหลด Map ที่มีอยู่เดิมจาก Disk (ตอนนี้คือ 3.1.L1-L5)
-                    existing_map_from_disk = self._load_evidence_map(is_for_merge=True) or {}
-                    
-                    # 2. Map ที่เพิ่งรันเสร็จในหน่วยความจำ (Worker Process เพิ่งอัปเดต 3.1.L1-L5)
-                    map_from_runtime = deepcopy(self.evidence_map)
-                    
-                    # 3. [FIXED] ผสาน (Merge): เริ่มต้นด้วย Map เก่า และรวม Map ปัจจุบัน เข้าไป
-                    # final_map_to_write จะมีข้อมูลทั้งหมด (3.1 + 1.1)
-                    final_map_to_write = existing_map_from_disk
-                    final_map_to_write.update(map_from_runtime) # 👈 การแก้ไขหลัก: รวม Map ทั้งหมด
+                    # 1. โหลดของเก่าจากดิสก์
+                    existing_map = self._load_evidence_map(is_for_merge=True) or {}
+                    runtime_map = deepcopy(self.evidence_map)
 
-                    # 4. [FIXED] กรอง TEMP- ID จาก Map ที่ถูกรวมแล้ว
-                    final_map_to_write = self._process_temp_map_to_final_map(final_map_to_write)
-                    # หลังจาก merge เสร็จ
+                    # 2. Merge: เก่า + ใหม่ (ไม่ทับ แต่รวม)
+                    final_map_to_write = existing_map
+                    for key, entries in runtime_map.items():
+                        if key not in final_map_to_write:
+                            final_map_to_write[key] = []
+                        # deduplicate โดย doc_id
+                        existing_ids = {e["doc_id"] for e in final_map_to_write[key]}
+                        new_entries = [e for e in entries if e["doc_id"] not in existing_ids]
+                        final_map_to_write[key].extend(new_entries)
+
+                    # 3. ทำความสะอาดสุดท้าย (TEMP-, HASH-, Unknown)
                     final_map_to_write = self._clean_temp_entries(final_map_to_write)
-                    
-                    logger.debug(f"[DEBUG] Final Map keys count: {len(final_map_to_write.keys())}") # 👈 Log ยืนยัน
-                # === สิ้นสุด FIX LOGIC MERGE & FILTER ===
-                
+
+                    # 4. เรียงลำดับในแต่ละ key จาก relevance_score สูง → ต่ำ (ถ้ามี)
+                    for key, entries in final_map_to_write.items():
+                        if entries and "relevance_score" in entries[0]:
+                            entries.sort(
+                                key=lambda x: x.get("relevance_score", 0.0),
+                                reverse=True
+                            )
+
                 if not final_map_to_write:
-                    logger.warning("[EVIDENCE] final_map_to_write is empty. Skipping save.")
+                    logger.warning("[EVIDENCE] Nothing to save.")
                     return
 
-                # เตรียม directory
-                target_dir = os.path.dirname(map_file_path)
-                os.makedirs(target_dir, exist_ok=True)
+                # เตรียมโฟลเดอร์
+                os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
-                # เขียนไฟล์ชั่วคราวก่อน (Atomic Write)
+                # Atomic write
                 with tempfile.NamedTemporaryFile(
-                    mode='w', delete=False, encoding="utf-8", dir=target_dir
+                    mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
                 ) as tmp_file:
-                    map_to_write_cleaned = self._clean_map_for_json(final_map_to_write)
-                    json.dump(map_to_write_cleaned, tmp_file, indent=4, ensure_ascii=False)
+                    cleaned_for_json = self._clean_map_for_json(final_map_to_write)
+                    json.dump(cleaned_for_json, tmp_file, indent=4, ensure_ascii=False)
                     tmp_path = tmp_file.name
 
-                # ย้ายไฟล์จริง (atomic)
                 shutil.move(tmp_path, map_file_path)
                 tmp_path = None
 
-                logger.info(f"[EVIDENCE] Evidence map saved successfully to: {map_file_path}")
-                logger.info(f"[DEBUG] Final file size: {os.path.getsize(map_file_path)} bytes")
-                
-                items_count = sum(len(v) for v in final_map_to_write.values())
-                logger.info(f"Persisted final evidence map | Keys: {len(final_map_to_write.keys())} | Items: {items_count} | Size: ~{(os.path.getsize(map_file_path) / 1024):.1f} KB")
+                # สรุปสถิติสุดท้าย (สวยมาก)
+                total_keys = len(final_map_to_write)
+                total_items = sum(len(v) for v in final_map_to_write.values())
+                file_size_kb = os.path.getsize(map_file_path) / 1024
+
+                logger.info(f"[EVIDENCE] Evidence map saved successfully!")
+                logger.info(f"   Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB")
+
+                # โชว์ Top 1 ของแต่ละ sub-criteria (สุดยอดมาก)
+                preview = []
+                for key in sorted(final_map_to_write.keys())[:5]:  # แสดงแค่ 5 อันแรก
+                    entries = final_map_to_write[key]
+                    if entries:
+                        top = entries[0]
+                        score = top.get("relevance_score", "-")
+                        preview.append(f"{key}: {top['filename'][:50]} ({score})")
+                if preview:
+                    logger.info(f"   Top evidence preview → {', '.join(preview[:3])}{'...' if len(preview)>3 else ''}")
 
         except TimeoutError:
-            logger.critical(f"[EVIDENCE] Could not acquire lock within 60s: {lock_path}")
-            logger.critical("[EVIDENCE] Another process is holding the lock — possible stuck process!")
+            logger.critical(f"[EVIDENCE] Lock timeout! Another process may be stuck: {lock_path}")
             raise
         except Exception as e:
-            logger.critical("FATAL FILE WRITE ERROR - CHECK LOG TRACE")
-            logger.exception(f"[EVIDENCE] Failed to save map: {e}")
+            logger.critical("[EVIDENCE] FATAL SAVE ERROR")
+            logger.exception(e)
             raise
         finally:
             if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                    logger.debug(f"[EVIDENCE] Cleaned up temp file: {tmp_path}")
-                except Exception:
-                    pass
-            logger.debug(f"[EVIDENCE] File lock released: {lock_path}")
+                try: os.unlink(tmp_path)
+                except: pass
+            logger.debug(f"[EVIDENCE] Lock released: {lock_path}")
+
 
     def _load_evidence_map(self, is_for_merge: bool = False):
         """
@@ -1205,12 +1214,10 @@ class SEAMPDCAEngine:
                         
                         if initial_priority_chunks:
                             # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
-                            reranker = get_global_reranker(self.FINAL_K_RERANKED) 
+                            reranker = get_global_reranker() 
                             rerank_query = rag_queries_for_vsm[0] 
                             
                             # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
-                            from langchain_core.documents import Document as LcDocument
-
                             lc_docs_for_rerank = [
                                 LcDocument(
                                     page_content=d.get('content') or d.get('text', ''), 
@@ -1228,17 +1235,37 @@ class SEAMPDCAEngine:
                                     documents=lc_docs_for_rerank,
                                     top_n=self.PRIORITY_CHUNK_LIMIT 
                                 )
-                                # แปลงกลับเป็น Dict
-                                priority_docs = [{
-                                    **d.metadata, 
-                                    'content': d.page_content,
-                                    'text': d.page_content, 
-                                    'score': d.metadata.get('relevance_score', 1.0) 
-                                } for d in reranked_docs]
-                            else:
-                                priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
 
-                            logger.critical(f"🧭 DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+                                # === วิชามารสุดท้ายที่ฆ่า 0.0000 ตลอดกาล ===
+                                # เขียน relevance_score กลับลง metadata ก่อน
+                                if hasattr(reranker, "scores") and reranker.scores:
+                                    for doc, score in zip(reranked_docs, reranker.scores):
+                                        doc.metadata["relevance_score"] = float(score)
+
+                                # แปลงกลับเป็น dict และให้ 'score' ทับค่าเก่าอย่างแน่นอน
+                                priority_docs = []
+                                for d in reranked_docs:
+                                    # เริ่มจาก metadata เดิม
+                                    item = dict(d.metadata)
+                                    # อัปเดตข้อมูลที่จำเป็น
+                                    item.update({
+                                        'content': d.page_content,
+                                        'text': d.page_content,
+                                        # สำคัญที่สุด: score ต้องมาท้ายสุด และทับแน่นอน
+                                        'score': float(d.metadata.get('relevance_score', 0.0)),
+                                        'relevance_score': float(d.metadata.get('relevance_score', 0.0))
+                                    })
+                                    priority_docs.append(item)
+                                # ========================================
+
+                                logger.critical(f"DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+                            else:
+                                # fallback กรณีไม่มี reranker
+                                priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
+                                # แม้ fallback ก็ยังใส่ score ให้ครบ
+                                for item in priority_docs:
+                                    if 'score' not in item:
+                                        item['score'] = 0.0
 
                     except Exception as e:
                         logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
@@ -1651,7 +1678,7 @@ class SEAMPDCAEngine:
         self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
 
         return final_sub_result, final_temp_map
-
+    
     def run_assessment(
             self,
             target_sub_id: str = "all",
@@ -1665,11 +1692,6 @@ class SEAMPDCAEngine:
         และรับประกันว่า evidence_map ครบทุกกรณี
         """
 
-        # if export:
-        #     logger.info("EXPORT DETECTED → FORCING SEQUENTIAL MODE...")
-        #     sequential = True
-        #     run_parallel = False
-            
         start_ts = time.time()
         self.is_sequential = sequential
 
@@ -1687,9 +1709,8 @@ class SEAMPDCAEngine:
         # Reset states
         self.raw_llm_results = []
         self.final_subcriteria_results = []
-        # self.evidence_map.clear()  # เคลียร์ทุกครั้งก่อนเริ่มใหม่
 
-        # แทนที่ด้วย:
+        # โหลด evidence map ที่มีอยู่แล้ว (ไม่ clear!)
         if os.path.exists(self.evidence_map_path):
             loaded = self._load_evidence_map()
             if loaded:
@@ -1703,14 +1724,12 @@ class SEAMPDCAEngine:
         if not sequential:
             self.logger.info("[PARALLEL MODE] Starting parallel assessment...")
 
-        # run_parallel = (target_sub_id.lower() == "all" and not self.config.force_sequential)
         run_parallel = (target_sub_id.lower() == "all") and not (sequential or export)
 
         # ============================== 2. Run Assessment ==============================
         if run_parallel:
             # --------------------- PARALLEL MODE ---------------------
             logger.info("Starting Parallel Assessment with Multiprocessing...")
-
             worker_args = [(
                 sub_data,
                 self.config.enabler,
@@ -1731,16 +1750,14 @@ class SEAMPDCAEngine:
 
             # รวมผลลัพธ์จากทุก worker
             for sub_result, temp_map_from_worker in results_list:
-                # รวม Evidence Map
                 if isinstance(temp_map_from_worker, dict):
                     for level_key, evidence_list in temp_map_from_worker.items():
                         if isinstance(evidence_list, list) and evidence_list:
                             current_list = self.evidence_map.setdefault(level_key, [])
                             current_list.extend(evidence_list)
                             self.logger.info(f"AGGREGATED: +{len(evidence_list)} → {level_key} "
-                                           f"(total: {len(current_list)})")
+                                        f"(total: {len(current_list)})")
 
-                # รวมผลลัพธ์อื่น ๆ
                 raw_refs = sub_result.get("raw_results_ref", [])
                 self.raw_llm_results.extend(raw_refs if isinstance(raw_refs, list) else [])
                 self.final_subcriteria_results.append(sub_result)
@@ -1750,9 +1767,6 @@ class SEAMPDCAEngine:
             mode_desc = target_sub_id if target_sub_id != "all" else "All Sub-Criteria (Sequential)"
             self.logger.info(f"Starting Sequential Assessment: {mode_desc}")
 
-            # สำคัญที่สุด: อย่าสร้าง temp_map_for_save เลยใน Sequential
-            # และอย่ารับ temp_map_from_worker มาทำอะไรทั้งนั้น!
-
             local_vsm = vectorstore_manager or (
                 load_all_vectorstores(doc_types=[EVIDENCE_DOC_TYPES], evidence_enabler=self.config.enabler)
                 if self.config.mock_mode == "none" else None
@@ -1760,10 +1774,7 @@ class SEAMPDCAEngine:
             self.vectorstore_manager = local_vsm
 
             for sub_criteria in sub_criteria_list:
-                # เรียก worker แต่ไม่สนใจ temp_map_from_worker เพราะ Sequential บันทึกตรงใน evidence_map แล้ว
                 sub_result, _ = self._run_sub_criteria_assessment_worker(sub_criteria)
-
-                # รวมผลลัพธ์ปกติ
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
@@ -1792,7 +1803,6 @@ class SEAMPDCAEngine:
                 sub_criteria_id=target_sub_id if target_sub_id != "all" else "ALL",
                 target_level=self.config.target_level
             )
-            # สำคัญ: รวม evidence_map ทุกกรณี (ทั้ง sequential และ parallel)
             final_results["export_path_used"] = export_path
             final_results["evidence_map"] = deepcopy(self.evidence_map)
             self.logger.info(f"Exported full results → {export_path}")
@@ -1800,18 +1810,19 @@ class SEAMPDCAEngine:
         return final_results
 
     def _run_single_assessment(
-        self,
-        sub_criteria: Dict[str, Any],
-        statement_data: Dict[str, Any],
-        vectorstore_manager: Optional['VectorStoreManager'],
-        sequential_chunk_uuids: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+            self,
+            sub_criteria: Dict[str, Any],
+            statement_data: Dict[str, Any],
+            vectorstore_manager: Optional['VectorStoreManager'],
+            sequential_chunk_uuids: Optional[List[str]] = None
+        ) -> Dict[str, Any]:
         """
         รันการประเมิน Level เดียว (L1-L5) อย่างสมบูรณ์
         - ใช้หลักฐานจาก Level ก่อนหน้าทั้งหมด (baseline)
         - บันทึก evidence map ครบทุก Level
         - รองรับ Sequential & Parallel 100%
         - ไม่มี TEMP-, HASH-, Unknown อีกต่อไป
+        - มี relevance_score จริง + เรียงลำดับ
         """
 
         sub_id = sub_criteria['sub_id']
@@ -1951,58 +1962,129 @@ class SEAMPDCAEngine:
         pdca_breakdown, is_passed, _ = calculate_pdca_breakdown_and_pass_status(llm_score, level)
         status = "PASS" if is_passed else "FAIL"
 
-        # ==================== 11. บันทึก Evidence Map (เฉพาะ PASS) ====================
+        # -------------------- 11. SAVE EVIDENCE MAP (PASS ONLY) --------------------
         temp_map_for_level = None
-        evidence_entries = []  # ใช้ตัวนี้ทั้งบันทึกและแสดงผล
-        logger.critical(f"🧭 DEBUG: Entering Evidence Save Logic for {sub_id}.L{level}. Passed: {is_passed}, Top Evidences: {len(top_evidences)}")
+        evidence_entries = []
 
         if is_passed and top_evidences:
             seen = set()
-            discarded_ids = []
+            score_map = {}
+            
+            # Helper function
+            def safe_float(val, default=0.0):
+                """Convert val to float safely, fallback to default if fails"""
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return default
 
             for ev in top_evidences:
                 doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
-                if not doc_id or str(doc_id).startswith("TEMP-") or str(doc_id).startswith("HASH-"):
-                    discarded_ids.append(f"Skipped: {doc_id}")
+                if not doc_id or str(doc_id).startswith(("TEMP-", "HASH-")):
                     continue
                 if doc_id in seen:
                     continue
-                seen.add(doc_id)
 
-                filename = (
-                    ev.get("source_filename") or
-                    ev.get("source") or
-                    ev.get("filename") or
-                    previous_levels_filename_map.get(doc_id) or
-                    f"เอกสารอ้างอิง_{doc_id[:8]}.pdf"
+                # --- START: SCORE EXTRACTION (METADATA STAND) ---
+                score = 0.0
+                metadata = ev.get("metadata", {}) or {}
+                filename_to_use = ""
+
+                # 1. 🔴 NEW FORCE KEY: Check the most aggressive key
+                potential_score_force = metadata.get("_rerank_score_force")
+                if potential_score_force is not None:
+                    try:
+                        score = max(score, safe_float(potential_score_force))
+                    except (TypeError, ValueError):
+                        pass
+                
+                # 2. FILENAME: Check the filename for the embedded string
+                filename_with_score = ev.get("source_filename") or metadata.get("source_filename") or ""
+                
+                if "|SCORE:" in filename_with_score:
+                    try:
+                        score_str = filename_with_score.split("|SCORE:")[1].split("|")[0]
+                        filename_score = safe_float(score_str)
+                        score = max(score, filename_score)
+                        # Clean the filename for saving to JSON
+                        filename_to_use = filename_with_score.split("|SCORE:")[0]
+                    except Exception:
+                        pass
+                else:
+                    filename_to_use = filename_with_score
+
+                # 3. STANDARD FALLBACKS (รวม Distance Score)
+                if score == 0.0:
+                    score_sources = [
+                        ev.get("rerank_score"), ev.get("relevance_score"),
+                        metadata.get("rerank_score"), metadata.get("relevance_score"), metadata.get("score")
+                    ]
+                    for s in score_sources:
+                        score = max(score, safe_float(s))
+                    
+                    # Distance Score (Chroma)
+                    distance = metadata.get("distance")
+                    if distance is not None:
+                        try:
+                            distance_val = safe_float(distance)
+                            similarity = round(1.0 - distance_val, 4)
+                            score = max(score, similarity)
+                        except (TypeError, ValueError):
+                            pass
+                
+                # Final Cleanup
+                score = round(score, 4)
+                
+                # --- END: SCORE EXTRACTION (METADATA STAND) ---
+
+                score_map[doc_id] = score
+                seen.add(doc_id)
+                
+                # ถ้า filename_to_use ยังว่าง ให้ใช้ filename เดิม (ถ้าถูกดึงมา)
+                if not filename_to_use:
+                     filename_to_use = (
+                        metadata.get("source_filename")
+                        or ev.get("filename")
+                        or ev.get("source")
+                        or previous_levels_filename_map.get(doc_id)
+                        or f"document_{doc_id[:8]}.pdf"
+                    )
+
+                # Debug: log score per document
+                logger.critical(
+                    f"DEBUG SCORE FINAL: ID {doc_id[:8]} | SCORE: {score:.4f} | "
+                    f"RerankKey: {ev.get('rerank_score')} | RelevanceKey: {metadata.get('relevance_score')}"
                 )
 
                 entry = {
                     "doc_id": doc_id,
-                    "filename": os.path.basename(filename),
+                    "filename": os.path.basename(filename_to_use),
                     "mapper_type": "AI_GENERATED",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "relevance_score": score,
                 }
                 evidence_entries.append(entry)
 
-            logger.critical(f"🧭 DEBUG: Discarded {len(discarded_ids)} invalid entries. "
-                            f"Valid entries: {len(evidence_entries)}")
+            # Sort by relevance (high → low)
+            evidence_entries.sort(
+                key=lambda x: score_map.get(x["doc_id"], 0.0),
+                reverse=True
+            )
 
-            if evidence_entries:
-                key = f"{sub_id}.L{level}"
-                if self.is_sequential:
-                    current_list = self.evidence_map.setdefault(key, [])
-                    existing_ids = {item["doc_id"] for item in current_list}
-                    new_entries = [e for e in evidence_entries if e["doc_id"] not in existing_ids]
-                    current_list.extend(new_entries)
-                    logger.info(f"DIRECT SAVE evidence_map[{key}] +{len(new_entries)} files → total {len(current_list)}")
-                else:
-                    if not hasattr(self, "temp_map_for_save"):
-                        self.temp_map_for_save = {}
-                    self.temp_map_for_save[key] = evidence_entries
+            key = f"{sub_id}.L{level}"
+            if self.is_sequential:
+                current = self.evidence_map.setdefault(key, [])
+                existing = {e["doc_id"] for e in current}
+                new_items = [e for e in evidence_entries if e["doc_id"] not in existing]
+                current.extend(new_items)
+                logger.info(f"DIRECT SAVE evidence_map[{key}] +{len(new_items)} files → total {len(current)}")
+            else:
+                if not hasattr(self, "temp_map_for_save"):
+                    self.temp_map_for_save = {}
+                self.temp_map_for_save[key] = evidence_entries
+                logger.info(f"TEMP SAVE evidence_map[{key}] = {len(evidence_entries)} files")
 
-                logger.info(f"  > [EVIDENCE SAVED] {key} → {len(evidence_entries)} files")
-                temp_map_for_level = evidence_entries if not self.is_sequential else None
+            temp_map_for_level = None if self.is_sequential else evidence_entries
 
         # ==================== 12. Evidence Strength & Confidence ====================
         direct_count = len([d for d in top_evidences if d.get("pdca_tag") in ["P", "D", "C", "A"]])
@@ -2035,7 +2117,7 @@ class SEAMPDCAEngine:
             "llm_result_full": llm_result,
             "retrieval_duration_s": round(retrieval_duration, 2),
             "llm_duration_s": round(llm_duration, 2),
-            "top_evidences_ref": evidence_entries,  # ใช้ตัวเดียวกัน → ตรงกัน 100%
+            "top_evidences_ref": evidence_entries,
             "temp_map_for_level": temp_map_for_level,
             "evidence_strength": round(evidence_strength, 1),
             "ai_confidence": ai_confidence,

@@ -1,0 +1,652 @@
+{
+    "6.1.L1": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024484",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024578",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024625",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024673",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024712",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024751",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024787",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.024896",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.025679",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.025990",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:02:15.026071",
+            "relevance_score": 0.0
+        }
+    ],
+    "6.1.L2": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501208",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501315",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501395",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501470",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501554",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501624",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501693",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501760",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501828",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501896",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:04:11.501966",
+            "relevance_score": 0.0
+        }
+    ],
+    "6.1.L3": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120339",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120465",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120551",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120634",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120709",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120781",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120859",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.120946",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.121014",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.121094",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:06:54.121166",
+            "relevance_score": 0.0
+        }
+    ],
+    "6.1.L4": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596354",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596457",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596527",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596584",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596638",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596693",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596745",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596807",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596856",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596905",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:09:15.596952",
+            "relevance_score": 0.0
+        }
+    ],
+    "6.1.L5": [
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239648",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239779",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "11cfc9b4d724d612a7656d69d1e19acd8888339239e0204db392a622af41da00",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239829",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2c3845bbdfdeb676589cc33ce111198139b1860fcb226b6e598017e91eb988fe",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239871",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f7fd565f70c2bbc19713fc999d28c3f18a0755babf845cb2875a2357fc4330f1",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239940",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1a8e0aa9ec275dde70b2945c30b15b6bf6e5fd26fc8a9f33618b628461d38e00",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.239993",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.240033",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "07bcf27b88ca34107711427faf021934d9de4b10e744fcba8db77c5bf1d2afae",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.240070",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "f133e42354c0439962886d767ecae1467aa540e42a9cf0e82c6054a6f28d4094",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.240107",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1fa19915eaeb2e53debd4746974fbb3e5b3413f811d1573ef7d3ee5b96024985",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.240145",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0ca7bfc799ff01204ef97ad44b871d55371c1870e56969c39a18019dfd48618f",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:11:09.240297",
+            "relevance_score": 0.0
+        }
+    ],
+    "5.2.L1": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.376585",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.376644",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.376723",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.376785",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.376829",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.377114",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:13:35.377160",
+            "relevance_score": 0.0
+        }
+    ],
+    "5.2.L2": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.705683",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.705828",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.705892",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.705949",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.705994",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.706035",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:15:46.706070",
+            "relevance_score": 0.0
+        }
+    ],
+    "5.2.L3": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.586742",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587063",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587112",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587148",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587229",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587282",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:17:57.587320",
+            "relevance_score": 0.0
+        }
+    ],
+    "5.2.L4": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.000790",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.000980",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.001106",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.001241",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.001416",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.001503",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:19:33.001604",
+            "relevance_score": 0.0
+        }
+    ],
+    "5.2.L5": [
+        {
+            "doc_id": "56b05513db3ff601e6c710fd9312f36ffdcac0eed920f82a356f59106b76f33f",
+            "filename": "KM4.1L105 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571061",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "1c00938ede70ecb82cdd952704aea33da45b3e40944b9e20cbebf83c580d260f",
+            "filename": "KM4.2L101 KM-FP-03-01 การวิเคราะห์องค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571256",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "2a77669387ed04dd9750bf02783747e33be253455d9c2ee4638af8accd58dd76",
+            "filename": "KM4.1L304 KM-FP-03-01 การวิเคราะห์องค์กร (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571358",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "0a7b0a58d1d892c9192b5efb7a630383c4266dcd452886212aa2b9332801f480",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571451",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "7ad98bfcbe86bb76b5bc16a535ce1323338552d1d9dba799c9a288ec40701f7c",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571515",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "5a299e4b7b38b36bba1a779e27c0ec846c4379f598cb8a94a62f83b6a67314fb",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571569",
+            "relevance_score": 0.0
+        },
+        {
+            "doc_id": "781301c75efda4a8f14ad1fa2da71ff4fb487701ba18a89735f9808cb6c391b7",
+            "filename": "KM4.1L106 KM-FP-03-03 การวิเคราะห์ความเสี่ยงจากปัจจัยภายในและภายนอกขององค์กร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-02T18:21:34.571620",
+            "relevance_score": 0.0
+        }
+    ]
+}

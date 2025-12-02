@@ -232,7 +232,7 @@ def retrieve_context_with_filter(
     candidates = [d for d in dedup_chunks if d not in final_docs]
 
     if slots > 0 and candidates:
-        reranker = get_global_reranker(FINAL_K_RERANKED)
+        reranker = get_global_reranker()
         if reranker and hasattr(reranker, "compress_documents"):
             try:
                 reranked = reranker.compress_documents(
