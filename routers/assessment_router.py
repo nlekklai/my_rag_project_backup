@@ -65,8 +65,21 @@ async def _run_assessment_background(record_id: str, request: StartAssessmentReq
         )
 
         # รัน assessment
+        
+        # V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V
+        # 🧪 HARDCODE TEST: ใช้ "1.2" เพื่อทดสอบ Engine โดยตรง (ต้องลบออกเมื่อทดสอบเสร็จ)
+        target_id_to_use = "1.2"
+        # ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
+        
+        # โค้ดเดิมที่ถูกต้อง (ให้ลบ Hardcode ด้านบนและใช้โค้ดด้านล่างนี้เมื่อแก้ไขปัญหา Client เสร็จ)
+        # target_id_to_use = (
+        #     request.sub_criteria_id.strip() 
+        #     if request.sub_criteria_id and request.sub_criteria_id.strip()
+        #     else "all"
+        # )
+
         result = engine.run_assessment(
-            target_sub_id=request.sub_criteria_id or "all",
+            target_sub_id=target_id_to_use,
             export=True,
             sequential=request.sequential
         )
@@ -89,7 +102,7 @@ async def _run_assessment_background(record_id: str, request: StartAssessmentReq
     except Exception as e:
         logger.exception(f"Assessment FAILED → {record_id}")
         record.status = "FAILED"
-        record.message = f"Error: {str(e)}"
+        record.message = f"Error: {str(e)} ชิ้นส่วน (sub_criteria_id) ถูก Hardcode ไว้เพื่อทดสอบ"
 
 # ------------------- API Endpoints -------------------
 @assessment_router.post("/start", response_model=AssessmentStatus)
@@ -101,10 +114,17 @@ async def start_assessment(request: StartAssessmentRequest, background_tasks: Ba
     record_id = uuid.uuid4().hex[:12]
     os.makedirs("exports", exist_ok=True)
 
+    # 🟢 FIX: ตรวจสอบ String ว่าง/None ก่อนใช้ (สำหรับบันทึก Record)
+    sub_id_for_record = (
+        request.sub_criteria_id.strip() 
+        if request.sub_criteria_id and request.sub_criteria_id.strip()
+        else "all"
+    )
+
     record = AssessmentStatus(
         record_id=record_id,
         enabler=request.enabler.upper(),
-        sub_criteria_id=request.sub_criteria_id or "all",
+        sub_criteria_id=sub_id_for_record,
         sequential=request.sequential,
         status="RUNNING",
         started_at=datetime.now(timezone.utc).isoformat(),
