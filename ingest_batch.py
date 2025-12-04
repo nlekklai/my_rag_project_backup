@@ -1,14 +1,15 @@
-# ingest_batch.py
+# ingest_batch.py (เวอร์ชันแก้ไขล่าสุด: รองรับ Multi-Tenant/Year, แก้ไข Path ใน wipe)
+
 import argparse
 import logging
 import sys
 import os
-from typing import Optional
-from pathlib import Path as SysPath
+import shutil
+from typing import Final, List, Dict, Any
 
-# -------------------- Logging --------------------
+# -------------------- Logging Setup --------------------
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO, 
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -20,205 +21,301 @@ try:
     if project_root not in sys.path:
         sys.path.append(project_root)
 
+    # ต้องมั่นใจว่าไฟล์ config/global_vars.py มีการกำหนดค่าเหล่านี้
     from config.global_vars import (
         DATA_DIR,
         VECTORSTORE_DIR,
         SUPPORTED_DOC_TYPES,
         SUPPORTED_ENABLERS,
+        EVIDENCE_DOC_TYPES,
+        DEFAULT_TENANT,  
+        DEFAULT_YEAR,    
     )
-
+    
+    # ต้องมั่นใจว่าไฟล์ core/ingest.py มีฟังก์ชันเหล่านี้
     from core.ingest import (
         ingest_all_files,
         list_documents,
         wipe_vectorstore,
         delete_document_by_uuid,
+        get_target_dir # สำหรับการคำนวณพาธแสดงผล
     )
 
 except ImportError as e:
     logger.critical(f"Cannot import core modules: {e}")
+    if 'config.global_vars' in str(e):
+        logger.critical("HINT: Ensure config/global_vars.py exists and defines DEFAULT_TENANT, DEFAULT_YEAR, etc.")
+    elif 'core.ingest' in str(e):
+        logger.critical("HINT: Ensure core/ingest.py exists and is correctly defined.")
     sys.exit(1)
+
 
 # -------------------- Argument Parsing --------------------
 parser = argparse.ArgumentParser(description="RAG Batch Ingestion & Vectorstore Management")
 subparsers = parser.add_subparsers(dest="command", required=True)
 
-# ingest
+
+# --- 1. ingest ---
 ingest_parser = subparsers.add_parser("ingest", help="Ingest files into vectorstore")
 ingest_parser.add_argument(
-    "doc_type",
-    nargs="?",
-    default="all",
-    help=f"Document type to ingest (supported: {SUPPORTED_DOC_TYPES} or 'all')",
+    "--tenant", type=str, default=DEFAULT_TENANT,
+    help=f"Specify the tenant (e.g., pea, pwa). Default: {DEFAULT_TENANT}"
 )
 ingest_parser.add_argument(
-    "--enabler",
-    type=str,
-    default=None,
-    help=f"Specific enabler code for 'evidence' type (supported: {SUPPORTED_ENABLERS})",
+    # NOTE: ใช้ type=str เพื่อรับค่า 2568, 2569 ได้ แต่ต้องแปลงเป็น int ก่อนส่งให้ core/ingest
+    "--year", type=str, default=DEFAULT_YEAR,
+    help=f"Specify the year (e.g., 2567, 2568). Default: {DEFAULT_YEAR} (Only applies to 'evidence')."
 )
 ingest_parser.add_argument(
-    "--skip_ext",
-    nargs="*",
-    default=None,
-    help="Skip files with these extensions (e.g., .txt .csv)",
+    "--doc_type", type=str, default="all",
+    help=f"Document type to ingest. Supported: {', '.join(SUPPORTED_DOC_TYPES + ['all'])}. Default: all"
 )
 ingest_parser.add_argument(
-    "--sequential",
-    action="store_true",
-    help="Run ingestion sequentially (no multiprocessing)",
+    "--enabler", type=str,
+    help=f"Enabler to ingest (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
 )
 ingest_parser.add_argument(
-    "--log_every",
-    type=int,
-    default=50,
-    help="Log progress every N files",
+    "--skip_ext", type=str, nargs='+', default=[],
+    help="File extensions to skip (e.g., .jpg .png)."
 )
 ingest_parser.add_argument(
-    "--dry_run",
-    action="store_true",
-    help="Perform a dry run without writing to vectorstore",
+    "--sequential", action="store_true",
+    help="Ingest files sequentially (single-threaded) for easier debugging."
 )
 ingest_parser.add_argument(
-    "--debug",
-    action="store_true",
-    help="Enable debug logging"
+    "--dry_run", action="store_true",
+    help="Only scan and log, do not perform ingestion."
+)
+ingest_parser.add_argument(
+    "--log_every", type=int, default=100,
+    help="Log progress every N files."
+)
+ingest_parser.add_argument(
+    "--debug", action="store_true", 
+    help="Enable debug logging and stable document ID creation."
 )
 
-# wipe
-wipe_parser = subparsers.add_parser("wipe", help="Wipe vectorstore collection(s)")
+
+# --- 2. list ---
+list_parser = subparsers.add_parser("list", help="List all documents in vectorstore collection")
+list_parser.add_argument(
+    "--tenant", type=str, default=DEFAULT_TENANT,
+    help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
+)
+list_parser.add_argument(
+    "--year", type=str, default=DEFAULT_YEAR,
+    help=f"Specify the year. Default: {DEFAULT_YEAR}"
+)
+list_parser.add_argument(
+    "--doc_type", type=str, required=True,
+    help=f"Document type to list. Supported: {', '.join(SUPPORTED_DOC_TYPES)}."
+)
+list_parser.add_argument(
+    "--enabler", type=str,
+    help=f"Enabler to list (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
+)
+list_parser.add_argument(
+    "--debug", action="store_true", 
+    help="Enable debug logging and stable document ID creation."
+)
+
+
+# --- 3. wipe ---
+wipe_parser = subparsers.add_parser("wipe", help="Wipe (Delete) vectorstore collection or files")
 wipe_parser.add_argument(
-    "doc_type",
-    nargs="?",
-    default="all",
-    help=f"Document type to wipe (supported: {SUPPORTED_DOC_TYPES} or 'all')",
+    "--tenant", type=str, default=DEFAULT_TENANT,
+    help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
 wipe_parser.add_argument(
-    "--enabler",
-    type=str,
-    default=None,
-    help=f"Specific enabler code for 'evidence' type (e.g., KM, L).",
+    "--year", type=str, default=DEFAULT_YEAR,
+    help=f"Specify the year. Default: {DEFAULT_YEAR}"
+)
+wipe_parser.add_argument(
+    "--doc_type", type=str, required=True,
+    help=f"Document type to wipe. Supported: {', '.join(SUPPORTED_DOC_TYPES)}."
+)
+wipe_parser.add_argument(
+    "--enabler", type=str,
+    help=f"Enabler to wipe (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
+)
+wipe_parser.add_argument(
+    "--yes",
+    action="store_true",
+    help="Bypass confirmation prompt for wiping (DANGER: use only when sure!)",
+)
+wipe_parser.add_argument(
+    "--debug", action="store_true", 
+    help="Enable debug logging and stable document ID creation."
 )
 
-# list
-list_parser = subparsers.add_parser("list", help="List all indexed documents")
-list_parser.add_argument(
-    "doc_type",
-    nargs="?",
-    default="all",
-    help=f"Document type to list (supported: {SUPPORTED_DOC_TYPES} or 'all')",
+
+# --- 4. delete ---
+delete_parser = subparsers.add_parser("delete", help="Delete a specific document by its UUID from the vectorstore")
+delete_parser.add_argument(
+    "--tenant", type=str, default=DEFAULT_TENANT,
+    help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
-list_parser.add_argument(
-    "--enabler",
-    type=str,
-    default=None,
-    help="Specific enabler code for 'evidence' type.",
+delete_parser.add_argument(
+    "--year", type=str, default=DEFAULT_YEAR,
+    help=f"Specify the year. Default: {DEFAULT_YEAR}"
 )
-list_parser.add_argument(
-    "--show-results",
-    type=str,
-    default="ingested",
-    choices=["full", "ingested", "failed"],
-    help="Filter documents to show: 'full', 'ingested', or 'failed'"
+delete_parser.add_argument(
+    "--doc_type", type=str, required=True,
+    help=f"Document type containing the document. Supported: {', '.join(SUPPORTED_DOC_TYPES)}."
+)
+delete_parser.add_argument(
+    "--enabler", type=str,
+    help=f"Enabler containing the document (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
+)
+delete_parser.add_argument(
+    "doc_uuid", type=str,
+    help="The full 64-character Stable Document UUID to delete."
+)
+delete_parser.add_argument(
+    "--debug", action="store_true", 
+    help="Enable debug logging and stable document ID creation."
 )
 
-# delete
-delete_parser = subparsers.add_parser("delete", help="Delete a specific document by its Stable UUID")
-delete_parser.add_argument(
-    "stable_doc_uuid",
-    type=str,
-    help="Stable UUID of the document to delete (found via 'list' command)",
-)
-delete_parser.add_argument(
-    "doc_type",
-    type=str,
-    help=f"Document type where the UUID resides (supported: {SUPPORTED_DOC_TYPES})",
-)
-delete_parser.add_argument(
-    "--enabler",
-    type=str,
-    default=None,
-    help="Enabler code for 'evidence' type (required if doc_type is evidence).",
-)
 
-# -------------------- Main Logic --------------------
+# -------------------- Main Execution --------------------
+
 args = parser.parse_args()
 
-# -------------------- Enable debug if requested --------------------
-if getattr(args, "debug", False):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Debug logging enabled")
+# --- Pre-Command Validation ---
+doc_type_input = args.doc_type.lower() if hasattr(args, 'doc_type') else None
+if doc_type_input and doc_type_input != "all" and doc_type_input not in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
+    logger.error(f"Invalid doc_type: {doc_type_input}. Supported: {SUPPORTED_DOC_TYPES}")
+    sys.exit(1)
 
-# -------------------- LIST --------------------
+# Check enabler for 'evidence' type (applies to ingest, list, wipe, delete)
+if doc_type_input == EVIDENCE_DOC_TYPES.lower() and args.command in ["ingest", "list", "wipe", "delete"] and not args.enabler:
+    logger.error(f"When using '{EVIDENCE_DOC_TYPES.lower()}', you must specify --enabler {', '.join(SUPPORTED_ENABLERS)}.")
+    sys.exit(1)
+
+# ตั้งค่า Logging Level ถ้าใช้ --debug
+if hasattr(args, 'debug') and args.debug:
+    logger.setLevel(logging.DEBUG)
+
+
+# -------------------- COMMAND: list --------------------
 if args.command == "list":
-    doc_type_req = (args.doc_type.lower() if args.doc_type != "all" else None)
-    doc_types = [doc_type_req] if doc_type_req else None
-    logger.info(f"--- Listing documents for type '{args.doc_type}' (Enabler: {args.enabler or 'ALL'}) ---")
     list_documents(
-        doc_types=doc_types,
+        tenant=args.tenant,
+        year=args.year,
+        doc_types=[doc_type_input],
         enabler=args.enabler,
-        show_results=args.show_results
     )
     sys.exit(0)
 
-# -------------------- WIPE --------------------
-elif args.command == "wipe":
-    target = args.doc_type.lower()
-    if target not in SUPPORTED_DOC_TYPES and target != "all":
-        logger.error(f"❌ Invalid doc_type '{target}'. Choose from ['all', {', '.join(SUPPORTED_DOC_TYPES)}]")
-        sys.exit(1)
 
-    logger.warning(f"⚠️ You are about to wipe collection(s) matching '{target}' (Enabler: {args.enabler or 'ALL'})")
-    if input("Type 'YES' to confirm: ") == "YES":
-        wipe_vectorstore(target, args.enabler)
-        logger.info("✅ Wipe finished")
-    else:
-        logger.info("Cancelled")
-    sys.exit(0)
-
-# -------------------- DELETE --------------------
+# -------------------- COMMAND: delete --------------------
 elif args.command == "delete":
-    doc_type = args.doc_type.lower()
-    uuid = args.stable_doc_uuid
-    enabler = args.enabler
-
-    if doc_type == "evidence" and not enabler:
-        logger.error("❌ Must specify --enabler for evidence deletion")
-        sys.exit(1)
-
-    logger.warning(f"⚠️ Deleting document {uuid} in {doc_type} (Enabler: {enabler or '-'})")
-    if input("Type 'YES' to confirm: ") == "YES":
-        success = delete_document_by_uuid(uuid, doc_type=doc_type, enabler=enabler)
-        if success:
-            logger.info(f"✅ Deleted {uuid}")
-        else:
-            logger.error("❌ Document not found or deletion failed")
-    else:
-        logger.info("Cancelled")
+    final_enabler = args.enabler if doc_type_input == EVIDENCE_DOC_TYPES.lower() else None
+    
+    delete_document_by_uuid(
+        tenant=args.tenant,
+        year=args.year,
+        doc_type=doc_type_input,
+        enabler=final_enabler,
+        doc_uuid_to_delete=args.doc_uuid,
+        base_path=VECTORSTORE_DIR
+    )
     sys.exit(0)
 
-# -------------------- INGEST --------------------
+
+# -------------------- COMMAND: wipe --------------------
+elif args.command == "wipe":
+    logger.warning("!!! WARNING: You are about to wipe the entire Vector Store Collection !!!")
+    
+    # คำนวณพาธสำหรับแสดงผล (อิงจากตรรกะใน core/ingest.py)
+    doc_type_key = get_target_dir(doc_type_input, args.enabler)
+    tenant_clean = args.tenant.lower().replace(" ", "_")
+    
+    # กำหนดส่วนของ Year หรือ Common
+    year_or_common = str(args.year)
+    if doc_type_input != EVIDENCE_DOC_TYPES.lower():
+         year_or_common = "common" 
+    
+    # ✅ แก้ไข: ลบ "gov_tenants" ออก เนื่องจาก VECTORSTORE_DIR มีอยู่แล้ว
+    wipe_path_display = os.path.join(VECTORSTORE_DIR, tenant_clean, year_or_common, doc_type_key)
+    
+    logger.warning(f"Target Collection Path (based on arguments): {wipe_path_display}")
+    
+    if not args.yes:
+        confirmation = input("Type 'YES' (all caps) to confirm deletion: ")
+        if confirmation != "YES":
+            logger.info("Deletion cancelled.")
+            sys.exit(0)
+
+    # รัน Wipe จริง
+    logger.info("Starting actual deletion...")
+    wipe_vectorstore(
+        tenant=args.tenant, 
+        year=args.year,
+        doc_type_to_wipe=doc_type_input,
+        enabler=args.enabler,
+        base_path=VECTORSTORE_DIR,
+    )
+    logger.info("✅ Wipe completed.")
+    
+    # 💡 Cleanup: พยายามลบโฟลเดอร์เปล่าที่เหลืออยู่ (ถ้า wipe all)
+    if doc_type_input == 'all':
+        try:
+            # ✅ แก้ไข: ลบ "gov_tenants" ออก
+            target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean, year_or_common)
+            shutil.rmtree(target_cleanup_dir, ignore_errors=True)
+            logger.info(f"Cleaned up empty directory: {target_cleanup_dir}")
+        except Exception:
+             pass 
+
+    sys.exit(0)
+
+# -------------------- COMMAND: ingest --------------------
 elif args.command == "ingest":
-    doc_type = args.doc_type.lower()
-    enabler = args.enabler
+    logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}")
+    logger.info(f"Dry run: {args.dry_run} | Sequential: {args.sequential} | Debug: {args.debug}")
 
-    # ตรวจสอบเฉพาะกรณีที่เป็น doc_type 'evidence' และไม่ได้เลือก 'all'
-    if doc_type == "evidence" and not enabler:
-        logger.error("❌ Must specify --enabler for evidence ingestion")
-        sys.exit(1)
-
-    logger.info(f"--- Starting Ingestion: doc_type='{doc_type}' (Enabler: {enabler or 'ALL'}) ---")
-    logger.info(f"Dry run: {getattr(args, 'dry_run', False)} | Sequential: {args.sequential}")
-
-    ingest_all_files(
-        doc_type=doc_type,
-        enabler=enabler,
+    results: List[Dict[str, Any]] = ingest_all_files( # กำหนด Type Hint ให้ชัดเจนว่าเป็น List
+        tenant=args.tenant,
+        year=int(args.year), 
+        doc_type=None if doc_type_input == "all" else doc_type_input,
+        enabler=args.enabler,
         data_dir=DATA_DIR,
         base_path=VECTORSTORE_DIR,
         skip_ext=args.skip_ext,
         sequential=args.sequential,
         log_every=args.log_every,
-        dry_run=getattr(args, "dry_run", False)
+        dry_run=args.dry_run,
+        debug=args.debug,
     )
 
-    logger.info("✅ Ingestion process completed. Check logs for details.")
+    total = len(results)
+    success = 0
+    failed = 0
+    
+    # 🎯 FINAL FIX: ปรับ Logic การนับให้วนซ้ำใน List of Dictionaries
+    if isinstance(results, list):
+        # 🟢 นับจำนวนรายการที่สถานะเป็น 'chunked'
+        success = sum(1 for status_dict in results if status_dict.get('status') == 'chunked')
+        failed = total - success
+    else:
+        # ❌ จัดการกรณีที่ผลลัพธ์ไม่ใช่ List (ไม่ควรเกิดขึ้นแล้ว)
+        logger.error(f"❌ Cannot calculate summary: 'results' expected list, got {type(results)}. Assuming 0 successes.")
+        failed = total # ถ้า total > 0
+        
+    logger.info("-" * 50)
+    logger.info(f"🔥 INGESTION SUMMARY: {doc_type_input.upper()} ({args.enabler or 'ALL'})")
+    logger.info(f"Tenant/Year: {args.tenant.upper()}/{args.year}")
+    logger.info(f"Total files scanned: {total}")
+    logger.info(f"✅ Successfully chunked: {success}")
+    logger.info(f"❌ Failed or skipped chunking: {failed}")
+    logger.info("-" * 50)
+    
+    if failed > 0:
+        logger.error("Some files failed to chunk/process. Please review the logs above.")
+    
     sys.exit(0)
+
+else:
+    parser.print_help()
+    sys.exit(1)

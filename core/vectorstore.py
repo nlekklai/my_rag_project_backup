@@ -54,11 +54,14 @@ except Exception:
 # -------------------- Global Config --------------------
 from config.global_vars import (
     VECTORSTORE_DIR,
-    MAPPING_FILE_PATH,
+    MAPPING_BASE_DIR,
     FINAL_K_RERANKED,
     INITIAL_TOP_K,
     EVIDENCE_DOC_TYPES,
     MAX_PARALLEL_WORKERS,
+    DEFAULT_TENANT,
+    DEFAULT_YEAR,
+    DEFAULT_ENABLER
 )
 
 # -------------------- Vectorstore Constants --------------------
@@ -71,6 +74,7 @@ _EMBED_LOCK = threading.Lock()
 _MPS_WARNING_SHOWN = False
 
 # -------------------- Helper: detect environment & device --------------------
+@staticmethod
 def _detect_system():
     cpu_count = os.cpu_count() or 4
     total_ram_gb = None
@@ -81,6 +85,7 @@ def _detect_system():
             total_ram_gb = None
     return {"cpu_count": cpu_count, "total_ram_gb": total_ram_gb, "platform": platform.system().lower()}
 
+@staticmethod
 def _detect_torch_device():
     try:
         import torch
@@ -96,82 +101,43 @@ def _detect_torch_device():
     return "cpu"
 
 def get_hf_embeddings(device_hint: Optional[str] = None):
-    """
-    Return a HuggingFaceEmbeddings instance (cached per process).
-    """
     global _CACHED_EMBEDDINGS, _MPS_WARNING_SHOWN
     device = device_hint or _detect_torch_device()
 
-    sys_info = _detect_system()
-    force_mode = ENV_FORCE_MODE
-
-    using_process = (force_mode == "process") or (sys_info["cpu_count"] >= 8 and (sys_info["total_ram_gb"] or 0) >= 16)
-
-    if device == "mps" and using_process and not _MPS_WARNING_SHOWN:
-        logger.warning("⚠️ Detected MPS but running in process-parallel mode: forcing device -> cpu to avoid MPS multi-process failures")
-        _MPS_WARNING_SHOWN = True
-        device = "cpu"
-
-    if ENV_DISABLE_ACCEL:
-        device = "cpu"
+    # ... (โค้ดเดิมทั้งหมดจนถึงตรงนี้)
 
     if _CACHED_EMBEDDINGS is None:
         with _EMBED_LOCK:
             if _CACHED_EMBEDDINGS is None:
+                # เปลี่ยนตรงนี้เด็ดขาด!!!
+                model_name = "intfloat/multilingual-e5-base"  # หรือ large ถ้าเครื่องแรง
+                
+                logger.info(f"Loading BEST Thai RAG embedding 2025: {model_name} on {device}")
+                logger.info("This model was used to build ALL PEA 2568 vectorstores (evidence_km, document, etc.)")
+                
                 try:
-                    model_name = "intfloat/multilingual-e5-base"
-                    logger.info(f"📦 Creating HuggingFaceEmbeddings (model={model_name}, device={device})")
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
                         model_name=model_name,
-                        model_kwargs={"device": device}
+                        model_kwargs={
+                            "device": device,
+                            # สำคัญมาก: e5 ต้องใช้ prefix!
+                            # ถ้าไม่ใส่ → คะแนนตกฮวบ!
+                        },
+                        encode_kwargs={
+                            "normalize_embeddings": True,
+                            # สำหรับ e5 series ต้องใส่ prefix เท่านั้น!!!
+                            "prompt": "query: "  # สำหรับ query
+                            # หรือถ้าจะ embed เอกสาร → ใช้ "passage: "
+                        }
                     )
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to create embeddings on device={device}: {e}. Falling back to all-MiniLM-L6-v2 on cpu.")
-                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={"device": "cpu"})
+                    logger.error(f"Failed to load {model_name}: {e}")
+                    logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
+                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        model_kwargs={"device": "cpu"}
+                    )
     return _CACHED_EMBEDDINGS
-
-# -------------------- Vectorstore helpers --------------------
-def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
-    doc_type_norm = doc_type.strip().lower()
-    if doc_type_norm == EVIDENCE_DOC_TYPES:
-        enabler_norm = (enabler or "km").strip().lower()
-        collection_name = f"{doc_type_norm}_{enabler_norm}"
-    else:
-        collection_name = doc_type_norm
-    logger.critical(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
-    return collection_name
-
-def get_vectorstore_path(doc_type: Optional[str] = None, enabler: Optional[str] = None) -> str:
-    if not doc_type:
-        return VECTORSTORE_DIR
-    collection_name = _get_collection_name(doc_type, enabler)
-    return os.path.join(VECTORSTORE_DIR, collection_name)
-
-def list_vectorstore_folders(base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None, enabler: Optional[str] = None) -> List[str]:
-    if not os.path.exists(base_path):
-        return []
-    folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
-    if doc_type:
-        doc_type_norm = doc_type.lower().strip()
-        if doc_type_norm == EVIDENCE_DOC_TYPES and not enabler:
-            return [f for f in folders if f.startswith(f"{EVIDENCE_DOC_TYPES}_")]
-        collection_name = _get_collection_name(doc_type_norm, enabler)
-        return [collection_name] if collection_name in folders else []
-    return folders
-
-def vectorstore_exists(doc_id: str, base_path: str = VECTORSTORE_DIR, doc_type: Optional[str] = None, enabler: Optional[str] = None) -> bool:
-    if not doc_type:
-        return False
-    collection_name = _get_collection_name(doc_type, enabler)
-    path = os.path.join(base_path, collection_name)
-    file_path = os.path.join(path, "chroma.sqlite3")
-    if not os.path.isdir(path):
-        logger.warning(f"❌ V-Exists Check 1: Directory not found for collection '{collection_name}' at {path}")
-        return False
-    if os.path.isfile(file_path):
-        return True
-    logger.error(f"❌ V-Exists Check 3: FAILED to find file chroma.sqlite3 at {file_path} for collection '{collection_name}'")
-    return False
 
 # =================================================================
 # HuggingFace Cross-Encoder Reranker wrapper (singleton)
@@ -274,19 +240,189 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
     return _CACHED_RERANKER_INSTANCE
 
 
+# -------------------- Path Helper Function (REVISED for Lowercase Path Suffix and Optional Year) --------------------
+def _build_vectorstore_path_by_doc_type(tenant: str, year: Optional[int], doc_type: str, enabler: Optional[str] = None) -> str:
+    """
+    สร้าง Full Path สำหรับ Collection โดยใช้ตรรกะ EVIDENCE_DOC_TYPES
+    - Evidence (มี year): VECTORSTORE_DIR / tenant / year / collection_name
+    - Docs/FAQ (ไม่มี year): VECTORSTORE_DIR / tenant / collection_name
+    """
+    doc_type_lower = doc_type.lower()
+    collection_name = _get_collection_name(doc_type, enabler)
+    
+    path_segments = [VECTORSTORE_DIR, tenant.lower()]
+    
+    # 🎯 FIX: ตรวจสอบปี (year is not None) สำหรับ Evidence เท่านั้น
+    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
+        # Path สำหรับ evidence คือ /tenant/year/collection_name
+        path_segments.append(str(year))
+        path_segments.append(collection_name)
+    else:
+        # Path สำหรับ document/faq (ไม่ใช้ปี)
+        path_segments.append(collection_name)
+        
+    return os.path.join(*path_segments)
+
+# -----------------------------------------------------------
+
+def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
+    """
+    Calculates the Chroma collection name (Internal identifier).
+    """
+    doc_type_norm = doc_type.strip().lower()
+    
+    if doc_type_norm == EVIDENCE_DOC_TYPES.lower():
+        # สำหรับ Evidence: ชื่อ Collection ต้องรวม enabler เสมอ
+        enabler_norm = (enabler or "km").strip().lower()
+        
+        # 🎯 FIX: รวมตรรกะให้เป็นบรรทัดเดียว: evidence + enabler 
+        collection_name = f"{doc_type_norm}_{enabler_norm}"
+        
+    else:
+        # สำหรับเอกสารทั่วไป: ชื่อ Collection คือ doc_type เท่านั้น
+        collection_name = doc_type_norm
+        
+    logger.debug(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
+    return collection_name
+
+# 📌 REVISED: เพิ่ม tenant และ year, ใช้ Logic Centralized KM
+def get_vectorstore_path(
+    tenant: str, 
+    year: Optional[int], 
+    doc_type: Optional[str] = None, 
+    enabler: Optional[str] = None
+) -> str:
+    """
+    Calculates the full persist directory path for the vector store instance
+    based on the Centralized KM Logic.
+    """
+    if not doc_type:
+        # ถ้าไม่มี doc_type ให้ return root ของ tenant
+        return os.path.join(VECTORSTORE_DIR, tenant.lower()) 
+        
+    # 🎯 FIX: เรียกใช้ _build_vectorstore_path_by_doc_type ที่แก้ไขแล้ว
+    return _build_vectorstore_path_by_doc_type(tenant, year, doc_type, enabler)
+
+# 📌 REVISED: เพิ่ม tenant และ year, ใช้ Logic Centralized KM
+def vectorstore_exists(
+    doc_id: str, # รักษาไว้ตาม Signature เดิมของผู้ใช้
+    tenant: str,
+    year: Optional[int], # <--- รองรับ None สำหรับ General Docs
+    doc_type: Optional[str] = None, 
+    enabler: Optional[str] = None, 
+    base_path: str = VECTORSTORE_DIR # base_path จะถูกละเลยเนื่องจากใช้ global VECTORSTORE_DIR
+) -> bool:
+    """
+    Checks if the Vector Store directory exists for the given context.
+    """
+    if not doc_type:
+        return False
+        
+    # 1. Get the full path using the updated logic
+    path = get_vectorstore_path(tenant, year, doc_type, enabler) 
+    
+    # 2. Check for the actual data file created by Chroma
+    file_path = os.path.join(path, "chroma.sqlite3")
+    
+    if not os.path.isdir(path):
+        logger.warning(f"❌ V-Exists Check: Directory not found for doc_type '{doc_type}' at {path}")
+        return False
+    if os.path.isfile(file_path):
+        return True
+    logger.error(f"❌ V-Exists Check: FAILED to find file chroma.sqlite3 at {file_path}")
+    return False
+
+def _get_collection_parent_dir(tenant: str, year: Optional[int], doc_type: str) -> str: 
+    """
+    Calculates the parent directory where the collection folder resides.
+    - evidence: VECTORSTORE_DIR / tenant / year 
+    - others:   VECTORSTORE_DIR / tenant 
+    """
+    doc_type_lower = doc_type.lower()
+    path_segments = [VECTORSTORE_DIR, tenant.lower()]
+    
+    # 🎯 FIX: ตรวจสอบปี (year is not None) สำหรับ Evidence เท่านั้น
+    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
+        # Parent ของ evidence คือมีปี
+        path_segments.append(str(year))
+        
+    return os.path.join(*path_segments)
+
+def list_vectorstore_folders(
+    tenant: str, 
+    year: int, # NOTE: ใช้ปีปัจจุบันที่รัน (int)
+    doc_type: Optional[str] = None, 
+    enabler: Optional[str] = None, 
+    base_path: str = VECTORSTORE_DIR
+) -> List[str]:
+    """
+    Lists the actual collection folder names (e.g., 'evidence_km', 'document')
+    that exist under the specified tenant and year context.
+    """
+    
+    # Scenario 1: Specific doc_type/enabler is requested
+    if doc_type:
+        doc_type_norm = doc_type.lower().strip()
+        collection_name = _get_collection_name(doc_type_norm, enabler)
+        
+        # 🎯 FIX 4: ใช้ get_vectorstore_path ที่แก้ไขแล้ว
+        full_collection_path = get_vectorstore_path(tenant, year, doc_type_norm, enabler)
+        
+        if os.path.isdir(full_collection_path):
+            return [collection_name] 
+        return []
+
+    # Scenario 2: List ALL collections for the given tenant/year context (List All)
+    
+    collections: Set[str] = set()
+    
+    # 1. Scan the Year Root (สำหรับ Doc Type: evidence)
+    root_year = _get_collection_parent_dir(tenant, year, EVIDENCE_DOC_TYPES) 
+    if os.path.isdir(root_year):
+        # ค้นหา evidence_... collections ภายในโฟลเดอร์ปี
+        for sub_dir in os.listdir(root_year):
+             # 🎯 FIX 5: ใช้ startsWith เพื่อจับ 'evidence_km' (หรือ evidence_xxx)
+             if sub_dir.lower().startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"): 
+                 collections.add(sub_dir.lower()) 
+
+    # 2. Scan the Common Root (สำหรับ Doc Type: document, faq, ฯลฯ)
+    # Common Root: VECTORSTORE_DIR / tenant
+    root_common = _get_collection_parent_dir(tenant, year=None, doc_type="document") 
+    if os.path.isdir(root_common):
+        # ค้นหาโฟลเดอร์ Doc Type
+        for sub_dir in os.listdir(root_common):
+            sub_dir_lower = sub_dir.lower()
+            if sub_dir_lower == EVIDENCE_DOC_TYPES.lower() or sub_dir.isdigit():
+                 continue 
+            
+            # ตรวจสอบว่าโฟลเดอร์นั้นเป็น Collection จริง (มีไฟล์ Chroma)
+            full_collection_path = os.path.join(root_common, sub_dir)
+            
+            if os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
+                 collections.add(sub_dir_lower) 
+    
+    return sorted(list(collections))
+
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
     _instance = None
     _is_initialized = False
-
-    _chroma_cache: Dict[str, Chroma] = PrivateAttr({})
-    _multi_doc_retriever: Optional['MultiDocRetriever'] = PrivateAttr(None)
     _lock = threading.Lock()
 
-    _doc_id_mapping: Dict[str, Dict[str, Any]] = PrivateAttr({})
-    _uuid_to_doc_id: Dict[str, str] = PrivateAttr({})
+    # ใช้ default_factory แทนการใส่ {} หรือ None ตรงๆ
+    _chroma_cache: Dict[str, Chroma] = PrivateAttr(default_factory=dict)
+    _multi_doc_retriever: Optional['MultiDocRetriever'] = PrivateAttr(default=None)
+    
+    tenant: str = PrivateAttr(default=DEFAULT_TENANT)
+    year: int = PrivateAttr(default=DEFAULT_YEAR)
 
-    _embeddings: Any = PrivateAttr(None)
+    _doc_id_mapping: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
+    _uuid_to_doc_id: Dict[str, str] = PrivateAttr(default_factory=dict)
+
+    _embeddings: Any = PrivateAttr(default=None)
+
+    # สำคัญที่สุด: ต้องใช้ default_factory=dict หรือ default=None เท่านั้น!
+    _client: Optional[chromadb.PersistentClient] = PrivateAttr(default=None)
 
     def __new__(cls, *args, **kwargs):
         with cls._lock:
@@ -294,13 +430,40 @@ class VectorStoreManager:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_path: str = VECTORSTORE_DIR):
+    def __init__(self, base_path: str = VECTORSTORE_DIR, tenant: str = DEFAULT_TENANT, year: int = DEFAULT_YEAR):
         if not self._is_initialized:
             self._base_path = base_path
+            self.tenant = tenant.lower()        # ต้อง .lower() ด้วยนะ!
+            self.year = year
+            self.enabler = DEFAULT_ENABLER   
             self._chroma_cache = {}
             self._embeddings = get_hf_embeddings()
-            self._load_doc_id_mapping()
-            logger.info(f"Initialized VectorStoreManager. Loaded {len(self._doc_id_mapping)} stable doc IDs.")
+            
+            # แก้ตรงนี้: Chroma Client ต้องชี้ที่ root ของ tenant เท่านั้น!
+            # chroma_root_path = os.path.join(base_path, self.tenant)   # ไม่มี str(year)!!!
+            # chroma_root_path = os.path.join(base_path, self.tenant, str(self.year))  # เพิ่ม year เข้าไป!
+            # 1. สร้างชื่อ Collection ที่ถูกต้อง (evidence_km)
+            collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, self.enabler)
+            
+            # 2. ใช้ Path Helper ที่คุณมีอยู่ เพื่อสร้าง Full Path
+            #    ผลลัพธ์: /vectorstore/pea/2568/evidence_km
+            chroma_root_path = _build_vectorstore_path_by_doc_type(
+                tenant=self.tenant, 
+                year=self.year, 
+                doc_type=EVIDENCE_DOC_TYPES, 
+                enabler=self.enabler
+            )
+            
+            self._client = chromadb.PersistentClient(path=chroma_root_path)
+            logger.info(f"ChromaDB Client initialized at FULL COLLECTION PATH: {chroma_root_path}")
+            # Note: เราใช้ Chroma Client ในโหมดนี้เพื่อโหลด DB ที่สร้างเป็นราย collection
+            
+            # โหลด mapping หลังจากตั้งค่า tenant/year แล้ว
+            self._load_doc_id_mapping() 
+            
+            logger.info(f"Initialized VectorStoreManager (Tenant: {self.tenant}, Year: {self.year}). "
+                        f"Loaded {len(self._doc_id_mapping)} stable doc IDs.")
+            
             VectorStoreManager._is_initialized = True
 
     def close(self):
@@ -321,8 +484,20 @@ class VectorStoreManager:
     def _load_doc_id_mapping(self):
         self._doc_id_mapping = {}
         self._uuid_to_doc_id = {}
+        
+        # NOTE: Doc ID Mapping ต้องใช้ Path ที่ระบุปีเสมอ
+        # mapping_filename = f"{self.tenant.lower()}_{self.year}_doc_id_mapping.json"
+        mapping_filename = f"{self.tenant.lower()}_{self.year}_{self.enabler.lower()}_doc_id_mapping.json"
+        
+        doc_id_mapping_path = os.path.join(
+            MAPPING_BASE_DIR, 
+            self.tenant.lower(), 
+            str(self.year), 
+            mapping_filename
+        )
+  
         try:
-            with open(MAPPING_FILE_PATH, "r", encoding="utf-8") as f:
+            with open(doc_id_mapping_path, "r", encoding="utf-8") as f:
                 mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
                 cleaned_mapping = {k.strip(): v for k, v in mapping_data.items()}
                 self._doc_id_mapping = cleaned_mapping
@@ -330,11 +505,11 @@ class VectorStoreManager:
                     if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry and isinstance(doc_entry.get("chunk_uuids"), list):
                         for uid in doc_entry["chunk_uuids"]:
                             self._uuid_to_doc_id[uid] = doc_id
-            logger.info(f"✅ Loaded Doc ID Mapping: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
+            logger.info(f"✅ Loaded Doc ID Mapping from {doc_id_mapping_path}: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
         except FileNotFoundError:
-            logger.warning(f"⚠️ Doc ID Mapping file not found at {MAPPING_FILE_PATH}.")
+            logger.warning(f"⚠️ Doc ID Mapping file not found at {doc_id_mapping_path}.")
         except Exception as e:
-            logger.error(f"❌ Failed to load Doc ID Mapping: {e}")
+            logger.error(f"❌ Failed to load Doc ID Mapping from {doc_id_mapping_path}: {e}")
 
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         collection_name_lower = collection_name.strip().lower()
@@ -344,23 +519,92 @@ class VectorStoreManager:
         return collection_name_lower, None
 
     def _load_chroma_instance(self, collection_name: str) -> Optional[Chroma]:
+        """
+        โหลด (หรือคืนจาก cache) Chroma instance โดยใช้ PersistentClient เดียวกันทุกครั้ง
+        รองรับทั้ง year-specific (evidence_*) และ general/policy collections
+        """
+        # 1. Fast cache hit
         if collection_name in self._chroma_cache:
             return self._chroma_cache[collection_name]
+
+        # 2. Thread-safe double-check
         with self._lock:
             if collection_name in self._chroma_cache:
                 return self._chroma_cache[collection_name]
-            persist_directory = os.path.join(self._base_path, collection_name)
+
+            # ------------------------------------------------------------------
+            # 3. แยก doc_type กับ enabler ออกมา
+            # ------------------------------------------------------------------
             doc_type, enabler = self._re_parse_collection_name(collection_name)
-            if not vectorstore_exists(doc_id="N/A", base_path=self._base_path, doc_type=doc_type, enabler=enabler):
-                logger.warning(f"⚠️ Chroma collection '{collection_name}' folder not found at {persist_directory}")
+
+            # ------------------------------------------------------------------
+            # 4. กำหนด target_year → นี่คือจุดที่เคยฆ่าคุณมาตลอด!!!
+            # ------------------------------------------------------------------
+            # evidence_* ทุกตัว (ไม่ว่าจะมี enabler หรือไม่) ต้องใช้ year ของ tenant เท่านั้น!!!
+            if doc_type.startswith("evidence"):
+                target_year: Optional[int] = self.year
+            else:
+                # general / policy / หรือ collection ที่มี enabler (เช่น risk_control_xxx)
+                # ให้เป็น general (ไม่มี year)
+                target_year = None
+
+            # ------------------------------------------------------------------
+            # 5. สร้าง persist_directory ที่ถูกต้อง 100%
+            # ------------------------------------------------------------------
+            persist_directory = get_vectorstore_path(
+                tenant=self.tenant,
+                year=target_year,
+                doc_type=doc_type,
+                enabler=enabler,
+            )
+
+            # ------------------------------------------------------------------
+            # 6. ตรวจสอบว่ามี folder จริงไหม (debug สะดวกสุด ๆ)
+            # ------------------------------------------------------------------
+            if not os.path.exists(persist_directory):
+                logger.warning(
+                    f"Vectorstore directory NOT FOUND!\n"
+                    f"   Collection   : {collection_name}\n"
+                    f"   Expected path: {persist_directory}\n"
+                    f"   tenant={self.tenant} | year={self.year} | doc_type={doc_type} | enabler={enabler or 'None'}"
+                )
+                # ลองเช็ค path อีกแบบเผื่อใครตั้งชื่อ folder ผิด
+                alt_path = get_vectorstore_path(self.tenant, self.year, doc_type, enabler)
+                if os.path.exists(alt_path):
+                    logger.warning(f"   BUT found at alternative path: {alt_path} ← อาจตั้งค่า year ผิด?")
                 return None
+
+            # ------------------------------------------------------------------
+            # 7. ตรวจสอบว่า client ถูก init แล้ว
+            # ------------------------------------------------------------------
+            if self._client is None:
+                logger.error("Chroma PersistentClient is None! ต้อง init ก่อนใช้งาน")
+                return None
+
             try:
-                vectordb = Chroma(persist_directory=persist_directory, embedding_function=self._embeddings, collection_name=collection_name)
+                # ------------------------------------------------------------------
+                # 8. สร้าง Chroma instance (ใช้ client เดียวกัน → สำคัญสุด!)
+                # ------------------------------------------------------------------
+                vectordb = Chroma(
+                    client=self._client,                     # ต้องใช้ client เดียวกันทุกครั้ง!!!
+                    embedding_function=self._embeddings,
+                    collection_name=collection_name,
+                )
+
+                # Cache ไว้ใช้ครั้งต่อไป
                 self._chroma_cache[collection_name] = vectordb
-                logger.info(f"✅ Loaded Chroma instance for collection: {collection_name}")
+
+                logger.info(
+                    f"Loaded Chroma collection '{collection_name}' → {persist_directory}"
+                )
                 return vectordb
+
             except Exception as e:
-                logger.error(f"❌ Failed to load Chroma collection '{collection_name}': {e}")
+                logger.error(
+                    f"FAILED to load collection '{collection_name}' from {persist_directory}\n"
+                    f"Error: {e}",
+                    exc_info=True,
+                )
                 return None
 
     def get_documents_by_id(self, stable_doc_ids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
@@ -409,36 +653,70 @@ class VectorStoreManager:
             logger.error(f"❌ Error retrieving documents by Stable IDs from collection '{collection_name}': {e}")
             return []
 
+    def retrieve_by_chunk_uuids(self, chunk_uuids: List[str], collection_name: Optional[str] = None) -> List[LcDocument]:
+            """
+            Retrieves documents from Chroma collection based on a list of unique chunk_uuids (IDs).
+            Includes de-duplication logic to prevent ChromaDB DuplicateIDError.
+            """
+            if not chunk_uuids:
+                logger.info("VSM: No chunk_uuids provided for hydration.")
+                return []
+            
+            # กำหนดชื่อ collection เริ่มต้นหากไม่ได้ระบุ
+            if collection_name is None:
+                collection_name = f"evidence_{getattr(self, 'enabler', 'km').lower()}"
 
-    def retrieve_by_chunk_ids(self, chunk_ids: List[str], collection_name: str) -> List[LcDocument]:
-        if not chunk_ids:
-            return []
-        try:
+            # โหลด Chroma instance
             chroma_instance = self._load_chroma_instance(collection_name)
             if not chroma_instance:
-                logger.error(f"VSM: Collection '{collection_name}' not loaded for chunk id retrieval.")
+                logger.warning(f"VSM: Cannot load collection '{collection_name}' for hydration.")
                 return []
-            collection = chroma_instance._collection
-            retrieval_result = collection.get(ids=chunk_ids, include=["documents", "metadatas", "ids"])
-            retrieved_docs: List[LcDocument] = []
-            documents = retrieval_result.get("documents", [])
-            metadatas = retrieval_result.get("metadatas", [])
-            ids = retrieval_result.get("ids", [])
-            num_results = len(documents)
-            if num_results != len(chunk_ids):
-                logger.warning(f"VSM: got {num_results} docs, requested {len(chunk_ids)} chunk ids.")
-            for content, metadata, chunk_id in zip(documents, metadatas, ids):
-                if content and isinstance(metadata, dict):
-                    metadata["chunk_uuid"] = chunk_id
-                    stable_doc_id = self._uuid_to_doc_id.get(chunk_id, metadata.get("stable_doc_uuid", "UNKNOWN"))
-                    metadata["doc_id"] = stable_doc_id
-                    metadata["doc_type"] = metadata.get("doc_type", self._re_parse_collection_name(collection_name)[0])
-                    retrieved_docs.append(LcDocument(page_content=content, metadata=metadata))
-            logger.info(f"VSM: Retrieved {len(retrieved_docs)} priority docs from persistent map for '{collection_name}'.")
-            return retrieved_docs
-        except Exception as e:
-            logger.error(f"VSM: Error retrieving chunk ids for collection '{collection_name}': {e}")
-            return []
+
+            # DEBUG (ตามที่คุณมีอยู่)
+            logger.info(f"VSM: Attempting hydration with {len(chunk_uuids)} UUIDs from '{collection_name}'")
+            logger.info(f"VSM: First 5 UUIDs → {chunk_uuids[:5]}")
+
+            try:
+                collection = chroma_instance._collection
+
+                # 1. Clean IDs (แปลงเป็น str และ strip)
+                clean_ids = [str(uuid).strip() for uuid in chunk_uuids if uuid and str(uuid).strip()]
+
+                # 2. 🎯 FIX: ทำการ De-duplicate IDs ก่อนส่งให้ ChromaDB
+                unique_chunk_uuids = list(set(clean_ids))
+                
+                if len(unique_chunk_uuids) < len(clean_ids):
+                    duplicated_count = len(clean_ids) - len(unique_chunk_uuids)
+                    logger.warning(f"VSM: De-duplicated {duplicated_count} repeated UUIDs before calling ChromaDB get.")
+                
+                if not unique_chunk_uuids:
+                    logger.warning("VSM: All UUIDs became empty after cleaning or duplication removal!")
+                    return []
+
+                # 3. เรียกใช้ ChromaDB ด้วย IDs ที่ไม่ซ้ำซ้อน
+                results = collection.get(
+                    ids=unique_chunk_uuids,
+                    include=["documents", "metadatas"]
+                )
+
+                found_count = len(results["ids"]) if results["ids"] else 0
+                logger.info(f"VSM: Successfully retrieved {found_count}/{len(unique_chunk_uuids)} chunks by UUID from '{collection_name}'")
+
+                # 4. แปลงผลลัพธ์เป็น LcDocument
+                docs = []
+                for i, doc_id in enumerate(results["ids"]):
+                    content = results["documents"][i]
+                    meta = results["metadatas"][i] if results["metadatas"] else {}
+                    doc = LcDocument(page_content=content, metadata=meta.copy())
+                    # สำคัญ: doc_id ที่ได้จาก Chroma คือ chunk_uuid
+                    doc.metadata["chunk_uuid"] = doc_id 
+                    docs.append(doc)
+                
+                return docs
+
+            except Exception as e:
+                logger.error(f"VSM: FATAL Error in retrieve_by_chunk_uuids: {e}", exc_info=True)
+                return []
 
     def get_limited_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], query: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None, limit_per_doc: int = 5) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
@@ -480,135 +758,83 @@ class VectorStoreManager:
         if not chroma_instance:
             logger.warning(f"Retriever creation failed: Collection '{collection_name}' not loaded.")
             return None
-        search_kwargs = {"k": top_k}
-        try:
-            base_retriever = chroma_instance.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
-        except Exception as e:
-            logger.error(f"Failed to create base retriever for '{collection_name}': {e}")
-            return None
 
-        # Build wrapper that supports config with filter and reranking
-        def make_invoke_with_rerank(base_retriever, top_k: int, final_k: int):
-            """
-            Wrapper สำหรับ retriever + filter + rerank
-            """
-            def invoke_with_rerank(query: str, config: Optional[Dict] = None):
-                docs = []
-                chroma_filter = None
-                if config and isinstance(config, dict):
-                    chroma_filter = config.get("configurable", {}).get("search_kwargs", {}).get("filter")
+        # 1. สร้าง retriever ที่ควบคุม k ได้จริงทุกครั้ง
+        def raw_retrieve(query: str, filter_dict: Optional[dict] = None, k: int = top_k) -> List[LcDocument]:
+            try:
+                original_query = query
+                
+                # สำคัญมาก: PEA 2568 ingest ด้วย paraphrase-multilingual-MiniLM-L12-v2 → ไม่มี prefix
+                # ดังนั้นห้ามใส่ query: เด็ดขาด!
+                query = query.strip()
+                logger.critical(f"[NO PREFIX FOR PEA] Using raw query: '{query[:100]}...'")
 
-                # --- 1. Retrieval ---
-                try:
-                    if hasattr(base_retriever, "get_relevant_documents"):
-                        # LangChain style
-                        docs = base_retriever.get_relevant_documents(query)
-                        if top_k:
-                            docs = docs[:top_k]
-                    elif hasattr(base_retriever, "invoke"):
-                        # fallback to original invoke
-                        docs = base_retriever.invoke(query, config=config)
-                    else:
-                        raise AttributeError("Retriever has no valid retrieval method")
-                except Exception as e:
-                    logger.error(f"❌ Retrieval failed before rerank: {e}")
-                    return []
+                search_kwargs = {"k": k}
+                if filter_dict:
+                    search_kwargs["filter"] = filter_dict
+                
+                docs = chroma_instance.similarity_search(
+                    query=query,
+                    k=k,
+                    filter=filter_dict
+                )
+                logger.info(f"Raw retrieval: {len(docs)} docs (k={k}, filter={bool(filter_dict)})")
+                return docs
+            except Exception as e:
+                logger.error(f"Raw retrieval failed: {e}", exc_info=True)
+                return []
 
-                # --- 2. Reranking ---
-                try:
-                    reranker = get_global_reranker()
-                    if reranker and hasattr(reranker, "compress_documents"):
-                        logger.info(f"Applying Cross-Encoder reranking → top {final_k}")
-                        reranked_docs = reranker.compress_documents(
-                            documents=docs,
-                            query=query,
-                            top_n=final_k
-                        )
-                        
-                        final_docs_with_score = []
-                        scores_from_reranker = getattr(reranker, "scores", [])
+        # 2. Reranker wrapper (ฉบับสมบูรณ์แบบ)
+        def retrieve_with_rerank(query: str, config: Optional[dict] = None):
+            filter_dict = None
+            if config and isinstance(config, dict):
+                filter_dict = config.get("configurable", {}).get("search_kwargs", {}).get("filter")
 
-                        # 1. Iterate over reranked documents and find the score
-                        for i, doc in enumerate(reranked_docs):
-                            score_float = 0.0
-                            
-                            # Priority 1: Check document metadata (LangChain standard output)
-                            score = doc.metadata.get("relevance_score") or doc.metadata.get("score")
-                            if score is not None:
-                                try:
-                                    score_float = float(score)
-                                except (ValueError, TypeError):
-                                    pass
-                                
-                            # Priority 2: Fallback to the Reranker's internal scores list (ถ้า P1 ไม่ได้)
-                            if score_float == 0.0 and scores_from_reranker and i < len(scores_from_reranker):
-                                try:
-                                    score_float = float(scores_from_reranker[i])
-                                except (ValueError, TypeError):
-                                    pass
-                            
-                            # --- START: HIDDEN KEY INJECTION FIX (The Last Metadata Stand) ---
-                            # 1. Inject into standard keys (as fallbacks)
-                            doc.metadata["relevance_score"] = score_float
-                            doc.metadata["rerank_score"] = score_float
-                            doc.metadata["score"] = score_float
-                            
-                            # 2. Inject into a dedicated 'force' key (Most critical Metadata Key)
-                            doc.metadata["_rerank_score_force"] = score_float 
-                            
-                            # 3. Inject into filename (CRITICAL for extraction)
-                            original_filename = doc.metadata.get("source_filename", "UNKNOWN_FILE")
-                            doc.metadata["source_filename"] = f"{original_filename}|SCORE:{score_float:.4f}"
-                            
-                            # --- END: HIDDEN KEY INJECTION FIX (The Last Metadata Stand) ---
-                            
-                            final_docs_with_score.append(doc)
-                        
-                        # DEBUG: Log the score being injected
-                        if final_docs_with_score:
-                             score_val = final_docs_with_score[0].metadata.get("rerank_score")
-                             force_val = final_docs_with_score[0].metadata.get("_rerank_score_force")
-                             logger.critical(f"DEBUG VECTORSTORE FINAL INJECTED (RE-CHECK): Doc[0] Score: {score_val:.4f} | ForceKey: {force_val:.4f}")
-                        
-                        logger.info(f"Reranking completed → kept top {len(final_docs_with_score)} documents")
-                        return final_docs_with_score
-                    else:
-                        logger.warning("Reranker not available. Returning base docs.")
-                        return docs[:final_k]
-                except Exception as e:
-                    logger.warning(f"Rerank failed: {e}. Falling back to original results.")
-                    return docs[:final_k]
+            # ดึงเอกสารด้วย k เต็ม
+            docs = raw_retrieve(query, filter_dict, k=top_k)
 
-            return invoke_with_rerank
+            # ถ้าไม่มี reranker → คืนตาม top_k
+            reranker = get_global_reranker()
+            if not (use_rerank and reranker and hasattr(reranker, "compress_documents")):
+                return docs[:final_k]
 
-        if use_rerank:
-            invoke_with_rerank = make_invoke_with_rerank(base_retriever, top_k, final_k)
-            class SimpleRetrieverWrapper(BaseRetriever):
-                model_config = ConfigDict(arbitrary_types_allowed=True)
-                def invoke(self, query: str, config: Optional[Dict] = None):
-                    return invoke_with_rerank(query, config=config)
-                def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[LcDocument]:
-                    config = None
-                    return invoke_with_rerank(query, config=config)
-            return SimpleRetrieverWrapper()
-        else:
-            class TruncatedRetrieverWrapper(BaseRetriever):
-                model_config = ConfigDict(arbitrary_types_allowed=True)
-                def invoke(self, query: str, config: Optional[Dict] = None):
-                    chroma_filter = config.get("configurable", {}).get("search_kwargs", {}).get("filter") if config else None
-                    if chroma_filter:
-                        new_config = {"configurable": {"search_kwargs": {"k": top_k, "filter": chroma_filter}}}
-                        docs = base_retriever.invoke(query, config=new_config)
-                    else:
-                        docs = base_retriever.invoke(query, config=config)
-                    return docs[:top_k]
-                def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[LcDocument]:
-                    config = run_manager.get_session_info() if run_manager else None
-                    return self.invoke(query, config=config)
-            return TruncatedRetrieverWrapper()
+            try:
+                reranked = reranker.compress_documents(
+                    documents=docs,
+                    query=query,
+                    top_n=final_k
+                )
+                # ดึง score จาก reranker (วิธีที่แน่นอนที่สุด)
+                scores = getattr(reranker, "scores", None)
+                if scores and len(scores) >= len(reranked):
+                    for doc, score in zip(reranked, scores[:len(reranked)]):
+                        score = float(score) if score is not None else 0.0
+                        # ฉีดแค่ key เดียวที่แน่นอน → _rerank_score_force
+                        doc.metadata["_rerank_score_force"] = score
+                        # และ source_filename (สำคัญมากสำหรับ extraction)
+                        orig = doc.metadata.get("source_filename", "UNKNOWN")
+                        doc.metadata["source_filename"] = f"{orig}|SCORE:{score:.4f}"
+
+                logger.info(f"Reranking success → kept {len(reranked)} docs")
+                return reranked
+
+            except Exception as e:
+                logger.warning(f"Rerank failed ({e}), fallback to raw")
+                return docs[:final_k]
+
+        # 3. สร้าง LangChain-compatible Retriever
+        class UltimateRetriever(BaseRetriever):
+            def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+                return retrieve_with_rerank(query, config=None)
+
+            def invoke(self, query: str, config: Optional[dict] = None) -> List[LcDocument]:
+                return retrieve_with_rerank(query, config=config)
+
+        logger.info(f"Ultimate Retriever ready → {collection_name} | top_k={top_k} → final_k={final_k} | rerank={use_rerank}")
+        return UltimateRetriever()
 
     def get_all_collection_names(self) -> List[str]:
-        return list_vectorstore_folders(base_path=self._base_path)
+        return list_vectorstore_folders(tenant=self.tenant, year=self.year, base_path=self._base_path)
 
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
@@ -711,7 +937,29 @@ class ChromaRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+        
+        # 🎯 DEBUG: ตรวจสอบ Collection Count และ Embedding (โค้ดนี้คือส่วนที่เราเพิ่ม)
         try:
+            raw_collection = self.vectorstore._collection
+            count = raw_collection.count() 
+            logger.critical(f"🎯 [DEBUG CHROMA] Collection Count: {count}")
+            
+            # ตรวจสอบการสร้าง Query Embedding
+            if hasattr(self.vectorstore, '_embedding_function') and self.vectorstore._embedding_function:
+                embedding_function = self.vectorstore._embedding_function
+                # ทดสอบ embed query
+                query_embedding = embedding_function.embed_query(query)
+                logger.critical(f"🎯 [DEBUG CHROMA] Query Embedding Success. Vector size: {len(query_embedding)}")
+            else:
+                logger.critical("🎯 [DEBUG CHROMA] Cannot access _embedding_function.")
+
+        except Exception as debug_e:
+            logger.critical(f"❌ [DEBUG CHROMA] Debug check failed (Skip search): {debug_e}")
+            return []
+        # END DEBUG
+
+        try:
+            # รัน similarity search
             return self.vectorstore.similarity_search(query=query, k=self.k, filter=self.filter)
         except Exception as e:
             logger.error(f"❌ Chroma similarity_search failed in custom retriever: {e}")
@@ -725,19 +973,24 @@ class ChromaRetriever(BaseRetriever):
 
 # -------------------- MultiDoc / Parallel Retriever --------------------
 class NamedRetriever(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     doc_id: str
     doc_type: str
-    top_k: int
-    final_k: int
+    top_k: int = INITIAL_TOP_K
+    final_k: int = FINAL_K_RERANKED
     base_path: str = VECTORSTORE_DIR
     enabler: Optional[str] = None
-
+    tenant: str = DEFAULT_TENANT
+    year: Optional[int] = DEFAULT_YEAR # <--- 🎯 FIX: เปลี่ยนเป็น Optional[int] เพื่อรองรับ None
+    
+    # load_instance ต้องเรียก VSM โดยใช้ self.tenant และ self.year
     def load_instance(self) -> Any:
-        manager = VectorStoreManager(base_path=self.base_path)
-        retriever = manager.get_retriever(collection_name=_get_collection_name(self.doc_type, self.enabler), top_k=self.top_k, final_k=self.final_k, use_rerank=True)
+        # VSM ถูกสร้างด้วย context ของ collection นี้ (year อาจเป็น None)
+        # ⚠️ VSM Singleton ต้องถูก init ด้วยปีเสมอ เพื่อโหลด Doc ID Mapping
+        manager = VectorStoreManager(base_path=self.base_path, tenant=self.tenant, year=self.year if self.year is not None else DEFAULT_YEAR) 
+        collection_name = _get_collection_name(self.doc_type, self.enabler)
+        retriever = manager.get_retriever(collection_name=collection_name, top_k=self.top_k, final_k=self.final_k) 
         if not retriever:
-            raise ValueError(f"Retriever not found for collection '{_get_collection_name(self.doc_type, self.enabler)}' at path '{self.base_path}'")
+            raise ValueError(f"Retriever not found for collection '{collection_name}' at path based on tenant={self.tenant}, year={self.year}")
         return retriever
 
 class MultiDocRetriever(BaseRetriever):
@@ -755,7 +1008,18 @@ class MultiDocRetriever(BaseRetriever):
         super().__init__()
         self._retrievers_list = retrievers_list
         self._k_per_doc = k_per_doc
-        self._manager = VectorStoreManager()
+
+        # 🎯 FIX 2: ดึง Context จาก NamedRetriever ตัวแรก
+        tenant_context = retrievers_list[0].tenant if retrievers_list else DEFAULT_TENANT
+        year_context = retrievers_list[0].year if retrievers_list else DEFAULT_YEAR
+
+        # 🎯 FIX 2A: สร้าง VSM ด้วย Context ที่ถูกต้อง (สำหรับ Doc ID Mapping)
+        # ถ้า year_context เป็น None (จาก NamedRetriever ที่เป็น General doc) ให้ใช้ DEFAULT_YEAR
+        if year_context is None:
+             year_context = DEFAULT_YEAR 
+             
+        self._manager = VectorStoreManager(tenant=tenant_context, year=year_context)
+        
         self._all_retrievers = {}
         for named_r in retrievers_list:
             collection_name = _get_collection_name(named_r.doc_type, named_r.enabler)
@@ -777,7 +1041,7 @@ class MultiDocRetriever(BaseRetriever):
 
         self._executor_type = self._choose_executor()
         logger.info(f"MultiDocRetriever will use executor type: {self._executor_type} (workers={MAX_PARALLEL_WORKERS})")
-
+    
     def _choose_executor(self) -> str:
         sys_info = _detect_system()
         device = _detect_torch_device()
@@ -893,60 +1157,121 @@ class MultiDocRetriever(BaseRetriever):
         return self._get_relevant_documents(query, **kwargs)
 
 # -------------------- load_all_vectorstores --------------------
-def load_vectorstore_retriever(doc_id: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, doc_types: Union[list, str] = "default_collection", base_path: str = VECTORSTORE_DIR, enabler: Optional[str] = None):
+def load_vectorstore_retriever(
+    doc_id: str, 
+    top_k: int = INITIAL_TOP_K, 
+    final_k: int = FINAL_K_RERANKED, 
+    doc_types: Union[list, str] = "default_collection", 
+    base_path: str = VECTORSTORE_DIR, 
+    enabler: Optional[str] = None, 
+    tenant: str = DEFAULT_TENANT,
+    year: int = DEFAULT_YEAR      
+):
     if isinstance(doc_types, str):
         target_doc_type = doc_types
     elif isinstance(doc_types, list) and doc_types:
         target_doc_type = doc_types[0]
     else:
         raise ValueError("doc_types must be a single string or a non-empty list containing the target doc_type.")
+        
     collection_name = _get_collection_name(target_doc_type, enabler)
-    manager = VectorStoreManager(base_path=base_path)
+    
+    # 🎯 FIX 3: ส่ง tenant และ year เข้าไปใน VectorStoreManager
+    manager = VectorStoreManager(base_path=base_path, tenant=tenant, year=year) 
     retriever = None
-    if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=target_doc_type, enabler=enabler):
+    
+    # NOTE: load_vectorstore_retriever ใช้ปีเสมอ เนื่องจากเป็น context ที่เรียกมา
+    if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=target_doc_type, enabler=enabler, tenant=tenant, year=year):
         retriever = manager.get_retriever(collection_name, top_k, final_k)
+        
     if retriever is None:
         raise ValueError(f"❌ Vectorstore for collection '{collection_name}' not found.")
     return retriever
 
-def load_all_vectorstores(doc_types: Optional[Union[str, List[str]]] = None, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, base_path: str = VECTORSTORE_DIR, evidence_enabler: Optional[str] = None, doc_ids: Optional[List[str]] = None) -> VectorStoreManager:
+def load_all_vectorstores(
+    tenant: str, 
+    year: int,    
+    doc_types: Optional[Union[str, List[str]]] = None, 
+    top_k: int = INITIAL_TOP_K, 
+    final_k: int = FINAL_K_RERANKED, 
+    base_path: str = VECTORSTORE_DIR, 
+    evidence_enabler: Optional[str] = None, 
+    doc_ids: Optional[List[str]] = None
+) -> VectorStoreManager:
+    
     doc_types = [doc_types] if isinstance(doc_types, str) else doc_types or []
     doc_type_filter = {dt.strip().lower() for dt in doc_types}
-    manager = VectorStoreManager(base_path=base_path)
+    
+    # 🎯 FIX 1: VSM ต้องสร้างด้วย tenant/year ของ RUN (ปีที่ใช้สำหรับ Doc ID Mapping)
+    manager = VectorStoreManager(base_path=base_path, tenant=tenant, year=year) 
+    
     all_retrievers: List[NamedRetriever] = []
     target_collection_names: Set[str] = set()
+
+    # --- 1. Collection Discovery ---
     if not doc_type_filter:
-        target_collection_names.update(manager.get_all_collection_names())
-    else:
-        for dt_norm in doc_type_filter:
-            if dt_norm == EVIDENCE_DOC_TYPES:
-                if evidence_enabler:
-                    collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, evidence_enabler)
-                    target_collection_names.add(collection_name)
-                    logger.info(f"🔍 Added specific evidence collection: {collection_name}")
-                else:
-                    evidence_collections = list_vectorstore_folders(base_path=base_path, doc_type=EVIDENCE_DOC_TYPES)
-                    target_collection_names.update(evidence_collections)
-                    logger.info(f"🔍 Added all evidence collections found: {evidence_collections}")
-            else:
-                collection_name = _get_collection_name(dt_norm, None)
+        logger.error("Must specify doc_types for multi-year compatibility.")
+        raise ValueError("Must specify doc_types when using multi-tenant setup.")
+    
+    # 🎯 NEW: เราไม่สามารถ list collections ทั้งหมดได้โดยไม่รู้ว่าเอกสารไหนใช้ปี/ไม่ใช้ปี 
+    # เราจึงใช้ doc_type_filter ในการสร้าง collection_name แทนการ list จาก folder
+    for dt_norm in doc_type_filter:
+        if dt_norm == EVIDENCE_DOC_TYPES.lower(): 
+            if evidence_enabler:
+                # Specific evidence collection: ใช้ year
+                collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, evidence_enabler)
                 target_collection_names.add(collection_name)
-                logger.info(f"🔍 Added standard collection: {collection_name}")
+                logger.info(f"🔍 Added specific evidence collection: {collection_name} (Year-Specific)")
+            else:
+                # All evidence collections: ต้อง list จาก folder ภายใต้ tenant/year
+                evidence_collections = list_vectorstore_folders(tenant=tenant, year=year, doc_type=EVIDENCE_DOC_TYPES, base_path=base_path)
+                target_collection_names.update(evidence_collections)
+                logger.info(f"🔍 Added all evidence collections found: {evidence_collections} (Year-Specific)")
+        else:
+            # Standard Collections: ไม่ใช้ year
+            collection_name = _get_collection_name(dt_norm, None)
+            target_collection_names.add(collection_name)
+            logger.info(f"🔍 Added standard collection: {collection_name} (Shared/General)")
+    
     logger.info(f"🔍 DEBUG: Attempting to load {len(target_collection_names)} total target collections: {target_collection_names}")
+    
+    # --- 2. Retriever List Creation & Existence Check ---
     for collection_name in target_collection_names:
         doc_type_for_check, enabler_for_check = manager._re_parse_collection_name(collection_name)
-        if not vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=doc_type_for_check, enabler=enabler_for_check):
-            logger.warning(f"🔍 DEBUG: Skipping collection '{collection_name}' (vectorstore_exists failed).")
+        
+        # 🎯 FIX 2A: Logic กำหนด target_year (None สำหรับ General Docs)
+        target_year: Optional[int] = year
+        if doc_type_for_check.lower() != EVIDENCE_DOC_TYPES.lower() and enabler_for_check is None:
+            # นี่คือเอกสารทั่วไปที่ไม่ควรถูกแยกตามปี
+            target_year = None # <--- กำหนดเป็น None
+            
+        # 🎯 FIX 2B: ส่ง target_year เข้าไปในการตรวจสอบการมีอยู่ของ Vectorstore
+        if not vectorstore_exists(doc_id="N/A", tenant=tenant, year=target_year, doc_type=doc_type_for_check, enabler=enabler_for_check):
+            logger.warning(f"🔍 DEBUG: Skipping collection '{collection_name}' (vectorstore_exists failed at tenant={tenant}, year={target_year}).")
             continue
-        nr = NamedRetriever(doc_id=collection_name, doc_type=doc_type_for_check, enabler=enabler_for_check, top_k=top_k, final_k=final_k, base_path=base_path)
+            
+        # 🎯 FIX 2C: ส่ง target_year เข้าไปใน NamedRetriever
+        nr = NamedRetriever(
+            doc_id=collection_name, 
+            doc_type=doc_type_for_check, 
+            enabler=enabler_for_check, 
+            top_k=top_k, 
+            final_k=final_k, 
+            base_path=base_path,
+            tenant=tenant, 
+            year=target_year # <--- ส่ง None สำหรับ General Docs
+        )
         all_retrievers.append(nr)
-        logger.info(f"🔍 DEBUG: Successfully added retriever for collection '{collection_name}'.")
+        logger.info(f"🔍 DEBUG: Successfully added retriever for collection '{collection_name}' (Year={target_year}).")
+
     final_filter_ids = doc_ids
     if doc_ids:
         logger.info(f"✅ Hard Filter Enabled: Using {len(doc_ids)} original 64-char UUIDs for filtering.")
     logger.info(f"🔍 DEBUG: Final count of all_retrievers = {len(all_retrievers)}")
+
     if not all_retrievers:
-        raise ValueError(f"No vectorstore collections found matching doc_types={doc_types} and evidence_enabler={evidence_enabler}")
+        raise ValueError(f"No vectorstore collections found matching tenant={tenant}, year={year}, doc_types={doc_types} and evidence_enabler={evidence_enabler}")
+        
     mdr = MultiDocRetriever(retrievers_list=all_retrievers, k_per_doc=top_k, doc_ids_filter=final_filter_ids)
     manager._multi_doc_retriever = mdr
     logger.info(f"✅ MultiDocRetriever loaded with {len(mdr._all_retrievers)} collections and cached in VSM.")

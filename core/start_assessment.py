@@ -24,15 +24,15 @@ from models.llm import create_llm_instance
 
 try:
     # Import Config & Core Modules
-    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, LLM_MODEL_NAME
-    # 🎯 VSM: ต้อง import AssessmentConfig ด้วย
+    # 📌 เพิ่ม DEFAULT_TENANT และ DEFAULT_YEAR
+    from config.global_vars import (
+        EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, LLM_MODEL_NAME, 
+        DEFAULT_TENANT, DEFAULT_YEAR
+    ) 
     from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
-    # VSM: Import เพื่อโหลดและส่ง Instance เข้าไปยัง Engine
     from core.vectorstore import load_all_vectorstores, VectorStoreManager
-    # Import mock logic สำหรับการตั้งค่าภายใน
     import assessments.seam_mocking as seam_mocking 
 except Exception as e:
-    # บล็อกนี้จะจับข้อผิดพลาดการ Import 
     print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
     raise
 
@@ -51,44 +51,47 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target_level", type=int, default=5, help="Maximum target level for sequential assessment.")
     p.add_argument("--export", action="store_true", help="Export results to JSON file.")
     p.add_argument("--mock", choices=["none", "random", "control"], default="none", help="Mock mode ('none', 'random', 'control').")
-    # 🟢 NEW: Argument to force sequential execution
     p.add_argument("--sequential", action="store_true", help="Force sequential execution, even when assessing all sub-criteria (recommended for low-resource machines).")
+    # 🟢 NEW: Arguments for Evidence Mapping scope
+    p.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help="Tenant ID for mapping file scope (e.g., 'EGAT').")
+    p.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Assessment year for mapping file scope (e.g., 2024).")
     return p.parse_args()
 
 # -------------------- MAIN EXECUTION --------------------
 def main():
     args = parse_args()
-    # 🟢 เพิ่มการแสดงผล Mode ใน Log
+    
+    # 🟢 เพิ่มการแสดงผล Mode ใน Log (และ Tenant/Year)
     run_mode = "Sequential" if args.sequential else "Parallel"
-    logger.info(f"Starting {run_mode} assessment runner (enabler={args.enabler}, sub={args.sub}, mock={args.mock}, target_level={args.target_level})")
+    logger.info(
+        f"Starting {run_mode} assessment runner "
+        f"(enabler={args.enabler}, sub={args.sub}, tenant={args.tenant}, year={args.year}, "
+        f"mock={args.mock}, target_level={args.target_level})"
+    )
     start_ts = time.time()
 
     # 1. Load Vectorstores (โหลดเพียงครั้งเดียวใน Process หลัก)
     vsm: Optional[VectorStoreManager] = None
     
     # 🟢 FIX: Skip VSM loading if running in Sequential Mode 
-    # เพื่อป้องกัน Module Conflict และให้ VSM โหลดแค่ครั้งเดียวใน Engine (seam_assessment.py)
     if args.sequential and args.mock == "none":
         logger.info("Sequential mode (non-mock): Skipping initial VSM load in main process. VSM will be loaded one time inside the Engine for robustness.")
         # vsm remains None, forcing the load in seam_assessment.py
     else:
         try:
             logger.info("Loading central evidence vectorstore(s)...")
-            # โหลด VSM โดยระบุประเภทเอกสาร (evidence) และ Enabler (e.g., KM)
             vsm = load_all_vectorstores(doc_types=[EVIDENCE_DOC_TYPES], evidence_enabler=args.enabler)
         except Exception as e:
             logger.error(f"Failed to load vectorstores: {e}")
-            # ถ้าไม่ใช่ Mock mode และโหลด VSM ไม่สำเร็จ ให้แจ้ง Error ร้ายแรง
             if args.mock == "none":
                  logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
                  raise
 
-    # -------------------- 🎯 1.5. Initialize LLM for Classification & Evaluation (MODIFIED) --------------------
+    # 1.5. Initialize LLM for Classification & Evaluation
     llm_for_classification = None
     try:
-        # 📌 เรียกใช้ Factory Function
         llm_for_classification = create_llm_instance(
-            model_name=LLM_MODEL_NAME, # ใช้ค่าคงที่ที่กำหนดไว้ใน models/llm.py
+            model_name=LLM_MODEL_NAME, 
             temperature=0.0
         )
         if not llm_for_classification:
@@ -105,28 +108,28 @@ def main():
         enabler=args.enabler, 
         target_level=args.target_level,
         mock_mode=args.mock,
-        # 🟢 PASS THE NEW ARGUMENT
+        # 🟢 PASS THE NEW ARGUMENTS
         force_sequential=args.sequential,
         model_name=LLM_MODEL_NAME,
-        temperature=0.0 # ใช้ 0.0 ตามที่กำหนดไว้ในการเรียก llm_instance 
+        temperature=0.0, 
+        tenant=args.tenant,  # 🟢 เพิ่ม Tenant
+        year=args.year,      # 🟢 เพิ่ม Year
     )
     engine = SEAMPDCAEngine(
         config=config,
         llm_instance=llm_for_classification, 
         logger_instance=logger,             
-        # 🟢 FIX: แก้ Syntax Error (ส่งเฉพาะชื่อพารามิเตอร์และค่า)
         doc_type=EVIDENCE_DOC_TYPES, 
         vectorstore_manager=vsm, 
     )
 
     # 3. Run Assessment
     try:
-        # 🎯 VSM INJECTION: ส่ง VSM Instance เข้าไป (ซึ่งจะเป็น None ถ้าอยู่ใน Sequential mode)
         final = engine.run_assessment(
             target_sub_id=args.sub, 
             export=args.export, 
             vectorstore_manager=vsm,
-            sequential=args.sequential  # <-- เพิ่มบรรทัดนี้
+            sequential=args.sequential
         )
     except Exception as e:
         logger.exception(f"Engine run failed: {e}")
@@ -138,9 +141,9 @@ def main():
     
     print("\n" + "="*60)
     print(f"ASSESSMENT COMPLETE - ENABLER: {args.enabler}")
-    # 🟢 แสดงโหมดที่ใช้ในการรัน
     print(f"RUN MODE: {run_mode}")
     print("="*60)
+    print(f"Tenant/Year: {args.tenant}/{args.year}")
     print(f"Target Level: {summary.get('target_level', config.target_level)}")
     print(f"Total sub-criteria run: {summary.get('total_subcriteria', 0)}")
     print(f"Percentage Achieved: {summary.get('percentage_achieved_run', 0.0):.3f}%")
@@ -150,7 +153,7 @@ def main():
     # 5. Detailed print if single sub requested
     if args.sub and args.sub.lower() != "all":
         # engine.print_detailed_results(target_sub_id=args.sub)
-        pass # 🟢 เพิ่ม pass เข้ามาแทน (หรือไม่เพิ่มก็ได้)
+        pass 
 
     if args.export:
         print("\nReport export status logged (see INFO logs for path).")
@@ -158,5 +161,4 @@ def main():
     logger.info(f"Full runner execution completed in {duration_s:.2f}s")
 
 if __name__ == "__main__":
-    # ⚠️ สำคัญ: การใช้ Multiprocessing ต้องรันจาก __main__
     main()

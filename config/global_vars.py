@@ -2,14 +2,23 @@
 import os
 from typing import Final, List
 
-# RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
-RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
-# ==================== Project Paths ====================
+# -------------------- Tenant / Context Configuration (NEW) --------------------
+DEFAULT_TENANT: Final[str] = "pea" 
+DEFAULT_YEAR: Final[int] = 2568    
+
+# ==================== Project Paths (CORRECTED for Clean Multi-Tenant) ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ✅ แก้ไข: ลบ 'gov_tenants' ออก
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
-MAPPING_FILE_PATH = os.path.join(DATA_DIR, "doc_id_mapping.json")
+
+# ✅ แก้ไข: ลบ 'gov_tenants' ออก และเปลี่ยนเป็น 'mapping' เพื่อจัดเก็บไฟล์ mapping โดยเฉพาะ
+MAPPING_BASE_DIR = os.path.join(PROJECT_ROOT, "config", "mapping") 
+
+# RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
+RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
 # -------------------- Retrieval / Evaluation --------------------
 # L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
@@ -74,9 +83,10 @@ MAX_EVAL_CONTEXT_LENGTH = 4500
 PRIORITY_CHUNK_LIMIT: Final[int] = 30
 
 # 💡 Rubric / Export Paths
-RUBRIC_FILENAME_PATTERN: Final[str] = "{enabler}_rubric.json"
-RUBRIC_CONFIG_DIR: Final[str] = "config"
+RUBRIC_FILENAME_PATTERN: Final[str] = "{tenant}_{enabler}_rubric.json"
+# RUBRIC_CONFIG_DIR: Final[str] = "config"
+RUBRIC_CONFIG_DIR: Final[str] = MAPPING_BASE_DIR
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
-KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
+# KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
 
 EVIDENCE_MAPPING_FILENAME_SUFFIX = "_evidence_mapping.json"

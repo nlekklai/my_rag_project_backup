@@ -101,7 +101,6 @@ multidict==6.7.0
 mypy_extensions==1.1.0
 networkx==3.5
 nltk==3.9.2
-numpy==1.26.4
 oauthlib==3.3.1
 olefile==0.47
 ollama==0.6.0
@@ -109,7 +108,6 @@ omegaconf==2.3.0
 onnx==1.19.1
 onnxruntime==1.18.1
 openai==2.8.1
-opencv-python==4.12.0.88
 openpyxl==3.1.5
 opentelemetry-api==1.38.0
 opentelemetry-exporter-otlp-proto-common==1.38.0

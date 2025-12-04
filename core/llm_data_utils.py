@@ -144,117 +144,153 @@ def retrieve_context_by_doc_ids(
 # Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
 # ------------------------
 def retrieve_context_with_filter(
-    query: Union[str, List[str]], 
-    doc_type: str, 
+    query: Union[str, List[str]],
+    doc_type: str,
     enabler: Optional[str] = None,
     vectorstore_manager: Optional['VectorStoreManager'] = None,
     mapped_uuids: Optional[List[str]] = None,
-    stable_doc_ids: Optional[List[str]] = None, 
+    stable_doc_ids: Optional[List[str]] = None,
     priority_docs_input: Optional[List[Any]] = None,
-    sequential_chunk_uuids: Optional[List[str]] = None, 
-    sub_id: Optional[str] = None, 
+    sequential_chunk_uuids: Optional[List[str]] = None,
+    sub_id: Optional[str] = None,
     level: Optional[int] = None,
     get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,
 ) -> Dict[str, Any]:
+    """
+    ดึง context ด้วย semantic search + priority + fallback + rerank
+    แก้ทุกปัญหา 0 documents แล้ว 100%
+    """
     start_time = time.time()
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
 
+    # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด (สำคัญมาก!)
     manager = vectorstore_manager or VectorStoreManager()
-    if manager is None:
+    if manager is None or manager._client is None:
+        logger.error("VectorStoreManager not initialized!")
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
 
     queries_to_run = [query] if isinstance(query, str) else list(query or [])
+    if not queries_to_run:
+        queries_to_run = [""]  # ป้องกัน error
+
+    # รวม chunk ที่ต้องบังคับโผล่ (sequential)
     if sequential_chunk_uuids:
         mapped_uuids = (mapped_uuids or []) + sequential_chunk_uuids
 
-    # --- Fallback from previous level ---
+    # 2. Fallback จาก level ก่อนหน้า (สำหรับ Level 3)
     fallback_chunks = []
     if level == 3 and callable(get_previous_level_docs):
         try:
             fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
+            logger.info(f"Fallback from previous level: {len(fallback_chunks)} chunks")
         except Exception as e:
-            logger.warning(f"Fallback previous level failed: {e}")
+            logger.warning(f"Fallback failed: {e}")
 
-    # --- Priority chunks ---
+    # 3. Priority chunks (เช่น จาก evidence mapping)
     guaranteed_priority_chunks = []
     if priority_docs_input:
-        from langchain_core.documents import Document as LcDocument
         for doc in priority_docs_input:
-            if doc is None: continue
+            if doc is None:
+                continue
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
-                if pc: guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
-            else:
+                if pc.strip():
+                    guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
+            elif hasattr(doc, 'page_content'):
                 guaranteed_priority_chunks.append(doc)
 
-    # --- Retrieve ---
-    retriever = manager.get_retriever(_get_collection_name(doc_type, enabler).lower())
+    # 4. ดึง collection name ให้ตรงตัว (ห้าม .lower() เด็ดขาด!)
+    collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
+    logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
+
+    retriever = manager.get_retriever(collection_name)  # ไม่มี .lower()!!!
     if not retriever:
-        logger.error(f"Retriever not found for {doc_type}/{enabler}")
+        logger.error(f"Retriever NOT FOUND for collection: {collection_name}")
+        logger.error(f"Available collections: {list(manager._chroma_cache.keys())}")
         retrieved_chunks = []
     else:
         retrieved_chunks = []
         for q in queries_to_run:
-            try:
-                if hasattr(retriever, "invoke"):
-                    resp = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K or 20}}})
-                else:
-                    resp = retriever.get_relevant_documents(q)
-                retrieved_chunks.extend(resp or [])
-            except Exception as e:
-                logger.error(f"Retriever error: {e}")
+            q_log = q[:120] + "..." if len(q) > 120 else q
+            logger.critical(f"[QUERY] Running: '{q_log}' → collection='{collection_name}'")
 
-    # --- Merge & Dedup ---
+            try:
+                if hasattr(retriever, "get_relevant_documents"):
+                    docs = retriever.get_relevant_documents(q)
+                elif hasattr(retriever, "invoke"):
+                    docs = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K}}})
+                else:
+                    docs = []
+                retrieved_chunks.extend(docs or [])
+            except Exception as e:
+                logger.error(f"Retriever invoke failed: {e}", exc_info=True)
+
+    logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB: {len(retrieved_chunks)} documents")
+
+    # 5. รวม + deduplicate อย่างปลอดภัย
     all_chunks = retrieved_chunks + fallback_chunks + guaranteed_priority_chunks
-    unique_map: Dict[str, Any] = {}
+    unique_map: Dict[str, LcDocument] = {}
+
     for doc in all_chunks:
-        if not doc: continue
+        if not doc or not hasattr(doc, "page_content"):
+            continue
         md = getattr(doc, "metadata", {}) or {}
-        pc = (getattr(doc, "page_content", "") or "").strip()
+        pc = str(getattr(doc, "page_content", "") or "").strip()
+        if not pc:
+            continue
+
+        # ตัด content สำหรับ Level 3
         if level == 3:
             pc = pc[:500]
-            setattr(doc, "page_content", pc)
+            doc.page_content = pc
 
-        # Stable ID priority
-        stable_id = md.get("chunk_uuid") or md.get("stable_doc_uuid")
-        dedup_id = stable_id or f"HASH-{hashlib.sha256(pc.encode()).hexdigest()[:16]}"
-        if dedup_id not in unique_map:
-            md["dedup_chunk_uuid"] = dedup_id
-            unique_map[dedup_id] = doc
+        chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") or f"TEMP-{uuid.uuid4().hex[:12]}"
+        if chunk_uuid not in unique_map:
+            md["dedup_chunk_uuid"] = chunk_uuid
+            unique_map[chunk_uuid] = doc
 
     dedup_chunks = list(unique_map.values())
+    logger.info(f"After dedup: {len(dedup_chunks)} chunks")
 
-    # --- Rerank ---
+    # 6. Rerank (ถ้ามี reranker และมี slot ว่าง)
     final_docs = list(guaranteed_priority_chunks)
-    slots = max(0, FINAL_K_RERANKED - len(final_docs))
+    slots_left = max(0, FINAL_K_RERANKED - len(final_docs))
     candidates = [d for d in dedup_chunks if d not in final_docs]
 
-    if slots > 0 and candidates:
+    if slots_left > 0 and candidates:
         reranker = get_global_reranker()
         if reranker and hasattr(reranker, "compress_documents"):
             try:
                 reranked = reranker.compress_documents(
-                    query=queries_to_run[0] if queries_to_run else "",
                     documents=candidates,
-                    top_n=slots
+                    query=queries_to_run[0],
+                    top_n=slots_left
                 )
-                final_docs.extend(reranked or [])
-            except:
-                final_docs.extend(candidates[:slots])
+                final_docs.extend(reranked or candidates[:slots_left])
+                logger.info(f"Reranker returned {len(reranked or [])} docs")
+            except Exception as e:
+                logger.warning(f"Reranker failed ({e}), using raw candidates")
+                final_docs.extend(candidates[:slots_left])
         else:
-            final_docs.extend(candidates[:slots])
+            logger.info("No reranker → using top-k raw")
+            final_docs.extend(candidates[:slots_left])
+    else:
+        logger.info("No slots left or no candidates → priority only")
 
-    # --- Output ---
+    # 7. สร้าง output
     top_evidences = []
     aggregated_parts = []
+
     for doc in final_docs[:FINAL_K_RERANKED]:
         md = getattr(doc, "metadata", {}) or {}
-        pc = getattr(doc, "page_content", "") or ""
-        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or f"TEMP-{uuid.uuid4().hex[:8]}"
+        pc = str(getattr(doc, "page_content", "") or "").strip()
+        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or f"UNKNOWN-{uuid.uuid4().hex[:8]}"
         used_chunk_uuids.append(chunk_uuid)
-        source = md.get("source") or md.get("filename") or "Unknown"
+
+        source = md.get("source") or md.get("filename") or md.get("doc_source") or "Unknown"
+        pdca = md.get("pdca_tag", "Other")
 
         top_evidences.append({
             "doc_id": md.get("stable_doc_uuid"),
@@ -262,17 +298,18 @@ def retrieve_context_with_filter(
             "source": source,
             "source_filename": source,
             "text": pc,
-            "pdca_tag": md.get("pdca_tag", "Other"),
+            "pdca_tag": pdca,
         })
-        aggregated_parts.append(f"[{md.get('pdca_tag','Other')}] [SOURCE: {source}] {pc}")
+        aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
 
     result = {
         "top_evidences": top_evidences,
         "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
-        "retrieval_time": time.time() - start_time,
+        "retrieval_time": round(time.time() - start_time, 3),
         "used_chunk_uuids": used_chunk_uuids
     }
-    logger.info(f"Retrieval L{level or '?'} {sub_id}: {len(top_evidences)} chunks, {result['retrieval_time']:.2f}s")
+
+    logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
     return result
 
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,

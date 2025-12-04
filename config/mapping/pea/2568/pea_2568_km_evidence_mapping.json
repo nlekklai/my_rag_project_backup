@@ -1,0 +1,1412 @@
+{
+    "1.1.L1": [
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089521",
+            "relevance_score": 0.0,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089613",
+            "relevance_score": 0.0,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089680",
+            "relevance_score": 0.0,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089756",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089814",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089870",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089927",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        },
+        {
+            "doc_id": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.089982",
+            "relevance_score": 0.0,
+            "chunk_uuid": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.090035",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.090089",
+            "relevance_score": 0.0,
+            "chunk_uuid": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:02:52.090143",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        }
+    ],
+    "1.1.L2": [
+        {
+            "doc_id": "UNKNOWN-aa239011",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698217",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-aa239011"
+        },
+        {
+            "doc_id": "UNKNOWN-b6dc1765",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698468",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b6dc1765"
+        },
+        {
+            "doc_id": "UNKNOWN-c2d0895e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698562",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-c2d0895e"
+        },
+        {
+            "doc_id": "UNKNOWN-d3c0c39e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698637",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3c0c39e"
+        },
+        {
+            "doc_id": "UNKNOWN-2135cc14",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698756",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2135cc14"
+        },
+        {
+            "doc_id": "UNKNOWN-123968f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698816",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-123968f6"
+        },
+        {
+            "doc_id": "UNKNOWN-9e98614b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698869",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-9e98614b"
+        },
+        {
+            "doc_id": "UNKNOWN-cc806eae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698922",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cc806eae"
+        },
+        {
+            "doc_id": "UNKNOWN-ec68664e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.698973",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-ec68664e"
+        },
+        {
+            "doc_id": "UNKNOWN-642e6e19",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699026",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-642e6e19"
+        },
+        {
+            "doc_id": "UNKNOWN-759f17b7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699079",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-759f17b7"
+        },
+        {
+            "doc_id": "UNKNOWN-86b384b6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699130",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-86b384b6"
+        },
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699183",
+            "relevance_score": 0.0,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699238",
+            "relevance_score": 0.0,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699330",
+            "relevance_score": 0.0,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699398",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699450",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699498",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699542",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        },
+        {
+            "doc_id": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699583",
+            "relevance_score": 0.0,
+            "chunk_uuid": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699625",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699667",
+            "relevance_score": 0.0,
+            "chunk_uuid": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:03:44.699708",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        }
+    ],
+    "1.1.L3": [
+        {
+            "doc_id": "UNKNOWN-b404eeb2",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157161",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b404eeb2"
+        },
+        {
+            "doc_id": "UNKNOWN-6cb7324f",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157292",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-6cb7324f"
+        },
+        {
+            "doc_id": "UNKNOWN-d3b7d2af",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157342",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3b7d2af"
+        },
+        {
+            "doc_id": "UNKNOWN-15a76239",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157385",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-15a76239"
+        },
+        {
+            "doc_id": "UNKNOWN-53424991",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157427",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-53424991"
+        },
+        {
+            "doc_id": "UNKNOWN-03c6ebd6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157469",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-03c6ebd6"
+        },
+        {
+            "doc_id": "UNKNOWN-2eb30b6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157509",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2eb30b6a"
+        },
+        {
+            "doc_id": "UNKNOWN-e6ad4063",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157548",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e6ad4063"
+        },
+        {
+            "doc_id": "UNKNOWN-abdef5f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157587",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-abdef5f6"
+        },
+        {
+            "doc_id": "UNKNOWN-74cd580d",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157626",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-74cd580d"
+        },
+        {
+            "doc_id": "UNKNOWN-11eb0bf8",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157665",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-11eb0bf8"
+        },
+        {
+            "doc_id": "UNKNOWN-52fe2029",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157703",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-52fe2029"
+        },
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157755",
+            "relevance_score": 0.0,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.157794",
+            "relevance_score": 0.0,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159583",
+            "relevance_score": 0.0,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159721",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159769",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159810",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159847",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        },
+        {
+            "doc_id": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159885",
+            "relevance_score": 0.0,
+            "chunk_uuid": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159936",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.159983",
+            "relevance_score": 0.0,
+            "chunk_uuid": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160026",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        },
+        {
+            "doc_id": "UNKNOWN-aa239011",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160062",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-aa239011"
+        },
+        {
+            "doc_id": "UNKNOWN-b6dc1765",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160097",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b6dc1765"
+        },
+        {
+            "doc_id": "UNKNOWN-c2d0895e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160131",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-c2d0895e"
+        },
+        {
+            "doc_id": "UNKNOWN-d3c0c39e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160164",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3c0c39e"
+        },
+        {
+            "doc_id": "UNKNOWN-2135cc14",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160197",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2135cc14"
+        },
+        {
+            "doc_id": "UNKNOWN-123968f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160230",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-123968f6"
+        },
+        {
+            "doc_id": "UNKNOWN-9e98614b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160263",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-9e98614b"
+        },
+        {
+            "doc_id": "UNKNOWN-cc806eae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160296",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cc806eae"
+        },
+        {
+            "doc_id": "UNKNOWN-ec68664e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160329",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-ec68664e"
+        },
+        {
+            "doc_id": "UNKNOWN-642e6e19",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160363",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-642e6e19"
+        },
+        {
+            "doc_id": "UNKNOWN-759f17b7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160397",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-759f17b7"
+        },
+        {
+            "doc_id": "UNKNOWN-86b384b6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:06:01.160432",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-86b384b6"
+        }
+    ],
+    "1.1.L4": [
+        {
+            "doc_id": "UNKNOWN-cbe88288",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.451861",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cbe88288"
+        },
+        {
+            "doc_id": "UNKNOWN-cd9ad7c7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.451997",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cd9ad7c7"
+        },
+        {
+            "doc_id": "UNKNOWN-403d6fda",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452093",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-403d6fda"
+        },
+        {
+            "doc_id": "UNKNOWN-33511f83",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452179",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-33511f83"
+        },
+        {
+            "doc_id": "UNKNOWN-b4653f8c",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452262",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b4653f8c"
+        },
+        {
+            "doc_id": "UNKNOWN-e137b0e8",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452346",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e137b0e8"
+        },
+        {
+            "doc_id": "UNKNOWN-7fe3617f",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452427",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-7fe3617f"
+        },
+        {
+            "doc_id": "UNKNOWN-a3727c95",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452503",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-a3727c95"
+        },
+        {
+            "doc_id": "UNKNOWN-87ace2f9",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452593",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-87ace2f9"
+        },
+        {
+            "doc_id": "UNKNOWN-6ea4ef59",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452649",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-6ea4ef59"
+        },
+        {
+            "doc_id": "UNKNOWN-924fc3e7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452705",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-924fc3e7"
+        },
+        {
+            "doc_id": "UNKNOWN-76ccb9ae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452762",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-76ccb9ae"
+        },
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452818",
+            "relevance_score": 0.0,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452873",
+            "relevance_score": 0.0,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452927",
+            "relevance_score": 0.0,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.452985",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453037",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453092",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453145",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        },
+        {
+            "doc_id": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453198",
+            "relevance_score": 0.0,
+            "chunk_uuid": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453250",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453305",
+            "relevance_score": 0.0,
+            "chunk_uuid": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453360",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        },
+        {
+            "doc_id": "UNKNOWN-aa239011",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453417",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-aa239011"
+        },
+        {
+            "doc_id": "UNKNOWN-b6dc1765",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453470",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b6dc1765"
+        },
+        {
+            "doc_id": "UNKNOWN-c2d0895e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453521",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-c2d0895e"
+        },
+        {
+            "doc_id": "UNKNOWN-d3c0c39e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453575",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3c0c39e"
+        },
+        {
+            "doc_id": "UNKNOWN-2135cc14",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453626",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2135cc14"
+        },
+        {
+            "doc_id": "UNKNOWN-123968f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453679",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-123968f6"
+        },
+        {
+            "doc_id": "UNKNOWN-9e98614b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453732",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-9e98614b"
+        },
+        {
+            "doc_id": "UNKNOWN-cc806eae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453787",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cc806eae"
+        },
+        {
+            "doc_id": "UNKNOWN-ec68664e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453838",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-ec68664e"
+        },
+        {
+            "doc_id": "UNKNOWN-642e6e19",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453889",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-642e6e19"
+        },
+        {
+            "doc_id": "UNKNOWN-759f17b7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453945",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-759f17b7"
+        },
+        {
+            "doc_id": "UNKNOWN-86b384b6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.453994",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-86b384b6"
+        },
+        {
+            "doc_id": "UNKNOWN-b404eeb2",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454058",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b404eeb2"
+        },
+        {
+            "doc_id": "UNKNOWN-6cb7324f",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454111",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-6cb7324f"
+        },
+        {
+            "doc_id": "UNKNOWN-d3b7d2af",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454162",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3b7d2af"
+        },
+        {
+            "doc_id": "UNKNOWN-15a76239",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454215",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-15a76239"
+        },
+        {
+            "doc_id": "UNKNOWN-53424991",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454266",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-53424991"
+        },
+        {
+            "doc_id": "UNKNOWN-03c6ebd6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454316",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-03c6ebd6"
+        },
+        {
+            "doc_id": "UNKNOWN-2eb30b6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454367",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2eb30b6a"
+        },
+        {
+            "doc_id": "UNKNOWN-e6ad4063",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454420",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e6ad4063"
+        },
+        {
+            "doc_id": "UNKNOWN-abdef5f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454475",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-abdef5f6"
+        },
+        {
+            "doc_id": "UNKNOWN-74cd580d",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454526",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-74cd580d"
+        },
+        {
+            "doc_id": "UNKNOWN-11eb0bf8",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454574",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-11eb0bf8"
+        },
+        {
+            "doc_id": "UNKNOWN-52fe2029",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:07:29.454610",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-52fe2029"
+        }
+    ],
+    "1.1.L5": [
+        {
+            "doc_id": "UNKNOWN-5ef11c91",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169132",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-5ef11c91"
+        },
+        {
+            "doc_id": "UNKNOWN-00ba97fa",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169202",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-00ba97fa"
+        },
+        {
+            "doc_id": "UNKNOWN-4695bb76",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169247",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-4695bb76"
+        },
+        {
+            "doc_id": "UNKNOWN-40526ab5",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169289",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-40526ab5"
+        },
+        {
+            "doc_id": "UNKNOWN-acfe977e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169329",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-acfe977e"
+        },
+        {
+            "doc_id": "UNKNOWN-2f5a3b4e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169369",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2f5a3b4e"
+        },
+        {
+            "doc_id": "UNKNOWN-0850d593",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169409",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-0850d593"
+        },
+        {
+            "doc_id": "UNKNOWN-e6e67a95",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169447",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e6e67a95"
+        },
+        {
+            "doc_id": "UNKNOWN-c78bf403",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169484",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-c78bf403"
+        },
+        {
+            "doc_id": "UNKNOWN-0877cfdd",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169523",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-0877cfdd"
+        },
+        {
+            "doc_id": "UNKNOWN-2b473601",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169563",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2b473601"
+        },
+        {
+            "doc_id": "UNKNOWN-4a14e0a0",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169601",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-4a14e0a0"
+        },
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169653",
+            "relevance_score": 0.0,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169692",
+            "relevance_score": 0.0,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169731",
+            "relevance_score": 0.0,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169782",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169821",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169876",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169915",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        },
+        {
+            "doc_id": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438",
+            "filename": "KM1.1L105 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169954",
+            "relevance_score": 0.0,
+            "chunk_uuid": "685dadc60bf642b435227dbb38ef2bbadf19eed291910bd4d44f72d3c28cf438"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.169992",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a",
+            "filename": "KM1.1L402 แผนใหม่.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170031",
+            "relevance_score": 0.0,
+            "chunk_uuid": "f5588b5c01c8cab241e4463eabf56fa4bb457c26d7a777ef1643ee35828ba89a"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170074",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        },
+        {
+            "doc_id": "UNKNOWN-aa239011",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170112",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-aa239011"
+        },
+        {
+            "doc_id": "UNKNOWN-b6dc1765",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170153",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b6dc1765"
+        },
+        {
+            "doc_id": "UNKNOWN-c2d0895e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170192",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-c2d0895e"
+        },
+        {
+            "doc_id": "UNKNOWN-d3c0c39e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170231",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3c0c39e"
+        },
+        {
+            "doc_id": "UNKNOWN-2135cc14",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170269",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2135cc14"
+        },
+        {
+            "doc_id": "UNKNOWN-123968f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170306",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-123968f6"
+        },
+        {
+            "doc_id": "UNKNOWN-9e98614b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170342",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-9e98614b"
+        },
+        {
+            "doc_id": "UNKNOWN-cc806eae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170378",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cc806eae"
+        },
+        {
+            "doc_id": "UNKNOWN-ec68664e",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170415",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-ec68664e"
+        },
+        {
+            "doc_id": "UNKNOWN-642e6e19",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170452",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-642e6e19"
+        },
+        {
+            "doc_id": "UNKNOWN-759f17b7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170489",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-759f17b7"
+        },
+        {
+            "doc_id": "UNKNOWN-86b384b6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170533",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-86b384b6"
+        },
+        {
+            "doc_id": "UNKNOWN-b404eeb2",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170655",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b404eeb2"
+        },
+        {
+            "doc_id": "UNKNOWN-6cb7324f",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170746",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-6cb7324f"
+        },
+        {
+            "doc_id": "UNKNOWN-d3b7d2af",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170807",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-d3b7d2af"
+        },
+        {
+            "doc_id": "UNKNOWN-15a76239",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170858",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-15a76239"
+        },
+        {
+            "doc_id": "UNKNOWN-53424991",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170903",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-53424991"
+        },
+        {
+            "doc_id": "UNKNOWN-03c6ebd6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170946",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-03c6ebd6"
+        },
+        {
+            "doc_id": "UNKNOWN-2eb30b6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.170999",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-2eb30b6a"
+        },
+        {
+            "doc_id": "UNKNOWN-e6ad4063",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171054",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e6ad4063"
+        },
+        {
+            "doc_id": "UNKNOWN-abdef5f6",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171094",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-abdef5f6"
+        },
+        {
+            "doc_id": "UNKNOWN-74cd580d",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171134",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-74cd580d"
+        },
+        {
+            "doc_id": "UNKNOWN-11eb0bf8",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171172",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-11eb0bf8"
+        },
+        {
+            "doc_id": "UNKNOWN-52fe2029",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171211",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-52fe2029"
+        },
+        {
+            "doc_id": "UNKNOWN-cbe88288",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171287",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cbe88288"
+        },
+        {
+            "doc_id": "UNKNOWN-cd9ad7c7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171334",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-cd9ad7c7"
+        },
+        {
+            "doc_id": "UNKNOWN-403d6fda",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171373",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-403d6fda"
+        },
+        {
+            "doc_id": "UNKNOWN-33511f83",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171411",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-33511f83"
+        },
+        {
+            "doc_id": "UNKNOWN-b4653f8c",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171449",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-b4653f8c"
+        },
+        {
+            "doc_id": "UNKNOWN-e137b0e8",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171488",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-e137b0e8"
+        },
+        {
+            "doc_id": "UNKNOWN-7fe3617f",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171529",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-7fe3617f"
+        },
+        {
+            "doc_id": "UNKNOWN-a3727c95",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171567",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-a3727c95"
+        },
+        {
+            "doc_id": "UNKNOWN-87ace2f9",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171607",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-87ace2f9"
+        },
+        {
+            "doc_id": "UNKNOWN-6ea4ef59",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171646",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-6ea4ef59"
+        },
+        {
+            "doc_id": "UNKNOWN-924fc3e7",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171700",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-924fc3e7"
+        },
+        {
+            "doc_id": "UNKNOWN-76ccb9ae",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T01:09:09.171739",
+            "relevance_score": 0.0,
+            "chunk_uuid": "UNKNOWN-76ccb9ae"
+        }
+    ]
+}
