@@ -1,0 +1,86 @@
+{
+    "1.2.L1": [
+        {
+            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:49:56.060312",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
+        },
+        {
+            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:49:56.060344",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
+        },
+        {
+            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
+            "filename": "KM1.2L506 ดูงาน egat 2.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:49:56.060357",
+            "relevance_score": 0.0,
+            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
+        },
+        {
+            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:49:56.060370",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+        },
+        {
+            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:49:56.060382",
+            "relevance_score": 0.0,
+            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+        }
+    ],
+    "1.2.L2": [
+        {
+            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:53:30.879876",
+            "relevance_score": 0.0,
+            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
+        },
+        {
+            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:53:30.879947",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
+        },
+        {
+            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
+            "filename": "KM1.2L506 ดูงาน egat 2.png",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:53:30.879962",
+            "relevance_score": 0.0,
+            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
+        },
+        {
+            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:53:30.879978",
+            "relevance_score": 0.0,
+            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+        },
+        {
+            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-05T23:53:30.879997",
+            "relevance_score": 0.0,
+            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+        }
+    ]
+}
