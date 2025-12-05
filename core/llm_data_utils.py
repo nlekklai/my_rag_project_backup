@@ -86,24 +86,15 @@ def set_mock_control_mode(enable: bool):
     logger.info(f"Mock control mode: {_MOCK_FLAG}")
 
 # ------------------------
-# ID normalization
-# ------------------------
-def _hash_stable_id_to_64_char(stable_id: str) -> str:
-    return hashlib.sha256(stable_id.lower().encode('utf-8')).hexdigest()
-
-def normalize_stable_ids(ids: List[str]) -> List[str]:
-    return [i.lower() if len(i)==64 else _hash_stable_id_to_64_char(i) for i in ids]
-
-# ------------------------
-# Retrieval
+# Retrieval: retrieve_context_by_doc_ids (Level 2 Hydration)
 # ------------------------
 def retrieve_context_by_doc_ids(
-    doc_uuids: List[str],
+    doc_uuids: List[str], # <--- Input คือ Chunk UUIDs (64-char_index) หรือ Stable Doc UUID (64-char)
     doc_type: str,
     enabler: Optional[str] = None,
     vectorstore_manager: Optional['VectorStoreManager'] = None
 ) -> Dict[str, Any]:
-
+    
     # ไม่มี Doc UUID → ไม่มี evidence
     if not doc_uuids:
         return {"top_evidences": []}
@@ -114,22 +105,64 @@ def retrieve_context_by_doc_ids(
         logger.error("VectorStoreManager is None.")
         return {"top_evidences": []}
 
-    try:
-        # 🎯 FIX: ลบ normalize_stable_ids ออก เพราะ doc_uuids คือ Chunk UUIDs ที่เสถียรแล้ว
-        lookup_ids = doc_uuids
+    # 🟢 NEW FIX: การแปลง ID
+    chunk_uuids_for_chroma = []
+    
+    # ตรวจสอบว่ามี Doc ID Map ไหม
+    if not hasattr(manager, 'doc_id_map') or not manager.doc_id_map:
+        logger.warning("VSM Doc ID Map is missing or empty! Using input IDs directly (may fail Hydration).")
+        # Fallback (เพื่อไม่ให้โค้ดพัง)
+        chunk_uuids_for_chroma = doc_uuids
         
-        # ดึง document chunk ตาม stable_doc_uuid หรือ chunk_uuid
-        docs: List[LcDocument] = manager.get_documents_by_id(lookup_ids, doc_type, enabler)
+    else:
+        for input_id in doc_uuids:
+            input_id_str = str(input_id).strip()
+            # 1. ตรวจสอบว่าเป็น Stable Doc ID (64 ตัว) ที่ต้อง Map หรือไม่
+            if len(input_id_str) == 64 and input_id_str in manager.doc_id_map:
+                # 🎯 แปลง: ใช้ Stable Doc ID ค้นหา Chunk UUIDs ที่ถูกต้อง
+                mapped_info = manager.doc_id_map.get(input_id_str, {})
+                full_chunk_list = mapped_info.get('chunk_uuids', [])
+                chunk_uuids_for_chroma.extend(full_chunk_list)
+            # 2. ถ้าไม่ใช่ 64 ตัว หรือไม่ตรงกับ Stable Doc ID (อาจเป็น Chunk ID ที่ถูกต้องแล้ว) ให้ใช้โดยตรง
+            else:
+                chunk_uuids_for_chroma.append(input_id_str) 
+
+        # Log เพื่อความชัดเจน
+        if len(chunk_uuids_for_chroma) > len(doc_uuids):
+            logger.info(f"VSM: Mapped {len(doc_uuids)} Stable IDs to {len(chunk_uuids_for_chroma)} full Chunk UUIDs for Chroma.")
+
+    # ลบซ้ำก่อนส่งเข้า Chroma
+    final_uuids_to_retrieve = list(set(chunk_uuids_for_chroma))
+    if not final_uuids_to_retrieve:
+        logger.warning("VSM: No valid Chunk UUIDs found after mapping and cleaning.")
+        return {"top_evidences": []}
+    
+    # END OF NEW FIX: ใช้ final_uuids_to_retrieve แทน doc_uuids
+
+    try:
+        # 🎯 FIX: เปลี่ยนไปใช้ retrieve_by_chunk_uuids เพื่อดึงเฉพาะ Chunk ที่ระบุเท่านั้น (1:1 Hydration)
+        collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
+        
+        # docs จะเป็นรายการ LcDocument ที่มี page_content และ metadata ที่เกี่ยวข้องกับ Chunk ID นั้น ๆ
+        # ใช้ ID ที่ถูกแปลงแล้ว
+        docs: List[LcDocument] = manager.retrieve_by_chunk_uuids(final_uuids_to_retrieve, collection_name) 
 
         top_evidences = []
         for d in docs:
             md = getattr(d, "metadata", {}) or {}
+            
+            # ✅ FIX: ตรวจสอบและใช้ chunk_uuid ซึ่งตอนนี้ควรเป็น 64-char_index ที่ถูกดึงมา
+            # ใน retrieve_by_chunk_uuids, chunk_uuid จะถูกใส่กลับเข้าไปใน metadata
+            final_chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") 
+            
             top_evidences.append({
+                # doc_id: ID เอกสารหลัก (64 ตัว)
                 "doc_id": md.get("stable_doc_uuid"),
-                "chunk_uuid": md.get("chunk_uuid"),
+                # chunk_uuid: ID ที่ใช้ในการค้นหาและอ้างอิง Chunk (64-char_index)
+                "chunk_uuid": final_chunk_uuid, 
                 "doc_type": md.get("doc_type"),
                 "source": md.get("source") or md.get("doc_source"),
-                "source_filename": md.get("source") or md.get("doc_source"),  # ✅
+                "source_filename": md.get("source") or md.get("doc_source"),  
                 "content": getattr(d, "page_content", "").strip(),
                 "chunk_index": md.get("chunk_index")
             })
@@ -140,6 +173,7 @@ def retrieve_context_by_doc_ids(
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
+
 # ------------------------
 # Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
 # ------------------------
@@ -149,7 +183,7 @@ def retrieve_context_with_filter(
     enabler: Optional[str] = None,
     vectorstore_manager: Optional['VectorStoreManager'] = None,
     mapped_uuids: Optional[List[str]] = None,
-    stable_doc_ids: Optional[List[str]] = None,
+    stable_doc_ids: Optional[List[str]] = None, 
     priority_docs_input: Optional[List[Any]] = None,
     sequential_chunk_uuids: Optional[List[str]] = None,
     sub_id: Optional[str] = None,
@@ -158,7 +192,6 @@ def retrieve_context_with_filter(
 ) -> Dict[str, Any]:
     """
     ดึง context ด้วย semantic search + priority + fallback + rerank
-    แก้ทุกปัญหา 0 documents แล้ว 100%
     """
     start_time = time.time()
     all_retrieved_chunks: List[Any] = []
@@ -201,11 +234,18 @@ def retrieve_context_with_filter(
             elif hasattr(doc, 'page_content'):
                 guaranteed_priority_chunks.append(doc)
 
-    # 4. ดึง collection name ให้ตรงตัว (ห้าม .lower() เด็ดขาด!)
+    # 4. ดึง collection name ให้ตรงตัว
     collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
     logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
 
-    retriever = manager.get_retriever(collection_name)  # ไม่มี .lower()!!!
+    # 🟢 Logic สร้าง Filter WHERE จาก 64-char stable_doc_ids 
+    where_filter: Dict[str, Any] = {}
+    if stable_doc_ids:
+        logger.info(f"Applying Stable Doc ID filter: {len(stable_doc_ids)} IDs")
+        # 🎯 FIX: ใช้ 'stable_doc_uuid' ในการกรองเพื่อให้ตรงกับ Ingestion ใหม่
+        where_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}} 
+
+    retriever = manager.get_retriever(collection_name) 
     if not retriever:
         logger.error(f"Retriever NOT FOUND for collection: {collection_name}")
         logger.error(f"Available collections: {list(manager._chroma_cache.keys())}")
@@ -217,10 +257,15 @@ def retrieve_context_with_filter(
             logger.critical(f"[QUERY] Running: '{q_log}' → collection='{collection_name}'")
 
             try:
+                # 🎯 FIX: รวม Filter เข้าใน search_kwargs
+                search_kwargs = {"k": INITIAL_TOP_K}
+                if where_filter:
+                    search_kwargs["where"] = where_filter
+
                 if hasattr(retriever, "get_relevant_documents"):
-                    docs = retriever.get_relevant_documents(q)
+                    docs = retriever.get_relevant_documents(q, search_kwargs=search_kwargs) 
                 elif hasattr(retriever, "invoke"):
-                    docs = retriever.invoke(q, config={"configurable": {"search_kwargs": {"k": INITIAL_TOP_K}}})
+                    docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
                 else:
                     docs = []
                 retrieved_chunks.extend(docs or [])
@@ -246,6 +291,8 @@ def retrieve_context_with_filter(
             pc = pc[:500]
             doc.page_content = pc
 
+        # 🎯 FIX: ใช้ chunk_uuid ซึ่งตอนนี้คือ ID 64-char_index สำหรับ Dedup
+        # TEMP-ID ยังคงถูกใช้สำหรับ dedup ชั่วคราว แต่จะถูกกรองออกในขั้นตอนที่ 7
         chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") or f"TEMP-{uuid.uuid4().hex[:12]}"
         if chunk_uuid not in unique_map:
             md["dedup_chunk_uuid"] = chunk_uuid
@@ -282,19 +329,41 @@ def retrieve_context_with_filter(
     # 7. สร้าง output
     top_evidences = []
     aggregated_parts = []
+    used_chunk_uuids: List[str] = [] # ต้องประกาศใหม่ที่นี่เพื่อรับเฉพาะ ID ที่ถูกเลือก
 
+    # 🟢 NEW FIX: กรอง Chunk ที่ไม่มี ID ที่ถูกต้องออกไป
+    valid_final_docs = []
     for doc in final_docs[:FINAL_K_RERANKED]:
         md = getattr(doc, "metadata", {}) or {}
+        chunk_uuid_candidate = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        
+        # เงื่อนไขการยอมรับ: ต้องมี ID, ต้องมีความยาวอย่างน้อย 32 ตัวอักษร (เพื่อกรอง TEMP-), และต้องไม่เป็น ID ชั่วคราว (UNKNOWN/TEMP)
+        is_valid_hash = bool(chunk_uuid_candidate and len(chunk_uuid_candidate) >= 32 and not re.match(r"^(TEMP|UNKNOWN)-", str(chunk_uuid_candidate)))
+        
+        if is_valid_hash:
+            valid_final_docs.append(doc)
+        else:
+            logger.warning(
+                f"Skipping chunk in final output due to invalid/temporary ID: {chunk_uuid_candidate}. "
+                f"Source Doc ID: {md.get('stable_doc_uuid')}"
+            )
+
+    # 7.1 วนลูปเฉพาะ Chunk ที่มี ID ที่ถูกต้องเพื่อสร้าง Final Output
+    for doc in valid_final_docs:
+        md = getattr(doc, "metadata", {}) or {}
         pc = str(getattr(doc, "page_content", "") or "").strip()
-        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or f"UNKNOWN-{uuid.uuid4().hex[:8]}"
-        used_chunk_uuids.append(chunk_uuid)
+        
+        # 🎯 FIX B: ใช้ ID ที่ถูกกรองแล้ว (chunk_uuid_final)
+        chunk_uuid_final = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        
+        used_chunk_uuids.append(str(chunk_uuid_final)) # บันทึกเฉพาะ ID ที่ถูกต้อง
 
         source = md.get("source") or md.get("filename") or md.get("doc_source") or "Unknown"
         pdca = md.get("pdca_tag", "Other")
 
         top_evidences.append({
             "doc_id": md.get("stable_doc_uuid"),
-            "chunk_uuid": chunk_uuid,
+            "chunk_uuid": chunk_uuid_final, # ID ที่ Level 2 จะใช้ค้นหา (ตอนนี้มั่นใจว่าเป็น 64-char Hash)
             "source": source,
             "source_filename": source,
             "text": pc,

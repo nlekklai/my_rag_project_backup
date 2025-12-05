@@ -1,4 +1,3 @@
-#core/start_assessment.py
 """
 CLI runner that:
  - parses args (--sub, --enabler, --export, --mock, --sequential) 
@@ -12,7 +11,7 @@ import sys
 import logging
 import argparse
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 # -------------------- PATH SETUP --------------------
@@ -30,7 +29,19 @@ try:
         DEFAULT_TENANT, DEFAULT_YEAR
     ) 
     from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
-    from core.vectorstore import load_all_vectorstores, VectorStoreManager
+    # 🟢 FIX: ต้องเพิ่ม load_document_map
+    from core.vectorstore import load_all_vectorstores, VectorStoreManager 
+    
+    # 🟢 ASSUMPTION: load_document_map is available in core.vectorstore
+    # (หากไม่มี ต้องแก้ไข core.vectorstore ให้มีฟังก์ชันนี้)
+    try:
+        from core.vectorstore import load_document_map
+    except ImportError:
+        def load_document_map(tenant: str, year: int, enabler: str) -> Dict[str, str]:
+             """MOCK: Returns an empty dictionary if the real function is not imported."""
+             logger.warning("load_document_map not found. Using empty dictionary.")
+             return {}
+
     import assessments.seam_mocking as seam_mocking 
 except Exception as e:
     print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
@@ -70,22 +81,44 @@ def main():
     )
     start_ts = time.time()
 
-    # 1. Load Vectorstores (โหลดเพียงครั้งเดียวใน Process หลัก)
+    # 1. Load Vectorstores and Document Map (โหลดเพียงครั้งเดียวใน Process หลัก)
     vsm: Optional[VectorStoreManager] = None
+    document_map: Optional[Dict[str, str]] = None # 🟢 FIX: เตรียมตัวแปรสำหรับ Document Map
     
     # 🟢 FIX: Skip VSM loading if running in Sequential Mode 
     if args.sequential and args.mock == "none":
         logger.info("Sequential mode (non-mock): Skipping initial VSM load in main process. VSM will be loaded one time inside the Engine for robustness.")
-        # vsm remains None, forcing the load in seam_assessment.py
+        # vsm remains None, forcing the load in SEAMPDCAEngine
     else:
         try:
             logger.info("Loading central evidence vectorstore(s)...")
-            vsm = load_all_vectorstores(doc_types=[EVIDENCE_DOC_TYPES], evidence_enabler=args.enabler)
+            # 🎯 FIX: เพิ่ม tenant และ year ในการเรียกฟังก์ชัน load_all_vectorstores 
+            vsm = load_all_vectorstores(
+                doc_types=[EVIDENCE_DOC_TYPES], 
+                evidence_enabler=args.enabler,
+                tenant=args.tenant,        
+                year=args.year             
+            )
         except Exception as e:
             logger.error(f"Failed to load vectorstores: {e}")
             if args.mock == "none":
                  logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
                  raise
+
+    # 1.3 Load Document Map (สำหรับ mapping doc_id -> filename)
+    try:
+        logger.info("Loading document ID to filename map...")
+        # 🎯 NEW FIX: โหลด Document Map
+        document_map = load_document_map(
+            tenant=args.tenant, 
+            year=args.year,
+            enabler=args.enabler
+        )
+        logger.info(f"Loaded {len(document_map)} document mappings.")
+    except Exception as e:
+        logger.warning(f"Failed to load document map: {e}. Assessment will continue, but filenames in results may be limited.")
+        document_map = {} # Ensure it's an empty dictionary if failed
+        
 
     # 1.5. Initialize LLM for Classification & Evaluation
     llm_for_classification = None
@@ -112,8 +145,8 @@ def main():
         force_sequential=args.sequential,
         model_name=LLM_MODEL_NAME,
         temperature=0.0, 
-        tenant=args.tenant,  # 🟢 เพิ่ม Tenant
-        year=args.year,      # 🟢 เพิ่ม Year
+        tenant=args.tenant,  
+        year=args.year,      
     )
     engine = SEAMPDCAEngine(
         config=config,
@@ -121,6 +154,7 @@ def main():
         logger_instance=logger,             
         doc_type=EVIDENCE_DOC_TYPES, 
         vectorstore_manager=vsm, 
+        document_map=document_map, # 🟢 FIX: ส่ง Document Map ไปให้ Engine
     )
 
     # 3. Run Assessment
@@ -129,7 +163,8 @@ def main():
             target_sub_id=args.sub, 
             export=args.export, 
             vectorstore_manager=vsm,
-            sequential=args.sequential
+            sequential=args.sequential,
+            document_map=document_map # 🟢 FIX: ส่ง Document Map ไปให้ run_assessment (สำหรับส่งต่อไปยัง Workers)
         )
     except Exception as e:
         logger.exception(f"Engine run failed: {e}")

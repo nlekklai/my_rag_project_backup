@@ -247,66 +247,63 @@ def get_correct_pdca_required_score(level: int) -> int:
     return 8
 
 
-# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม LLM parameters (7 elements)
-def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, str, str, str, float]) -> Dict[str, Any]:
+# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม document_map (8 elements)
+def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, str, str, str, float, Optional[Dict[str, str]]]) -> Dict[str, Any]:
     """
     Static worker function for multiprocessing pool. 
     It reconstructs SeamAssessment in the new process and executes the assessment 
     for a single sub-criteria.
     
     Args:
-        worker_input_tuple: (sub_criteria_data, enabler: str, target_level: int, mock_mode: str, evidence_map_path: str, model_name: str, temperature: float) 
+        worker_input_tuple: (sub_criteria_data, enabler: str, target_level: int, mock_mode: str, 
+                             evidence_map_path: str, model_name: str, temperature: float, 
+                             document_map: Optional[Dict[str, str]]) 
 
     Returns:
         Dict[str, Any]: Final result of the sub-criteria assessment.
     """
     
     # 🟢 NEW FIX: PATH SETUP สำหรับ Worker Process
-    # ทำให้ Worker Process รู้จัก Root Directory ของโปรเจกต์ เพื่อ Import modules ภายในได้ (เช่น models.llm)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
         
-    # NOTE: logger ควรถูกสร้างใหม่ใน Worker process
     worker_logger = logging.getLogger(__name__)
 
     try:
-        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 7 ตัว (รวม LLM parameters)
-        sub_criteria_data, enabler, target_level, mock_mode, evidence_map_path, model_name, temperature = worker_input_tuple
+        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 8 ตัว (รวม document_map)
+        sub_criteria_data, enabler, target_level, mock_mode, evidence_map_path, model_name, temperature, document_map = worker_input_tuple
     except ValueError as e:
-        worker_logger.critical(f"Worker input tuple unpack failed: {e}")
+        worker_logger.critical(f"Worker input tuple unpack failed (expected 8 elements): {e}")
         return {"error": f"Invalid worker input: {e}"}
         
-    # 1. Reconstruct Config โดยการสร้างใหม่ด้วยค่า Primitives (The Robust Fix)
+    # 1. Reconstruct Config 
     try:
-        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process พร้อมส่ง LLM parameters
-        # (AssessmentConfig ต้องมี field model_name และ temperature แล้ว)
+        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process
         worker_config = AssessmentConfig(
             enabler=enabler,
             target_level=target_level,
             mock_mode=mock_mode,
             model_name=model_name, 
             temperature=temperature
-            # force_sequential ไม่จำเป็นใน worker
         )
     except Exception as e:
         worker_logger.critical(f"Failed to reconstruct AssessmentConfig in worker: {e}")
-        # Return ผลลัพธ์ที่ผิดพลาด
         return {
             "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
             "error": f"Config reconstruction failed: {e}"
         }
 
-    # 2. Re-instantiate SeamAssessment (LLM และ VSM จะถูกสร้างใหม่ใน Worker)
+    # 2. Re-instantiate SeamAssessment 
     try:
-        # Worker Instance จะเรียก _initialize_llm_if_none() เพื่อสร้าง LLM/VSM ใหม่
-        # (ต้องมั่นใจว่า _initialize_llm_if_none ถูกแก้ให้ Import จาก models.llm แล้ว)
+        # 🟢 FIX (สำคัญ): ส่ง document_map เข้าไปใน SEAMPDCAEngine
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=None, # ให้ Worker สร้างใหม่
-            vectorstore_manager=None, # ให้ Worker สร้างใหม่
-            logger_instance=worker_logger
+            llm_instance=None, 
+            vectorstore_manager=None, 
+            logger_instance=worker_logger,
+            document_map=document_map # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
         )
     except Exception as e:
         worker_logger.critical(f"FATAL: SEAMPDCAEngine instantiation failed in worker: {e}")
@@ -316,7 +313,6 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
         }
     
     # 3. Execute the worker logic
-    # เมธอดนี้จะรัน Logic L1-L5 สำหรับ Sub-Criteria เดี่ยว
     return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
 
 
@@ -373,7 +369,7 @@ class SEAMPDCAEngine:
     
     def __init__(
         self, 
-        config: 'AssessmentConfig',
+        config: AssessmentConfig,
         llm_instance: Any = None, 
         logger_instance: logging.Logger = None,
         rag_retriever_instance: Any = None,
@@ -382,7 +378,8 @@ class SEAMPDCAEngine:
         # 🟢 FIX #2: เพิ่ม vectorstore_manager
         vectorstore_manager: Optional['VectorStoreManager'] = None,
         # 📌 FIX #3 (ใหม่): เพิ่ม evidence_map_path เพื่อรับค่าจาก Worker Process
-        evidence_map_path: Optional[str] = None 
+        evidence_map_path: Optional[str] = None,
+        document_map: Optional[Dict[str, str]] = None 
     ):
 
             # =======================================================
@@ -392,7 +389,7 @@ class SEAMPDCAEngine:
                  self.logger = logger_instance
             else:
                  # สร้าง Child Logger เพื่อให้ Log มี Context ของ Tenant/Year
-                 self.logger = logger.getChild(f"Engine|{config.enabler}|{config.tenant}/{config.year}")
+                 self.logger = logging.getLogger(__name__).getChild(f"Engine|{config.enabler}|{config.tenant}/{config.year}")
             
             self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year}).")
 
@@ -448,11 +445,6 @@ class SEAMPDCAEngine:
             if evidence_map_path:
                 self.evidence_map_path = evidence_map_path
             else:
-                # map_filename = f"{self.enabler_id.lower()}{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
-                # # 🔹 ใช้ Absolute Path เพื่อป้องกันปัญหา CWD ไม่คงที่
-                # self.evidence_map_path = os.path.join(PROJECT_ROOT, RUBRIC_CONFIG_DIR, map_filename)
-                # 🟢 FIX #1: ใช้ RUBRIC_CONFIG_DIR (ซึ่งตอนนี้คือ config/gov_tenants)
-                # และเพิ่ม Tenant/Year
                 base_dir = os.path.join(
                     PROJECT_ROOT, 
                     RUBRIC_CONFIG_DIR, # <-- ตอนนี้คือ config/gov_tenants
@@ -461,7 +453,6 @@ class SEAMPDCAEngine:
                 )
 
                 # 🟢 FIX #2: สร้าง Filename: tenant_year_enabler_evidence_mapping.json
-                # (เช่น: pea_2568_km_evidence_mapping.json)
                 map_filename = (
                     f"{self.config.tenant}_{self.config.year}_{self.enabler_id.lower()}"
                     f"{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
@@ -494,18 +485,29 @@ class SEAMPDCAEngine:
 
             # Set global mock control mode for llm_data_utils if using 'control'
             if config.mock_mode == "control":
-                logger.info("Enabling global LLM data utils mock control mode.")
+                self.logger.info("Enabling global LLM data utils mock control mode.")
                 set_llm_data_mock_mode(True)
             elif config.mock_mode == "random":
-                logger.warning("Mock mode 'random' is not fully implemented. Using 'control' logic if available.")
-                if hasattr(seam_mocking, 'set_mock_control_mode'):
-                    seam_mocking.set_mock_control_mode(False)
+                self.logger.warning("Mock mode 'random' is not fully implemented. Using 'control' logic if available.")
+                if hasattr(sys.modules.get('seam_mocking'), 'set_mock_control_mode'):
+                    sys.modules.get('seam_mocking').set_mock_control_mode(False)
                     set_llm_data_mock_mode(False)
 
             # 📌 โหลด LLM และ VSM หากยังไม่มี
             if self.llm is None: self._initialize_llm_if_none()
             if self.vectorstore_manager is None: self._initialize_vsm_if_none()
             
+            # 🟢 FIX: จัดเก็บ Document Map (ตามที่แจ้งมา)
+            # ตัวแปรนี้คือตัวที่ใช้ในการ Map ID -> Filename ในฟังก์ชัน _resolve_evidence_filenames ใหม่
+            self.doc_id_to_filename_map: Dict[str, str] = document_map if document_map is not None else {}
+            
+            # self.document_map ถูกทิ้งไว้เพื่อความเข้ากันได้กับโค้ดเดิมที่อาจใช้ชื่อนี้
+            self.document_map: Dict[str, str] = self.doc_id_to_filename_map # ให้ชี้ไปที่เดียวกันเพื่อความมั่นใจ
+
+            self.logger.info(f"Loaded {len(self.doc_id_to_filename_map)} document mappings.")
+            if not self.doc_id_to_filename_map:
+                self.logger.warning("Document ID to Filename Map is empty. Filename resolution might be limited.")
+
             self.logger.info(f"Engine initialized for Enabler: {self.enabler_id}, Mock Mode: {config.mock_mode}")
 
     def _initialize_llm_if_none(self):
@@ -559,7 +561,67 @@ class SEAMPDCAEngine:
                 self.logger.error(f"FATAL: Could not initialize VectorStoreManager: {e}")
                 raise # Re-raise the exception to หยุดโปรแกรม
         
+    def _resolve_evidence_filenames(self, evidence_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            """
+            ฟังก์ชันสำหรับแก้ไขชื่อไฟล์ในรายการหลักฐานอ้างอิง
+            1. จัดการหลักฐานที่ doc_id ขึ้นต้นด้วย 'UNKNOWN-' (หลักฐานภายใน/ที่ไม่ใช่เอกสาร)
+            2. แปลง doc_id (ที่เป็น Hash/UUID) ให้เป็นชื่อไฟล์ที่มนุษย์อ่านได้ โดยใช้ doc_id_to_filename_map
+            """
+            resolved_entries = []
+            for entry in evidence_entries:
+                # ใช้ deepcopy เพื่อป้องกันการแก้ไขข้อมูลต้นฉบับ
+                resolved_entry = deepcopy(entry)
+                # ใช้ doc_id เป็นค่าหลักในการค้นหาชื่อไฟล์
+                doc_id = resolved_entry.get("doc_id", "")
+                # ตรวจสอบชื่อไฟล์ปัจจุบัน (จาก metadata ของ vectorstore ถ้ามี)
+                current_filename = resolved_entry.get("filename", "")
+                
+                # --- 1. จัดการกรณี UNKNOWN- (AI-GENERATED or Lost Source) ---
+                if doc_id.startswith("UNKNOWN-"):
+                    # ให้ใช้ชื่อไฟล์ที่สื่อสารชัดเจนว่าไม่ใช่ไฟล์เอกสารจริง
+                    # เช่น "UNKNOWN-2fac2f11" --> "AI-GENERATED-REF-2fac2f11"
+                    resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
+                    resolved_entries.append(resolved_entry)
+                    continue
 
+                # --- 2. จัดการกรณี Doc ID (Hash/UUID) ที่ถูกต้อง ---
+                if doc_id:
+                    # A. ลองค้นหาชื่อไฟล์จาก Map
+                    if doc_id in self.doc_id_to_filename_map:
+                        resolved_entry["filename"] = self.doc_id_to_filename_map[doc_id]
+                        # ชื่อถูกต้องแล้ว
+                        resolved_entries.append(resolved_entry)
+                        continue
+
+                    # B. ถ้าค้นหาไม่เจอ (Map Fail)
+                    else:
+                        # ตรวจสอบว่าชื่อไฟล์ปัจจุบันเป็นชื่อที่ไม่เหมาะสม (เช่น "Unknown" หรือ Hash.pdf)
+                        is_generic_name = (
+                            current_filename.lower() == "unknown" or
+                            # ❌ เดิม: r"^[0-9a-f]{64}(\.pdf|\.txt)?$" (ถูกต้อง)
+                            # ✅ เพิ่มเติม: ให้รองรับ Hash/UUID 64 ตัวอักษรอย่างเดียว
+                            re.match(r"^[0-9a-f]{64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
+                        )
+                        
+                        if is_generic_name:
+                            # ใช้ชื่อไฟล์ Fallback ที่สื่อว่า Map ไม่สำเร็จ แต่มี ID
+                            resolved_entry["filename"] = f"MAPPING-FAILED-{doc_id[:8]}..."
+                            self.logger.warning(f"Failed to map doc_id {doc_id[:8]}... to filename. Using fallback.")
+                        # else: ชื่อไฟล์ปัจจุบันที่มาจาก metadata อาจจะพอใช้ได้แล้ว ไม่ต้องแก้
+                
+                # --- 3. กรณีไม่มี Doc ID หรือเข้าถึงชื่อไฟล์ไม่ได้เลย (เหลือเป็น Unknown) ---
+                elif not doc_id:
+                    # ถ้าไม่มี doc_id และ filename เป็น Unknown
+                    if current_filename.lower() == "unknown":
+                        resolved_entry["filename"] = "MISSING-SOURCE-METADATA"
+                        self.logger.error("Evidence found with no doc_id and generic filename.")
+                
+                # เพิ่ม entry เข้าไป (ไม่ว่าจะได้รับการแก้ไขหรือไม่)
+                resolved_entries.append(resolved_entry)
+
+            return resolved_entries
+
+    
     # -------------------- Contextual Rules Handlers (FIXED) --------------------
     def _load_contextual_rules_map(self) -> Dict[str, Dict[str, str]]:
         """
@@ -601,109 +663,203 @@ class SEAMPDCAEngine:
         except Exception as e:
             self.logger.error(f"❌ Failed to load Contextual Rules from {filepath}: {e}")
             return {}
-        
+
     def _collect_previous_level_evidences(self, sub_id: str, current_level: int) -> Dict[str, List[Dict]]:
-        """
-        ดึงหลักฐาน (Metadata + Text) ที่ผ่านจาก Level ก่อนหน้าทั้งหมด 
-        เพื่อใช้เป็น Baseline Context ใน Level ปัจจุบัน (Sequential Mode)
+            """
+            ดึงหลักฐาน (Metadata + Text) ที่ผ่านจาก Level ก่อนหน้าทั้งหมด 
+            เพื่อใช้เป็น Baseline Context ใน Level ปัจจุบัน (Sequential Mode)
+            
+            🎯 FIX: เพิ่ม Logic การ Mapping Stable Doc ID เป็น Chunk UUIDs เพื่อแก้ปัญหา Hydration Fail
+            """
+            collected = {}
+            # ดึงค่าคงที่ที่จำเป็น (สมมติว่ามีการ import EVIDENCE_DOC_TYPES มาแล้ว)
+            try:
+                from config.global_vars import EVIDENCE_DOC_TYPES
+            except ImportError:
+                EVIDENCE_DOC_TYPES = "evidence"
 
-        แก้ไขแล้วให้ใช้ self.vectorstore_manager โดยตรง → รับประกันว่า _client มีแน่นอน
-        """
-        collected = {}
+            # 1. ใช้ evidence_map ของ engine ตัวเอง (shared ระหว่าง Level)
+            source_map = self.evidence_map
+            source_name = "evidence_map (SEQ/PAR Main)"
 
-        # 1. ใช้ evidence_map ของ engine ตัวเอง (shared ระหว่าง Level)
-        source_map = self.evidence_map
-        source_name = "evidence_map (SEQ/PAR Main)"
+            # 2. รวบรวม Metadata จาก Level ก่อนหน้า
+            for key, evidence_list in source_map.items():
+                if key.startswith(f"{sub_id}.L") and isinstance(evidence_list, list):
+                    try:
+                        level_num = int(key.split(".L")[-1])
+                        if level_num < current_level:
+                            collected[key] = evidence_list
+                    except (ValueError, IndexError):
+                        continue
 
-        # 2. รวบรวม Metadata จาก Level ก่อนหน้า
-        for key, evidence_list in source_map.items():
-            if key.startswith(f"{sub_id}.L") and isinstance(evidence_list, list):
-                try:
-                    level_num = int(key.split(".L")[-1])
-                    if level_num < current_level:
-                        collected[key] = evidence_list
-                except (ValueError, IndexError):
-                    continue
+            # 3. HYDRATION: ดึง Text เต็มจาก Chroma ด้วย chunk_uuid
+            vectorstore_manager = self.vectorstore_manager
+            is_hydration_needed = vectorstore_manager is not None and collected
 
-        # 3. HYDRATION: ดึง Text เต็มจาก Chroma ด้วย chunk_uuid
-        # ใช้ self.vectorstore_manager โดยตรง → _client มีแน่นอน
-        vectorstore_manager = self.vectorstore_manager
-        is_hydration_needed = vectorstore_manager is not None and collected
+            if is_hydration_needed:
+                # รวบรวม Stable Doc/Chunk IDs ทั้งหมดที่ถูกเลือกใน Level ก่อนหน้า
+                all_uuids_raw = [
+                    # ใช้ chunk_uuid หรือ doc_id ซึ่งในตอนนี้คือ Stable Doc ID (64 char)
+                    str(
+                        ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')
+                    ).strip()
+                    for ev_list in collected.values()
+                    for ev in ev_list
+                    # กรอง ID ที่เป็น None/ว่าง หรือเป็นตัวชั่วคราว/Hash ที่ไม่สมบูรณ์ตั้งแต่ต้น
+                    if (ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')) 
+                    and not str(ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')).startswith(("TEMP-", "HASH-", "Unknown"))
+                ]
+                
+                # แบ่ง ID เป็น Stable Doc ID (64 ตัว) และ Chunk ID อื่นๆ (ที่มี _index หรืออื่นๆ)
+                all_uuids_stable_doc_only = list(set([uid for uid in all_uuids_raw if len(uid) == 64]))
+                all_uuids_non_stable_doc = list(set([uid for uid in all_uuids_raw if len(uid) > 64])) # Chunk ID ที่ถูกต้องควรยาวกว่า 64
 
-        if is_hydration_needed:
-            # รวบรวม chunk_uuids ทั้งหมด (ใช้ chunk_uuid ก่อน, doc_id เป็น fallback)
-            all_uuids = [
-                ev.get('chunk_uuid') or ev.get('doc_id')
-                for ev_list in collected.values()
-                for ev in ev_list
-                if (ev.get('chunk_uuid') or ev.get('doc_id'))
-            ]
+                # 🎯 NEW FIX: ทำการแปลง Stable Doc ID (64-char) เป็น Chunk UUIDs (64-char_index)
+                chunk_uuids_for_chroma = []
+                mapped_count = 0
+                
+                if not hasattr(vectorstore_manager, 'doc_id_map') or not vectorstore_manager.doc_id_map:
+                    self.logger.warning("VSM Doc ID Map is missing! Using raw IDs for ChromaDB (may fail).")
+                    chunk_uuids_for_chroma = all_uuids_raw # Fallback
+                else:
+                    # 1. แปลง Stable Doc IDs
+                    for input_id in all_uuids_stable_doc_only:
+                        # 🎯 แปลง: ใช้ Stable Doc ID ค้นหา Chunk UUIDs ที่ถูกต้อง
+                        mapped_info = vectorstore_manager.doc_id_map.get(input_id, {})
+                        full_chunk_list = mapped_info.get('chunk_uuids', [])
+                        chunk_uuids_for_chroma.extend(full_chunk_list)
+                        mapped_count += 1
+                    
+                    # 2. เพิ่ม Chunk IDs ที่อาจถูกบันทึกมาอย่างถูกต้อง (ยาวกว่า 64 ตัว)
+                    chunk_uuids_for_chroma.extend(all_uuids_non_stable_doc)
 
-            if not all_uuids:
-                self.logger.warning("No valid chunk_uuids found for hydration")
-                full_chunks = []
-            else:
-                collection_name = f"{EVIDENCE_DOC_TYPES.lower()}_{self.enabler_id.lower()}"
+                    if mapped_count > 0:
+                        self.logger.info(f"VSM: Successfully mapped {mapped_count}/{len(all_uuids_stable_doc_only)} Stable Doc IDs to {len(chunk_uuids_for_chroma)} potential Chunk UUIDs.")
+                    
+                    # ลบซ้ำและกรอง ID ที่ว่างเปล่า/สั้นเกินไป
+                    chunk_uuids_for_chroma = list(set([uid for uid in chunk_uuids_for_chroma if len(uid) > 10]))
 
-                try:
-                    self.logger.info(f"Hydrating {len(all_uuids)} chunks from previous levels (collection: {collection_name})")
-                    retrieved_lc_docs = vectorstore_manager.retrieve_by_chunk_uuids(all_uuids, collection_name)
-
+                
+                # 🎯 FIX A: เพิ่ม Log เพื่อยืนยันจำนวน ID ที่รวบรวมได้ทั้งหมด
+                total_metadata_chunks = sum(len(v) for v in collected.values())
+                self.logger.info(f"DEBUG HYDRATION: Total evidence entries found in metadata (evidence_map): {total_metadata_chunks} items.")
+                
+                # ใช้ chunk_uuids_for_chroma แทน all_uuids
+                if not chunk_uuids_for_chroma:
+                    self.logger.warning(
+                        f"No valid Chunk UUIDs found for hydration. Raw IDs found: {len(all_uuids_raw)}. "
+                        "Skipping hydration for previous levels."
+                    )
                     full_chunks = []
-                    for doc in retrieved_lc_docs:
-                        chunk_dict = doc.metadata.copy()
-                        chunk_dict["text"] = doc.page_content
-                        # รับประกันว่า chunk_uuid มีค่า
-                        chunk_dict["chunk_uuid"] = (
-                            doc.metadata.get("chunk_uuid")
-                            or doc.metadata.get("id")
-                            or doc.metadata.get("_id")
+                else:
+                    collection_name = f"{EVIDENCE_DOC_TYPES.lower()}_{self.enabler_id.lower()}"
+
+                    try:
+                        self.logger.info(
+                            f"🚨 DEBUG: Attempting to HYDRATE {len(chunk_uuids_for_chroma)} unique chunks from Collection: '{collection_name}'. "
+                            f"First 3 IDs: {chunk_uuids_for_chroma[:3]}" # แสดงตัวอย่าง ID เพื่อตรวจสอบ (ตอนนี้ควรมี _index)
                         )
-                        full_chunks.append(chunk_dict)
+                        # 🚨 การเรียกใช้ ChromaDB ด้วย Chunk UUIDs ที่ถูกต้อง
+                        retrieved_lc_docs = vectorstore_manager.retrieve_by_chunk_uuids(chunk_uuids_for_chroma, collection_name)
 
-                    self.logger.info(f"Successfully hydrated {len(full_chunks)} chunks from previous levels")
+                        full_chunks = []
+                        for doc in retrieved_lc_docs:
+                            chunk_dict = doc.metadata.copy()
+                            chunk_dict["text"] = doc.page_content
+                            # รับประกันว่า chunk_uuid มีค่า
+                            chunk_dict["chunk_uuid"] = (
+                                doc.metadata.get("chunk_uuid")
+                                or doc.metadata.get("id")
+                                or doc.metadata.get("_id")
+                            )
+                            # เพิ่ม Stable Doc ID เพื่อใช้ในการค้นหาในขั้นตอนถัดไป
+                            chunk_dict["stable_doc_uuid"] = doc.metadata.get("stable_doc_uuid") or doc.metadata.get("doc_id")
+                            
+                            full_chunks.append(chunk_dict)
 
-                except Exception as e:
-                    self.logger.error(f"Failed to retrieve full chunks for baseline: {e}")
-                    full_chunks = []
+                        self.logger.info(f"Successfully hydrated {len(full_chunks)} chunks from previous levels")
+                        
+                        # 🎯 FIX B: ตรวจสอบ ID ที่หายไป (Critical Debug)
+                        retrieved_uuids = {c.get('chunk_uuid') for c in full_chunks if c.get('chunk_uuid')}
+                        missing_uuids = set(chunk_uuids_for_chroma) - retrieved_uuids
+                        
+                        if missing_uuids:
+                            self.logger.error(
+                                f"❌ FATAL HYDRATION ISSUE: {len(missing_uuids)} chunks were requested but NOT FOUND in ChromaDB. "
+                                f"Example missing IDs (3): {list(missing_uuids)[:3]}"
+                            )
+                            self.logger.error(f"Please verify: 1. ChromaDB is loaded from the correct base_path. 2. These IDs were INGESTED correctly.")
+                            
+                    except Exception as e:
+                        self.logger.error(f"Failed to retrieve full chunks for baseline: {e}")
+                        full_chunks = []
 
-            # สร้าง map เพื่อรวม Text เข้ากับ metadata เดิม
-            full_chunk_map = {c.get('chunk_uuid'): c for c in full_chunks if c.get('chunk_uuid')}
+                # 4. สร้าง map เพื่อรวม Text เข้ากับ metadata เดิม
+                
+                # 🟢 FIX: เปลี่ยนการทำ map keying เพื่อให้ค้นหาจาก Stable Doc ID หรือ Chunk ID ได้
+                # Map retrieved full chunks by their full chunk ID (Primary Key)
+                full_chunk_map_by_chunk_uuid = {c.get('chunk_uuid'): c for c in full_chunks if c.get('chunk_uuid')}
+                # Map retrieved full chunks by their Stable Doc ID (Hash 64)
+                full_chunk_map_by_stable_doc_id = {}
+                for c in full_chunks:
+                    s_doc_id = c.get('stable_doc_uuid') or c.get('doc_id')
+                    if s_doc_id and s_doc_id not in full_chunk_map_by_stable_doc_id:
+                        # เลือกเก็บ chunk แรก (เพื่อป้องกันการซ้ำซ้อนในการค้นหาด้วย Stable Doc ID)
+                        full_chunk_map_by_stable_doc_id[s_doc_id] = c 
 
-            hydrated_collected = {}
-            for key, ev_list in collected.items():
-                hydrated_list = []
-                for ev_metadata in ev_list:
-                    uuid_key = ev_metadata.get('chunk_uuid') or ev_metadata.get('doc_id')
-                    full_chunk = full_chunk_map.get(uuid_key)
-                    if full_chunk and full_chunk.get('text'):
-                        combined = full_chunk.copy()
-                        combined.update(ev_metadata)  # metadata จาก evidence_map ทับท้าย
-                        hydrated_list.append(combined)
-                    else:
-                        # ถ้าดึงไม่ได้ ยังใส่ metadata เปล่าไว้ (ไม่ให้หาย)
-                        hydrated_list.append(ev_metadata)
+                hydrated_collected = {}
+                for key, ev_list in collected.items():
+                    hydrated_list = []
+                    for ev_metadata in ev_list:
+                        # 5. ใช้ ID ที่ถูกบันทึกใน metadata (Stable Doc ID) ในการค้นหา
+                        uuid_key = ev_metadata.get('chunk_uuid') or ev_metadata.get('stable_doc_uuid') or ev_metadata.get('doc_id')
+                        
+                        full_chunk = None
 
-                if hydrated_list:
-                    hydrated_collected[key] = hydrated_list
+                        # 5.1 ลองค้นหาด้วย Full Chunk UUID (หาก L1 บันทึกมาถูกต้อง)
+                        if len(uuid_key) > 64:
+                            full_chunk = full_chunk_map_by_chunk_uuid.get(uuid_key)
+                        
+                        # 5.2 ถ้าหาไม่เจอ หรือ ID ที่บันทึกมาเป็น Stable Doc ID (64 ตัว) ให้ใช้ Stable Doc ID ค้นหา
+                        if full_chunk is None and len(uuid_key) == 64:
+                            full_chunk = full_chunk_map_by_stable_doc_id.get(uuid_key)
 
-            collected = hydrated_collected
+                        if full_chunk and full_chunk.get('text'):
+                            combined = full_chunk.copy()
+                            # 🟢 FIX: ใช้ content/text ของ chunk ที่ดึงมา (Full Text) และใช้ metadata เดิมที่ LLM เลือก (Short Text)
+                            combined['text'] = full_chunk['text'] # Full Text
+                            
+                            # นำ metadata ส่วนอื่น ๆ จาก ev_metadata มาอัพเดต (เช่น score, reason จาก L1)
+                            # ยกเว้น 'text' เพื่อไม่ให้ Text สั้นจาก L1 ทับ Text เต็ม
+                            metadata_to_update = {k:v for k,v in ev_metadata.items() if k != 'text'}
+                            combined.update(metadata_to_update)
+                            
+                            hydrated_list.append(combined)
+                        else:
+                            # ถ้าดึงไม่ได้ ยังใส่ metadata เปล่าไว้ (ไม่ให้หาย)
+                            hydrated_list.append(ev_metadata)
 
-        else:
-            if collected:
-                self.logger.info("Hydration skipped: vectorstore_manager not ready")
+                    if hydrated_list:
+                        hydrated_collected[key] = hydrated_list
 
-        # 4. Debug Log
-        total_files = sum(len(v) for v in collected.values())
-        self.logger.info(
-            f"BASELINE LOADED → Mode: {'SEQ' if self.is_sequential else 'PAR'} | "
-            f"Source: {source_name} | "
-            f"Found {len(collected)} levels | "
-            f"Keys: {sorted(collected.keys())} | "
-            f"Total files: {total_files}"
-        )
+                collected = hydrated_collected
 
-        return collected
+            else:
+                if collected:
+                    self.logger.info("Hydration skipped: vectorstore_manager not ready")
+
+            # 6. Debug Log
+            total_files = sum(len(v) for v in collected.values())
+            self.logger.info(
+                f"BASELINE LOADED → Mode: {'SEQ' if self.is_sequential else 'PAR'} | "
+                f"Source: {source_name} | "
+                f"Found {len(collected)} levels | "
+                f"Keys: {sorted(collected.keys())} | "
+                f"Total files: {total_files}"
+            )
+
+            return collected    
+
 
     def _get_contextual_rules_prompt(self, sub_id: str, level: int) -> str:
         """
@@ -880,96 +1036,105 @@ class SEAMPDCAEngine:
         return cleaned_map
 
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
-        """
-        บันทึก evidence map อย่างปลอดภัย 100% - Atomic + Lock + Clean + Sort + Score
-        """
-        map_file_path = self.evidence_map_path
-        lock_path = map_file_path + ".lock"
-        tmp_path = None
+            """
+            บันทึก evidence map อย่างปลอดภัย 100% - Atomic + Lock + Clean + Sort + Score
+            """
+            map_file_path = self.evidence_map_path
+            lock_path = map_file_path + ".lock"
+            tmp_path = None
 
-        logger.info(f"[EVIDENCE] Saving evidence map → {map_file_path}")
+            logger.info(f"[EVIDENCE] Saving evidence map → {map_file_path}")
 
-        try:
-            with FileLock(lock_path, timeout=60):
-                logger.debug("[EVIDENCE] Lock acquired.")
+            try:
+                with FileLock(lock_path, timeout=60):
+                    logger.debug("[EVIDENCE] Lock acquired.")
 
-                if map_to_save is not None:
-                    final_map_to_write = map_to_save
-                else:
-                    # 1. โหลดของเก่าจากดิสก์
-                    existing_map = self._load_evidence_map(is_for_merge=True) or {}
-                    runtime_map = deepcopy(self.evidence_map)
+                    if map_to_save is not None:
+                        final_map_to_write = map_to_save
+                    else:
+                        # 1. โหลดของเก่าจากดิสก์
+                        existing_map = self._load_evidence_map(is_for_merge=True) or {}
+                        runtime_map = deepcopy(self.evidence_map)
 
-                    # 2. Merge: เก่า + ใหม่ (ไม่ทับ แต่รวม)
-                    final_map_to_write = existing_map
-                    for key, entries in runtime_map.items():
-                        if key not in final_map_to_write:
-                            final_map_to_write[key] = []
-                        # deduplicate โดย doc_id
-                        existing_ids = {e["doc_id"] for e in final_map_to_write[key]}
-                        new_entries = [e for e in entries if e["doc_id"] not in existing_ids]
-                        final_map_to_write[key].extend(new_entries)
+                        # 2. Merge: เก่า + ใหม่ (ไม่ทับ แต่รวม)
+                        final_map_to_write = existing_map
+                        for key, entries in runtime_map.items():
+                            if key not in final_map_to_write:
+                                final_map_to_write[key] = []
+                                
+                            # 🟢 FIX 1: Deduplicate โดยใช้ Chunk UUID (หรือ doc_id เป็น Fallback)
+                            existing_ids = {
+                                e.get("chunk_uuid", e.get("doc_id", "N/A")) 
+                                for e in final_map_to_write[key]
+                            }
+                            
+                            # 🟢 FIX 1: ใช้ Logic ID เดียวกันในการตรวจสอบ
+                            new_entries = [
+                                e for e in entries 
+                                if e.get("chunk_uuid", e.get("doc_id", "N/A")) not in existing_ids
+                            ]
+                            final_map_to_write[key].extend(new_entries)
 
-                    # 3. ทำความสะอาดสุดท้าย (TEMP-, HASH-, Unknown)
-                    final_map_to_write = self._clean_temp_entries(final_map_to_write)
+                        # 3. ทำความสะอาดสุดท้าย (TEMP-, HASH-, Unknown)
+                        final_map_to_write = self._clean_temp_entries(final_map_to_write)
 
-                    # 4. เรียงลำดับในแต่ละ key จาก relevance_score สูง → ต่ำ (ถ้ามี)
-                    for key, entries in final_map_to_write.items():
-                        if entries and "relevance_score" in entries[0]:
-                            entries.sort(
-                                key=lambda x: x.get("relevance_score", 0.0),
-                                reverse=True
-                            )
+                        # 4. เรียงลำดับในแต่ละ key จาก relevance_score สูง → ต่ำ (ถ้ามี)
+                        for key, entries in final_map_to_write.items():
+                            if entries and "relevance_score" in entries[0]:
+                                entries.sort(
+                                    key=lambda x: x.get("relevance_score", 0.0),
+                                    reverse=True
+                                )
 
-                if not final_map_to_write:
-                    logger.warning("[EVIDENCE] Nothing to save.")
-                    return
+                    if not final_map_to_write:
+                        logger.warning("[EVIDENCE] Nothing to save.")
+                        return
 
-                # เตรียมโฟลเดอร์
-                os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
+                    # เตรียมโฟลเดอร์
+                    os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
-                # Atomic write
-                with tempfile.NamedTemporaryFile(
-                    mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
-                ) as tmp_file:
-                    cleaned_for_json = self._clean_map_for_json(final_map_to_write)
-                    json.dump(cleaned_for_json, tmp_file, indent=4, ensure_ascii=False)
-                    tmp_path = tmp_file.name
+                    # Atomic write
+                    with tempfile.NamedTemporaryFile(
+                        mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
+                    ) as tmp_file:
+                        cleaned_for_json = self._clean_map_for_json(final_map_to_write)
+                        json.dump(cleaned_for_json, tmp_file, indent=4, ensure_ascii=False)
+                        tmp_path = tmp_file.name
 
-                shutil.move(tmp_path, map_file_path)
-                tmp_path = None
+                    shutil.move(tmp_path, map_file_path)
+                    tmp_path = None
 
-                # สรุปสถิติสุดท้าย (สวยมาก)
-                total_keys = len(final_map_to_write)
-                total_items = sum(len(v) for v in final_map_to_write.values())
-                file_size_kb = os.path.getsize(map_file_path) / 1024
+                    # สรุปสถิติสุดท้าย (สวยมาก)
+                    total_keys = len(final_map_to_write)
+                    total_items = sum(len(v) for v in final_map_to_write.values())
+                    file_size_kb = os.path.getsize(map_file_path) / 1024
 
-                logger.info(f"[EVIDENCE] Evidence map saved successfully!")
-                logger.info(f"   Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB")
+                    logger.info(f"[EVIDENCE] Evidence map saved successfully!")
+                    logger.info(f"   Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB")
 
-                # โชว์ Top 1 ของแต่ละ sub-criteria (สุดยอดมาก)
-                preview = []
-                for key in sorted(final_map_to_write.keys())[:5]:  # แสดงแค่ 5 อันแรก
-                    entries = final_map_to_write[key]
-                    if entries:
-                        top = entries[0]
-                        score = top.get("relevance_score", "-")
-                        preview.append(f"{key}: {top['filename'][:50]} ({score})")
-                if preview:
-                    logger.info(f"   Top evidence preview → {', '.join(preview[:3])}{'...' if len(preview)>3 else ''}")
+                    # โชว์ Top 1 ของแต่ละ sub-criteria (สุดยอดมาก)
+                    preview = []
+                    for key in sorted(final_map_to_write.keys())[:5]:  # แสดงแค่ 5 อันแรก
+                        entries = final_map_to_write[key]
+                        if entries:
+                            top = entries[0]
+                            score = top.get("relevance_score", "-")
+                            preview.append(f"{key}: {top['filename'][:50]} ({score})")
+                    if preview:
+                        logger.info(f"   Top evidence preview → {', '.join(preview[:3])}{'...' if len(preview)>3 else ''}")
 
-        except TimeoutError:
-            logger.critical(f"[EVIDENCE] Lock timeout! Another process may be stuck: {lock_path}")
-            raise
-        except Exception as e:
-            logger.critical("[EVIDENCE] FATAL SAVE ERROR")
-            logger.exception(e)
-            raise
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try: os.unlink(tmp_path)
-                except: pass
-            logger.debug(f"[EVIDENCE] Lock released: {lock_path}")
+            except TimeoutError:
+                logger.critical(f"[EVIDENCE] Lock timeout! Another process may be stuck: {lock_path}")
+                raise
+            except Exception as e:
+                logger.critical("[EVIDENCE] FATAL SAVE ERROR")
+                logger.exception(e)
+                raise
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try: os.unlink(tmp_path)
+                    except: pass
+                logger.debug(f"[EVIDENCE] Lock released: {lock_path}")
 
 
     def _load_evidence_map(self, is_for_merge: bool = False):
@@ -1277,144 +1442,146 @@ class SEAMPDCAEngine:
 
         return plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks
 
-
     def _get_mapped_uuids_and_priority_chunks(
-            self, 
-            sub_id: str, 
-            level: int, 
-            statement_text: str, 
-            level_constraint: str,
-            vectorstore_manager: Optional['VectorStoreManager']
-        ) -> Tuple[List[str], List[Dict[str, Any]]]:
-            """
-            1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
-            2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
-            based on the gathered Chunk UUIDs.
-            
-            Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
-            """
-            
-            all_priority_items: List[Dict[str, Any]] = [] 
-            
-            # 📌 DEBUG: ตรวจสอบสถานะของ evidence_map ก่อนเริ่มดึง
-            logger.info(f"DEBUG: EVIDENCE MAP KEYS BEFORE PRIORITY SEARCH (L{level}): {sorted(self.evidence_map.keys())}")
-            
-            # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
-            for prev_level in range(1, level): 
-                prev_map_key = f"{sub_id}.L{prev_level}"
+                self, 
+                sub_id: str, 
+                level: int, 
+                statement_text: str, 
+                level_constraint: str,
+                vectorstore_manager: Optional['VectorStoreManager']
+            ) -> Tuple[List[str], List[Dict[str, Any]]]:
+                """
+                1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
+                2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
+                based on the gathered Chunk UUIDs.
                 
-                # 🎯 ดึงจาก self.evidence_map (แหล่งข้อมูลหลักที่ถูกอัปเดตใน Sequential)
-                items_from_map = self.evidence_map.get(prev_map_key, [])
-                all_priority_items.extend(items_from_map)
+                Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
+                """
                 
-                # [การปรับปรุง]: ลบการดึงจาก self.temp_map_for_save ออกในโหมด Sequential เพื่อความชัดเจน
-                # แต่ถ้าเป็นโหมด Parallel, Main Process ต้องรวมผลลัพธ์จาก self.temp_map_for_save 
-                # เข้ามาใน all_priority_items ด้วย (ซึ่ง Logic นี้ควรอยู่ใน Main Loop ของ run_assessment)
-                # เราจะคงไว้แค่การดึงจาก evidence_map เพื่อให้สอดคล้องกับ Sequential mode ที่กำลังรันอยู่
-
-            
-            # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
-            doc_ids_for_dedup: List[str] = [
-                item.get('doc_id') 
-                for item in all_priority_items
-                if isinstance(item, dict) and item.get('doc_id')
-            ]
-
-            mapped_chunk_uuids: List[str] = list(set(doc_ids_for_dedup))
-            num_historical_chunks = len(mapped_chunk_uuids)
-
-            priority_docs = [] 
-            
-            if num_historical_chunks > 0:
-                levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
-                logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
-                logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
+                all_priority_items: List[Dict[str, Any]] = [] 
                 
-                if vectorstore_manager:
-                    try:
-                        # Assuming enhance_query_for_statement is available
-                        rag_queries_for_vsm = enhance_query_for_statement(
-                            statement_text=statement_text,
-                            sub_id=sub_id, 
-                            statement_id=sub_id, 
-                            level=level, 
-                            enabler_id=self.enabler_id,
-                            focus_hint=level_constraint 
-                        )
-                        
-                        doc_type = self.doc_type 
-                        
-                        # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
-                        retrieved_docs_result = retrieve_context_by_doc_ids(
-                            doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk UUIDs
-                            doc_type=doc_type,
-                            enabler=self.enabler_id,
-                            vectorstore_manager=vectorstore_manager
-                        )
-                        
-                        initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
-                        
-                        if initial_priority_chunks:
-                            # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
-                            reranker = get_global_reranker() 
-                            rerank_query = rag_queries_for_vsm[0] 
+                # 📌 DEBUG: ตรวจสอบสถานะของ evidence_map ก่อนเริ่มดึง
+                logger.info(f"DEBUG: EVIDENCE MAP KEYS BEFORE PRIORITY SEARCH (L{level}): {sorted(self.evidence_map.keys())}")
+                
+                # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
+                for prev_level in range(1, level): 
+                    prev_map_key = f"{sub_id}.L{prev_level}"
+                    
+                    # 🎯 ดึงจาก self.evidence_map (แหล่งข้อมูลหลักที่ถูกอัปเดตใน Sequential)
+                    items_from_map = self.evidence_map.get(prev_map_key, [])
+                    all_priority_items.extend(items_from_map)
+
+                
+                # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
+                # 🟢 FIX 2: เน้นใช้ Chunk UUID หรือ Stable Doc UUID เป็น ID หลัก
+                doc_ids_for_dedup: List[str] = [
+                    (
+                        item.get('chunk_uuid') 
+                        or item.get('stable_doc_uuid') # <-- เน้น Stable Doc UUID
+                        or item.get('doc_id')
+                    )
+                    for item in all_priority_items
+                    if isinstance(item, dict) and (
+                        item.get('chunk_uuid') or item.get('stable_doc_uuid') or item.get('doc_id')
+                    )
+                ]
+
+                mapped_chunk_uuids: List[str] = list(set([uid for uid in doc_ids_for_dedup if uid is not None])) # กรอง None ออก
+                num_historical_chunks = len(mapped_chunk_uuids)
+
+                priority_docs = [] 
+                
+                if num_historical_chunks > 0:
+                    levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
+                    logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
+                    logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
+                    
+                    if vectorstore_manager:
+                        try:
+                            # Assuming enhance_query_for_statement is available
+                            rag_queries_for_vsm = enhance_query_for_statement(
+                                statement_text=statement_text,
+                                sub_id=sub_id, 
+                                statement_id=sub_id, 
+                                level=level, 
+                                enabler_id=self.enabler_id,
+                                focus_hint=level_constraint 
+                            )
                             
-                            # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
-                            lc_docs_for_rerank = [
-                                LcDocument(
-                                    page_content=d.get('content') or d.get('text', ''), 
-                                    metadata={
-                                        **d, 
-                                        'relevance_score': 1.0 
-                                    }
-                                ) 
-                                for d in initial_priority_chunks
-                            ]
+                            doc_type = self.doc_type 
                             
-                            if reranker and hasattr(reranker, 'compress_documents'):
-                                reranked_docs = reranker.compress_documents(
-                                    query=rerank_query,
-                                    documents=lc_docs_for_rerank,
-                                    top_n=self.PRIORITY_CHUNK_LIMIT 
-                                )
+                            # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
+                            retrieved_docs_result = retrieve_context_by_doc_ids(
+                                doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk/Stable Doc UUIDs
+                                doc_type=doc_type,
+                                enabler=self.enabler_id,
+                                vectorstore_manager=vectorstore_manager
+                            )
+                            
+                            initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
+                            
+                            if initial_priority_chunks:
+                                # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
+                                reranker = get_global_reranker() 
+                                rerank_query = rag_queries_for_vsm[0] 
+                                
+                                # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
+                                lc_docs_for_rerank = [
+                                    LcDocument(
+                                        page_content=d.get('content') or d.get('text', ''), 
+                                        metadata={
+                                            **d, 
+                                            'relevance_score': 1.0 
+                                        }
+                                    ) 
+                                    for d in initial_priority_chunks
+                                ]
+                                
+                                if reranker and hasattr(reranker, 'compress_documents'):
+                                    reranked_docs = reranker.compress_documents(
+                                        query=rerank_query,
+                                        documents=lc_docs_for_rerank,
+                                        top_n=self.PRIORITY_CHUNK_LIMIT 
+                                    )
 
-                                # === วิชามารสุดท้ายที่ฆ่า 0.0000 ตลอดกาล ===
-                                # เขียน relevance_score กลับลง metadata ก่อน
-                                if hasattr(reranker, "scores") and reranker.scores:
-                                    for doc, score in zip(reranked_docs, reranker.scores):
-                                        doc.metadata["relevance_score"] = float(score)
+                                    # === วิชามารสุดท้ายที่ฆ่า 0.0000 ตลอดกาล ===
+                                    # เขียน relevance_score กลับลง metadata ก่อน
+                                    if hasattr(reranker, "scores") and reranker.scores:
+                                        for doc, score in zip(reranked_docs, reranker.scores):
+                                            doc.metadata["relevance_score"] = float(score)
 
-                                # แปลงกลับเป็น dict และให้ 'score' ทับค่าเก่าอย่างแน่นอน
-                                priority_docs = []
-                                for d in reranked_docs:
-                                    # เริ่มจาก metadata เดิม
-                                    item = dict(d.metadata)
-                                    # อัปเดตข้อมูลที่จำเป็น
-                                    item.update({
-                                        'content': d.page_content,
-                                        'text': d.page_content,
-                                        # สำคัญที่สุด: score ต้องมาท้ายสุด และทับแน่นอน
-                                        'score': float(d.metadata.get('relevance_score', 0.0)),
-                                        'relevance_score': float(d.metadata.get('relevance_score', 0.0))
-                                    })
-                                    priority_docs.append(item)
-                                # ========================================
+                                    # แปลงกลับเป็น dict และให้ 'score' ทับค่าเก่าอย่างแน่นอน
+                                    priority_docs = []
+                                    for d in reranked_docs:
+                                        # เริ่มจาก metadata เดิม
+                                        item = dict(d.metadata)
+                                        # อัปเดตข้อมูลที่จำเป็น
+                                        item.update({
+                                            'content': d.page_content,
+                                            'text': d.page_content,
+                                            # สำคัญที่สุด: score ต้องมาท้ายสุด และทับแน่นอน
+                                            'score': float(d.metadata.get('relevance_score', 0.0)),
+                                            'relevance_score': float(d.metadata.get('relevance_score', 0.0))
+                                        })
+                                        priority_docs.append(item)
+                                    # ========================================
 
-                                logger.critical(f"DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
-                            else:
-                                # fallback กรณีไม่มี reranker
-                                priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
-                                # แม้ fallback ก็ยังใส่ score ให้ครบ
-                                for item in priority_docs:
-                                    if 'score' not in item:
-                                        item['score'] = 0.0
+                                    logger.critical(f"DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+                                else:
+                                    # fallback กรณีไม่มี reranker
+                                    priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
+                                    # แม้ fallback ก็ยังใส่ score ให้ครบ
+                                    for item in priority_docs:
+                                        if 'score' not in item:
+                                            item['score'] = 0.0
 
-                    except Exception as e:
-                        logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
-                        priority_docs = [] 
-            
-            # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
-            return mapped_chunk_uuids, priority_docs
+                        except Exception as e:
+                            logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
+                            priority_docs = [] 
+                
+                # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
+                return mapped_chunk_uuids, priority_docs
+
 
     # -------------------- Calculation Helpers (ADDED) --------------------
     def _calculate_weighted_score(self, highest_full_level: int, weight: int) -> float:
@@ -1527,8 +1694,7 @@ class SEAMPDCAEngine:
         except Exception as e:
             logging.error(f"❌ Failed to export results to {full_path}: {e}")
             return ""
-        
-    # -------------------- Multiprocessing Worker Method --------------------
+       # -------------------- Multiprocessing Worker Method --------------------
     def _assess_single_sub_criteria_worker(self, args) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
         Worker function for multiprocessing. 
@@ -1832,7 +1998,8 @@ class SEAMPDCAEngine:
             target_sub_id: str = "all",
             export: bool = False,
             vectorstore_manager: Optional['VectorStoreManager'] = None,
-            sequential: bool = False
+            sequential: bool = False,
+            document_map: Optional[Dict[str, str]] = None, # 🟢 FIX: รับ document_map
         ) -> Dict[str, Any]:
         """
         Main runner ของ Assessment Engine
@@ -1943,7 +2110,7 @@ class SEAMPDCAEngine:
             self.vectorstore_manager = local_vsm
 
             for sub_criteria in sub_criteria_list:
-                sub_result, _ = self._run_sub_criteria_assessment_worker(sub_criteria)
+                sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria)
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
@@ -2125,6 +2292,16 @@ class SEAMPDCAEngine:
             llm_duration = time.time() - llm_start
 
             # ==================== 9-10. Scoring & Pass/Fail ====================
+            # 🎯 FIX 1: Robust Type Check to prevent 'int' object has no attribute 'get'
+            if not isinstance(llm_result, dict): # <--- ตรวจสอบว่า llm_result เป็น dict หรือไม่
+                self.logger.error(
+                    f"🚨 LLM parsing failed for {statement_id} L{level}. "
+                    f"Received type: {type(llm_result).__name__}."
+                    f"Using empty dict as fallback."
+                )
+                llm_result = {} # <--- ถ้าไม่ใช่ dict ให้ตั้งค่าเป็น dict ว่าง เพื่อให้ .get() ทำงานได้
+            # =============================================================================
+
             llm_score = llm_result.get('score', 0) if llm_result else 0
             pdca_breakdown, is_passed, _ = calculate_pdca_breakdown_and_pass_status(llm_score, level)
             status = "PASS" if is_passed else "FAIL"
@@ -2209,84 +2386,75 @@ class SEAMPDCAEngine:
                     
                     # ถ้า filename_to_use ยังว่าง ให้ใช้ filename เดิม (ถ้าถูกดึงมา)
                     if not filename_to_use:
-                        filename_to_use = (
-                            metadata.get("source_filename")
-                            or ev.get("filename")
-                            or ev.get("source")
-                            or previous_levels_filename_map.get(doc_id)
-                            or f"document_{doc_id[:8]}.pdf"
-                        )
+                        filename_to_use = ev.get("source_filename") or ev.get("source") or ev.get("filename") or metadata.get("source_filename") or metadata.get("filename") or "UNKNOWN_FILE"
 
-                    # Debug: log score per document
-                    self.logger.critical(
-                        f"DEBUG SCORE FINAL: ID {doc_id[:8]} | SCORE: {score:.4f} | "
-                        f"RerankKey: {ev.get('rerank_score')} | RelevanceKey: {metadata.get('relevance_score')}"
-                    )
-
-                    # 🎯 FIX V4 (ULTIMATE): Explicitly check all common locations for the Chunk UUID (Chroma ID)
-                    # เพื่อให้มั่นใจว่าได้ Chroma ID ที่ถูกต้องมาบันทึก
-                    c_uuid = (
-                        ev.get("chunk_uuid")          # 1. ตำแหน่งที่ RAG ควรจะใส่ให้
-                        or metadata.get("chunk_uuid") # 2. ตำแหน่งที่ RAG อาจจะใส่ให้ใน metadata
-                        or metadata.get("id")          # 3. บางครั้ง Chroma/LangChain ใช้ 'id'
-                        or metadata.get("_id")         # 4. บางครั้ง Chroma ใช้ '_id'
-                    )
-                    
-                    # ถ้ายังหาไม่เจอ ให้ใช้ doc_id เป็น Fallback (แต่รู้ว่าอาจจะผิด)
-                    if not c_uuid:
-                        c_uuid = doc_id 
-                        self.logger.warning(f"⚠️ Chunk UUID Fallback: ใช้ doc_id ({c_uuid[:8]}) แทน เนื่องจากหา chunk_uuid ไม่เจอ")
-
-                    entry = {
+                    evidence_entries.append({
                         "doc_id": doc_id,
-                        "filename": os.path.basename(filename_to_use),
-                        "mapper_type": "AI_GENERATED",
-                        "timestamp": datetime.now().isoformat(),
+                        "filename": filename_to_use,
+                        "mapper_type": "AI_GENERATED", 
+                        "timestamp": datetime.now().isoformat(), 
                         "relevance_score": score,
-                        # ใช้ c_uuid ที่ค้นหามาอย่างแข็งแกร่งที่สุด
-                        "chunk_uuid": c_uuid, 
-                    }
-                    evidence_entries.append(entry)
+                        "chunk_uuid": doc_id,
+                    })
 
-                # Sort by relevance (high → low)
-                evidence_entries.sort(
-                    key=lambda x: score_map.get(x["doc_id"], 0.0),
-                    reverse=True
+                # -------------------- 12. Calculate PDCA Coverage & Strength --------------------
+                direct_count = channels.get("debug_meta", {}).get("direct_count", 0)
+                
+                # นับจำนวน Evidence ที่มี relevance score > 0 (เพื่อเป็นตัวบ่งชี้ความแข็งแกร่ง)
+                effective_evidence_count = sum(1 for entry in evidence_entries if entry.get("relevance_score", 0.0) > 0.0)
+                
+                # PDCA Coverage: L1-L2 นับจาก direct_count, L3-L5 นับจาก pdca breakdown
+                if level <= 2:
+                    pdca_coverage = min(1.0, direct_count / 1.0) # Assume 1 piece of evidence is enough for L1-L2
+                else:
+                    # ใช้จำนวน PDCA ที่ถูกตรวจพบ
+                    pdca_coverage = sum(1 for v in pdca_breakdown.values() if v.get("status") == "PASS") / 4.0
+                
+                # Evidence Strength: (Reranked Score Avg) * (PDCA Coverage * 1.5)
+                avg_score = sum(entry.get("relevance_score", 0.0) for entry in evidence_entries) / len(evidence_entries) if evidence_entries else 0.0
+                
+                evidence_strength = min(
+                    10.0,
+                    (avg_score * 10.0) * (pdca_coverage * 1.5)
                 )
 
-                key = f"{sub_id}.L{level}"
-                if self.is_sequential:
-                    current = self.evidence_map.setdefault(key, [])
-                    # ใช้ Chunk UUID ในการเช็คว่ามีหลักฐานนี้อยู่แล้วหรือไม่
-                    existing_uuids = {e["chunk_uuid"] for e in current if e.get("chunk_uuid")}
-                    new_items = [e for e in evidence_entries if e.get("chunk_uuid") not in existing_uuids]
-                    current.extend(new_items)
-                    self.logger.info(f"DIRECT SAVE evidence_map[{key}] +{len(new_items)} files → total {len(current)}")
-                else:
-                    if not hasattr(self, "temp_map_for_save"):
-                        self.temp_map_for_save = {}
-                    self.temp_map_for_save[key] = evidence_entries
-                    self.logger.info(f"TEMP SAVE evidence_map[{key}] = {len(evidence_entries)} files")
+                ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
+                                "MEDIUM" if evidence_strength >= 5.5 else "LOW"
 
-                temp_map_for_level = None if self.is_sequential else evidence_entries
+                evidence_count_for_level = len(evidence_entries)
+                
+                # -------------------- 13. Prepare temp_map_for_level and Finalize Evidence --------------------
+                # 13a. Sort evidence by relevance score (Highest score first)
+                evidence_entries.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
 
-            # ==================== 12. Evidence Strength & Confidence ====================
-            direct_count = len([d for d in top_evidences if d.get("pdca_tag") in ["P", "D", "C", "A"]])
-            total_chunks = len(top_evidences)
-            pdca_coverage = len({d.get("pdca_tag") for d in top_evidences if d.get("pdca_tag")})
+                # 13b. Cap evidence list to FINAL_K_RERANKED (from config)
+                final_k_reranked = self.config.final_k_reranked if hasattr(self.config, 'final_k_reranked') else 5
+                evidence_entries = evidence_entries[:final_k_reranked]
 
-            evidence_strength = min(10.0, 
-                (direct_count * 1.8) + 
-                (2.0 if total_chunks >= 20 else 1.0 if total_chunks >= 10 else 0.0) +
-                (pdca_coverage * 1.5)
-            )
-
-            ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
-                            "MEDIUM" if evidence_strength >= 5.5 else "LOW"
-
-            evidence_count_for_level = len(evidence_entries)
-
-            # ==================== 13. สร้างผลลัพธ์สุดท้าย ====================
+                # 13c. Prepare temp_map_for_level (minimal structure for process return)
+                temp_map_for_level = [
+                    {
+                        "doc_id": entry["doc_id"],
+                        "filename": entry["filename"],
+                        "mapper_type": entry["mapper_type"],
+                        "timestamp": entry["timestamp"],
+                        "relevance_score": entry["relevance_score"],
+                        "chunk_uuid": entry["chunk_uuid"],
+                    }
+                    for entry in evidence_entries
+                ]
+            
+            # If FAIL or no evidences found, evidence_entries and temp_map_for_level should be empty list/None
+            if not is_passed:
+                evidence_entries = []
+                temp_map_for_level = []
+                evidence_strength = 0.0
+                ai_confidence = "LOW"
+                pdca_coverage = 0.0
+                direct_count = 0
+                evidence_count_for_level = 0
+            
+            # ==================== 14. สร้างผลลัพธ์สุดท้าย ====================
             final_result = {
                 "sub_criteria_id": sub_id,
                 "statement_id": statement_id,
@@ -2301,14 +2469,17 @@ class SEAMPDCAEngine:
                 "llm_result_full": llm_result,
                 "retrieval_duration_s": round(retrieval_duration, 2),
                 "llm_duration_s": round(llm_duration, 2),
-                "top_evidences_ref": evidence_entries,
+                "top_evidences_ref": self._resolve_evidence_filenames(evidence_entries), # 🎯 FIX 3A: เรียกใช้การแก้ไขชื่อไฟล์
                 "temp_map_for_level": temp_map_for_level,
                 "evidence_strength": round(evidence_strength, 1),
                 "ai_confidence": ai_confidence,
                 "evidence_count": evidence_count_for_level,
-                "pdca_coverage": pdca_coverage,
-                "direct_evidence_count": direct_count
+                "pdca_coverage": round(pdca_coverage, 4), # Ensure rounding for storage
+                "direct_evidence_count": direct_count,
+                "rag_query": rag_query,
+                "full_context_meta": debug,
             }
 
-            self.logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f})")
+            self.logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f} | Evi Str: {final_result['evidence_strength']:.1f} | Conf: {ai_confidence})")
+            
             return final_result

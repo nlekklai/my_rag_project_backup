@@ -1,4 +1,4 @@
-# gen_seam_report.py (โค้ดฉบับแก้ไขรอบที่ 4: ดึงชื่อ Source จาก Snippet หากไม่พบใน Metadata)
+# gen_seam_report.py (โค้ดฉบับสมบูรณ์: DOCX Report, Raw Details, และ CSV Export)
 
 import json
 import os
@@ -6,6 +6,7 @@ import argparse
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import re 
+import csv # 🟢 NEW: Import for CSV handling
 
 # Import libraries for DOCX generation
 from docx import Document
@@ -17,7 +18,7 @@ from docx.enum.table import WD_ALIGN_VERTICAL
 # 1. CONFIGURATION & GLOBAL VARS
 # ==========================
 EXPORT_DIR = "reports"
-REPORT_DATE = datetime.now().strftime("%Y-%m-%d")
+REPORT_DATE = datetime.now().strftime("%Y%m%d_%H%M%S") 
 THAI_FONT_NAME = "Angsana New" 
 
 # พจนานุกรมสำหรับชื่อ Enabler ฉบับเต็ม
@@ -32,6 +33,10 @@ SEAM_ENABLER_MAP = {
     "IM": "7.2 การจัดการนวัตกรรม",
     "IA": "8.1 การตรวจสอบภายใน"
 }
+
+# Regex pattern to find source entries in the raw context snippet
+# [SOURCE: filename.ext (ID:hash)]
+SOURCE_PATTERN = re.compile(r'\[SOURCE:\s*(.*?)\s*\(ID:([0-9a-f]+)...?\)\s*\]', re.DOTALL)
 
 # ==========================
 # 2. DATA LOADING & UTILITY
@@ -87,43 +92,14 @@ def set_heading(doc, text, level=1):
     
     for run in p.runs:
         run.font.name = THAI_FONT_NAME 
+# (ฟังก์ชัน flatten_raw_data ถูกลบออกเนื่องจากโครงสร้างใหม่ใช้ List โดยตรง)
 
-def flatten_raw_data(raw_data_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    ดึง Statement ทั้งหมดออกมาจาก Raw Data Dictionary 
-    (รองรับโครงสร้าง List ของ Statements โดยตรง)
-    """
-    statements = []
-    
-    # 1. โครงสร้าง List ของ Statements โดยตรง (สำหรับ New Single-File Export)
-    if isinstance(raw_data_dict, list):
-        statements = [s for s in raw_data_dict if isinstance(s, dict)]
-        if statements:
-            return statements
-            
-    # 2. โครงสร้างเดิมที่เผื่อไว้ (สำหรับ Raw Details ที่เคยเป็น Dictionary)
-    if isinstance(raw_data_dict, dict) and 'sub_criteria_results' in raw_data_dict:
-        sub_results = raw_data_dict.get('sub_criteria_results', [])
-        for sub_item in sub_results:
-            if isinstance(sub_item, dict) and 'raw_results_ref' in sub_item:
-                raw_statements = sub_item['raw_results_ref']
-                if isinstance(raw_statements, list):
-                    statements.extend([s for s in raw_statements if isinstance(s, dict)])
-        if statements:
-            return statements
-            
-    # 3. โครงสร้างเก่ามาก (เผื่อไว้)
-    details = raw_data_dict.get("Assessment_Details") if isinstance(raw_data_dict, dict) else None
-    if isinstance(details, dict):
-        for sub_id_statements in details.values():
-            if isinstance(sub_id_statements, list):
-                statements.extend([s for s in sub_id_statements if isinstance(s, dict)])
-                
-    return statements
 
 # ==========================
 # 3. REPORT GENERATION FUNCTIONS (DOCX)
 # ==========================
+
+# ... [generate_overall_summary_docx, generate_executive_summary_docx, generate_sub_criteria_status_docx, generate_action_plan_report_docx, generate_raw_details_report_docx] remains the same as previous version ...
 
 def generate_overall_summary_docx(document: Document, summary_data: Dict[str, Any], enabler_name_full: str): 
     """สร้างส่วนสรุปผลการประเมินโดยรวม (Overall) [SECTION 1] ใน DOCX"""
@@ -342,7 +318,8 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
                     pdca_actions[pdca_key].append({
                         'rec': action.get('Recommendation', ''), 
                         'target_evidence': '-', # ไม่มีข้อมูลในโครงสร้างนี้
-                        'key_metric': '-' # ไม่มีข้อมูลในโครงสร้างนี้
+                        'key_metric': '-', # ไม่มีข้อมูลในโครงสร้างนี้
+                        'failed_level': action.get('Failed_Level', 5)
                     })
         
         # 2. ตรวจสอบโครงสร้างแบบเรียบง่าย (List of Recommendations ที่มีคีย์ Target_Evidence_Type, Key_Metric)
@@ -366,7 +343,8 @@ def generate_action_plan_report_docx(document: Document, gap_criteria: Dict[str,
                 pdca_actions[pdca_key].append({
                     'rec': rec, 
                     'target_evidence': target_evidence,
-                    'key_metric': key_metric
+                    'key_metric': key_metric,
+                    'failed_level': failed_level
                 })
                 
         # 3. สร้างตารางรายงาน PDCA จากข้อมูลที่จัดกลุ่มแล้ว
@@ -483,11 +461,7 @@ def generate_raw_details_report_docx(document: Document, raw_data_list: List[Dic
             document.add_paragraph()
             continue 
             
-        # Regex pattern to find source entries in the raw context snippet
-        # [SOURCE: filename.ext (ID:hash)]
-        SOURCE_PATTERN = re.compile(r'\[SOURCE:\s*(.*?)\s*\(ID:([0-9a-f]+)...?\)\s*\]', re.DOTALL)
-
-
+        
         for statement in statements:
             is_passed = statement.get('is_passed', statement.get('is_pass', False)) 
             status = "✅ PASS" if is_passed else "❌ FAIL"
@@ -569,7 +543,7 @@ def generate_raw_details_report_docx(document: Document, raw_data_list: List[Dic
             row_cells[3].text = sources_text 
             
             # Column 5 (Snippet) - ต้องทำความสะอาด Source Prefix ออกจาก Snippet
-            context_snippet_cleaned = context_snippet_raw
+            context_snippet_raw = statement.get('aggregated_context_used', 'ไม่มีหลักฐานสนับสนุนที่ชัดเจน') 
             
             # FIX 2: Clean the Snippet by removing the [SOURCE: ...] prefix if present 
             # เราใช้ Regex เดียวกันนี้เพื่อทำความสะอาด
@@ -599,8 +573,112 @@ def generate_raw_details_report_docx(document: Document, raw_data_list: List[Dic
 
         document.add_paragraph()
 
+
 # ==========================
-# 4. MAIN EXECUTION (Updated for Single-File Input)
+# 4. NEW: CSV EXPORT FUNCTION
+# ==========================
+
+def generate_csv_export(file_path: str, sub_results: List[Dict[str, Any]]):
+    """
+    สร้างไฟล์ CSV สำหรับการวิเคราะห์เชิงปริมาณ
+    
+    อ้างอิงจากโครงสร้าง 'sub_criteria_results' โดยจะดึงคอลัมน์สำคัญ และรวมข้อมูล Action Plan
+    """
+    
+    # 1. กำหนด Header (ภาษาไทยและภาษาอังกฤษเพื่อความสะดวกในการใช้งาน)
+    FIELDNAMES = [
+        'Enabler_ID', 
+        'Sub_Criteria_ID', 
+        'Sub_Criteria_Name_TH',
+        'Weighted_Score_Achieved', 
+        'Max_Possible_Weight', 
+        'Highest_Full_Level', 
+        'Target_Level_Achieved_Bool',
+        'Target_Level_Achieved_Text',
+        'Overall_Progress_Pct',
+        'Action_Plan_Recommendation_L5', # ข้อเสนอแนะ Action Plan (รวมหลายบรรทัด)
+        'Action_Plan_Evidence_L5', # หลักฐานเป้าหมาย
+        'Action_Plan_Key_Metric_L5', # ตัวชี้วัดสำคัญ
+        'L5_Summary_Evidence_Snippet', # สรุปหลักฐาน L5
+        'L5_Suggestion_For_Next_Level' # ข้อเสนอแนะภาพรวม L5
+    ]
+    
+    export_data = []
+    
+    # 2. วนลูปเพื่อเตรียมข้อมูล
+    for info in sub_results:
+        # Extract basic metrics
+        sub_id = info.get('sub_criteria_id', 'N/A')
+        enabler_id = sub_id.split('.')[0] if '.' in sub_id else 'N/A'
+        
+        weighted_score = info.get('weighted_score', 0.0)
+        weight = info.get('weight', 0.0)
+        progress_pct = (weighted_score / weight) * 100 if weight > 0 else 0.0
+        
+        target_achieved_bool = info.get('target_level_achieved', False)
+        target_achieved_text = 'YES' if target_achieved_bool else 'NO (GAP)'
+        
+        # 3. จัดการ Action Plan (ดึงเฉพาะ Recommendation มาเป็น String เดี่ยว)
+        action_plans = info.get('action_plan', [])
+        
+        # กรองและรวม Recommendation ทั้งหมด
+        recommendations = []
+        target_evidence_list = []
+        key_metric_list = []
+        
+        # ตรวจสอบโครงสร้าง Action Plan แบบง่าย
+        if isinstance(action_plans, list) and all(isinstance(a, dict) and 'Recommendation' in a for a in action_plans):
+            for action in action_plans:
+                recommendations.append(action.get('Recommendation', ''))
+                target_evidence_list.append(action.get('Target_Evidence_Type', ''))
+                key_metric_list.append(action.get('Key_Metric', ''))
+        
+        # ตรวจสอบโครงสร้าง Action Plan แบบซับซ้อน (Phase/Goal/Actions)
+        elif isinstance(action_plans, list) and action_plans and isinstance(action_plans[0], dict) and 'Phase' in action_plans[0]:
+             for plan in action_plans:
+                 for action in plan.get('Actions', []):
+                     recommendations.append(action.get('Recommendation', ''))
+
+        action_plan_rec = "\n".join(filter(None, recommendations)) 
+        action_plan_evidence = "\n".join(filter(None, set(target_evidence_list))) # ใช้ set เพื่อให้ไม่ซ้ำ
+        action_plan_metric = "\n".join(filter(None, set(key_metric_list))) # ใช้ set เพื่อให้ไม่ซ้ำ
+
+        # 4. ดึง Summary Evidence และ Suggestion L5
+        summary_l5 = info.get("evidence_summary_L5", {})
+        l5_snippet = summary_l5.get('summary', '')
+        l5_suggestion = summary_l5.get('suggestion_for_next_level', '')
+        
+        # 5. สร้างแถวข้อมูลสำหรับ CSV
+        export_data.append({
+            'Enabler_ID': enabler_id,
+            'Sub_Criteria_ID': sub_id, 
+            'Sub_Criteria_Name_TH': info.get('sub_criteria_name', 'N/A'),
+            'Weighted_Score_Achieved': f"{weighted_score:.2f}", 
+            'Max_Possible_Weight': f"{weight:.2f}", 
+            'Highest_Full_Level': info.get('highest_full_level', 0), 
+            'Target_Level_Achieved_Bool': target_achieved_bool,
+            'Target_Level_Achieved_Text': target_achieved_text,
+            'Overall_Progress_Pct': f"{progress_pct:.2f}%",
+            'Action_Plan_Recommendation_L5': action_plan_rec, 
+            'Action_Plan_Evidence_L5': action_plan_evidence, 
+            'Action_Plan_Key_Metric_L5': action_plan_metric,
+            'L5_Summary_Evidence_Snippet': l5_snippet, 
+            'L5_Suggestion_For_Next_Level': l5_suggestion,
+        })
+    
+    # 6. บันทึกไฟล์ CSV
+    try:
+        with open(file_path, 'w', newline='', encoding='utf-8-sig') as csvfile: # ใช้ utf-8-sig เพื่อรองรับภาษาไทยใน Excel
+            writer = csv.DictWriter(csvfile, fieldnames=FIELDNAMES)
+            writer.writeheader()
+            writer.writerows(export_data)
+        print(f"🎉 สร้างไฟล์ CSV [Data Export] สำเร็จ! บันทึกที่: {file_path}")
+    except Exception as e:
+        print(f"❌ ข้อผิดพลาดในการสร้างไฟล์ CSV '{file_path}': {e}")
+
+
+# ==========================
+# 5. MAIN EXECUTION
 # ==========================
 def main():
     """ฟังก์ชันหลักในการสร้างรายงานทั้งหมด (รองรับ Input 1 ไฟล์ในโครงสร้างใหม่)"""
@@ -608,10 +686,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Comprehensive SEAM Assessment Reports (Using the new Single-File Export).")
     parser.add_argument("--mode", choices=["all", "sub"], default="all", help="all: Generate full report. sub: Generate report for a specific sub-criteria.")
     parser.add_argument("--sub", type=str, help="SubCriteria ID (e.g., 2.2) if mode=sub.")
-    
-    # *** 🟢 รับ 1 ไฟล์ Input ***
     parser.add_argument("--results_file", type=str, required=True, help="Path to the unified JSON results file (e.g., seam_assessment_results_km_L5_...json).") 
-    
     parser.add_argument("--output_path", type=str, default="reports/SEAM_Comprehensive_Report", help="Output directory and base filename prefix (e.g., reports/SEAM_Comprehensive_Report).")
     
     args = parser.parse_args()
@@ -631,22 +706,22 @@ def main():
         
     # --- 3. การดึงข้อมูลจากโครงสร้าง Single-File Export ---
     
-    # 3.1 GOAL 1: Get Summary Section (for Sections 1 & 2)
+    # 3.1 GOAL 1: Get Summary Section
     summary_section = results_data_loaded.get("summary", {})
     if not summary_section:
         print("🚨 ไม่พบคีย์ 'summary' ในไฟล์ Results Data (โปรดตรวจสอบโครงสร้างไฟล์)")
         return
     
-    # 3.2 GOAL 2: Synthesize Sub Results Full (for Sections 2, 3, 4)
-    # FIX: Access 'sub_criteria_results' as a LIST
+    # 3.2 GOAL 2: Synthesize Sub Results Full
     sub_results_list = results_data_loaded.get("sub_criteria_results")
     sub_results_full = []
     
     if sub_results_list and isinstance(sub_results_list, list):
-        print("✅ ตรวจพบโครงสร้าง Results File (summary/sub_criteria_results เป็น List) กำลังเตรียมข้อมูล...")
+        print("✅ ตรวจพบโครงสร้าง Results File กำลังเตรียมข้อมูล...")
         
         for item in sub_results_list:
             if isinstance(item, dict):
+                # โครงสร้างนี้ถูกทำซ้ำจากเวอร์ชันก่อนหน้าเพื่อให้เข้ากันได้ดีกับฟังก์ชัน DOCX/CSV
                 sub_results_full.append({
                     "sub_criteria_id": item.get('sub_criteria_id', 'N/A'),
                     "sub_criteria_name": item.get('sub_criteria_name', 'N/A'),
@@ -662,15 +737,13 @@ def main():
          print("🚨 ไม่พบหรือโครงสร้าง 'sub_criteria_results' ไม่ถูกต้อง")
          return
          
-    # 3.3 GOAL 3: Raw Data (for Section 5)
-    # FIX: Correct key name to 'raw_llm_results'
+    # 3.3 GOAL 3: Raw Data 
     raw_data_for_section5 = results_data_loaded.get("raw_llm_results") 
-    
     if not raw_data_for_section5:
          print("🚨 ไม่พบ Raw Data ในคีย์ 'raw_llm_results' (Section 5 จะถูกข้าม)")
          raw_data_for_section5 = [] 
          
-    # ดึง ENABLER และกำหนดค่าเริ่มต้น
+    # ดึง ENABLER
     enabler_id = summary_section.get("enabler", summary_section.get("enabler_id", "KM")).upper()
     enabler_name_full = SEAM_ENABLER_MAP.get(enabler_id, f"Unknown Enabler ({enabler_id})")
     
@@ -706,20 +779,20 @@ def main():
         
     
     # กำหนดชื่อ Output สุดท้าย (รวมวันที่)
-    final_base_name = f"{base_prefix}_{REPORT_DATE}"
+    final_base_name = f"{base_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}" 
     
-    # ** ในเวอร์ชันนี้ จะสร้าง 2 ไฟล์ DOCX **
+    # กำหนด Path สำหรับ 3 ไฟล์
     strategic_path = os.path.join(output_dir, f"{final_base_name}_Strategic.docx")
     detail_path = os.path.join(output_dir, f"{final_base_name}_RawDetails.docx")
+    csv_path = os.path.join(output_dir, f"{final_base_name}_DataExport.csv") # 🟢 NEW CSV PATH
 
     # --- A. การสร้างไฟล์ DOCX ---
     
     # 1. สร้าง Strategic Report (Sections 1-4)
-    if not final_sub_results:
-        print("🚨 ไม่สามารถสร้าง Strategic Report ได้เนื่องจากไม่มีข้อมูล Sub-Criteria ที่กรองแล้ว")
-        if args.mode == "sub":
-             print(f"   (ข้อผิดพลาด: ไม่พบข้อมูลสำหรับเกณฑ์ย่อย {args.sub})")
-        # ยังคงไปขั้นตอน 2 เพื่อลองสร้าง Raw Details (เผื่อมีข้อมูล)
+    if not final_sub_results and args.mode != "sub":
+        print("🚨 ไม่สามารถสร้าง Strategic Report ได้เนื่องจากไม่มีข้อมูล Sub-Criteria")
+    elif args.mode == "sub" and not final_sub_results:
+         print(f"🚨 ไม่สามารถสร้าง Strategic Report ได้เนื่องจากไม่พบข้อมูลสำหรับเกณฑ์ย่อย {args.sub}")
     else:
         print(f"\nกำลังสร้างไฟล์ DOCX [Strategic Report]...")
         strategic_doc = Document()
@@ -743,13 +816,20 @@ def main():
     detail_doc = Document()
     setup_document(detail_doc) 
     
-    # SECTION 5: Raw Details (ส่ง List ของ Statements เข้าไปโดยตรง)
     generate_raw_details_report_docx(detail_doc, raw_data_for_section5)
     
     detail_doc.save(detail_path)
     print(f"🎉 สร้างไฟล์ DOCX [Raw Details] สำเร็จ! บันทึกที่: {detail_path}")
 
-    print("\n✅ การสร้างรายงาน SEAM Assessment ทั้งหมดเสร็จสมบูรณ์")
+    # --- B. การสร้างไฟล์ CSV (NEW) ---
+    print(f"\nกำลังสร้างไฟล์ CSV [Data Export]...")
+    if final_sub_results:
+        generate_csv_export(csv_path, final_sub_results)
+    else:
+        print("⚠️ ไม่สามารถสร้าง CSV ได้ เนื่องจากไม่มีข้อมูล Sub-Criteria")
+    
+
+    print("\n✅ การสร้างรายงาน SEAM Assessment ทั้งหมดเสร็จสมบูรณ์ (DOCX 2 ไฟล์ และ CSV 1 ไฟล์)")
 
 
 if __name__ == "__main__":

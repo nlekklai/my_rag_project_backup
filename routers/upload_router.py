@@ -1,5 +1,4 @@
-# routers/upload_router.py
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Path, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Path, Query, Depends, status
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -28,8 +27,12 @@ try:
         delete_document_by_uuid,
         DocInfo,
     )
+    # --- NEW IMPORT for Auth ---
+    from routers.auth_router import UserMe, get_current_user
+    # ---------------------------
 
 except ImportError as e:
+    # ❌ Import error: [ชื่อโมดูลที่หายไป]
     print(f"❌ Import error: {e}")
     raise
 
@@ -59,6 +62,16 @@ class UploadResponse(BaseModel):
     chunk_count: Optional[int] = None
     size: Optional[float] = None
     enabler: Optional[str] = None
+    tenant: Optional[str] = None
+    year: Optional[int] = None
+
+# -----------------------------
+# --- Helper Function for File Path ---
+# -----------------------------
+def get_save_dir(doc_type: str, tenant: str, year: int) -> str:
+    """Constructs the segregated directory path for saving files."""
+    # Structure: DATA_DIR/tenant/year/doc_type
+    return os.path.join(DATA_DIR, tenant, str(year), doc_type)
 
 # -----------------------------
 # --- Upload with background processing ---
@@ -68,18 +81,28 @@ async def upload_document(
     doc_type: str = Path(..., description=f"Document type. Must be one of: {SUPPORTED_DOC_TYPES}"),
     file: UploadFile = File(..., description="Document file to upload"),
     background_tasks: BackgroundTasks = None,
+    current_user: UserMe = Depends(get_current_user), # <-- User Dependency
 ):
+    # --- LOGGING DEBUG INFO ---
+    # พยายามดึง ID ผู้ใช้ ถ้ามีใน UserMe model (ถ้าไม่มีจะแสดง N/A)
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Upload): ID={user_id_display}, Tenant={current_user.tenant}, Year={current_user.year} (Type: {type(current_user.year)})"
+    )
+    # --------------------------
+    
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type. Must be one of: {SUPPORTED_DOC_TYPES}")
 
-    # Folder for file storage
-    save_dir = os.path.join(DATA_DIR, doc_type)
+    # Folder for file storage (segregated by tenant/year)
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year)
     os.makedirs(save_dir, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    sanitized_filename = "".join(
-        c for c in file.filename if c.isalnum() or c in (".", "_", "-")
-    ).rstrip() or f"uploaded_{timestamp}.tmp"
+    # ปรับปรุงการ Sanitized filename ให้มีความยืดหยุ่นมากขึ้นสำหรับภาษาไทย/อักขระพิเศษ
+    sanitized_filename = SysPath(file.filename).name
+    if not sanitized_filename:
+        sanitized_filename = f"uploaded_{timestamp}.tmp"
 
     file_path = os.path.join(save_dir, f"{timestamp}_{uuid.uuid4().hex}_{sanitized_filename}")
     mock_doc_id = f"temp-{uuid.uuid4().hex}"
@@ -96,6 +119,8 @@ async def upload_document(
                 file_name=file.filename,
                 stable_doc_uuid=mock_doc_id,
                 doc_type=doc_type,
+                tenant=current_user.tenant,  # <-- Pass Tenant
+                year=str(current_user.year),     # <-- FIX: Ensure year is stored as string
             )
 
         return UploadResponse(
@@ -106,6 +131,8 @@ async def upload_document(
             file_type=os.path.splitext(file.filename)[1],
             upload_date=datetime.now(timezone.utc).isoformat(),
             message="Document accepted for background processing.",
+            tenant=current_user.tenant,
+            year=current_user.year,
         )
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -117,11 +144,28 @@ async def upload_document(
 # --- List uploaded documents ---
 # -----------------------------
 @upload_router.get("/uploads/{doc_type}", response_model=List[UploadResponse])
-async def list_uploads_by_type(doc_type: str):
+async def list_uploads_by_type(
+    doc_type: str, 
+    current_user: UserMe = Depends(get_current_user) # <-- User Dependency
+):
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={current_user.year} (Filtering with STR year)"
+    )
+    # --------------------------
+    
     # Support "all"
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
-    doc_data = await run_in_threadpool(lambda: list_documents(doc_types=doc_types_to_fetch))
+    # List documents for the user's specific tenant and year
+    doc_data = await run_in_threadpool(
+        lambda: list_documents(
+            doc_types=doc_types_to_fetch, 
+            tenant=current_user.tenant,  # <-- Pass Tenant
+            year=str(current_user.year)  # <-- FIX: Convert year to string for filtering
+        )
+    )
     uploads: List[UploadResponse] = []
 
     for doc_info in doc_data.values():
@@ -144,7 +188,9 @@ async def list_uploads_by_type(doc_type: str):
                 upload_date=doc_info.get("upload_date"),
                 chunk_count=doc_info.get("chunk_count"),
                 size=size_mb,
-                enabler=doc_info.get("enabler") or "-"
+                enabler=doc_info.get("enabler") or "-",
+                tenant=doc_info.get("tenant") or current_user.tenant,
+                year=doc_info.get("year") or current_user.year,
             )
         )
 
@@ -159,14 +205,25 @@ async def ingest_document(
     file: UploadFile = File(..., description="File to ingest"),
     doc_type: str = Form(..., description=f"Document type: {', '.join(SUPPORTED_DOC_TYPES)}"),
     enabler: Optional[str] = Form(None, description="Enabler code (used for evidence)"),
+    current_user: UserMe = Depends(get_current_user), # <-- User Dependency
 ):
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Ingest): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={current_user.year}"
+    )
+    # --------------------------
+
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type: {doc_type}")
 
-    enabler = enabler or DEFAULT_ENABLER
-    save_dir = DATA_DIR if doc_type != "evidence" else os.path.join(DATA_DIR, f"evidence_{enabler}")
+    enabler_code = enabler or DEFAULT_ENABLER
+    
+    # Use segregated save directory
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year)
     os.makedirs(save_dir, exist_ok=True)
 
+    # ใช้ SysPath เพื่อจัดการชื่อไฟล์ให้ปลอดภัยยิ่งขึ้น
     file_path = os.path.join(save_dir, SysPath(file.filename).name)
 
     try:
@@ -175,7 +232,14 @@ async def ingest_document(
 
         # Ingest document
         doc_info = await run_in_threadpool(
-            lambda: process_document(file_path, SysPath(file.filename).name, doc_type, enabler)
+            lambda: process_document(
+                file_path, 
+                SysPath(file.filename).name, 
+                doc_type, 
+                enabler_code,
+                tenant=current_user.tenant, # <-- Pass Tenant
+                year=str(current_user.year)      # <-- FIX: Convert year to string for indexing
+            )
         )
         return {"status": "success", "doc_info": doc_info.model_dump()}
     except Exception as e:
@@ -191,9 +255,26 @@ async def ingest_document(
 async def get_documents(
     doc_type: Optional[str] = Query(None, description=f"Filter by doc_type: {', '.join(SUPPORTED_DOC_TYPES)}"),
     enabler: Optional[str] = Query(None, description="Filter by enabler (e.g. KM)"),
+    current_user: UserMe = Depends(get_current_user), # <-- User Dependency
 ):
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Get Docs): ID={user_id_display}, FilterDoc={doc_type}, Tenant={current_user.tenant}, Year={current_user.year} (Filtering with STR year)"
+    )
+    # --------------------------
+
     doc_types_to_fetch = [doc_type] if doc_type and doc_type.lower() != "all" else None
-    doc_data = await run_in_threadpool(lambda: list_documents(doc_types=doc_types_to_fetch, enabler=enabler))
+    
+    # List documents for the user's specific tenant and year
+    doc_data = await run_in_threadpool(
+        lambda: list_documents(
+            doc_types=doc_types_to_fetch, 
+            enabler=enabler, 
+            tenant=current_user.tenant,  # <-- Pass Tenant
+            year=str(current_user.year)       # <-- FIX: Convert year to string for filtering
+        )
+    )
     uploads: List[UploadResponse] = []
 
     for doc_info in doc_data.values():
@@ -216,7 +297,9 @@ async def get_documents(
                 upload_date=doc_info.get("upload_date"),
                 chunk_count=doc_info.get("chunk_count"),
                 size=size_mb,
-                enabler=doc_info.get("enabler") or "-"
+                enabler=doc_info.get("enabler") or "-",
+                tenant=doc_info.get("tenant") or current_user.tenant,
+                year=doc_info.get("year") or current_user.year,
             )
         )
 
@@ -226,27 +309,70 @@ async def get_documents(
 # --- Delete document ---
 # -----------------------------
 @upload_router.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str):
-    success = await run_in_threadpool(lambda: delete_document_by_uuid(doc_id))
+async def delete_document(
+    doc_id: str,
+    current_user: UserMe = Depends(get_current_user) # <-- User Dependency
+):
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Delete Doc): ID={user_id_display}, DocID={doc_id}, Tenant={current_user.tenant}, Year={current_user.year}"
+    )
+    # --------------------------
+    
+    # NOTE: เพื่อให้ปลอดภัย ต้องแน่ใจว่า Doc ID เป็นของ User นี้เท่านั้น
+    success = await run_in_threadpool(
+        lambda: delete_document_by_uuid(
+            doc_id, 
+            tenant=current_user.tenant,  # <-- Pass Tenant
+            year=str(current_user.year)       # <-- FIX: Convert year to string for deletion lookup
+        )
+    )
     if not success:
-        raise HTTPException(404, detail=f"Document {doc_id} not found or failed to delete.")
+        # ถ้าไม่พบไฟล์ อาจเป็นเพราะ Doc ID ผิด หรือ User ไม่มีสิทธิ์เข้าถึง
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, 
+            detail=f"Document {doc_id} not found or access denied (Tenant: {current_user.tenant}, Year: {current_user.year})."
+        )
     return {"status": "success", "message": f"Document {doc_id} deleted successfully."}
 
 # -----------------------------
 # --- Download uploaded file ---
 # -----------------------------
 @upload_router.get("/upload/{doc_type}/{file_id}/download")
-async def download_upload(doc_type: str, file_id: str):
-    doc_data = await run_in_threadpool(lambda: list_documents(doc_types=[doc_type]))
+async def download_upload(
+    doc_type: str, 
+    file_id: str,
+    current_user: UserMe = Depends(get_current_user) # <-- User Dependency
+):
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Download): ID={user_id_display}, DocType={doc_type}, FileID={file_id}, Tenant={current_user.tenant}, Year={current_user.year}"
+    )
+    # --------------------------
+
+    # 1. ดึงเอกสารเฉพาะของ Tenant/Year นี้เท่านั้น และตรวจสอบ Doc ID
+    doc_data = await run_in_threadpool(
+        lambda: list_documents(
+            doc_types=[doc_type], 
+            tenant=current_user.tenant,  # <-- Pass Tenant
+            year=str(current_user.year)       # <-- FIX: Convert year to string for filtering
+        )
+    )
     doc_map = {item["doc_id"]: item for item in doc_data.values()}
 
     target = doc_map.get(file_id)
     if not target:
-        raise HTTPException(404, detail="Document ID not found")
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, 
+            detail="Document ID not found or access denied."
+        )
 
+    # 2. ตรวจสอบ Path และส่งไฟล์
     filepath = target.get("filepath")
     if not filepath or not os.path.exists(filepath):
-        raise HTTPException(404, detail="File not found on disk")
+        logger.error(f"File path missing for doc_id {file_id}: {filepath}")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found on disk")
 
     return FileResponse(filepath, filename=target.get("filename", "download.bin"))
-

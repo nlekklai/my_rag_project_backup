@@ -61,7 +61,8 @@ from config.global_vars import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     DEFAULT_TENANT, 
-    DEFAULT_YEAR
+    DEFAULT_YEAR,
+    EVIDENCE_MAPPING_FILENAME_SUFFIX
 )
 
 # Logging
@@ -555,14 +556,17 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
 # -------------------- Load & Chunk Document --------------------
 def load_and_chunk_document(
     file_path: str,
-    doc_id_key: str, 
+    # 🎯 FIX: ลบ doc_id_key ออกไป เพราะไม่ใช้งานแล้ว
     stable_doc_uuid: str, 
     year: Optional[int] = None,
     version: str = "v1",
     metadata: Optional[Dict[str, Any]] = None,
     ocr_pages: Optional[Iterable[int]] = None
 ) -> List[Document]:
-    """Load document, inject metadata, clean, and split into chunks. (No Change in Logic)"""
+    """
+    Load document, inject metadata, clean, and split into chunks.
+    ใช้ 64-char stable_doc_uuid เป็นตัวระบุเอกสารหลัก (Primary Document ID).
+    """
     file_extension = os.path.splitext(file_path)[1].lower()
     loader_func = FILE_LOADER_MAP.get(file_extension)
     
@@ -611,7 +615,13 @@ def load_and_chunk_document(
         
         if year: d.metadata["year"] = year
         d.metadata["version"] = version
-        d.metadata["stable_doc_uuid"] = stable_doc_uuid
+        
+        # 🟢 ยืนยัน: ใช้ 64-char UUID เป็น ID หลัก
+        d.metadata["stable_doc_uuid"] = stable_doc_uuid 
+        # NOTE: หากต้องการให้ Metadata Field 'doc_id' เก็บค่า 64-char UUID ด้วย 
+        # (เพื่อให้การ filter ใน VSM ทำงานได้) ต้องเพิ่มบรรทัดนี้:
+        # d.metadata["doc_id"] = stable_doc_uuid 
+        
         base_filename = os.path.basename(file_path)
         d.metadata["source_filename"] = base_filename
         d.metadata["source"] = base_filename
@@ -634,12 +644,15 @@ def load_and_chunk_document(
     chunks = final_cleaned_chunks 
 
     for idx, c in enumerate(chunks, start=1):
+        # 🎯 FIX: ID นี้จะถูกใช้เป็น Primary Key ใน ChromaDB
+        unique_chunk_id = f"{stable_doc_uuid}_{idx}" 
+        
+        c.metadata["chunk_uuid"] = unique_chunk_id # <-- ID ที่ใช้เป็น Primary ID ของ ChromaDB
         c.metadata["chunk_index"] = idx
         c.metadata = _safe_filter_complex_metadata(c.metadata) 
         
     logger.info(f"Loaded and chunked {os.path.basename(file_path)} -> {len(chunks)} chunks.")
     return chunks
-
 
 # -------------------- [REVISED] Process single document --------------------
 def process_document(
@@ -679,7 +692,6 @@ def process_document(
 
     chunks = load_and_chunk_document(
         file_path=file_path,
-        doc_id_key=filename_doc_id_key, 
         stable_doc_uuid=stable_doc_uuid,
         year=year,
         version=version,
@@ -805,7 +817,27 @@ def create_vectorstore_from_documents(
     
     # 2. Add Chunks to Vector Store — Chroma 0.5+ ไม่ต้อง persist() อีกต่อไป
     try:
-        chunk_uuids = vectorstore.add_documents(chunks)
+        # 🎯 FIX 2A: ดึง Chunk UUID ที่สร้างไว้ใน metadata
+        chunk_ids_to_add = [c.metadata.get("chunk_uuid") for c in chunks]
+        
+        # กรองค่า None ออก (หากมี)
+        valid_chunks = [c for c, id in zip(chunks, chunk_ids_to_add) if id is not None]
+        valid_ids = [id for id in chunk_ids_to_add if id is not None]
+        
+        if len(valid_ids) != len(chunks):
+            logger.warning(f"Found {len(chunks) - len(valid_ids)} chunks without UUIDs. Skipping them.")
+            chunks = valid_chunks
+            chunk_ids_to_add = valid_ids
+            
+        if not chunks:
+            logger.warning(f"No valid chunks with UUIDs found to index for collection '{collection_name}'. Skipping.")
+            return
+
+        # 🎯 FIX 2B: ส่ง Chunk IDs ที่สร้างไว้ไปเป็น Primary ID ของ ChromaDB
+        chunk_uuids = vectorstore.add_documents(
+            documents=chunks,
+            ids=chunk_ids_to_add  # <-- แก้ไข: ใช้ IDs ที่เราสร้างขึ้น
+        )
         
         logger.info(f"Indexed {len(chunk_uuids)} chunks into collection '{collection_name}' (tenant={tenant}, year={year}).")
 
@@ -819,6 +851,7 @@ def create_vectorstore_from_documents(
     # 3. อัปเดต Doc ID Mapping Database
     doc_chunk_map: Dict[str, List[str]] = {}
     
+    # 📌 Note: chunk_uuids ที่ได้จาก add_documents ตอนนี้คือ ID เดียวกันกับ chunk_ids_to_add
     for chunk, chunk_id in zip(chunks, chunk_uuids):
         stable_doc_uuid = chunk.metadata.get("stable_doc_uuid")
         if stable_doc_uuid:
@@ -854,7 +887,6 @@ def create_vectorstore_from_documents(
             updated_count += 1
 
     logger.info(f"Updated mapping DB for {updated_count} documents in collection '{collection_name}'.")
-
 
 def save_doc_id_mapping(
     mapping_data: Dict[str, Dict[str, Any]], 
@@ -1304,6 +1336,9 @@ def ingest_all_files(
 
 
 # -------------------- [REVISED] wipe_vectorstore --------------------
+# core/ingest.py (เฉพาะฟังก์ชัน wipe_vectorstore)
+
+# -------------------- [REVISED] wipe_vectorstore (FINAL - UNCONDITIONAL MAPPING CLEANUP & EXPLICIT LOGS) --------------------
 def wipe_vectorstore(
     doc_type_to_wipe: str = 'all', 
     enabler: Optional[str] = None, 
@@ -1311,12 +1346,15 @@ def wipe_vectorstore(
     year: int = 2568,           
     base_path: str = VECTORSTORE_DIR
 ):
-    """Wipes the vector store directory/collection(s) and updates the doc_id_mapping file (Multi-Tenant/Year)."""
+    """Wipes the vector store directory/collection(s) and updates the doc_id_mapping file (Multi-Tenant/Year).
+    
+    🎯 FINAL FIX: Ensures all relevant mapping files (primary, secondary, lock) are deleted 
+                 unconditionally if the user explicitly requests to wipe that doc_type/enabler, 
+                 and provides explicit logs for each file deletion.
+    """
     
     doc_type_to_wipe_lower = doc_type_to_wipe.lower()
     collections_to_delete: List[str] = []
-    
-    # 🎯 FIXED: ใช้ get_collection_parent_dir ที่ถูกต้อง
     
     # Root สำหรับ Evidence (แยกปี)
     tenant_vectorstore_root_year = get_collection_parent_dir(tenant, year, EVIDENCE_DOC_TYPES) 
@@ -1327,6 +1365,7 @@ def wipe_vectorstore(
     
     doc_types_affected = set() 
     
+    # -------------------- ส่วน 1: การกำหนด Collection ที่จะลบ (Vector Store) --------------------
     if doc_type_to_wipe_lower == 'all':
         logger.warning(f"Wiping ALL collections in {tenant_vectorstore_root_year} and {tenant_vectorstore_root_common}")
 
@@ -1340,7 +1379,6 @@ def wipe_vectorstore(
                        col_path = os.path.join(root_path, f)
                        if os.path.isdir(col_path):
                             doc_type_from_col, _ = _parse_collection_name(f) 
-                            # 📌 FIX: ต้องรวม Doc Type ที่เป็น Evidence ด้วย
                             if doc_type_from_col in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
                                 collections_to_delete_with_root.append((root_path, f, doc_type_from_col))
                             else:
@@ -1369,8 +1407,8 @@ def wipe_vectorstore(
     else:
         logger.error(f"Invalid doc_type_to_wipe: {doc_type_to_wipe}")
         return
-
-    # 1. Delete collection folders
+    
+    # -------------------- 1. Delete collection folders (Vector Store) --------------------
     deleted_collections_names = set()
     deleted_collections_map: Dict[str, Set[str]] = {} 
     
@@ -1385,21 +1423,18 @@ def wipe_vectorstore(
             except OSError as e:
                 logger.error(f"❌ Error deleting collection {col_name}: {e}")
 
-    # 2. Update Mapping files
+    # -------------------- 2. Update Mapping files (Primary: doc_id_mapping.json) - Clean entries for other Enablers/Doc Types --------------------
     for dt in doc_types_affected:
-        # 🎯 FIX: ต้องโหลด mapping ทั้งหมดรวม Enabler ด้วย
         mapping_db = load_doc_id_mapping(dt, tenant, year) 
         uuids_to_keep = {}
         deletion_count = 0
         
         cols_to_check = deleted_collections_map.get(dt, set())
         
-        # 📌 NEW: สร้าง Collection Names ที่เกี่ยวข้องกับ Doc Type นี้ที่ถูกลบไป
+        # สร้าง Collection Names ที่เกี่ยวข้องกับ Doc Type นี้ที่ถูกลบไป
         if doc_type_to_wipe_lower == 'all':
-             # ถ้า wipe all ให้เช็คทุก collection ที่ถูกลบไป
              cols_to_check = deleted_collections_map.get(dt, set())
         elif doc_type_to_wipe_lower == dt:
-             # ถ้า wipe เฉพาะ Doc Type นี้
              if dt == EVIDENCE_DOC_TYPES.lower() and enabler and enabler.upper() in SUPPORTED_ENABLERS:
                  cols_to_check = {get_target_dir(dt, enabler)}
              elif dt == EVIDENCE_DOC_TYPES.lower() and not enabler:
@@ -1412,7 +1447,7 @@ def wipe_vectorstore(
             entry_doc_type = entry.get("doc_type")
             entry_enabler = entry.get("enabler")
             
-            # 🎯 FIX: เช็ค Tenant และ Year ใน Mapping File ด้วย 
+            # เช็ค Tenant และ Year ใน Mapping File
             if str(entry.get("tenant")).lower() != str(tenant).lower() or entry.get("year") != year:
                  uuids_to_keep[s_uuid] = entry
                  continue
@@ -1426,7 +1461,7 @@ def wipe_vectorstore(
                 uuids_to_keep[s_uuid] = entry
                 
         if deletion_count > 0:
-            # 📌 FIX: ต้องมีการแยก Enabler ในการบันทึก
+            # ต้องมีการแยก Enabler ในการบันทึก
             if dt.lower() == EVIDENCE_DOC_TYPES.lower():
                  db_by_enabler: Dict[Optional[str], Dict[str, Dict[str, Any]]] = {}
                  for s_uuid, entry in uuids_to_keep.items():
@@ -1434,32 +1469,94 @@ def wipe_vectorstore(
                       db_by_enabler.setdefault(enabler_key, {})[s_uuid] = entry
                  
                  for enabler_key, small_db in db_by_enabler.items():
+                      # บันทึกข้อมูลที่เหลืออยู่ (ถ้ามี)
                       save_doc_id_mapping(small_db, dt, tenant, year, enabler=enabler_key)
+                      
+                      # ลบไฟล์ Doc ID Mapping (Primary) ถ้าฐานข้อมูลว่างเปล่า (Logic เดิม)
+                      if not small_db:
+                           mapping_path = get_doc_id_mapping_path(tenant, str(year), enabler_key)
+                           if os.path.exists(mapping_path):
+                               try:
+                                   os.remove(mapping_path)
+                                   logger.info(f"✅ Deleted (empty) Primary Doc ID mapping file: {mapping_path} (Via Step 2)")
+                               except OSError as e:
+                                   logger.error(f"❌ Error deleting mapping file: {e}")
             else:
                  save_doc_id_mapping(uuids_to_keep, dt, tenant, year) 
                  
+                 # ลบไฟล์ Doc ID Mapping (Primary) ถ้าฐานข้อมูลว่างเปล่า (Logic เดิม)
+                 if not uuids_to_keep:
+                       mapping_path = get_doc_id_mapping_path(tenant, str(year), None)
+                       if os.path.exists(mapping_path):
+                           try:
+                               os.remove(mapping_path)
+                               logger.info(f"✅ Deleted (empty) Primary Doc ID mapping file: {mapping_path} (Via Step 2)")
+                           except OSError as e:
+                               logger.error(f"❌ Error deleting mapping file: {e}")
+                 
             logger.info(f"🧹 Removed {deletion_count} entries from mapping file for deleted collections (Doc Type: {dt}) of {tenant}/{year}.")
+    
+    # -------------------- 3. ลบ Mapping Files ที่เกี่ยวข้องกับคำสั่ง Wipe โดยตรง (บังคับลบ Primary/Secondary Mapping) --------------------
+    # 🎯 การแก้ไขสำคัญ: ลบไฟล์ Mapping โดยตรง หากตรงกับ Doc Type/Enabler ที่สั่ง Wipe
+    if doc_type_to_wipe_lower == EVIDENCE_DOC_TYPES.lower() or doc_type_to_wipe_lower == 'all':
+        
+        # ตรวจสอบ Enabler ที่ถูกสั่ง wipe
+        enablers_to_check = []
+        if enabler and enabler.upper() in SUPPORTED_ENABLERS:
+            enablers_to_check.append(enabler.upper())
+        elif doc_type_to_wipe_lower == 'all' or (doc_type_to_wipe_lower == EVIDENCE_DOC_TYPES.lower() and not enabler):
+             enablers_to_check.extend(SUPPORTED_ENABLERS)
+             
+        for ena_to_check in set(enablers_to_check):
             
-        # 📌 FIXED: ถ้า Doc Type ถูกสั่ง wipe ทั้งหมด (all) ให้ลบไฟล์ Mapping ทิ้ง
-        if doc_type_to_wipe_lower == 'all' or doc_type_to_wipe_lower == dt:
-             # หา Path ทั้งหมดที่เกี่ยวข้อง (สำหรับ Doc Type นี้)
-             paths_to_check: List[str] = []
-             if dt.lower() == EVIDENCE_DOC_TYPES.lower():
-                  for ena in SUPPORTED_ENABLERS:
-                       paths_to_check.append(get_doc_id_mapping_path(tenant, str(year), ena))
-             else:
-                  paths_to_check.append(get_doc_id_mapping_path(tenant, str(year), None))
-                  
-             for mapping_path in paths_to_check:
-                  # 📌 FIX: ใช้การเช็คว่าไฟล์ว่างเปล่า (ขนาด 0) หรือไม่ 
-                  # (เพราะ save_doc_id_mapping จะลบไฟล์ถ้าข้อมูลว่างเปล่า)
-                  if os.path.exists(mapping_path) and os.path.getsize(mapping_path) < 10: # น้อยกว่า 10 bytes
-                       try:
-                           os.remove(mapping_path)
-                           logger.info(f"✅ Deleted (almost) empty Doc ID mapping file: {mapping_path}")
-                       except OSError as e:
-                           logger.error(f"❌ Error deleting mapping file: {e}")
+            # --- A. Primary Doc ID Mapping File (e.g., pea_2568_km_doc_id_mapping.json) ---
+            primary_mapping_path = get_doc_id_mapping_path(tenant, str(year), ena_to_check)
+            if os.path.exists(primary_mapping_path):
+                 try:
+                     # 🎯 ENFORCED DELETION - พร้อม Log ยืนยันการลบ
+                     os.remove(primary_mapping_path)
+                     logger.info(f"✅ Deleted (FORCED) Primary Doc ID Mapping file: {primary_mapping_path}")
+                 except OSError as e:
+                     logger.error(f"❌ Error deleting Primary mapping file: {e}")
 
+            # --- B. Secondary Evidence Mapping File (e.g., pea_2568_km_evidence_mapping.json) ---
+            secondary_mapping_filename = f"{tenant}_{year}_{ena_to_check.lower()}{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
+            secondary_mapping_path = os.path.join(MAPPING_BASE_DIR, tenant, str(year), secondary_mapping_filename)
+            
+            if os.path.exists(secondary_mapping_path):
+                 try:
+                     os.remove(secondary_mapping_path)
+                     logger.info(f"✅ Deleted secondary evidence mapping file: {secondary_mapping_path}")
+                 except OSError as e:
+                     logger.error(f"❌ Error deleting secondary mapping file: {e}")
+            
+            # --- C. Lock File (e.g., pea_2568_km_evidence_mapping.json.lock) ---
+            lock_path = secondary_mapping_path + ".lock"
+            if os.path.exists(lock_path):
+                 try:
+                     os.remove(lock_path)
+                     logger.info(f"✅ Deleted lock file: {lock_path}")
+                 except OSError as e:
+                     logger.error(f"❌ Error deleting lock file: {e}")
+
+    # -------------------- 4. Final cleanup: พยายามลบโฟลเดอร์ Mapping ถ้าว่างเปล่า --------------------
+    try:
+        if doc_types_affected:
+            mapping_dir = os.path.join(MAPPING_BASE_DIR, tenant, str(year))
+
+            if os.path.isdir(mapping_dir):
+                # Check if the directory is truly empty (excluding hidden files like .DS_Store)
+                if not any(f for f in os.listdir(mapping_dir) if not f.startswith('.')):
+                    try:
+                        os.rmdir(mapping_dir)
+                        logger.info(f"✅ Deleted empty Doc ID mapping directory: {mapping_dir}")
+                    except OSError as e:
+                        logger.debug(f"Mapping directory {mapping_dir} not empty or cannot be deleted: {e}")
+                else:
+                    logger.info(f"Mapping directory {mapping_dir} is not completely empty. Keeping.")
+        
+    except Exception as e:
+        logger.warning(f"Error during final mapping directory cleanup: {e}")
 
 # -------------------- [REVISED] Document Management Utilities --------------------
 def delete_document_by_uuid(

@@ -30,6 +30,7 @@ logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
 from routers.upload_router import upload_router
 from routers.llm_router import llm_router
 from routers.assessment_router import assessment_router   # เพิ่มบรรทัดนี้!
+from routers.auth_router import auth_router   # <-- เพิ่มบรรทัดนี้!!!
 
 # -----------------------------
 # Lifespan
@@ -67,6 +68,7 @@ app.add_middleware(
 app.include_router(upload_router)
 app.include_router(llm_router)
 app.include_router(assessment_router)   # เพิ่มบรรทัดนี้!
+app.include_router(auth_router)  # <-- เพิ่มบรรทัดนี้!!!
 
 # -----------------------------
 # Health check endpoints

@@ -10,11 +10,9 @@ DEFAULT_YEAR: Final[int] = 2568
 # ==================== Project Paths (CORRECTED for Clean Multi-Tenant) ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ แก้ไข: ลบ 'gov_tenants' ออก
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
 
-# ✅ แก้ไข: ลบ 'gov_tenants' ออก และเปลี่ยนเป็น 'mapping' เพื่อจัดเก็บไฟล์ mapping โดยเฉพาะ
 MAPPING_BASE_DIR = os.path.join(PROJECT_ROOT, "config", "mapping") 
 
 # RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
