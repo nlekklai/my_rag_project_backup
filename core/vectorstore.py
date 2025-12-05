@@ -9,6 +9,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 from pathlib import Path
+import hashlib
 
 # system utils
 try:
@@ -1043,7 +1044,6 @@ class ChromaRetriever(BaseRetriever):
     async def _aget_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
         return self._get_relevant_documents(query, run_manager=run_manager)
 
-
 # -------------------- MultiDoc / Parallel Retriever --------------------
 class NamedRetriever(BaseModel):
     """
@@ -1190,6 +1190,22 @@ class MultiDocRetriever(BaseRetriever):
             for doc in docs:
                 doc.metadata["retrieval_source"] = named_r.doc_type
                 doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+                
+                # 🎯 FIX 1A: Ensure chunk_uuid is present for final filtering.
+                chunk_uuid = doc.metadata.get("chunk_uuid") 
+                
+                if not chunk_uuid:
+                    # Try to find the ID from common Langchain/Chroma internal keys
+                    potential_uuid = doc.metadata.get("id") or doc.metadata.get("_id") 
+                    
+                    if potential_uuid:
+                        doc.metadata["chunk_uuid"] = str(potential_uuid)
+                    else:
+                        # Final Fallback: Use a stable hash of the content/metadata for deduplication/ID
+                        key_content = f"{doc.page_content}{doc.metadata.get('doc_id')}"
+                        hashed_uuid = hashlib.sha256(key_content.encode('utf-8')).hexdigest()
+                        doc.metadata["chunk_uuid"] = hashed_uuid[:32] # Use first 32 chars for uniqueness
+                        
             return docs
         except Exception as e:
             # Use print here as logger might not be configured correctly in child process
@@ -1218,6 +1234,22 @@ class MultiDocRetriever(BaseRetriever):
             for doc in docs:
                 doc.metadata["retrieval_source"] = named_r.doc_type
                 doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+
+                # 🎯 FIX 1A: Ensure chunk_uuid is present for final filtering.
+                chunk_uuid = doc.metadata.get("chunk_uuid") 
+                
+                if not chunk_uuid:
+                    # Try to find the ID from common Langchain/Chroma internal keys
+                    potential_uuid = doc.metadata.get("id") or doc.metadata.get("_id") 
+                    
+                    if potential_uuid:
+                        doc.metadata["chunk_uuid"] = str(potential_uuid)
+                    else:
+                        # Final Fallback: Use a stable hash of the content/metadata for deduplication/ID
+                        key_content = f"{doc.page_content}{doc.metadata.get('doc_id')}"
+                        hashed_uuid = hashlib.sha256(key_content.encode('utf-8')).hexdigest()
+                        doc.metadata["chunk_uuid"] = hashed_uuid[:32] # Use first 32 chars for uniqueness
+                    
             return docs
         except Exception as e:
             logger.warning(f"⚠️ Thread retrieval error for {named_r.doc_id}: {e}")
@@ -1256,6 +1288,7 @@ class MultiDocRetriever(BaseRetriever):
         for d in all_docs:
             src = d.metadata.get("retrieval_source") or ""
             # Use 'chunk_uuid' or 'ids' (which is the UUID from Chroma) for unique identification
+            # NOTE: chunk_uuid should now be present due to the fix in the task methods
             chunk_uuid = d.metadata.get("chunk_uuid") or d.metadata.get("ids") or "" 
             
             # Fallback to content if UUIDs are missing (less reliable)

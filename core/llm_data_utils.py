@@ -229,6 +229,16 @@ def retrieve_context_with_filter(
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
+                
+                # 🎯 FIX C: นำ chunk_uuid และ doc_id (stable_doc_uuid) เข้ามาใน metadata
+                # เพราะ priority_docs_input มาจาก evidence_map ซึ่งเก็บ chunk_uuid และ doc_id ไว้ที่ level บน
+                if 'chunk_uuid' in doc:
+                    meta['chunk_uuid'] = doc['chunk_uuid']
+                if 'doc_id' in doc:
+                    meta['stable_doc_uuid'] = doc['doc_id']
+                if 'pdca_tag' in doc:
+                     meta['pdca_tag'] = doc['pdca_tag'] # ต้องเก็บ PDCA tag ด้วย
+
                 if pc.strip():
                     guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
             elif hasattr(doc, 'page_content'):
@@ -306,17 +316,53 @@ def retrieve_context_with_filter(
     slots_left = max(0, FINAL_K_RERANKED - len(final_docs))
     candidates = [d for d in dedup_chunks if d not in final_docs]
 
+    # **NEW:** 6.0. สร้าง Map เพื่อ Patch Metadata ที่หายไปกลับคืนมา (ป้องกัน Reranker ล้าง metadata)
+    # ใช้ page_content เป็น Key ในการ Map กลับไปยัง metadata เดิม (ที่มี chunk_uuid)
+    candidate_metadata_map = {
+        doc.page_content: getattr(doc, 'metadata', {}) 
+        for doc in candidates if hasattr(doc, 'page_content') and doc.page_content.strip()
+    }
+
     if slots_left > 0 and candidates:
         reranker = get_global_reranker()
         if reranker and hasattr(reranker, "compress_documents"):
             try:
-                reranked = reranker.compress_documents(
+                # 6.1. เรียก Reranker (จะคืนค่าเป็น DocumentWithScore object)
+                reranked_results = reranker.compress_documents(
                     documents=candidates,
                     query=queries_to_run[0],
                     top_n=slots_left
                 )
-                final_docs.extend(reranked or candidates[:slots_left])
-                logger.info(f"Reranker returned {len(reranked or [])} docs")
+                
+                reranked_docs_with_metadata = []
+                for result in reranked_results:
+                    # 🎯 FIX A: แตก Wrapper Object (ใช้ getattr เพื่อให้โค้ดสั้นลงและยืดหยุ่น)
+                    doc_to_add = getattr(result, 'document', result)
+                        
+                    # 2. ตรวจสอบความถูกต้อง
+                    if doc_to_add and hasattr(doc_to_add, 'page_content') and doc_to_add.page_content.strip():
+                        
+                        # 3. **CRITICAL FIX**: Patch Metadata ถ้าพบว่า ID หายไป
+                        current_metadata = getattr(doc_to_add, 'metadata', {})
+                        chunk_uuid_check = current_metadata.get("chunk_uuid") or current_metadata.get("dedup_chunk_uuid")
+
+                        # ถ้า ID หายไป และ Content สามารถ Map กลับไปหา Original ได้
+                        if not chunk_uuid_check and doc_to_add.page_content in candidate_metadata_map:
+                            original_metadata = candidate_metadata_map[doc_to_add.page_content]
+                            
+                            # Patch metadata กลับเข้าไปใน document object
+                            if hasattr(doc_to_add, 'metadata'):
+                                doc_to_add.metadata = original_metadata
+                                logger.debug("Patched metadata back to reranked document.")
+                            # กรณีที่เป็น object ชนิดอื่นที่แก้ไข metadata ไม่ได้ ให้ข้ามไป (กรณีนี้ไม่ควรเกิด)
+                        
+                        # 4. เพิ่มเข้าลิสต์
+                        reranked_docs_with_metadata.append(doc_to_add)
+                
+                # 6.2. ใช้ Documents ที่ถูกแตกและ Patch Metadata แล้ว
+                final_docs.extend(reranked_docs_with_metadata or candidates[:slots_left])
+                logger.info(f"Reranker returned {len(reranked_docs_with_metadata)} docs (after extraction and patching)")
+                
             except Exception as e:
                 logger.warning(f"Reranker failed ({e}), using raw candidates")
                 final_docs.extend(candidates[:slots_left])
@@ -697,8 +743,12 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
         
         # 4. Extract JSON และ normalize keys
-        # parsed = _normalize_keys(_robust_extract_json(raw) or {})
         parsed = _robust_extract_json(raw)
+        
+        # 🎯 FIX 1: ตรวจสอบและบังคับให้ 'parsed' เป็น dict ก่อนใช้งาน
+        if not isinstance(parsed, dict):
+            logger.error(f"LLM L{level} response parsed to non-dict type: {type(parsed).__name__}. Falling back to empty dict.")
+            parsed = {}
 
         # 5. คืนผลลัพธ์, เติม default หาก key ขาด
         return {
@@ -722,7 +772,6 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
             "C_Check_Score": 0,
             "A_Act_Score": 0,
         }
-
 
 # =========================
 # Patch for L1-L2 evaluation
@@ -754,7 +803,6 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     }
     return result
 
-# 3️⃣ ปรับ evaluate_with_llm_low_level ให้เรียกฟังก์ชันใหม่
 def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
     """
     Evaluation สำหรับ L1/L2 แบบ robust และ schema uniform
@@ -790,8 +838,13 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
     try:
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
         # parsed = _normalize_keys(_robust_extract_json(raw) or {})
-        parsed = _robust_extract_json(raw)  # ใช้ตัวเดียวกันทั้งโปรเจกต์!
+        parsed = _robust_extract_json(raw)
 
+        # 🎯 FIX 1: ตรวจสอบและบังคับให้ 'parsed' เป็น dict ก่อนส่งไป extraction
+        if not isinstance(parsed, dict):
+            logger.error(f"LLM L{level} response parsed to non-dict type: {type(parsed).__name__}. Falling back to empty dict.")
+            parsed = {}
+        
         # ใช้ extraction สำหรับ L1/L2
         return _extract_combined_assessment_low_level(parsed)
 
@@ -816,7 +869,7 @@ def _extract_combined_assessment_low_level(parsed: dict) -> dict:
         "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
         "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
         "C_Check_Score": 0,  # บังคับ!
-        "A_Act_Sure": 0,     # บังคับ!
+        "A_Act_Score": 0,    # 🎯 FIX 2: เปลี่ยนจาก 'A_Act_Sure' เป็น 'A_Act_Score'
     }
     # แก้ is_passed ถ้า score >=1 แต่ LLM บอก False
     if result["score"] >= 1 and not result["is_passed"]:
