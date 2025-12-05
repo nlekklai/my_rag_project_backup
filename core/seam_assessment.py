@@ -1841,173 +1841,190 @@ class SEAMPDCAEngine:
         return raw_results_for_sub, final_sub_result, level_evidences
 
     def _run_sub_criteria_assessment_worker(
-                self,
-                sub_criteria: Dict[str, Any],
-            ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
-                """
-                รันการประเมิน L1-L5 แบบ sequential สำหรับ sub-criteria หนึ่งตัว
-                และส่ง evidence map กลับไปให้ main process รวม
-                """
-                sub_id = sub_criteria['sub_id']
-                sub_criteria_name = sub_criteria['sub_criteria_name']
-                sub_weight = sub_criteria.get('weight', 0)
+            self,
+            sub_criteria: Dict[str, Any],
+        ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
+            """
+            รันการประเมิน L1-L5 แบบ sequential สำหรับ sub-criteria หนึ่งตัว
+            และส่ง evidence map กลับไปให้ main process รวม
+            """
+            sub_id = sub_criteria['sub_id']
+            sub_criteria_name = sub_criteria['sub_criteria_name']
+            sub_weight = sub_criteria.get('weight', 0)
 
-                MAX_L1_ATTEMPTS = 2
-                highest_full_level = 0
-                is_passed_current_level = True
-                raw_results_for_sub_seq: List[Dict[str, Any]] = []
+            MAX_L1_ATTEMPTS = 2
+            highest_full_level = 0
+            is_passed_current_level = True
+            raw_results_for_sub_seq: List[Dict[str, Any]] = []
 
-                self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
+            self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
 
-                # รีเซ็ต temp_map_for_save เฉพาะ worker นี้ (สำคัญมากสำหรับ Parallel!)
-                self.temp_map_for_save = {}
+            # รีเซ็ต temp_map_for_save เฉพาะ worker นี้ (สำคัญมากสำหรับ Parallel!)
+            self.temp_map_for_save = {}
 
-                # 1. Loop ผ่านทุก Level (L1 → L5)
-                for statement_data in sub_criteria.get('levels', []):
-                    level = statement_data.get('level')
-                    if level is None or level > self.config.target_level:
-                        continue
+            # 1. Loop ผ่านทุก Level (L1 → L5)
+            for statement_data in sub_criteria.get('levels', []):
+                level = statement_data.get('level')
+                if level is None or level > self.config.target_level:
+                    continue
 
-                    # Dependency check: ถ้า level ก่อนหน้า fail → cap ที่นี่
-                    dependency_failed = level > 1 and not is_passed_current_level
-                    previous_level = level - 1
-                    persistence_key = f"{sub_id}.L{previous_level}"
-                    sequential_chunk_uuids = self.evidence_map.get(persistence_key, [])
+                # Dependency check: ถ้า level ก่อนหน้า fail → cap ที่นี่
+                dependency_failed = level > 1 and not is_passed_current_level
+                previous_level = level - 1
+                persistence_key = f"{sub_id}.L{previous_level}"
+                sequential_chunk_uuids = self.evidence_map.get(persistence_key, [])
 
+                level_result = {}
+                level_temp_map: List[Dict[str, Any]] = []
+
+                # --- เรียก _run_single_assessment (รับ 2 ค่า: result, temp_map) ---
+                if level >= 3:
+                    # L3-L5: ใช้ RetryPolicy
+                    wrapper = self.retry_policy.run(
+                        fn=lambda attempt: self._run_single_assessment(
+                            sub_criteria=sub_criteria,
+                            statement_data=statement_data,
+                            vectorstore_manager=self.vectorstore_manager,
+                            sequential_chunk_uuids=sequential_chunk_uuids
+                        ),
+                        level=level,
+                        statement=statement_data.get('statement', ''),
+                        context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
+                        logger=self.logger
+                    )
+
+                    # 🎯 FIX E: แก้ไขการ Unpack ผลลัพธ์จาก RetryPolicy (ดักจับ wrapper.result ที่เป็น None/int)
                     level_result = {}
-                    level_temp_map: List[Dict[str, Any]] = []
-
-                    # --- เรียก _run_single_assessment (รับ 2 ค่า: result, temp_map) ---
-                    if level >= 3:
-                        # L3-L5: ใช้ RetryPolicy
-                        wrapper = self.retry_policy.run(
-                            fn=lambda attempt: self._run_single_assessment(
-                                sub_criteria=sub_criteria,
-                                statement_data=statement_data,
-                                vectorstore_manager=self.vectorstore_manager,
-                                sequential_chunk_uuids=sequential_chunk_uuids
-                            ),
-                            level=level,
-                            statement=statement_data.get('statement', ''),
-                            context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
-                            logger=self.logger
-                        )
-
-                        # 🎯 FIX D: แก้ไขการ Unpack ผลลัพธ์จาก RetryPolicy
-                        # (wrapper.result คาดว่าจะเป็น Tuple (result_dict, temp_map_list))
-                        if isinstance(wrapper, RetryResult) and wrapper.result is not None:
-                            
-                            if isinstance(wrapper.result, tuple) and len(wrapper.result) == 2:
+                    level_temp_map = []
+                    
+                    if isinstance(wrapper, RetryResult) and wrapper.result is not None:
+                        # 1. กรณีที่สำเร็จและส่ง Tuple 2 ตัว (Dict, List) กลับมา
+                        if isinstance(wrapper.result, tuple) and len(wrapper.result) == 2:
+                            # ตรวจสอบ Type Safety ภายใน Tuple
+                            if isinstance(wrapper.result[0], dict) and isinstance(wrapper.result[1], list):
                                 level_result, level_temp_map = wrapper.result
-                                
-                                # ตรวจสอบความปลอดภัยอีกชั้น (ป้องกันกรณีที่ result_dict/temp_map เป็น int)
-                                if not isinstance(level_result, dict): level_result = {}
-                                if not isinstance(level_temp_map, list): level_temp_map = []
-                                
                             else:
-                                # กรณีที่ RetryPolicy ล้มเหลวและส่งค่าที่ไม่ใช่ tuple (เช่น int 0 หรือ dict ที่ไม่สมบูรณ์)
                                 self.logger.error(
-                                    f"🚨 L{level} Retry wrapper returned unexpected type ({type(wrapper.result).__name__}). "
-                                    f"Falling back to empty result."
+                                    f"🚨 L{level} Retry wrapper result tuple contains wrong types: "
+                                    f"({type(wrapper.result[0]).__name__}, {type(wrapper.result[1]).__name__}). "
+                                    f"Treating as failure."
                                 )
-                                level_result = {}
-                                level_temp_map = []
-                                
-                        else:
-                            level_result = {}
-                            level_temp_map = []
-
-                    else:
-                        # L1-L2: ลองสูงสุด 2 ครั้ง (ไม่มี RetryPolicy)
-                        for attempt in range(MAX_L1_ATTEMPTS):
-                            level_result = self._run_single_assessment(
-                                sub_criteria=sub_criteria,
-                                statement_data=statement_data,
-                                vectorstore_manager=self.vectorstore_manager,
-                                sequential_chunk_uuids=sequential_chunk_uuids
+                        
+                        # 2. กรณีที่ RetryPolicy ส่ง Dict, Int, หรือ Type อื่นที่ไม่ใช่ Tuple กลับมา
+                        elif isinstance(wrapper.result, dict):
+                            # กรณีที่ RetryPolicy อาจมีการส่ง Dict ของ Error กลับมา
+                            self.logger.warning(f"⚠️ L{level} Retry wrapper returned raw dict. Attempting to extract temp_map.")
+                            level_result = wrapper.result
+                            level_temp_map = level_result.get("temp_map_for_level", [])
+                        
+                        elif isinstance(wrapper.result, (int, float)):
+                            # 🎯 ดักจับกรณีที่เป็น int/float ที่ทำให้เกิด Error: 'int' object has no attribute 'get'
+                            self.logger.error(
+                                f"🚨 L{level} Retry wrapper returned raw number ({wrapper.result}). "
+                                f"Treating as failure and resetting result."
                             )
-                            level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา (OK เพราะ level_result คือ dict)
-                            if level_result.get('is_passed', False):
-                                break
+                            # ปล่อย level_result/level_temp_map เป็น {}/[] ต่อไป
+                            
+                        else:
+                            # กรณีที่ Unpack ล้มเหลว (list, string, หรือ type แปลกๆ)
+                            self.logger.error(
+                                f"🚨 L{level} Retry wrapper returned unexpected type ({type(wrapper.result).__name__}). "
+                                f"Falling back to empty result."
+                            )
+                            
+                    # END FIX E
 
-                    # ใช้ result ที่ได้มา
-                    result_to_process = level_result or {}
-                    result_to_process.setdefault("used_chunk_uuids", [])
-
-                    # ตัดสิน pass/fail สุดท้าย (รวม dependency cap)
-                    is_passed_llm = result_to_process.get('is_passed', False)
-                    is_passed_final = is_passed_llm and not dependency_failed
-
-                    result_to_process['is_passed'] = is_passed_final
-                    result_to_process['is_capped'] = is_passed_llm and not is_passed_final
-                    result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level)
-
-                    # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
-                    if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
-                        current_key = f"{sub_id}.L{level}"
-                        self.temp_map_for_save[current_key] = level_temp_map
-                        self.logger.info(f"[EVIDENCE SAVED] {current_key} → {len(level_temp_map)} chunks")
-
-                        # 🎯 FIX SEQUENTIAL DEPENDENCY: อัปเดต self.evidence_map ทันทีใน Sequential Mode
-                        if self.is_sequential:
-                            self.evidence_map[current_key] = level_temp_map
-                            self.logger.info(f"[SEQUENTIAL UPDATE] {current_key} added to engine's main evidence_map for L{level+1} dependency.")
-                        # END FIX
-
-                    # อัปเดตสถานะสำหรับ level ถัดไป
-                    is_passed_current_level = is_passed_final
-
-                    # เพิ่มลง raw results
-                    result_to_process.setdefault("level", level)
-                    result_to_process["execution_index"] = len(raw_results_for_sub_seq)
-                    raw_results_for_sub_seq.append(result_to_process)
-
-                    # อัปเดต highest level
-                    if is_passed_final:
-                        highest_full_level = level
-                    else:
-                        self.logger.info(f"[WORKER STOP] {sub_id} failed at L{level}. Highest achieved: L{highest_full_level}")
-                        break  # หยุดทันทีเมื่อ fail
-
-                # สรุปผล sub-criteria
-                weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
-                num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False))
-
-                sub_summary = {
-                    "num_statements": len(raw_results_for_sub_seq),
-                    "num_passed": num_passed,
-                    "num_failed": len(raw_results_for_sub_seq) - num_passed,
-                    "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
-                }
-
-                final_sub_result = {
-                    "sub_criteria_id": sub_id,
-                    "sub_criteria_name": sub_criteria_name,
-                    "highest_full_level": highest_full_level,
-                    "weight": sub_weight,
-                    "target_level_achieved": highest_full_level >= self.config.target_level,
-                    "weighted_score": weighted_score,
-                    "action_plan": [],
-                    "raw_results_ref": raw_results_for_sub_seq,
-                    "sub_summary": sub_summary,
-                }
-
-                # final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
-                # เป็น
-                final_temp_map = {}
-                if self.is_sequential:
-                    # ใน sequential เราใช้ self.evidence_map โดยตรงอยู่แล้ว
-                    # แต่ส่ง snapshot กลับไปเพื่อความปลอดภัย
-                    for key in self.evidence_map:
-                        if key.startswith(sub_criteria['sub_id'] + "."):
-                            final_temp_map[key] = self.evidence_map[key]
                 else:
-                    final_temp_map = self.temp_map_for_save.copy()
+                    # L1-L2: ลองสูงสุด 2 ครั้ง (ไม่มี RetryPolicy)
+                    for attempt in range(MAX_L1_ATTEMPTS):
+                        level_result = self._run_single_assessment(
+                            sub_criteria=sub_criteria,
+                            statement_data=statement_data,
+                            vectorstore_manager=self.vectorstore_manager,
+                            sequential_chunk_uuids=sequential_chunk_uuids
+                        )
+                        level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา (OK เพราะ level_result คือ dict)
+                        if level_result.get('is_passed', False):
+                            break
 
-                self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Evidence keys: {len(final_temp_map)}")
-                self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
+                # ใช้ result ที่ได้มา
+                result_to_process = level_result or {}
+                result_to_process.setdefault("used_chunk_uuids", [])
 
-                return final_sub_result, final_temp_map
+                # ตัดสิน pass/fail สุดท้าย (รวม dependency cap)
+                is_passed_llm = result_to_process.get('is_passed', False)
+                is_passed_final = is_passed_llm and not dependency_failed
+
+                result_to_process['is_passed'] = is_passed_final
+                result_to_process['is_capped'] = is_passed_llm and not is_passed_final
+                result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level)
+
+                # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
+                if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
+                    current_key = f"{sub_id}.L{level}"
+                    self.temp_map_for_save[current_key] = level_temp_map
+                    self.logger.info(f"[EVIDENCE SAVED] {current_key} → {len(level_temp_map)} chunks")
+
+                    # 🎯 FIX SEQUENTIAL DEPENDENCY: อัปเดต self.evidence_map ทันทีใน Sequential Mode
+                    if self.is_sequential:
+                        self.evidence_map[current_key] = level_temp_map
+                        self.logger.info(f"[SEQUENTIAL UPDATE] {current_key} added to engine's main evidence_map for L{level+1} dependency.")
+                    # END FIX
+
+                # อัปเดตสถานะสำหรับ level ถัดไป
+                is_passed_current_level = is_passed_final
+
+                # เพิ่มลง raw results
+                result_to_process.setdefault("level", level)
+                result_to_process["execution_index"] = len(raw_results_for_sub_seq)
+                raw_results_for_sub_seq.append(result_to_process)
+
+                # อัปเดต highest level
+                if is_passed_final:
+                    highest_full_level = level
+                else:
+                    self.logger.info(f"[WORKER STOP] {sub_id} failed at L{level}. Highest achieved: L{highest_full_level}")
+                    break  # หยุดทันทีเมื่อ fail
+
+            # สรุปผล sub-criteria
+            weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
+            num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False))
+
+            sub_summary = {
+                "num_statements": len(raw_results_for_sub_seq),
+                "num_passed": num_passed,
+                "num_failed": len(raw_results_for_sub_seq) - num_passed,
+                "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
+            }
+
+            final_sub_result = {
+                "sub_criteria_id": sub_id,
+                "sub_criteria_name": sub_criteria_name,
+                "highest_full_level": highest_full_level,
+                "weight": sub_weight,
+                "target_level_achieved": highest_full_level >= self.config.target_level,
+                "weighted_score": weighted_score,
+                "action_plan": [],
+                "raw_results_ref": raw_results_for_sub_seq,
+                "sub_summary": sub_summary,
+            }
+
+            # final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
+            # เป็น
+            final_temp_map = {}
+            if self.is_sequential:
+                # ใน sequential เราใช้ self.evidence_map โดยตรงอยู่แล้ว
+                # แต่ส่ง snapshot กลับไปเพื่อความปลอดภัย
+                for key in self.evidence_map:
+                    if key.startswith(sub_criteria['sub_id'] + "."):
+                        final_temp_map[key] = self.evidence_map[key]
+            else:
+                final_temp_map = self.temp_map_for_save.copy()
+
+            self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Evidence keys: {len(final_temp_map)}")
+            self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
+
+            return final_sub_result, final_temp_map
 
     def run_assessment(
             self,
