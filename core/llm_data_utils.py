@@ -427,6 +427,216 @@ def retrieve_context_with_filter(
     logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
     return result
 
+
+# ------------------------
+# Retrieval: retrieve_context_for_endpoint (New Function for Stable Filtering)
+# ------------------------
+# ------------------------
+# Retrieval: retrieve_context_for_endpoint (FIXED: Remove "ids" from include)
+# ------------------------
+def retrieve_context_for_endpoint(
+    query: Union[str, List[str]], 
+    doc_type: str,
+    stable_doc_ids: Optional[List[str]] = None, 
+    enabler: Optional[str] = None,
+    vectorstore_manager: Optional['VectorStoreManager'] = None,
+    # กำหนด K ที่ใช้สำหรับการค้นหา
+    k_to_retrieve: int = INITIAL_TOP_K,
+    k_to_rerank: int = FINAL_K_RERANKED,
+) -> Dict[str, Any]:
+    """
+    ดึง context สำหรับ Query Endpoint โดยใช้ Semantic Search และบังคับใช้ Stable Doc ID Filter
+    โดยเรียก Chroma Collection โดยตรงเพื่อเลี่ยงปัญหา ChromaRetriever
+    """
+    start_time = time.time()
+    
+    # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด
+    manager = vectorstore_manager or VectorStoreManager()
+    if manager is None or manager._client is None:
+        logger.error("VectorStoreManager not initialized!")
+        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
+
+    queries_to_run = [query] if isinstance(query, str) else list(query or [])
+    if not queries_to_run:
+        queries_to_run = [""]
+        
+    main_query = queries_to_run[0]
+
+    # 2. ดึง collection name และ Chroma instance โดยตรง
+    collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
+    # NOTE: ต้องมั่นใจว่า _load_chroma_instance ถูก Import หรืออยู่ใน scope
+    chroma_instance = manager._load_chroma_instance(collection_name) 
+    
+    if not chroma_instance:
+        logger.error(f"Chroma Collection NOT FOUND for endpoint query: {collection_name}")
+        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
+
+    # 3. สร้าง Filter WHERE จาก 64-char stable_doc_ids 
+    where_filter: Dict[str, Any] = {}
+    if stable_doc_ids:
+        logger.info(f"Applying Stable Doc ID (Hard) filter: {len(stable_doc_ids)} IDs")
+        # ใช้ 'stable_doc_uuid' ในการกรอง
+        where_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}} 
+
+    logger.critical(f"[QUERY] Running Endpoint Query: '{main_query[:100]}...' → collection='{collection_name}'")
+    
+    # 4. เรียกใช้ Chroma Collection.query() โดยตรง
+    retrieved_chunks: List[LcDocument] = []
+    
+    try:
+        results = chroma_instance._collection.query(
+            query_texts=[main_query],
+            n_results=k_to_retrieve,
+            where=where_filter, # 🎯 จุดสำคัญ: ส่ง filter ไปที่ Chroma โดยตรง
+            # 💡 FIX: ลบ "ids" ออกจาก include เพราะบางเวอร์ชันไม่รองรับการ include field นี้
+            # IDs มักจะถูกคืนค่าโดยปริยาย (Implicitly)
+            include=["documents", "metadatas"] 
+        )
+        
+        # NOTE: ผลลัพธ์จาก collection.query() จะเป็น List of List
+        docs = results.get("documents", [[]])
+        metadatas = results.get("metadatas", [[]])
+        # ใช้ key 'ids' ซึ่งมักจะถูกคืนค่ามาด้วย แม้จะไม่ได้ระบุใน include
+        ids = results.get("ids", [[]]) 
+        
+        # แปลงผลลัพธ์กลับเป็น LcDocument
+        if docs and metadatas and ids:
+            for i in range(len(docs[0])): 
+                text = docs[0][i]
+                meta = metadatas[0][i].copy() if metadatas[0] and metadatas[0][i] else {}
+                chunk_uuid = ids[0][i] if ids[0] else ""
+                
+                if chunk_uuid:
+                    meta["chunk_uuid"] = chunk_uuid
+                
+                stable_doc_id = meta.get("stable_doc_uuid")
+                if stable_doc_id:
+                     meta["stable_doc_uuid"] = stable_doc_id
+                     
+                if text: 
+                    retrieved_chunks.append(LcDocument(page_content=text, metadata=meta))
+
+    except Exception as e:
+        logger.error(f"Chroma direct query failed (Endpoint): {e}", exc_info=True)
+        retrieved_chunks = [] 
+
+    logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB (Direct): {len(retrieved_chunks)} documents")
+
+    # 5. Rerank และสร้าง output 
+    
+    # 5.1 Deduplicate
+    unique_map: Dict[str, LcDocument] = {}
+    for doc in retrieved_chunks:
+        md = getattr(doc, "metadata", {}) or {}
+        pc = str(getattr(doc, "page_content", "") or "").strip()
+        if not pc: continue
+        
+        chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") or f"TEMP-{uuid.uuid4().hex[:12]}"
+        if chunk_uuid not in unique_map:
+            md["dedup_chunk_uuid"] = chunk_uuid
+            unique_map[chunk_uuid] = doc
+            
+    dedup_chunks = list(unique_map.values())
+    logger.info(f"After dedup: {len(dedup_chunks)} chunks")
+
+    # 5.2 Rerank (ใช้ Logic การ Patch Metadata เหมือนเดิม)
+    final_docs = []
+    slots_left = k_to_rerank
+    candidates = dedup_chunks
+
+    candidate_metadata_map = {
+        doc.page_content: getattr(doc, 'metadata', {}) 
+        for doc in candidates if hasattr(doc, 'page_content') and doc.page_content.strip()
+    }
+    
+    if slots_left > 0 and candidates:
+        # NOTE: ต้องมั่นใจว่า get_global_reranker ถูก Import หรืออยู่ใน scope
+        reranker = get_global_reranker() 
+        if reranker and hasattr(reranker, "compress_documents"):
+            try:
+                reranked_results = reranker.compress_documents(
+                    documents=candidates,
+                    query=main_query,
+                    top_n=slots_left
+                )
+                
+                reranked_docs_with_metadata = []
+                for result in reranked_results:
+                    doc_to_add = getattr(result, 'document', result)
+                    if doc_to_add and hasattr(doc_to_add, 'page_content') and doc_to_add.page_content.strip():
+                        
+                        current_metadata = getattr(doc_to_add, 'metadata', {})
+                        chunk_uuid_check = current_metadata.get("chunk_uuid") or current_metadata.get("dedup_chunk_uuid")
+
+                        if not chunk_uuid_check and doc_to_add.page_content in candidate_metadata_map:
+                            original_metadata = candidate_metadata_map[doc_to_add.page_content]
+                            if hasattr(doc_to_add, 'metadata'):
+                                doc_to_add.metadata = original_metadata
+                        
+                        reranked_docs_with_metadata.append(doc_to_add)
+                
+                final_docs.extend(reranked_docs_with_metadata or candidates[:slots_left])
+                logger.info(f"Reranker returned {len(reranked_docs_with_metadata)} docs (after extraction and patching)")
+                
+            except Exception as e:
+                logger.warning(f"Reranker failed ({e}), using raw candidates")
+                final_docs.extend(candidates[:slots_left])
+        else:
+            logger.info("No reranker → using top-k raw")
+            final_docs.extend(candidates[:slots_left])
+    else:
+        logger.info("No slots left or no candidates")
+
+    # 6. สร้าง Final Output
+    top_evidences = []
+    aggregated_parts = []
+    used_chunk_uuids: List[str] = []
+
+    # กรอง Chunk ที่ไม่มี ID ที่ถูกต้องออกไป
+    valid_final_docs = []
+    for doc in final_docs[:k_to_rerank]: 
+        md = getattr(doc, "metadata", {}) or {}
+        chunk_uuid_candidate = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        
+        is_valid_hash = bool(chunk_uuid_candidate and len(chunk_uuid_candidate) >= 32 and not re.match(r"^(TEMP|UNKNOWN)-", str(chunk_uuid_candidate)))
+        
+        if is_valid_hash:
+            valid_final_docs.append(doc)
+        else:
+            logger.warning(f"Skipping chunk in final output due to invalid/temporary ID: {chunk_uuid_candidate}.")
+
+    for doc in valid_final_docs:
+        md = getattr(doc, "metadata", {}) or {}
+        pc = str(getattr(doc, "page_content", "") or "").strip()
+        chunk_uuid_final = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        
+        used_chunk_uuids.append(str(chunk_uuid_final))
+
+        source = md.get("source") or md.get("filename") or md.get("doc_source") or "Unknown"
+        pdca = md.get("pdca_tag", "Other")
+
+        top_evidences.append({
+            "doc_id": md.get("stable_doc_uuid"),
+            "chunk_uuid": chunk_uuid_final,
+            "source": source,
+            "source_filename": source,
+            "text": pc,
+            "pdca_tag": pdca,
+        })
+        aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
+
+    result = {
+        "top_evidences": top_evidences,
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
+        "retrieval_time": round(time.time() - start_time, 3),
+        "used_chunk_uuids": used_chunk_uuids,
+        "query_type": "Endpoint_Direct_Query"
+    }
+
+    logger.info(f"Final retrieval (Endpoint): {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s (Sources: {len(set(ev['source_filename'] for ev in top_evidences))})")
+    return result
+
+
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
                                  top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K,

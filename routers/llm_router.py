@@ -15,7 +15,8 @@ from langchain_core.output_parsers import PydanticOutputParser
 
 # Project imports (ใช้เวอร์ชันล่าสุดที่เราปรับแล้ว)
 from core.history_utils import async_save_message, async_load_conversation_history
-from core.llm_data_utils import retrieve_context_with_filter, retrieve_context_by_doc_ids
+# 💡 FIX: เปลี่ยน retrieve_context_with_filter เป็น retrieve_context_for_endpoint
+from core.llm_data_utils import retrieve_context_for_endpoint, retrieve_context_by_doc_ids
 from core.vectorstore import get_vectorstore_manager
 from core.rag_prompts import (
     SYSTEM_QA_INSTRUCTION,
@@ -89,7 +90,8 @@ async def query_llm(
         raise HTTPException(status_code=503, detail="LLM service unavailable")
 
     conversation_id = conversation_id or str(uuid.uuid4())
-    enabler = enabler or DEFAULT_ENABLER
+    # ใช้ enabler ที่ส่งมา หรือใช้ DEFAULT_ENABLER หากไม่มีค่า (เช่น 'KM')
+    enabler = enabler or DEFAULT_ENABLER 
     doc_types = doc_types or EVIDENCE_DOC_TYPES
     doc_ids = doc_ids or []
 
@@ -107,15 +109,15 @@ async def query_llm(
     if vsm:
         tasks = [
             run_in_threadpool(
-                retrieve_context_with_filter,
+                # 🎯 FIX: ใช้ retrieve_context_for_endpoint เพื่อบังคับใช้ Hard Filter
+                retrieve_context_for_endpoint,
                 query=question,
                 doc_type=d_type,
                 enabler=enabler,
                 vectorstore_manager=vsm,
                 stable_doc_ids=doc_ids,
-                # ลบ top_k และ initial_k ออก เพราะ retrieve_context_with_filter ใช้ Global Var โดยตรงแล้ว
-                # top_k=QUERY_FINAL_K,
-                # initial_k=QUERY_INITIAL_K
+                k_to_retrieve=QUERY_INITIAL_K, # กำหนด k จาก config
+                k_to_rerank=QUERY_FINAL_K
             )
             for d_type in doc_types
         ]
@@ -126,10 +128,14 @@ async def query_llm(
                 logger.warning(f"Retrieval failed for a doc_type: {result}")
                 continue
             for ev in result.get("top_evidences", []):
+                # 💡 Note: retrieve_context_for_endpoint ไม่มี "score" โดยตรงใน top_evidences
+                # แต่เราใช้ logic ของ Reranker ในฟังก์ชันนั้นแล้ว ดังนั้น score จะเป็น 0 หรือต้องดึงจาก metadata ถ้ามีการเพิ่มภายหลัง
+                # ในที่นี้ เราใช้ score เป็น 1.0 สำหรับทุก chunk ที่ผ่านการ Rerank แล้ว (เพื่อไม่ให้ Sorting แย่ลง)
+                score = ev.get("score", 1.0)
                 all_chunks.append(LcDocument(
                     page_content=ev["text"],
                     metadata={
-                        "score": float(ev.get("score", 0.0)),
+                        "score": float(score),
                         "stable_doc_uuid": ev.get("doc_id"),
                         "chunk_uuid": ev.get("chunk_uuid"),
                         "file_name": ev.get("source", "Unknown Document"),
@@ -150,6 +156,7 @@ async def query_llm(
         return QueryResponse(answer=answer, sources=[], conversation_id=conversation_id)
 
     # RAG Mode → ใช้ prompt ล่าสุดที่เราปรับให้ผู้บริหารรัก
+    # Note: เราใช้ FINAL_K_RERANKED เป็นตัวกำหนดจำนวน Source ที่จะส่งให้ LLM
     top_chunks = sorted(all_chunks, key=lambda x: x.metadata.get("score", 0), reverse=True)[:FINAL_K_RERANKED]
 
     context = "\n\n---\n\n".join([
@@ -178,14 +185,56 @@ async def query_llm(
         )
         for doc in top_chunks
     ]
+    
+    # 💡 LOG FIX: ปรับปรุงให้รองรับการดึงชื่อไฟล์สำหรับ Multiple IDs
+    doc_ids_summary = f"Filter IDs: {len(doc_ids)}"
+    
+    if doc_ids and vsm and doc_types:
+        try:
+            # ดึง Metadata ของ Doc ID ทั้งหมดที่เลือก
+            doc_metadata = await run_in_threadpool(
+                retrieve_context_by_doc_ids,
+                doc_uuids=doc_ids,
+                doc_type=doc_types[0], # ใช้ doc_type แรกในการดึงข้อมูล
+                enabler=enabler,
+                vectorstore_manager=vsm
+            )
+            
+            # สกัดชื่อไฟล์ที่ไม่ซ้ำกัน
+            file_names = set()
+            for ev in doc_metadata.get("top_evidences", []):
+                # ตรวจสอบว่า Metadata ที่ได้มาเป็นของ Doc ID ที่เราเลือกจริงๆ
+                if ev.get("doc_id") in doc_ids: 
+                    file_names.add(ev.get("source", "Unknown File"))
+            
+            file_names_list = sorted(list(file_names))
+            num_files = len(file_names_list)
+            
+            if num_files > 0:
+                # จำกัดการแสดงผล 2 ชื่อแรกเท่านั้น
+                display_names = file_names_list[:2]
+                names_summary = ", ".join(display_names)
+                
+                if num_files > 2:
+                    names_summary += f" (+{num_files - 2} files)"
+                    
+                doc_ids_summary = f"Filter IDs: {len(doc_ids)} ({num_files} files) | Files: {names_summary}"
+            # หากไม่พบชื่อไฟล์ (num_files=0) จะใช้ doc_ids_summary ค่าเริ่มต้น
 
-    logger.info(f"RAG Query Success | conv:{conversation_id[:8]} | chunks:{len(top_chunks)} | intent:{intent}")
+        except Exception as e:
+            logger.warning(f"Could not retrieve file names for logging: {e}")
+            # แสดง UUIDs แทนหากเกิด Error
+            doc_ids_list = doc_ids[:2] if len(doc_ids) > 2 else doc_ids
+            doc_ids_summary = f"Filter IDs: {len(doc_ids)} (Log Error: {e.__class__.__name__})"
+
+    logger.info(f"RAG Query Success | conv:{conversation_id[:8]} | chunks:{len(top_chunks)} | intent:{intent} | {doc_ids_summary}")
+    
     return QueryResponse(answer=answer, sources=sources, conversation_id=conversation_id)
 
 
 # =============================
 #    /compare → ใช้ Pydantic Parser → ไม่พังอีกต่อไป!
-# =============================
+# ==================================
 @llm_router.post("/compare", response_model=CompareResponse)
 async def compare_documents(
     doc1_id: str = Form(...),
@@ -213,7 +262,8 @@ async def compare_documents(
 
     doc_map = {}
     for ev in evidences:
-        doc_map.setdefault(ev["doc_id"], []).append(ev["content"])
+        # Note: retrieve_context_by_doc_ids จะคืนค่าเนื้อหาใน key "text"
+        doc_map.setdefault(ev["doc_id"], []).append(ev["text"]) 
 
     doc1_text = "\n\n".join(doc_map.get(doc1_id, []))[:18000]
     doc2_text = "\n\n".join(doc_map.get(doc2_id, []))[:18000]

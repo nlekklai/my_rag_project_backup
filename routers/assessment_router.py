@@ -18,7 +18,8 @@ from models.llm import create_llm_instance
 # Import Global Variables ที่จำเป็นทั้งหมดสำหรับ Pre-Check และ Path
 from config.global_vars import (
     LLM_MODEL_NAME, DATA_DIR, EVIDENCE_DOC_TYPES,
-    MAPPING_BASE_DIR, DOCUMENT_ID_MAPPING_FILENAME_SUFFIX 
+    MAPPING_BASE_DIR, DOCUMENT_ID_MAPPING_FILENAME_SUFFIX
+
 )
 from routers.auth_router import UserMe, get_current_user 
 

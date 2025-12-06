@@ -19,7 +19,8 @@ try:
         DATA_DIR,
         VECTORSTORE_DIR,
         SUPPORTED_DOC_TYPES,
-        DEFAULT_ENABLER,
+        DEFAULT_ENABLER, # 💡 ต้องมีค่านี้
+        EVIDENCE_DOC_TYPES
     )
     from core.ingest import (
         process_document,
@@ -68,10 +69,17 @@ class UploadResponse(BaseModel):
 # -----------------------------
 # --- Helper Function for File Path ---
 # -----------------------------
-def get_save_dir(doc_type: str, tenant: str, year: int) -> str:
-    """Constructs the segregated directory path for saving files."""
+# 💥 REVISED: เพิ่ม enabler สำหรับ Evidence file path
+def get_save_dir(doc_type: str, tenant: str, year: int, enabler: Optional[str] = None) -> str:
+    """Constructs the segregated directory path for saving files (DATA_DIR/tenant/year/doc_type/[enabler])."""
     # Structure: DATA_DIR/tenant/year/doc_type
-    return os.path.join(DATA_DIR, tenant, str(year), doc_type)
+    base_path = os.path.join(DATA_DIR, tenant, str(year), doc_type)
+    
+    # ถ้าเป็น Evidence และมี Enabler ให้เพิ่ม Enabler เป็น subfolder
+    if doc_type.lower() == "evidence" and enabler:
+        return os.path.join(base_path, enabler)
+        
+    return base_path
 
 # -----------------------------
 # --- Upload with background processing ---
@@ -80,11 +88,12 @@ def get_save_dir(doc_type: str, tenant: str, year: int) -> str:
 async def upload_document(
     doc_type: str = Path(..., description=f"Document type. Must be one of: {SUPPORTED_DOC_TYPES}"),
     file: UploadFile = File(..., description="Document file to upload"),
+    # 💥 ADDED: เพิ่ม enabler เป็น Form Parameter
+    enabler: Optional[str] = Form(None, description="Enabler code (used for evidence doc_type)"),
     background_tasks: BackgroundTasks = None,
     current_user: UserMe = Depends(get_current_user), # <-- User Dependency
 ):
     # --- LOGGING DEBUG INFO ---
-    # พยายามดึง ID ผู้ใช้ ถ้ามีใน UserMe model (ถ้าไม่มีจะแสดง N/A)
     user_id_display = getattr(current_user, 'id', 'N/A')
     logger.info(
         f"USER CONTEXT (Upload): ID={user_id_display}, Tenant={current_user.tenant}, Year={current_user.year} (Type: {type(current_user.year)})"
@@ -94,8 +103,11 @@ async def upload_document(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type. Must be one of: {SUPPORTED_DOC_TYPES}")
 
-    # Folder for file storage (segregated by tenant/year)
-    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year)
+    enabler_code = enabler or DEFAULT_ENABLER # Determine enabler code
+
+    # Folder for file storage (segregated by tenant/year/doc_type/enabler)
+    # 💥 REVISED: ใช้ enabler_code ในการสร้าง save_dir
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
     os.makedirs(save_dir, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -121,6 +133,7 @@ async def upload_document(
                 doc_type=doc_type,
                 tenant=current_user.tenant,  # <-- Pass Tenant
                 year=str(current_user.year),     # <-- FIX: Ensure year is stored as string
+                enabler=enabler_code, # 💥 ADDED: ส่ง enabler_code ไปให้ process_document
             )
 
         return UploadResponse(
@@ -133,6 +146,7 @@ async def upload_document(
             message="Document accepted for background processing.",
             tenant=current_user.tenant,
             year=current_user.year,
+            enabler=enabler_code, # 💥 ADDED: เพิ่ม enabler_code ใน Response
         )
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -158,12 +172,26 @@ async def list_uploads_by_type(
     # Support "all"
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
+    # 💡 TEMPORARY FIX START: บังคับใช้ DEFAULT_ENABLER สำหรับ 'evidence' 💡
+    enabler_to_fetch = None
+    
+    # ตรวจสอบว่าเป็นการลิสต์ 'evidence' หรือไม่ (และไม่ใช่การลิสต์ 'all')
+    if doc_type.lower() == EVIDENCE_DOC_TYPES and len(doc_types_to_fetch) == 1:
+        # *** ใช้ค่า DEFAULT_ENABLER จาก config/global_vars.py ***
+        enabler_to_fetch = DEFAULT_ENABLER
+        logger.warning(
+            f"TEMPORARY FIX: Forcing enabler to '{enabler_to_fetch}' for evidence listing "
+            f"to bypass core logic issue in list_documents."
+        )
+    # 💡 TEMPORARY FIX END 💡
+
     # List documents for the user's specific tenant and year
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
             tenant=current_user.tenant,  # <-- Pass Tenant
-            year=str(current_user.year)  # <-- FIX: Convert year to string for filtering
+            year=str(current_user.year),  # <-- Convert year to string for filtering
+            enabler=enabler_to_fetch # 💥 ส่ง enabler ที่ถูกกำหนดชั่วคราวไป
         )
     )
     uploads: List[UploadResponse] = []
@@ -220,7 +248,8 @@ async def ingest_document(
     enabler_code = enabler or DEFAULT_ENABLER
     
     # Use segregated save directory
-    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year)
+    # 💥 REVISED: ใช้ enabler_code ในการสร้าง save_dir
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
     os.makedirs(save_dir, exist_ok=True)
 
     # ใช้ SysPath เพื่อจัดการชื่อไฟล์ให้ปลอดภัยยิ่งขึ้น

@@ -376,5 +376,215 @@
             "relevance_score": 0.0,
             "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
         }
+    ],
+    "6.1.L1": [
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "KM2.1L503 Sipoc หลังปรับ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:24:43.091447",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "KM1.1L505 Sipoc กระบวนการจัดทำแผนแม่บทฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:24:43.091492",
+            "relevance_score": 0.0,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        },
+        {
+            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
+            "filename": "KM2.1L204 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:24:43.091510",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
+        },
+        {
+            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
+            "filename": "KM2.1L101 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:24:43.091527",
+            "relevance_score": 0.0,
+            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
+        },
+        {
+            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
+            "filename": "KM2.1L401 Sipoc ทำแผน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:24:43.091543",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
+        }
+    ],
+    "6.1.L2": [
+        {
+            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:25:23.331935",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
+        },
+        {
+            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:25:23.332030",
+            "relevance_score": 0.0,
+            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
+        },
+        {
+            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:25:23.332053",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
+        },
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:25:23.332081",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:25:23.332105",
+            "relevance_score": 0.0,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        }
+    ],
+    "6.1.L3": [
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:27:13.867293",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:27:13.867395",
+            "relevance_score": 0.0,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        },
+        {
+            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:27:13.867415",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
+        },
+        {
+            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:27:13.867434",
+            "relevance_score": 0.0,
+            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
+        },
+        {
+            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:27:13.867452",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
+        }
+    ],
+    "6.1.L4": [
+        {
+            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:28:52.251439",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
+        },
+        {
+            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:28:52.251558",
+            "relevance_score": 0.0,
+            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
+        },
+        {
+            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:28:52.251570",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
+        },
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:28:52.251593",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:28:52.251612",
+            "relevance_score": 0.0,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        }
+    ],
+    "6.1.L5": [
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:30:24.605304",
+            "relevance_score": 0.0,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:30:24.605580",
+            "relevance_score": 0.0,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        },
+        {
+            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:30:24.605607",
+            "relevance_score": 0.0,
+            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
+        },
+        {
+            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:30:24.605627",
+            "relevance_score": 0.0,
+            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
+        },
+        {
+            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-06T21:30:24.605647",
+            "relevance_score": 0.0,
+            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
+        }
     ]
 }

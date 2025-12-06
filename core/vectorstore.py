@@ -601,6 +601,14 @@ class VectorStoreManager:
             if self._client is None:
                 logger.error("Chroma PersistentClient is None! ต้อง init ก่อนใช้งาน")
                 return None
+            
+            # 🎯 FIX: ดึง Global Embedding Model มาใช้โดยตรงเพื่อรับประกันมิติ 768
+            # try:
+            #     # 💡 NOTE: คุณต้องมั่นใจว่า get_global_embedding_model ถูก Import หรือถูก Define แล้ว
+            #     correct_embeddings = get_global_embedding_model() 
+            # except Exception as e:
+            #     logger.error(f"FATAL: Failed to get global embedding model for Chroma init: {e}")
+            #     return None
 
             try:
                 # ------------------------------------------------------------------

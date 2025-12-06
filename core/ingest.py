@@ -1335,9 +1335,6 @@ def ingest_all_files(
     return results
 
 
-# -------------------- [REVISED] wipe_vectorstore --------------------
-# core/ingest.py (เฉพาะฟังก์ชัน wipe_vectorstore)
-
 # -------------------- [REVISED] wipe_vectorstore (FINAL - UNCONDITIONAL MAPPING CLEANUP & EXPLICIT LOGS) --------------------
 def wipe_vectorstore(
     doc_type_to_wipe: str = 'all', 
@@ -1644,101 +1641,120 @@ def delete_document_by_uuid(
     return True
 
 # -------------------- [REVISED] list_documents --------------------
-# -------------------- [REVISED] list_documents --------------------
+# 💡 ASSUME: Type hints, logger, SUPPORTED_DOC_TYPES, EVIDENCE_DOC_TYPES, 
+# SUPPORTED_ENABLERS, SUPPORTED_TYPES, _normalize_doc_id, load_doc_id_mapping, 
+# _get_source_dir, และ logger ถูกกำหนดไว้แล้วในไฟล์เดียวกัน
+
 def list_documents(
     doc_types: Optional[List[str]] = None,
     enabler: Optional[str] = None, 
     tenant: str = "pwa",        
-    year: int = 2568,           
+    year: Union[int, str] = 2568, # 💡 รองรับทั้ง int และ str ที่อาจมาจาก argparse
     show_results: str = "ingested" 
 ) -> Dict[str, Any]: 
+
+    # --- 1. Preparation & Robust Year Conversion ---
+    doc_mapping_db = {}
+    enabler_req = (enabler or "").upper()
     
-    # 🎯 FIX 1a: ต้องรวบรวมข้อมูลจาก Mapping File หลายไฟล์ หาก doc_types เป็น 'all'
+    # 🎯 FIX: Robustly convert the 'year' parameter to an integer for comparison
+    year_int = 0
+    try:
+        if year is not None:
+            year_int = int(year)
+    except (TypeError, ValueError):
+        logger.error(f"Invalid year argument provided: {year}. Defaulting year_int to 0 (Global Context).")
+        year_int = 0
+    # --------------------------------------------------------------------------
+    
+    # Determine Doc Types to load
     doc_types_reqs = {dt.lower() for dt in doc_types} if doc_types and doc_types[0] and doc_types[0].lower() != "all" else set()
-    
     if not doc_types_reqs:
         doc_types_to_load = {dt.lower() for dt in SUPPORTED_DOC_TYPES}
     else:
         doc_types_to_load = doc_types_reqs
         
-    doc_mapping_db = {}
-    enabler_req = (enabler or "").upper()
+    # Generate list of (doc_type, enabler, year) contexts to check
+    load_contexts: Set[Tuple[str, Optional[str], Optional[int]]] = set() 
+
+    for dt_lower in doc_types_to_load:
+        
+        # Case 1: Evidence (Requires Year and Enabler context)
+        if dt_lower == EVIDENCE_DOC_TYPES.lower():
+            # Evidence ต้องมีปีเสมอ (ปีต้อง > 0)
+            if year_int > 0: # ใช้ year_int ที่แปลงแล้ว
+                years_to_use = {year_int} # ใช้ year_int ที่แปลงแล้ว
+                
+                if enabler_req and enabler_req in SUPPORTED_ENABLERS:
+                    enablers_to_use = {enabler_req}
+                else:
+                    enablers_to_use = set(SUPPORTED_ENABLERS) 
+                    
+                for ena in enablers_to_use:
+                    for yr in years_to_use:
+                        load_contexts.add((dt_lower, ena, yr))
+        
+        # Case 2: Non-Evidence (document, faq, etc.) - Global Context
+        else:
+            # สำหรับ non-evidence จะไม่ใช้ Year และ Enabler ใน Context (year=None, enabler=None)
+            load_contexts.add((dt_lower, None, None)) 
+
+    # --- 2. Load Doc ID Mapping Files (using load_contexts) ---
+    for dt, ena, yr in load_contexts:
+        ena_code = ena
+        try:
+            mapping_db = load_doc_id_mapping(
+                doc_type=dt, 
+                tenant=tenant, 
+                year=yr, 
+                enabler=ena_code
+            )
+            doc_mapping_db.update(mapping_db)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.error(f"❌ Error loading mapping for {dt} / {ena_code or 'None'} / Year {yr or 'None'}: {e}")
+            
+    # --- 3. Filtering Doc ID Mapping for Physical Scan ---
     
-    # 📌 FIX 1b: แก้ไข Logic การโหลด Mapping File ให้ส่งค่า enabler
-    for dt in doc_types_to_load:
-         current_enabler = None
-         
-         # ตรวจสอบและกำหนด enabler เฉพาะเมื่อเป็น EVIDENCE
-         if dt == EVIDENCE_DOC_TYPES.lower() and enabler_req and enabler_req in SUPPORTED_ENABLERS:
-             current_enabler = enabler_req
-             
-         # FIX: ส่งค่า enabler เข้าไปใน load_doc_id_mapping
-         doc_mapping_db.update(load_doc_id_mapping(dt, tenant, year, enabler=current_enabler)) 
-         
+    filepath_to_stable_uuid: Dict[str, str] = {}
+    for s_uuid, entry in doc_mapping_db.items():
+        if "filepath" not in entry or str(entry.get("tenant")).lower() != str(tenant).lower():
+            continue
+        
+        doc_type_in_map = entry.get("doc_type").lower()
+        if doc_type_in_map not in doc_types_to_load:
+            continue
+        
+        doc_year_in_map = entry.get("year")
+        
+        is_context_match = False
+        
+        if doc_type_in_map == EVIDENCE_DOC_TYPES.lower():
+            # Evidence: ต้องตรงกับปีที่ร้องขอ (year_int > 0)
+            if year_int > 0 and doc_year_in_map == year_int: # ใช้ year_int ที่แปลงแล้ว
+                 is_context_match = True
+        else:
+            # Non-Evidence (Global): ต้องไม่มีส่วนประกอบของปีใน mapping (year=None หรือ 0)
+            if doc_year_in_map in [None, 0]:
+                 is_context_match = True
+            
+        if is_context_match:
+            filepath_to_stable_uuid[entry["filepath"]] = s_uuid
+
+
+    # --- 4. Physical File Scan and Status Check (using load_contexts) ---
     all_docs: Dict[str, Any] = {}
     
-    # REVISED: กรอง mapping file ให้เหลือเฉพาะ Tenant/Year ที่ระบุ
-    # Note: เราต้องกรองจาก doc_mapping_db ทั้งหมด เพราะ load_doc_id_mapping อาจคืนค่าทั้งหมดมา
-    filepath_to_stable_uuid: Dict[str, str] = {
-        entry["filepath"]: s_uuid 
-        for s_uuid, entry in doc_mapping_db.items() 
-        if "filepath" in entry and str(entry.get("tenant")).lower() == str(tenant).lower() and entry.get("year") == year
-    } 
-            
-    doc_type_reqs = {dt.lower() for dt in doc_types} if doc_types and doc_types[0] and doc_types[0].lower() != "all" else set()
-    
-    # REVISED: ใช้ _get_source_dir ที่ถูกแก้ไขแล้ว
-    source_dirs_to_scan: List[str] = []
-
-    if not doc_type_reqs: 
-        # Scan All Doc Types
-        for dt in SUPPORTED_DOC_TYPES:
-            if dt.lower() == EVIDENCE_DOC_TYPES.lower():
-                if enabler_req and enabler_req in SUPPORTED_ENABLERS:
-                     source_dirs_to_scan.append(_get_source_dir(tenant, year, dt, enabler_req)) 
-                else:
-                     for ena in SUPPORTED_ENABLERS:
-                         source_dirs_to_scan.append(_get_source_dir(tenant, year, dt, ena)) 
-            else:
-                source_dirs_to_scan.append(_get_source_dir(tenant, year, dt, None)) 
-    else:
-        # Scan Only Requested Doc Types
-        for dt_req in doc_type_reqs:
-            if dt_req == EVIDENCE_DOC_TYPES.lower():
-                if enabler_req and enabler_req in SUPPORTED_ENABLERS:
-                    source_dirs_to_scan.append(_get_source_dir(tenant, year, dt_req, enabler_req)) 
-                else:
-                    for ena in SUPPORTED_ENABLERS:
-                        source_dirs_to_scan.append(_get_source_dir(tenant, year, dt_req, ena)) 
-            elif dt_req in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-                source_dirs_to_scan.append(_get_source_dir(tenant, year, dt_req, None)) 
-                
-    # (Rest of the function logic is fine)
-    for root_to_scan in set(source_dirs_to_scan): 
+    for dt_lower, resolved_enabler, resolved_year in load_contexts:
+        
+        root_to_scan = _get_source_dir(tenant, resolved_year, dt_lower, resolved_enabler)
+        
         if not os.path.isdir(root_to_scan):
             logger.debug(f"Source directory not found: {root_to_scan}. Skipping scan.")
             continue
             
-        # FIX: ต้องดึง doc_type และ enabler จาก root_to_scan เหมือน ingest_all_files
-        path_parts = root_to_scan.strip(os.sep).split(os.sep)
-        
-        current_path_segment = path_parts[-1].lower()
-        
-        doc_type_from_path = None
-        resolved_enabler = None
-
-        if current_path_segment.upper() in SUPPORTED_ENABLERS: 
-             resolved_enabler = current_path_segment.upper()
-             doc_type_from_path = path_parts[-2].lower() if len(path_parts) >= 2 else None
-        elif current_path_segment in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-             doc_type_from_path = current_path_segment
-             resolved_enabler = None 
-
-        if not doc_type_from_path:
-             logger.warning(f"Could not determine doc_type from path: {root_to_scan} during list_documents. Skipping.")
-             continue
-             
-        original_doc_type = doc_type_from_path
+        original_doc_type = dt_lower
         
         for root, _, filenames in os.walk(root_to_scan):
             if root != root_to_scan: continue 
@@ -1755,12 +1771,17 @@ def list_documents(
                 # 1. ลองค้นหาด้วย Absolute Path (วิธีการปกติ)
                 stable_doc_uuid = filepath_to_stable_uuid.get(file_path)
                 
-                # 📌 FIX 3a: เพิ่ม Fallback Search ถ้าหาด้วย Absolute Path ไม่เจอ
+                # 📌 Fallback Search ถ้าหาด้วย Absolute Path ไม่เจอ
                 if stable_doc_uuid is None:
                     # 2. ลองค้นหาด้วย filename (ซึ่งอยู่ใน Mapping File)
                     for s_uuid, entry in doc_mapping_db.items():
-                        # ตรวจสอบว่า file_name ตรงกันหรือไม่
-                        if entry.get("file_name") == f: 
+                        # ตรวจสอบ file_name และ Context ที่ตรงกัน
+                        if (entry.get("file_name") == f 
+                            and str(entry.get("tenant")).lower() == str(tenant).lower() 
+                            and entry.get("doc_type").lower() == original_doc_type
+                            and entry.get("enabler", "").upper() == (resolved_enabler or "").upper()
+                            # ตรวจสอบ Year: ถ้า resolved_year=None ให้ดูว่า year ใน mapping เป็น None/0
+                            and (entry.get("year") == resolved_year if resolved_year is not None else entry.get("year") in [None, 0])):
                             stable_doc_uuid = s_uuid
                             break
                             
@@ -1770,8 +1791,7 @@ def list_documents(
                 chunk_uuids = doc_entry.get("chunk_uuids", []) if doc_entry else []
                 chunk_count = len(chunk_uuids)
                 
-                # 💡 FIX 3b: ถ้ามี Stable ID แต่ไม่มี chunk_count (เพราะ Ingest ไม่ได้บันทึกไว้) 
-                # ให้ถือว่า Ingested สำเร็จแล้ว (กำหนด chunk_count เป็น 1)
+                # 💡 ถ้ามี Stable ID แต่ไม่มี chunk_count (เพราะ Ingest ไม่ได้บันทึกไว้) 
                 if stable_doc_uuid is not None and chunk_count == 0:
                     chunk_count = 1 
                 
@@ -1794,7 +1814,7 @@ def list_documents(
                     "doc_type": original_doc_type,
                     "enabler": resolved_enabler, 
                     "tenant": tenant,          
-                    "year": year,              
+                    "year": resolved_year, # ใช้ resolved_year (int หรือ None)
                     "upload_date": upload_date,
                     "chunk_count": chunk_count,
                     "status": "Ingested" if is_ingested else "Pending", 
@@ -1802,14 +1822,19 @@ def list_documents(
                 }
                 all_docs[final_doc_id] = doc_info
 
+    # --- 5. Final Filtering and Display ---
+    
     total_supported_files = len(all_docs) 
     
     show_results_lower = show_results.lower()
     filtered_docs_dict: Dict[str, Any] = {}
     
+    # กำหนด String สำหรับแสดง Year
+    year_request_str = str(year_int) if year_int > 0 else "Global"
+
     if total_supported_files == 0:
         doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
-        logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}) for {tenant}/{year}.")
+        logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}, Year: {year_request_str}) for {tenant}.")
         return filtered_docs_dict 
     
     if show_results_lower == "ingested":
@@ -1845,6 +1870,8 @@ def list_documents(
     for doc_info in filtered_docs_dict.values(): 
         file_size_mb = doc_info['size'] / (1024 * 1024)
         enabler_display = doc_info['enabler'] if doc_info['enabler'] is not None else '-'
+        # แสดงปีเป็น '-' หากเป็น None หรือ 0
+        year_display = str(doc_info['year']) if doc_info['year'] is not None and doc_info['year'] > 0 else '-'
         
         display_list.append({
             "doc_id": doc_info["doc_id"],
@@ -1856,14 +1883,14 @@ def list_documents(
             "chunk_count": doc_info["chunk_count"],
             "ref_doc_id": doc_info["doc_id_key"],
             "tenant": doc_info["tenant"], 
-            "year": doc_info["year"]     
+            "year": year_display     
         })
         
     display_list.sort(key=lambda x: (x["doc_type"], x["file_name"]))
     
     doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
     
-    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year}, Filter: {filter_name}):\n")
+    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year_request_str}, Filter: {filter_name}):\n")
 
     if not display_list:
         print("--- No documents found matching the filter criteria to display ---")
@@ -1883,11 +1910,12 @@ def list_documents(
         file_ext = file_ext[1:].upper() if file_ext else '-' 
         size_str = f"{info['size_mb']:.2f}"
         enabler_display = info['enabler'] 
+        year_display = info['year']
         
         print(
             f"{full_doc_id:<{UUID_COL_WIDTH}} | " 
             f"{info['tenant']:<7} | " 
-            f"{info['year']:<4} | "   
+            f"{year_display:<4} | "   
             f"{short_filename:<30} | " 
             f"{file_ext:<5} | "
             f"{info['doc_type']:<10} | "
@@ -1896,7 +1924,7 @@ def list_documents(
             f"{info['status']:<10}"
         )
     print("-" * NEW_TABLE_WIDTH)
-    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year}, Filter: {filter_name}):\n")
+    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year_request_str}, Filter: {filter_name}):\n")
 
     
     return filtered_docs_dict
