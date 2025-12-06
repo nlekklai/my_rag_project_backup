@@ -86,5 +86,5 @@ RUBRIC_FILENAME_PATTERN: Final[str] = "{tenant}_{enabler}_rubric.json"
 RUBRIC_CONFIG_DIR: Final[str] = MAPPING_BASE_DIR
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 # KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
-
+DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"
 EVIDENCE_MAPPING_FILENAME_SUFFIX = "_evidence_mapping.json"

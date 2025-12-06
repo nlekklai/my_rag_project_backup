@@ -1,3 +1,4 @@
+# core/start_assessment.py
 """
 CLI runner that:
  - parses args (--sub, --enabler, --export, --mock, --sequential) 
@@ -39,7 +40,7 @@ try:
     except ImportError:
         def load_document_map(tenant: str, year: int, enabler: str) -> Dict[str, str]:
              """MOCK: Returns an empty dictionary if the real function is not imported."""
-             logger.warning("load_document_map not found. Using empty dictionary.")
+             # 🟢 FIX: ลบ Log Warning ออก เนื่องจากเราทราบแล้วว่าฟังก์ชันนี้ไม่มี
              return {}
 
     import assessments.seam_mocking as seam_mocking 
@@ -116,6 +117,7 @@ def main():
         )
         logger.info(f"Loaded {len(document_map)} document mappings.")
     except Exception as e:
+        # 🟢 Log นี้จะปรากฏหากการเรียก Mock function ล้มเหลว (ซึ่งไม่ควรเกิดขึ้นแล้ว)
         logger.warning(f"Failed to load document map: {e}. Assessment will continue, but filenames in results may be limited.")
         document_map = {} # Ensure it's an empty dictionary if failed
         
