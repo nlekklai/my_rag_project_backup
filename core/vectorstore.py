@@ -602,13 +602,13 @@ class VectorStoreManager:
                 logger.error("Chroma PersistentClient is None! ต้อง init ก่อนใช้งาน")
                 return None
             
-            # 🎯 FIX: ดึง Global Embedding Model มาใช้โดยตรงเพื่อรับประกันมิติ 768
-            # try:
-            #     # 💡 NOTE: คุณต้องมั่นใจว่า get_global_embedding_model ถูก Import หรือถูก Define แล้ว
-            #     correct_embeddings = get_global_embedding_model() 
-            # except Exception as e:
-            #     logger.error(f"FATAL: Failed to get global embedding model for Chroma init: {e}")
-            #     return None
+            # 🎯 FIX: ดึง Global Embedding Model (768-dim) มาใช้โดยตรง
+            try:
+                # 💡 ใช้ get_hf_embeddings() ที่คุณมีในไฟล์นี้
+                correct_embeddings = get_hf_embeddings() 
+            except Exception as e:
+                logger.error(f"FATAL: Failed to get correct embeddings for Chroma init: {e}")
+                return None
 
             try:
                 # ------------------------------------------------------------------
@@ -616,7 +616,7 @@ class VectorStoreManager:
                 # ------------------------------------------------------------------
                 vectordb = Chroma(
                     client=self._client,                     # ต้องใช้ client เดียวกันทุกครั้ง!!!
-                    embedding_function=self._embeddings,
+                    embedding_function=correct_embeddings,
                     collection_name=collection_name,
                 )
 
