@@ -1,4 +1,4 @@
-# ingest_batch.py (เวอร์ชันแก้ไขล่าสุด: รองรับ Multi-Tenant/Year, แก้ไข Path ใน wipe)
+# ingest_batch.py (เวอร์ชันแก้ไขล่าสุด: แก้ไขปัญหา list command และ Default Year)
 
 import argparse
 import logging
@@ -21,7 +21,7 @@ try:
     if project_root not in sys.path:
         sys.path.append(project_root)
 
-    # ต้องมั่นใจว่าไฟล์ config/global_vars.py มีการกำหนดค่าเหล่านี้
+    # ต้องมั่นใจว่าไฟล์ config.global_vars มีการกำหนดค่าเหล่านี้
     from config.global_vars import (
         DATA_DIR,
         VECTORSTORE_DIR,
@@ -75,6 +75,10 @@ ingest_parser.add_argument(
     help=f"Enabler to ingest (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
 )
 ingest_parser.add_argument(
+    "--subject", type=str, default=None, # 🟢 เพิ่ม subject argument
+    help="Subject/Topic for Global Doc Types (e.g., 'HR Policy')."
+)
+ingest_parser.add_argument(
     "--skip_ext", type=str, nargs='+', default=[],
     help="File extensions to skip (e.g., .jpg .png)."
 )
@@ -103,8 +107,9 @@ list_parser.add_argument(
     help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
 list_parser.add_argument(
-    "--year", type=str, default=DEFAULT_YEAR,
-    help=f"Specify the year. Default: {DEFAULT_YEAR}"
+    # 🟢 FIX 1: เปลี่ยน default เป็น None เพื่อไม่ให้ใช้ year filter โดยไม่จำเป็น
+    "--year", type=str, default=None,
+    help="Specify the year. Default: None (If doc_type is NOT evidence, year is ignored/not required)."
 )
 list_parser.add_argument(
     "--doc_type", type=str, required=True,
@@ -199,9 +204,16 @@ if hasattr(args, 'debug') and args.debug:
 
 # -------------------- COMMAND: list --------------------
 if args.command == "list":
+    
+    # 🟢 FIX 2: กำหนด Year ที่จะใช้กรอง (ใช้ DEFAULT_YEAR ก็ต่อเมื่อ doc_type เป็น evidence และไม่มีการระบุปีมา)
+    year_to_filter = args.year
+    if doc_type_input == EVIDENCE_DOC_TYPES.lower() and not args.year:
+        year_to_filter = DEFAULT_YEAR
+
     list_documents(
         tenant=args.tenant,
-        year=args.year,
+        # 🟢 ส่ง year_to_filter ที่ถูกจัดการแล้ว (จะเป็น None หากไม่ใช่ evidence และไม่ได้ถูกระบุ)
+        year=year_to_filter, 
         doc_types=[doc_type_input],
         enabler=args.enabler,
     )
@@ -272,14 +284,22 @@ elif args.command == "wipe":
 
 # -------------------- COMMAND: ingest --------------------
 elif args.command == "ingest":
-    logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}")
+    # 🎯 NOTE: ต้องมั่นใจว่าใน core/ingest.py มีการตรวจสอบ args.year ก่อนแปลงเป็น int
+    if args.doc_type.lower() != EVIDENCE_DOC_TYPES.lower() and args.year and args.year != DEFAULT_YEAR:
+        logger.warning(f"⚠️ Warning: Year '{args.year}' provided for doc_type='{doc_type_input}'. Year is usually ignored for non-evidence types.")
+    
+    logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}, subject: {args.subject or 'None'}") # 🟢 Log subject
     logger.info(f"Dry run: {args.dry_run} | Sequential: {args.sequential} | Debug: {args.debug}")
+
+    # 🟢 ตรวจสอบและแปลงปีเป็น int เมื่อมีค่า
+    year_to_ingest = int(args.year) if args.year else None
 
     results: List[Dict[str, Any]] = ingest_all_files( # กำหนด Type Hint ให้ชัดเจนว่าเป็น List
         tenant=args.tenant,
-        year=int(args.year), 
+        year=year_to_ingest, 
         doc_type=None if doc_type_input == "all" else doc_type_input,
         enabler=args.enabler,
+        subject=args.subject, # 🟢 ส่ง subject ที่ถูกรับเข้ามา
         data_dir=DATA_DIR,
         base_path=VECTORSTORE_DIR,
         skip_ext=args.skip_ext,
@@ -305,7 +325,7 @@ elif args.command == "ingest":
         
     logger.info("-" * 50)
     logger.info(f"🔥 INGESTION SUMMARY: {doc_type_input.upper()} ({args.enabler or 'ALL'})")
-    logger.info(f"Tenant/Year: {args.tenant.upper()}/{args.year}")
+    logger.info(f"Tenant/Year: {args.tenant.upper()}/{args.year or 'N/A'}")
     logger.info(f"Total files scanned: {total}")
     logger.info(f"✅ Successfully chunked: {success}")
     logger.info(f"❌ Failed or skipped chunking: {failed}")

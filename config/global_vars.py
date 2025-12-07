@@ -20,7 +20,7 @@ RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
 # -------------------- Retrieval / Evaluation --------------------
 # L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
-INITIAL_TOP_K: Final[int] = 40             # ใช้สำหรับ retrieval ก่อน rerank
+INITIAL_TOP_K: Final[int] = 100             # ใช้สำหรับ retrieval ก่อน rerank
 FINAL_K_RERANKED: Final[int] = 12          # สำหรับ L1–L2; L3–L5 ใช้ 5
 FINAL_K_NON_RERANKED: Final[int] = 7       # สำหรับ non-reranked
 

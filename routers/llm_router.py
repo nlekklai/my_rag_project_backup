@@ -83,6 +83,7 @@ async def query_llm(
     doc_ids: Optional[List[str]] = Form(None),
     doc_types: Optional[List[str]] = Form(None),
     enabler: Optional[str] = Form(None),
+    subject: Optional[str] = Form(None), # 🟢 เพิ่ม subject argument
     conversation_id: Optional[str] = Form(None),
 ):
     llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
@@ -107,6 +108,9 @@ async def query_llm(
     # ดึงข้อมูลแบบ parallel → เร็วสุดในสามโลก
     all_chunks: List[LcDocument] = []
     if vsm:
+        # 💡 สร้าง Set ล่วงหน้า (Set ของ Stable Doc IDs)
+        final_doc_set = set(doc_ids) if doc_ids else set() 
+        
         tasks = [
             run_in_threadpool(
                 # 🎯 FIX: ใช้ retrieve_context_for_endpoint เพื่อบังคับใช้ Hard Filter
@@ -114,8 +118,11 @@ async def query_llm(
                 query=question,
                 doc_type=d_type,
                 enabler=enabler,
+                subject=subject, # 🟢 ส่ง subject เข้าไปใน kwargs
                 vectorstore_manager=vsm,
-                stable_doc_ids=doc_ids,
+                # ✅ FIX ที่สมบูรณ์: ใช้ Keyword Argument 'stable_doc_ids' 
+                # และส่งค่าที่เป็น Set (final_doc_set)
+                stable_doc_ids=final_doc_set,
                 k_to_retrieve=QUERY_INITIAL_K, # กำหนด k จาก config
                 k_to_rerank=QUERY_FINAL_K
             )

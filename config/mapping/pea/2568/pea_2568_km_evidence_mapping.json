@@ -1,102 +1,10 @@
 {
-    "1.2.L1": [
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:08:23.199243",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:08:23.199405",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
-            "filename": "KM1.2L506 ดูงาน egat 2.png",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:08:23.199442",
-            "relevance_score": 0.0,
-            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
-        },
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:08:23.199466",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:08:23.199489",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        }
-    ],
-    "1.2.L2": [
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:10:30.781252",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:10:30.781340",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        },
-        {
-            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:10:30.781369",
-            "relevance_score": 0.0,
-            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
-        },
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:10:30.781394",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:10:30.781422",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        }
-    ],
     "1.1.L1": [
-        {
-            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
-            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:55:50.582889",
-            "relevance_score": 0.0,
-            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
-        },
         {
             "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
             "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:55:50.582943",
+            "timestamp": "2025-12-07T18:41:31.119410",
             "relevance_score": 0.0,
             "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
         },
@@ -104,7 +12,7 @@
             "doc_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
             "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:55:50.582992",
+            "timestamp": "2025-12-07T18:41:31.119503",
             "relevance_score": 0.0,
             "chunk_uuid": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51"
         },
@@ -112,7 +20,7 @@
             "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
             "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:55:50.583014",
+            "timestamp": "2025-12-07T18:41:31.119521",
             "relevance_score": 0.0,
             "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
         },
@@ -120,25 +28,33 @@
             "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
             "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:55:50.583053",
+            "timestamp": "2025-12-07T18:41:31.119548",
             "relevance_score": 0.0,
             "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-07T18:41:31.119564",
+            "relevance_score": 0.0,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
         }
     ],
     "1.1.L2": [
         {
-            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:57:02.661074",
+            "timestamp": "2025-12-07T18:42:38.540706",
             "relevance_score": 0.0,
-            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
         },
         {
             "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:57:02.661179",
+            "timestamp": "2025-12-07T18:42:38.540887",
             "relevance_score": 0.0,
             "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
         },
@@ -146,7 +62,7 @@
             "doc_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:57:02.661198",
+            "timestamp": "2025-12-07T18:42:38.540916",
             "relevance_score": 0.0,
             "chunk_uuid": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51"
         },
@@ -154,646 +70,226 @@
             "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:57:02.661221",
+            "timestamp": "2025-12-07T18:42:38.540939",
             "relevance_score": 0.0,
             "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
         },
         {
             "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
-            "filename": "KM4.2L501 KM-FM-02-แบบฟอร์มการวิเคราะห์ความคาดหวังของผู้มีส่วนได้ส่วนเสียขององค์กร (Stakeholder Analysis)_บก.pdf",
+            "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:57:02.661252",
+            "timestamp": "2025-12-07T18:42:38.540968",
             "relevance_score": 0.0,
             "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
         }
     ],
-    "1.1.L3": [
+    "1.2.L1": [
         {
-            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
-            "filename": "Unknown",
+            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
+            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:59:45.106557",
-            "relevance_score": 0.0,
-            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+            "timestamp": "2025-12-07T19:43:48.030770",
+            "relevance_score": 0.5,
+            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
         },
         {
-            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
-            "filename": "Unknown",
+            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
+            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:59:45.106728",
-            "relevance_score": 0.0,
-            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+            "timestamp": "2025-12-07T19:43:48.030927",
+            "relevance_score": 0.5,
+            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
         },
         {
-            "doc_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
-            "filename": "Unknown",
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
+            "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:59:45.106774",
-            "relevance_score": 0.0,
-            "chunk_uuid": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51"
+            "timestamp": "2025-12-07T19:43:48.030979",
+            "relevance_score": 0.5,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
         },
         {
-            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
-            "filename": "Unknown",
+            "doc_id": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1",
+            "filename": "KM2.1L501 Learning Form ทำแผนฯ.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:59:45.106821",
-            "relevance_score": 0.0,
-            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+            "timestamp": "2025-12-07T19:43:48.031000",
+            "relevance_score": 0.5,
+            "chunk_uuid": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1"
         },
         {
-            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
-            "filename": "Unknown",
+            "doc_id": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b",
+            "filename": "KM1.1L501 Learning Form ทำแผนฯ.pdf",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T19:59:45.106888",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+            "timestamp": "2025-12-07T19:43:48.031019",
+            "relevance_score": 0.5,
+            "chunk_uuid": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b"
         }
     ],
-    "1.1.L4": [
+    "1.2.L2": [
         {
-            "doc_id": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27",
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:01:57.795982",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6e9d341fd1f35d970af61425a35ba7766d31f9490c222101bfff9bac77f0ef27"
+            "timestamp": "2025-12-07T19:45:13.286794",
+            "relevance_score": 0.5,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
         },
         {
-            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "doc_id": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:01:57.796069",
-            "relevance_score": 0.0,
-            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+            "timestamp": "2025-12-07T19:45:13.287025",
+            "relevance_score": 0.5,
+            "chunk_uuid": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1"
         },
         {
-            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "doc_id": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:01:57.796087",
-            "relevance_score": 0.0,
-            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+            "timestamp": "2025-12-07T19:45:13.287048",
+            "relevance_score": 0.5,
+            "chunk_uuid": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b"
         },
         {
-            "doc_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
+            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:01:57.796100",
-            "relevance_score": 0.0,
-            "chunk_uuid": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51"
+            "timestamp": "2025-12-07T19:45:13.287076",
+            "relevance_score": 0.5,
+            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
         },
         {
-            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:01:57.796115",
-            "relevance_score": 0.0,
-            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+            "timestamp": "2025-12-07T19:45:13.287094",
+            "relevance_score": 0.5,
+            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
         }
     ],
     "1.2.L3": [
         {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:12:59.331403",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:12:59.331448",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+            "timestamp": "2025-12-07T19:47:33.490751",
+            "relevance_score": 0.5,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
         },
         {
             "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:12:59.331480",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:47:33.490912",
+            "relevance_score": 0.5,
             "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
         },
         {
             "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:12:59.331508",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:47:33.490940",
+            "relevance_score": 0.5,
             "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
         },
         {
-            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
+            "doc_id": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:12:59.331555",
-            "relevance_score": 0.0,
-            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
+            "timestamp": "2025-12-07T19:47:33.490977",
+            "relevance_score": 0.5,
+            "chunk_uuid": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1"
+        },
+        {
+            "doc_id": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-07T19:47:33.491016",
+            "relevance_score": 0.5,
+            "chunk_uuid": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b"
         }
     ],
     "1.2.L4": [
         {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:14:52.298307",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+            "timestamp": "2025-12-07T19:49:13.022797",
+            "relevance_score": 0.5,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
         },
         {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "doc_id": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:14:52.298348",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+            "timestamp": "2025-12-07T19:49:13.023057",
+            "relevance_score": 0.5,
+            "chunk_uuid": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1"
+        },
+        {
+            "doc_id": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-07T19:49:13.023125",
+            "relevance_score": 0.5,
+            "chunk_uuid": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b"
         },
         {
             "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:14:52.298371",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:49:13.023146",
+            "relevance_score": 0.5,
             "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
         },
         {
             "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:14:52.298392",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:49:13.023175",
+            "relevance_score": 0.5,
             "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:14:52.298414",
-            "relevance_score": 0.0,
-            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
         }
     ],
     "1.2.L5": [
         {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "doc_id": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:17:11.467699",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+            "timestamp": "2025-12-07T19:51:29.002531",
+            "relevance_score": 0.5,
+            "chunk_uuid": "8122964dc98fc36d720bc61c05227f6882f8666bc18a6bed2a942f058bb240a1"
         },
         {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "doc_id": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:17:11.468188",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+            "timestamp": "2025-12-07T19:51:29.002725",
+            "relevance_score": 0.5,
+            "chunk_uuid": "54cb33450563d808da2b2469e7ea5f2bdc63f22792a1cff3d132e1a5ae94994b"
+        },
+        {
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
+            "filename": "Unknown",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-07T19:51:29.002753",
+            "relevance_score": 0.5,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
         },
         {
             "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
+            "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:17:11.468336",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:51:29.002798",
+            "relevance_score": 0.5,
             "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
         },
         {
             "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:17:11.468371",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de",
-            "filename": "KM1.2L506 ดูงาน egat 2.png",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T20:17:11.468496",
-            "relevance_score": 0.0,
-            "chunk_uuid": "3e40346a7f27e4471ea9db3d925ac2b71808728908bf3696a279f5c4c86c88de"
-        }
-    ],
-    "6.1.L1": [
-        {
-            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
-            "filename": "KM2.1L503 Sipoc หลังปรับ.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:24:43.091447",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
-        },
-        {
-            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
-            "filename": "KM1.1L505 Sipoc กระบวนการจัดทำแผนแม่บทฯ.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:24:43.091492",
-            "relevance_score": 0.0,
-            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
-        },
-        {
-            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
-            "filename": "KM2.1L204 Sipoc ทำแผน.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:24:43.091510",
-            "relevance_score": 0.0,
-            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
-        },
-        {
-            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
-            "filename": "KM2.1L101 Sipoc ทำแผน.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:24:43.091527",
-            "relevance_score": 0.0,
-            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
-        },
-        {
-            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
-            "filename": "KM2.1L401 Sipoc ทำแผน.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:24:43.091543",
-            "relevance_score": 0.0,
-            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
-        }
-    ],
-    "6.1.L2": [
-        {
-            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
             "filename": "Unknown",
             "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:25:23.331935",
-            "relevance_score": 0.0,
-            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
-        },
-        {
-            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:25:23.332030",
-            "relevance_score": 0.0,
-            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
-        },
-        {
-            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:25:23.332053",
-            "relevance_score": 0.0,
-            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
-        },
-        {
-            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:25:23.332081",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
-        },
-        {
-            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:25:23.332105",
-            "relevance_score": 0.0,
-            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
-        }
-    ],
-    "6.1.L3": [
-        {
-            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:27:13.867293",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
-        },
-        {
-            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:27:13.867395",
-            "relevance_score": 0.0,
-            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
-        },
-        {
-            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:27:13.867415",
-            "relevance_score": 0.0,
-            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
-        },
-        {
-            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:27:13.867434",
-            "relevance_score": 0.0,
-            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
-        },
-        {
-            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:27:13.867452",
-            "relevance_score": 0.0,
-            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
-        }
-    ],
-    "6.1.L4": [
-        {
-            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:28:52.251439",
-            "relevance_score": 0.0,
-            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
-        },
-        {
-            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:28:52.251558",
-            "relevance_score": 0.0,
-            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
-        },
-        {
-            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:28:52.251570",
-            "relevance_score": 0.0,
-            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
-        },
-        {
-            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:28:52.251593",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
-        },
-        {
-            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:28:52.251612",
-            "relevance_score": 0.0,
-            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
-        }
-    ],
-    "6.1.L5": [
-        {
-            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:30:24.605304",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
-        },
-        {
-            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:30:24.605580",
-            "relevance_score": 0.0,
-            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
-        },
-        {
-            "doc_id": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:30:24.605607",
-            "relevance_score": 0.0,
-            "chunk_uuid": "8fa946f407789fe57c76f55a946855f1eaa8cb1098062e55f23783054a4a2691"
-        },
-        {
-            "doc_id": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:30:24.605627",
-            "relevance_score": 0.0,
-            "chunk_uuid": "a1aba4082f18803159929e25ddbece20fd14cd7df9c6e015693b7b5419cd93da"
-        },
-        {
-            "doc_id": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T21:30:24.605647",
-            "relevance_score": 0.0,
-            "chunk_uuid": "4f9a392d368b55c7fe165ba676458f9b3efe5a1c8275eccfa46859f2989e8246"
-        }
-    ],
-    "2.1.L1": [
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:11:15.422496",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:11:15.422549",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:11:15.422582",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0",
-            "filename": "KM2.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:11:15.422604",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:11:15.422626",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        }
-    ],
-    "2.1.L2": [
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:13:14.841082",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:13:14.841123",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        },
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:13:14.841159",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:13:14.841183",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0",
-            "filename": "KM2.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:13:14.841209",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0"
-        }
-    ],
-    "2.1.L3": [
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:15:51.073040",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:15:51.073155",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        },
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:15:51.073210",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:15:51.073232",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        },
-        {
-            "doc_id": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0",
-            "filename": "KM2.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:15:51.073273",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0"
-        }
-    ],
-    "2.1.L4": [
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:17:59.477006",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:17:59.477041",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        },
-        {
-            "doc_id": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:17:59.477052",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0"
-        },
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:17:59.477127",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:17:59.477204",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
-        }
-    ],
-    "2.1.L5": [
-        {
-            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:20:26.008165",
-            "relevance_score": 0.0,
-            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
-        },
-        {
-            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:20:26.008208",
-            "relevance_score": 0.0,
-            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
-        },
-        {
-            "doc_id": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0",
-            "filename": "Unknown",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:20:26.008234",
-            "relevance_score": 0.0,
-            "chunk_uuid": "b858af58f1839bd2f2c2c7877f3cea009ecab17d8fd5d68f0898d4208427d8b0"
-        },
-        {
-            "doc_id": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3",
-            "filename": "KM5.2L301 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:20:26.008299",
-            "relevance_score": 0.0,
-            "chunk_uuid": "6fef098ea4756e5fb0b82aabbbe0ea4a5ac6290ed78cfdd35a242e16a63949e3"
-        },
-        {
-            "doc_id": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc",
-            "filename": "KM6.1L201 1.รายงานการจัดอบรม.pdf",
-            "mapper_type": "AI_GENERATED",
-            "timestamp": "2025-12-06T23:20:26.008332",
-            "relevance_score": 0.0,
+            "timestamp": "2025-12-07T19:51:29.002807",
+            "relevance_score": 0.5,
             "chunk_uuid": "b883673a6e51d95f6cb655c641875f97cc52c41ab080e298ed8f24506ac979dc"
         }
     ]

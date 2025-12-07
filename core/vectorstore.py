@@ -244,8 +244,6 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
 
     return _CACHED_RERANKER_INSTANCE
 
-
-
 # -------------------- Path Helper Function (REVISED for Lowercase Path Suffix and Optional Year) --------------------
 def _build_vectorstore_path_by_doc_type(tenant: str, year: Optional[int], doc_type: str, enabler: Optional[str] = None) -> str:
     """
@@ -286,25 +284,6 @@ def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
     logger.debug(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
     return collection_name
 
-def _build_vectorstore_path_by_doc_type(tenant: str, year: Optional[int], doc_type: str, enabler: Optional[str] = None) -> str:
-    """
-    สร้าง Full Path สำหรับ Collection โดยใช้ตรรกะ EVIDENCE_DOC_TYPES
-    - Evidence (มี year): VECTORSTORE_DIR / tenant / year / collection_name
-    - Docs/FAQ (ไม่มี year): VECTORSTORE_DIR / tenant / collection_name
-    """
-    doc_type_lower = doc_type.lower()
-    collection_name = _get_collection_name(doc_type, enabler)
-    
-    path_segments = [VECTORSTORE_DIR, tenant.lower()]
-    
-    # 🎯 FIX: ตรวจสอบปี (year is not None) สำหรับ Evidence เท่านั้น
-    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
-        # Path สำหรับ evidence คือ /tenant/year/collection_name
-        path_segments.append(str(year))
-        
-    path_segments.append(collection_name)
-    
-    return os.path.join(*path_segments)
 
 def get_vectorstore_path(
     tenant: str, 
@@ -463,19 +442,28 @@ class VectorStoreManager:
             self._chroma_cache = {}
             self._embeddings = get_hf_embeddings()
             
-            # 1. สร้างชื่อ Collection ที่ถูกต้อง (evidence_km)
-            collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, self.enabler)
+            # # 1. สร้างชื่อ Collection ที่ถูกต้อง (evidence_km)
+            # collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, self.enabler)
             
-            # 2. ใช้ Path Helper ที่คุณมีอยู่ เพื่อสร้าง Full Path
-            chroma_root_path = _build_vectorstore_path_by_doc_type(
-                tenant=self.tenant, 
-                year=self.year, 
-                doc_type=EVIDENCE_DOC_TYPES, 
-                enabler=self.enabler
+            # # 2. ใช้ Path Helper ที่คุณมีอยู่ เพื่อสร้าง Full Path
+            # chroma_root_path = _build_vectorstore_path_by_doc_type(
+            #     tenant=self.tenant, 
+            #     year=self.year, 
+            #     doc_type=EVIDENCE_DOC_TYPES, 
+            #     enabler=self.enabler
+            # )
+            
+            # self._client = chromadb.PersistentClient(path=chroma_root_path)
+
+            chroma_client_root = os.path.join(
+                VECTORSTORE_DIR, 
+                self.tenant
             )
             
-            self._client = chromadb.PersistentClient(path=chroma_root_path)
-            logger.info(f"ChromaDB Client initialized at FULL COLLECTION PATH: {chroma_root_path}")
+            self._client = chromadb.PersistentClient(path=chroma_client_root)
+
+            # logger.info(f"ChromaDB Client initialized at FULL COLLECTION PATH: {chroma_root_path}")
+            logger.info(f"ChromaDB Client initialized at TENANT ROOT PATH: {chroma_client_root}")
             
             # โหลด mapping หลังจากตั้งค่า tenant/year แล้ว
             self._load_doc_id_mapping() 
@@ -510,34 +498,65 @@ class VectorStoreManager:
         except Exception:
             pass
 
+
     def _load_doc_id_mapping(self):
         self._doc_id_mapping = {}
         self._uuid_to_doc_id = {}
         
-        # NOTE: Doc ID Mapping ต้องใช้ Path ที่ระบุปีเสมอ
-        mapping_filename = f"{self.tenant.lower()}_{self.year}_{self.enabler.lower()}_doc_id_mapping.json"
-        
-        doc_id_mapping_path = os.path.join(
+        # 1. PATH A: Year-Specific/Enabler Mapping (เช่น Evidence)
+        mapping_filename_A = f"{self.tenant.lower()}_{self.year}_{self.enabler.lower()}_doc_id_mapping.json"
+        path_A = os.path.join(
             MAPPING_BASE_DIR, 
             self.tenant.lower(), 
             str(self.year), 
-            mapping_filename
+            mapping_filename_A
         )
-  
-        try:
-            with open(doc_id_mapping_path, "r", encoding="utf-8") as f:
-                mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
-                cleaned_mapping = {k.strip(): v for k, v in mapping_data.items()}
-                self._doc_id_mapping = cleaned_mapping
-                for doc_id, doc_entry in cleaned_mapping.items():
-                    if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry and isinstance(doc_entry.get("chunk_uuids"), list):
-                        for uid in doc_entry["chunk_uuids"]:
-                            self._uuid_to_doc_id[uid] = doc_id
-            logger.info(f"✅ Loaded Doc ID Mapping from {doc_id_mapping_path}: {len(self._doc_id_mapping)} original documents, {len(self._uuid_to_doc_id)} total chunks.")
-        except FileNotFoundError:
-            logger.warning(f"⚠️ Doc ID Mapping file not found at {doc_id_mapping_path}.")
-        except Exception as e:
-            logger.error(f"❌ Failed to load Doc ID Mapping from {doc_id_mapping_path}: {e}")
+        
+        # 2. PATH B: Global/Tenant Root Mapping (สำหรับเอกสารทั่วไป)
+        # NOTE: สมมติชื่อไฟล์เป็น tenant_doc_id_mapping.json
+        mapping_filename_B = f"{self.tenant.lower()}_doc_id_mapping.json" 
+        path_B = os.path.join(
+            MAPPING_BASE_DIR, 
+            self.tenant.lower(), 
+            mapping_filename_B
+        )
+
+        # จัดลำดับการโหลด: โหลด Global (Path B) ก่อน เพื่อให้ Evidence (Path A) ทับได้
+        paths_to_load = [path_B, path_A]
+        
+        total_loaded_docs = 0
+        total_loaded_uuids = 0
+
+        for path in paths_to_load:
+            if not os.path.exists(path):
+                logger.debug(f"🔍 DEBUG: Doc ID Mapping file not found at expected path: {path}")
+                continue
+                
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
+                    
+                    # Merge data
+                    for doc_id, doc_entry in mapping_data.items():
+                        doc_id_clean = doc_id.strip()
+                        
+                        # เพิ่มหรืออัปเดต doc_id_mapping (ใช้การอัปเดตเพื่อ Merge)
+                        self._doc_id_mapping[doc_id_clean] = doc_entry
+                        
+                        # สร้าง uuid to doc_id mapping
+                        if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry and isinstance(doc_entry.get("chunk_uuids"), list):
+                            for uid in doc_entry["chunk_uuids"]:
+                                self._uuid_to_doc_id[uid] = doc_id_clean
+                                
+                    logger.info(f"✅ Loaded {len(mapping_data)} documents from MAPPING: {path}")
+                    total_loaded_docs = len(self._doc_id_mapping)
+                    total_loaded_uuids = len(self._uuid_to_doc_id)
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to load Doc ID Mapping from {path}: {e}", exc_info=True)
+
+
+        logger.info(f"Initialized Doc ID Mapping. Total original documents loaded: {total_loaded_docs}, Total chunks mapped: {total_loaded_uuids}.")
 
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         collection_name_lower = collection_name.strip().lower()
@@ -547,7 +566,6 @@ class VectorStoreManager:
         return collection_name_lower, None
 
     def _load_chroma_instance(self, collection_name: str) -> Optional[Chroma]:
-        # ... (โค้ดส่วนนี้ไม่ได้เปลี่ยนแปลง)
         # 1. Fast cache hit
         if collection_name in self._chroma_cache:
             return self._chroma_cache[collection_name]
@@ -571,7 +589,7 @@ class VectorStoreManager:
                 target_year = None
 
             # ------------------------------------------------------------------
-            # 5. สร้าง persist_directory ที่ถูกต้อง 100%
+            # 5. สร้าง persist_directory ที่ถูกต้อง 100% (Full Path ของ Collection)
             # ------------------------------------------------------------------
             persist_directory = get_vectorstore_path(
                 tenant=self.tenant,
@@ -596,15 +614,16 @@ class VectorStoreManager:
                 return None
 
             # ------------------------------------------------------------------
-            # 7. ตรวจสอบว่า client ถูก init แล้ว
+            # 7. ตรวจสอบว่า client ถูก init แล้ว (ไม่ต้องใช้ แต่ยังคงไว้)
             # ------------------------------------------------------------------
             if self._client is None:
                 logger.error("Chroma PersistentClient is None! ต้อง init ก่อนใช้งาน")
-                return None
+                # สำหรับ FIX 6 เราจะปล่อยให้ LangChain สร้าง Client ภายในเอง
+                # จึงไม่มีผลต่อการทำงาน แต่เตือนให้ทราบ
+                
             
-            # 🎯 FIX: ดึง Global Embedding Model (768-dim) มาใช้โดยตรง
+            # 🎯 ดึง Global Embedding Model (768-dim) มาใช้โดยตรง
             try:
-                # 💡 ใช้ get_hf_embeddings() ที่คุณมีในไฟล์นี้
                 correct_embeddings = get_hf_embeddings() 
             except Exception as e:
                 logger.error(f"FATAL: Failed to get correct embeddings for Chroma init: {e}")
@@ -612,19 +631,24 @@ class VectorStoreManager:
 
             try:
                 # ------------------------------------------------------------------
-                # 8. สร้าง Chroma instance (ใช้ client เดียวกัน → สำคัญสุด!)
+                # 8. สร้าง Chroma instance (ใช้ Path แทน Client ตัวแม่)
                 # ------------------------------------------------------------------
+                
+                # 🎯 FIX 6: บังคับให้ LangChain Chroma สร้าง PersistentClient ภายใน
+                # ที่ชี้ไปที่ Collection Path โดยตรง เพื่อแก้ปัญหา Raw Retrieval: 0 Docs
+                
                 vectordb = Chroma(
-                    client=self._client,                     # ต้องใช้ client เดียวกันทุกครั้ง!!!
+                    # client=self._client,               # ⬅️ ลบ Client ตัวแม่ที่ Root ออก
                     embedding_function=correct_embeddings,
                     collection_name=collection_name,
+                    persist_directory=persist_directory  # ⬅️ ใช้ Full Path ของ Collection
                 )
 
                 # Cache ไว้ใช้ครั้งต่อไป
                 self._chroma_cache[collection_name] = vectordb
 
                 logger.info(
-                    f"Loaded Chroma collection '{collection_name}' → {persist_directory}"
+                    f"Loaded Chroma collection '{collection_name}' → Path: {persist_directory} (Retrieval Test Pending)"
                 )
                 return vectordb
 
@@ -652,7 +676,7 @@ class VectorStoreManager:
             return []
 
         # 1. กำหนดชื่อ Collection และโหลด Instance
-        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler, year=self.year)
+        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
         chroma_instance = self._load_chroma_instance(collection_name)
         
         if not chroma_instance:

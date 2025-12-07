@@ -1508,137 +1508,171 @@ class SEAMPDCAEngine:
                 level_constraint: str,
                 vectorstore_manager: Optional['VectorStoreManager']
             ) -> Tuple[List[str], List[Dict[str, Any]]]:
-                """
-                1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
-                2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
-                based on the gathered Chunk UUIDs.
-                
-                Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
-                """
-                
-                all_priority_items: List[Dict[str, Any]] = [] 
-                
-                # 📌 DEBUG: ตรวจสอบสถานะของ evidence_map ก่อนเริ่มดึง
-                logger.info(f"DEBUG: EVIDENCE MAP KEYS BEFORE PRIORITY SEARCH (L{level}): {sorted(self.evidence_map.keys())}")
-                
-                # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
-                for prev_level in range(1, level): 
-                    prev_map_key = f"{sub_id}.L{prev_level}"
-                    
-                    # 🎯 ดึงจาก self.evidence_map (แหล่งข้อมูลหลักที่ถูกอัปเดตใน Sequential)
-                    items_from_map = self.evidence_map.get(prev_map_key, [])
-                    all_priority_items.extend(items_from_map)
+        """
+        1. Gathers all PASSED Stable Chunk UUIDs (doc_id) from L1 up to L[level-1]. 
+        2. Fetches limited priority RAG chunks (Hybrid Retrieval) 
+        based on the gathered Chunk UUIDs.
+        
+        Returns: (mapped_chunk_uuids: list[str], priority_docs: list[dict])
+        """
+        
+        all_priority_items: List[Dict[str, Any]] = [] 
+        
+        # 📌 DEBUG: ตรวจสอบสถานะของ evidence_map ก่อนเริ่มดึง
+        logger.info(f"DEBUG: EVIDENCE MAP KEYS BEFORE PRIORITY SEARCH (L{level}): {sorted(self.evidence_map.keys())}")
+        
+        # 1. วนซ้ำเพื่อดึงหลักฐานที่ PASS จาก Level 1 จนถึง Level ก่อนหน้า (L1 -> L[level - 1])
+        for prev_level in range(1, level): 
+            prev_map_key = f"{sub_id}.L{prev_level}"
+            
+            # 🎯 ดึงจาก self.evidence_map (แหล่งข้อมูลหลักที่ถูกอัปเดตใน Sequential)
+            items_from_map = self.evidence_map.get(prev_map_key, [])
+            all_priority_items.extend(items_from_map)
 
-                
-                # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
-                # 🟢 FIX 2: เน้นใช้ Chunk UUID หรือ Stable Doc UUID เป็น ID หลัก
-                doc_ids_for_dedup: List[str] = [
-                    (
-                        item.get('chunk_uuid') 
-                        or item.get('stable_doc_uuid') # <-- เน้น Stable Doc UUID
-                        or item.get('doc_id')
+        
+        # 2. แปลงรายการทั้งหมดให้เป็น Chunk UUID (String) และ Dedup
+        # 🟢 FIX 2: เน้นใช้ Chunk UUID หรือ Stable Doc UUID เป็น ID หลัก
+        doc_ids_for_dedup: List[str] = [
+            (
+                item.get('chunk_uuid') 
+                or item.get('stable_doc_uuid') # <-- เน้น Stable Doc UUID
+                or item.get('doc_id')
+            )
+            for item in all_priority_items
+            if isinstance(item, dict) and (
+                item.get('chunk_uuid') or item.get('stable_doc_uuid') or item.get('doc_id')
+            )
+        ]
+
+        mapped_chunk_uuids: List[str] = list(set([uid for uid in doc_ids_for_dedup if uid is not None])) # กรอง None ออก
+        num_historical_chunks = len(mapped_chunk_uuids)
+
+        priority_docs = [] 
+        
+        if num_historical_chunks > 0:
+            levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
+            logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
+            logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
+            
+            if vectorstore_manager:
+                try:
+                    # Assuming enhance_query_for_statement is available
+                    rag_queries_for_vsm = enhance_query_for_statement(
+                        statement_text=statement_text,
+                        sub_id=sub_id, 
+                        statement_id=sub_id, 
+                        level=level, 
+                        enabler_id=self.enabler_id,
+                        focus_hint=level_constraint 
                     )
-                    for item in all_priority_items
-                    if isinstance(item, dict) and (
-                        item.get('chunk_uuid') or item.get('stable_doc_uuid') or item.get('doc_id')
-                    )
-                ]
-
-                mapped_chunk_uuids: List[str] = list(set([uid for uid in doc_ids_for_dedup if uid is not None])) # กรอง None ออก
-                num_historical_chunks = len(mapped_chunk_uuids)
-
-                priority_docs = [] 
-                
-                if num_historical_chunks > 0:
-                    levels_logged = f"L1-L{level-1}" if level > 1 else "L0 (Should not happen)"
-                    logger.critical(f"🧭 DEBUG: Priority Search initiated with {num_historical_chunks} historical Chunk UUIDs ({levels_logged}).") 
-                    logger.info(f"✅ Hybrid Mapping: Found {num_historical_chunks} pre-mapped Chunk UUIDs from {levels_logged} for {sub_id}. Prioritizing these.")
                     
-                    if vectorstore_manager:
-                        try:
-                            # Assuming enhance_query_for_statement is available
-                            rag_queries_for_vsm = enhance_query_for_statement(
-                                statement_text=statement_text,
-                                sub_id=sub_id, 
-                                statement_id=sub_id, 
-                                level=level, 
-                                enabler_id=self.enabler_id,
-                                focus_hint=level_constraint 
+                    doc_type = self.doc_type 
+                    
+                    # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
+                    retrieved_docs_result = retrieve_context_by_doc_ids(
+                        doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk/Stable Doc UUIDs
+                        doc_type=doc_type,
+                        enabler=self.enabler_id,
+                        vectorstore_manager=vectorstore_manager
+                    )
+                    
+                    initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
+                    
+                    if initial_priority_chunks:
+                        # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
+                        reranker = get_global_reranker() 
+                        rerank_query = rag_queries_for_vsm[0] 
+                        
+                        # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
+                        lc_docs_for_rerank = [
+                            LcDocument(
+                                page_content=d.get('content') or d.get('text', ''), 
+                                metadata={
+                                    **d, 
+                                    'relevance_score': 1.0 
+                                }
+                            ) 
+                            for d in initial_priority_chunks
+                        ]
+                        
+                        if reranker and hasattr(reranker, 'compress_documents'):
+                            reranked_docs = reranker.compress_documents(
+                                query=rerank_query,
+                                documents=lc_docs_for_rerank,
+                                top_n=self.PRIORITY_CHUNK_LIMIT 
                             )
+
+                            # === วิชามารสุดท้ายที่ฆ่า 0.0000 ตลอดกาล ===
+                            # เขียน relevance_score กลับลง metadata ก่อน
+
+                            # 🛑 [แก้ไข V3] แทนที่จะพึ่ง reranker.scores เราจะวนลูปผ่าน reranked_docs 
+                            # และพยายามดึง score จาก metadata ของมัน
                             
-                            doc_type = self.doc_type 
-                            
-                            # 3.1 ดึงเอกสารตาม Chunk UUIDs ที่พบ
-                            retrieved_docs_result = retrieve_context_by_doc_ids(
-                                doc_uuids=mapped_chunk_uuids, # <-- ใช้ Chunk/Stable Doc UUIDs
-                                doc_type=doc_type,
-                                enabler=self.enabler_id,
-                                vectorstore_manager=vectorstore_manager
-                            )
-                            
-                            initial_priority_chunks: List[Dict[str, Any]] = retrieved_docs_result.get("top_evidences", [])
-                            
-                            if initial_priority_chunks:
-                                # Rerank เพื่อเลือก Chunk ที่เกี่ยวข้องที่สุด
-                                reranker = get_global_reranker() 
-                                rerank_query = rag_queries_for_vsm[0] 
+                            scores = []
+                            # ตรวจสอบว่า Reranker ได้เขียน score เข้าไปใน Document.metadata หรือไม่
+                            for doc in reranked_docs:
+                                # score ที่มาจาก reranker อาจจะอยู่ใน metadata ภายใต้ key 'relevance_score' หรือ 'score'
+                                score = doc.metadata.get('relevance_score') or doc.metadata.get('score', 0.0)
+                                scores.append(float(score))
+                                # บังคับเขียน relevance_score กลับเข้าไปใน metadata
+                                doc.metadata["relevance_score"] = float(score)
+
+                            if scores: # ตรวจสอบว่ามี Scores ที่รวบรวมได้
                                 
-                                # สร้าง LcDocument list สำหรับ Rerank (ต้องนำเข้า LcDocument)
-                                lc_docs_for_rerank = [
-                                    LcDocument(
-                                        page_content=d.get('content') or d.get('text', ''), 
-                                        metadata={
-                                            **d, 
-                                            'relevance_score': 1.0 
-                                        }
-                                    ) 
-                                    for d in initial_priority_chunks
-                                ]
+                                # 🟢 [แก้ไข] 1. Log สรุปด้วย INFO และ CRITICAL
+                                num_reranked = len(reranked_docs)
+                                logger.info(f"✨ Reranking success ({sub_id} L{level}) → Prioritized {num_reranked} chunks. Logging top scores:")
+                                # 🎯 Log 2 บรรทัดที่ท่านต้องการ!
+                                logger.critical(f"✨ RERANK SCORE LOG (PRIORITY CHUNKS) ({sub_id} L{level}) → Logging top {min(5, num_reranked)} scores:")
                                 
-                                if reranker and hasattr(reranker, 'compress_documents'):
-                                    reranked_docs = reranker.compress_documents(
-                                        query=rerank_query,
-                                        documents=lc_docs_for_rerank,
-                                        top_n=self.PRIORITY_CHUNK_LIMIT 
-                                    )
+                                for i in range(len(reranked_docs)):
+                                    doc = reranked_docs[i]
+                                    score = scores[i] # ใช้ score ที่ดึงมาแล้ว
+                                    
+                                    # 🟢 [แก้ไข] 2. เพิ่มเงื่อนไขและ Log รายละเอียดด้วย CRITICAL
+                                    if i < 5: 
+                                        filename = doc.metadata.get('filename', doc.metadata.get('source_filename', 'N/A'))
+                                        doc_id_full = doc.metadata.get('doc_id', doc.metadata.get('chunk_uuid', 'N/A'))
+                                        
+                                        # ตัด Chunk ID ให้สั้นลง
+                                        if len(doc_id_full) > 8 and '_' in doc_id_full:
+                                            doc_id_short = doc_id_full.split('_')[0][:8]
+                                        else:
+                                            doc_id_short = doc_id_full[:8]
+                                            
+                                        logger.critical(f"  > Rerank #{i+1}: {doc_id_short} ({filename}) | Score: {float(score):.4f}")
 
-                                    # === วิชามารสุดท้ายที่ฆ่า 0.0000 ตลอดกาล ===
-                                    # เขียน relevance_score กลับลง metadata ก่อน
-                                    if hasattr(reranker, "scores") and reranker.scores:
-                                        for doc, score in zip(reranked_docs, reranker.scores):
-                                            doc.metadata["relevance_score"] = float(score)
+                            # แปลงกลับเป็น dict และให้ 'score' ทับค่าเก่าอย่างแน่นอน
+                            priority_docs = []
+                            for d in reranked_docs:
+                                # เริ่มจาก metadata เดิม
+                                item = dict(d.metadata)
+                                # อัปเดตข้อมูลที่จำเป็น
+                                item.update({
+                                    'content': d.page_content,
+                                    'text': d.page_content,
+                                    # สำคัญที่สุด: score ต้องมาท้ายสุด และทับแน่นอน
+                                    'score': float(d.metadata.get('relevance_score', 0.0)),
+                                    'relevance_score': float(d.metadata.get('relevance_score', 0.0))
+                                })
+                                priority_docs.append(item)
+                            # ========================================
 
-                                    # แปลงกลับเป็น dict และให้ 'score' ทับค่าเก่าอย่างแน่นอน
-                                    priority_docs = []
-                                    for d in reranked_docs:
-                                        # เริ่มจาก metadata เดิม
-                                        item = dict(d.metadata)
-                                        # อัปเดตข้อมูลที่จำเป็น
-                                        item.update({
-                                            'content': d.page_content,
-                                            'text': d.page_content,
-                                            # สำคัญที่สุด: score ต้องมาท้ายสุด และทับแน่นอน
-                                            'score': float(d.metadata.get('relevance_score', 0.0)),
-                                            'relevance_score': float(d.metadata.get('relevance_score', 0.0))
-                                        })
-                                        priority_docs.append(item)
-                                    # ========================================
+                            logger.critical(f"DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
+                        else:
+                            # fallback กรณีไม่มี reranker
+                            priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
+                            # แม้ fallback ก็ยังใส่ score ให้ครบ
+                            for item in priority_docs:
+                                if 'score' not in item:
+                                    item['score'] = 0.0
 
-                                    logger.critical(f"DEBUG: Limited and prioritized {len(priority_docs)} chunks from {num_historical_chunks} mapped UUIDs.")
-                                else:
-                                    # fallback กรณีไม่มี reranker
-                                    priority_docs = initial_priority_chunks[:self.PRIORITY_CHUNK_LIMIT]
-                                    # แม้ fallback ก็ยังใส่ score ให้ครบ
-                                    for item in priority_docs:
-                                        if 'score' not in item:
-                                            item['score'] = 0.0
-
-                        except Exception as e:
-                            logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
-                            priority_docs = [] 
-                
-                # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
-                return mapped_chunk_uuids, priority_docs
+                except Exception as e:
+                    logger.error(f"Error fetching/reranking priority chunks for {sub_id}: {e}")
+                    priority_docs = [] 
+        
+        # คืนค่า Chunk UUIDs และ Chunks ที่ถูกดึงและจัดลำดับความสำคัญแล้ว
+        return mapped_chunk_uuids, priority_docs
 
 
     # -------------------- Calculation Helpers (ADDED) --------------------
@@ -1873,6 +1907,7 @@ class SEAMPDCAEngine:
                 {
                     "doc_id": ev.get("doc_id"),
                     "filename": ev.get("filename"),
+                    "relevance_score": ev.get("relevance_score", ev.get("score", 0.0)),
                     "mapper_type": "AI_GENERATED", 
                     "timestamp": datetime.now().isoformat() # เพิ่ม timestamp เพื่อความสมบูรณ์
                 }
@@ -2426,7 +2461,6 @@ class SEAMPDCAEngine:
         
         if is_passed and top_evidences:
             seen = set()
-            score_map = {}
             
             def safe_float(val, default=0.0):
                 """Convert val to float safely, fallback to default if fails"""
@@ -2437,59 +2471,53 @@ class SEAMPDCAEngine:
 
             for ev in top_evidences:
                 doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
-                if not doc_id or str(doc_id).startswith(("TEMP-", "HASH-")):
-                    continue
-                if doc_id in seen:
+                
+                # กรอง ID ที่ไม่ถูกต้องและ Chunk ที่ซ้ำ
+                if not doc_id or str(doc_id).startswith(("TEMP-", "HASH-")) or doc_id in seen:
                     continue
 
-                # --- START: SCORE EXTRACTION (METADATA STAND) ---
+                # --- START: SCORE EXTRACTION REVISED ---
                 score = 0.0
                 metadata = ev.get("metadata", {}) or {}
-                filename_to_use = ""
+                filename_to_use = ev.get("source_filename") or metadata.get("source_filename") or ""
 
-                potential_score_force = metadata.get("_rerank_score_force")
-                if potential_score_force is not None:
+                # 🎯 Priority 1: ดึงจาก 'relevance_score' และ 'score' ที่ Reranker/Retriever เขียนไว้
+                score_sources = [
+                    ev.get("relevance_score"), ev.get("score"),
+                    metadata.get("relevance_score"), metadata.get("score"),
+                    ev.get("rerank_score"), metadata.get("rerank_score"),
+                    metadata.get("_rerank_score_force") # ค่าที่ถูกบังคับใส่
+                ]
+                
+                for s in score_sources:
+                    score = max(score, safe_float(s))
+                    
+                # 🎯 Priority 2: ตรวจสอบ distance (ChromaDB Similarity)
+                distance = metadata.get("distance") or ev.get("distance")
+                if distance is not None:
                     try:
-                        score = max(score, safe_float(potential_score_force))
+                        distance_val = safe_float(distance)
+                        similarity = round(1.0 - distance_val, 4)
+                        score = max(score, similarity)
                     except (TypeError, ValueError):
                         pass
-                
-                filename_with_score = ev.get("source_filename") or metadata.get("source_filename") or ""
-                
-                if "|SCORE:" in filename_with_score:
+
+                # 🎯 Priority 3: ตรวจสอบจากชื่อไฟล์ (โค้ดเดิม)
+                if "|SCORE:" in filename_to_use:
                     try:
-                        score_str = filename_with_score.split("|SCORE:")[1].split("|")[0]
+                        score_str = filename_to_use.split("|SCORE:")[1].split("|")[0]
                         filename_score = safe_float(score_str)
                         score = max(score, filename_score)
-                        filename_to_use = filename_with_score.split("|SCORE:")[0]
+                        filename_to_use = filename_to_use.split("|SCORE:")[0] 
                     except Exception:
                         pass
-                else:
-                    filename_to_use = filename_with_score
-
-                if score == 0.0:
-                    score_sources = [
-                        ev.get("rerank_score"), ev.get("relevance_score"),
-                        metadata.get("rerank_score"), metadata.get("relevance_score"), metadata.get("score")
-                    ]
-                    for s in score_sources:
-                        score = max(score, safe_float(s))
+                
+                # 💡 FIX: ถ้า score ยังเป็น 0.0 และไม่ใช่ Baseline Chunk ให้กำหนดเป็น 0.5 (Evidence Default)
+                if score == 0.0 and (ev.get("pdca_tag") != "Baseline"):
+                    score = 0.5 
                     
-                    distance = metadata.get("distance")
-                    if distance is not None:
-                        try:
-                            distance_val = safe_float(distance)
-                            similarity = round(1.0 - distance_val, 4)
-                            score = max(score, similarity)
-                        except (TypeError, ValueError):
-                            pass
-                
                 score = round(score, 4)
-                
-                # --- END: SCORE EXTRACTION (METADATA STAND) ---
-
-                score_map[doc_id] = score
-                seen.add(doc_id)
+                # --- END: SCORE EXTRACTION REVISED ---
                 
                 if not filename_to_use:
                     filename_to_use = ev.get("source_filename") or ev.get("source") or ev.get("filename") or metadata.get("source_filename") or metadata.get("filename") or "UNKNOWN_FILE"
@@ -2499,41 +2527,25 @@ class SEAMPDCAEngine:
                     "filename": filename_to_use,
                     "mapper_type": "AI_GENERATED", 
                     "timestamp": datetime.now().isoformat(), 
-                    "relevance_score": score,
+                    "relevance_score": score, # 💡 FIX 2: ใช้ score ที่ถูกคำนวณแล้ว
                     "chunk_uuid": doc_id,
                 })
-
+                seen.add(doc_id) # เพิ่มใน seen
+            
             # -------------------- 12. Calculate PDCA Coverage & Strength --------------------
             direct_count = channels.get("debug_meta", {}).get("direct_count", 0)
             
-            effective_evidence_count = sum(1 for entry in evidence_entries if entry.get("relevance_score", 0.0) > 0.0)
+            # NOTE: effective_evidence_count ถูกตัดออกไปแล้ว แต่ยังสามารถคำนวณ avg_score ได้
             
-            # NOTE: pdca_breakdown มาจาก calculate_pdca_breakdown_and_pass_status แล้ว
-            if level <= 2:
-                pdca_coverage = min(1.0, direct_count / 1.0)
-            else:
-                # NOTE: Logic นี้จะใช้ได้เมื่อ pdca_breakdown มี field 'status' ที่ถูกต้อง
-                # ถ้า pdca_breakdown เป็นเพียง Dict[str, int] ตามที่ calculate_pdca_breakdown_and_pass_status คืนมา
-                # จะต้องปรับการคำนวณ pdca_coverage หรือมั่นใจว่า Dict มี 'status'
-                # สำหรับตอนนี้ ปล่อยตามโค้ดเดิม หากเป็น Dict[str, int] จะได้ error:
-                # pdca_coverage = sum(1 for v in pdca_breakdown.values() if v.get("status") == "PASS") / 4.0 
-                
-                # *** สมมติว่า pdca_breakdown คือ Dict[str, int] (P, D, C, A Scores)
-                # และคำนวณ Coverage จากจำนวนที่มีคะแนนเป็น 1 ***
-                # coverage: (P+D+C+A score) / Required max PDCA score (4.0 or 8.0)
-                # สำหรับ L3-L5 (Max 4 Steps/8 Scores): 
-                # (P+D+C+A Score) / Max Required Score (6.0 for L4, 8.0 for L5)
-                # แต่เนื่องจากโค้ดเดิมใช้ / 4.0 ซึ่งน่าจะหมายถึง 4 steps (P,D,C,A)
-                # เพื่อให้เป็นไปตามโค้ดเดิม จึงใช้การนับจำนวนค่า > 0 / 4.0
-                
-                pdca_coverage = sum(1 for score in pdca_breakdown.values() if score > 0) / 4.0
-                # ********************************************************************************
-
             avg_score = sum(entry.get("relevance_score", 0.0) for entry in evidence_entries) / len(evidence_entries) if evidence_entries else 0.0
             
+            # NOTE: pdca_breakdown มาจาก calculate_pdca_breakdown_and_pass_status 
+            pdca_coverage = sum(1 for score in pdca_breakdown.values() if score > 0) / 4.0 # ใช้ Logic เดิม
+
+            # 💡 FIX: ปรับตัวคูณจาก 1.5 เป็น 2.0 เพื่อให้ Evidence Strength มีค่าสูงขึ้น
             evidence_strength = min(
                 10.0,
-                (avg_score * 10.0) * (pdca_coverage * 1.5)
+                (avg_score * 10.0) * (pdca_coverage * 2.0) 
             )
 
             ai_confidence = "HIGH" if evidence_strength >= 8.0 and is_passed else \
@@ -2594,6 +2606,10 @@ class SEAMPDCAEngine:
             "full_context_meta": debug,
         }
 
-        self.logger.info(f"  > Assessment {sub_id} L{level} completed → {status} (Score: {llm_score:.1f} | Evi Str: {final_result['evidence_strength']:.1f} | Conf: {ai_confidence})")
-        
+        # 🟢 [แก้ไข] 1. สร้างตัวแปร icon_status
+        icon_status = "✅" if status == "PASS" else "❌"
+
+        # 🟢 [แก้ไข] 2. นำ icon_status ไปใส่ใน Log
+        self.logger.info(f"  > Assessment {sub_id} L{level} completed → {icon_status} {status} (Score: {llm_score:.1f} | Evi Str: {final_result['evidence_strength']:.1f} | Conf: {ai_confidence})")
+
         return final_result

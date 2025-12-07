@@ -173,7 +173,6 @@ def retrieve_context_by_doc_ids(
         logger.error(f"retrieve_context_by_doc_ids error: {e}")
         return {"top_evidences": []}
 
-
 # ------------------------
 # Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
 # ------------------------
@@ -181,6 +180,7 @@ def retrieve_context_with_filter(
     query: Union[str, List[str]],
     doc_type: str,
     enabler: Optional[str] = None,
+    subject: Optional[str] = None, # 🟢 เพิ่ม subject
     vectorstore_manager: Optional['VectorStoreManager'] = None,
     mapped_uuids: Optional[List[str]] = None,
     stable_doc_ids: Optional[List[str]] = None, 
@@ -231,7 +231,6 @@ def retrieve_context_with_filter(
                 meta = doc.get('metadata') or {}
                 
                 # 🎯 FIX C: นำ chunk_uuid และ doc_id (stable_doc_uuid) เข้ามาใน metadata
-                # เพราะ priority_docs_input มาจาก evidence_map ซึ่งเก็บ chunk_uuid และ doc_id ไว้ที่ level บน
                 if 'chunk_uuid' in doc:
                     meta['chunk_uuid'] = doc['chunk_uuid']
                 if 'doc_id' in doc:
@@ -248,12 +247,29 @@ def retrieve_context_with_filter(
     collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
     logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
 
-    # 🟢 Logic สร้าง Filter WHERE จาก 64-char stable_doc_ids 
+    # 🟢 Logic สร้าง Filter WHERE จาก stable_doc_ids และ subject
     where_filter: Dict[str, Any] = {}
+    doc_id_filter: Dict[str, Any] = {}
+    
+    # 4.1 Filter: Stable Doc IDs (Hard Filter)
     if stable_doc_ids:
         logger.info(f"Applying Stable Doc ID filter: {len(stable_doc_ids)} IDs")
-        # 🎯 FIX: ใช้ 'stable_doc_uuid' ในการกรองเพื่อให้ตรงกับ Ingestion ใหม่
-        where_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}} 
+        doc_id_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}} 
+        where_filter = doc_id_filter # เริ่มต้นด้วย Doc ID Filter
+
+    # 4.2 Filter: Subject (Soft Filter)
+    if subject:
+        subject_filter = {"subject": {"$eq": subject}}
+        
+        if where_filter:
+            # ใช้ $and เพื่อรวมเงื่อนไข: (ID ต้องตรง AND Subject ต้องตรง)
+            where_filter = {"$and": [where_filter, subject_filter]}
+            logger.info(f"Adding Subject filter (AND logic): {subject}")
+        else:
+            # ถ้าไม่มี stable_doc_ids ให้ใช้ subject เป็น filter หลัก
+            where_filter = subject_filter
+            logger.warning("Applying Subject filter only (no Stable Doc IDs).")
+
 
     retriever = manager.get_retriever(collection_name) 
     if not retriever:
@@ -427,7 +443,6 @@ def retrieve_context_with_filter(
     logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
     return result
 
-
 # ------------------------------------------------------------------
 # Helper Function: Create ChromaDB Where Filter
 # ------------------------------------------------------------------
@@ -437,6 +452,7 @@ def _create_where_filter(doc_ids: Optional[Set[str]]) -> Dict[str, Any]:
     Assumes the stable document ID is stored in the metadata key 'stable_doc_uuid'.
     """
     if not doc_ids:
+        # 🟢 FIX: คืนค่าเป็น Dict ว่าง เมื่อไม่มี ID เพื่อป้องกัน Chroma Error
         return {}
     
     return {
@@ -445,22 +461,20 @@ def _create_where_filter(doc_ids: Optional[Set[str]]) -> Dict[str, Any]:
         }
     }
 
-# ------------------------
-# Retrieval: retrieve_context_for_endpoint 
-# ------------------------
-# ใน core/llm_data_utils.py
+
 # ------------------------
 # Retrieval: retrieve_context_for_endpoint (Final, Robust Version)
 # ------------------------
 def retrieve_context_for_endpoint(
     vectorstore_manager: VectorStoreManager, 
-    collection_name: Optional[str] = None, # ทำให้ Optional และมี Fallback
-    query: str = "", # ใส่ Default Value
-    doc_ids: Optional[Set[str]] = None,
+    collection_name: Optional[str] = None, 
+    query: str = "", 
+    stable_doc_ids: Optional[Set[str]] = None, 
     doc_type: Optional[str] = None, 
     enabler: Optional[str] = None, 
-    **kwargs: Any, # รับ Argument ที่ไม่คาดคิดทั้งหมด
-) -> Dict[str, Any]: # 💡 CRITICAL FIX: เปลี่ยน Return Type เป็น Dictionary
+    subject: Optional[str] = None, # 🟢 เพิ่ม subject เข้ามาใน Signature
+    **kwargs: Any, # รับ k_to_retrieve และ k_to_rerank ที่ Router อาจส่งมา
+) -> Dict[str, Any]: 
     """
     Directly query a Chroma collection using stable doc IDs (Hard Filter)
     This is used for endpoints that require specific, already selected documents.
@@ -472,9 +486,11 @@ def retrieve_context_for_endpoint(
     # ------------------------------------------------------------------
     if not collection_name and doc_type:
         try:
+            # 💡 Derive collection name จาก doc_type และ enabler
             collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
             logger.info(f"Derived collection_name: '{collection_name}' from doc_type='{doc_type}', enabler='{enabler}'")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Cannot derive collection_name from doc_type/enabler: {e}")
             collection_name = None 
 
     if not collection_name:
@@ -489,12 +505,29 @@ def retrieve_context_for_endpoint(
         logger.error(f"Cannot load Chroma instance for collection: {collection_name}")
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
     
-    # 3. เตรียม Where Filter
-    where_filter = _create_where_filter(doc_ids) 
+    # 3. เตรียม Where Filter (รวม Stable Doc IDs และ Subject) 🟢 จุดแก้ไข
+    # ใช้ฟังก์ชันช่วยสร้าง filter สำหรับ Doc IDs (ถ้ามี)
+    where_filter = _create_where_filter(stable_doc_ids)
+
+    # 3.2 Filter: Subject (Secondary Safety Filter) 
+    # 🟢 FIX: Clean Subject String ที่รับมาทันที และใช้ Exact Match (Final Version)
+    cleaned_subject = subject.strip() if subject else None
+
+    if cleaned_subject:
+        # 🎯 ใช้ Exact Match: {"subject": value}
+        subject_filter = {"subject": cleaned_subject}
+        
+        if where_filter:
+            # ใช้ $and เพื่อรวมเงื่อนไข: ID ต้องตรง AND Subject ต้องตรง
+            where_filter = {"$and": [where_filter, subject_filter]}
+            logger.info(f"Applying combined filter: {len(stable_doc_ids or [])} IDs AND Subject='{cleaned_subject}'")
+        else:
+            # กรณีที่ไม่ได้เลือก Doc ID มา
+            where_filter = subject_filter
+            logger.warning(f"Applying Subject filter only: '{cleaned_subject}'")
+    # ------------------------------------------------------------------
     
-    # ------------------------------------------------------------------
     # 4. Embed Query (แก้ Dimension Mismatch)
-    # ------------------------------------------------------------------
     try:
         embedding_func = get_hf_embeddings()
         query_text_with_prefix = "query: " + query
@@ -505,24 +538,29 @@ def retrieve_context_for_endpoint(
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
 
     # ------------------------------------------------------------------
-    # 5. Query Chroma DB โดยตรง (แก้ Chroma Empty Filter Error)
+    # 5. Query Chroma DB โดยตรง (ใช้ Hard Filter หรือ Query ทั้งหมด)
     # ------------------------------------------------------------------
     results = {'ids': [[]], 'documents': [[]], 'metadatas': [[]], 'distances': [[]]} # Placeholder
+    
+    # 💡 ใช้ INITIAL_TOP_K หรือค่า k_to_retrieve ที่ส่งมาจาก Router (ถ้ามี)
+    n_results = kwargs.get("k_to_retrieve", INITIAL_TOP_K)
     
     try:
         query_params = {
             "query_embeddings": [query_embeddings], 
-            "n_results": INITIAL_TOP_K,
+            "n_results": n_results,
             "include": ['documents', 'metadatas', 'distances']
         }
         
-        # 🎯 FIX: ส่ง 'where' ไปก็ต่อเมื่อมี Doc IDs เท่านั้น (แก้ Chroma Error)
+        # 🎯 FIX: ส่ง 'where' ไปก็ต่อเมื่อมี Filter เท่านั้น (แก้ Chroma Error)
         if where_filter: 
             query_params["where"] = where_filter
-            logger.info(f"Running Chroma query with {len(doc_ids or [])} Doc IDs filter and n_results={INITIAL_TOP_K}")
+            filter_summary = f"Doc IDs:{len(stable_doc_ids or [])}"
+            if subject:
+                 filter_summary += f", Subject:'{subject}'"
+            logger.info(f"Running Chroma query with Filter ({filter_summary}) and n_results={n_results}") # 🟢 ปรับปรุง Log
         else:
-            # ถ้าไม่มี doc_ids ให้ Log Warning และอาจจะ Query ทั้งหมด
-            logger.warning("No doc_ids provided for endpoint query. Querying entire collection (may be slow/incorrect usage).")
+            logger.warning("No stable_doc_ids or subject provided. Querying entire collection (may be slow/incorrect usage).")
 
         results = chroma_instance._collection.query(**query_params)
         
@@ -551,7 +589,7 @@ def retrieve_context_for_endpoint(
     final_chunks = list(raw_chunks) 
     
     # ------------------------------------------------------------------
-    # 7. Final Output: Convert LcDocument list to expected DICT format (CRITICAL FIX)
+    # 7. Final Output: Convert LcDocument list to expected DICT format
     # ------------------------------------------------------------------
     top_evidences = []
     aggregated_parts = []
