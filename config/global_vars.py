@@ -23,6 +23,8 @@ RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 INITIAL_TOP_K: Final[int] = 100             # ใช้สำหรับ retrieval ก่อน rerank
 FINAL_K_RERANKED: Final[int] = 12          # สำหรับ L1–L2; L3–L5 ใช้ 5
 FINAL_K_NON_RERANKED: Final[int] = 7       # สำหรับ non-reranked
+RERANK_THRESHOLD: Final[float] = 0.5  # เกณฑ์คุณภาพหลักฐาน (Threshold)
+MAX_EVI_STR_CAP: Final[float] = 3.0   # Evidence Strength สูงสุดเมื่อหลักฐานคุณภาพต่ำ
 
 CHUNK_SIZE: Final[int] = 1500
 CHUNK_OVERLAP: Final[int] = 250

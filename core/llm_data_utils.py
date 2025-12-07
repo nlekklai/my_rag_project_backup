@@ -176,6 +176,9 @@ def retrieve_context_by_doc_ids(
 # ------------------------
 # Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
 # ------------------------
+# ------------------------
+# Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
+# ------------------------
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
     doc_type: str,
@@ -333,7 +336,6 @@ def retrieve_context_with_filter(
     candidates = [d for d in dedup_chunks if d not in final_docs]
 
     # **NEW:** 6.0. สร้าง Map เพื่อ Patch Metadata ที่หายไปกลับคืนมา (ป้องกัน Reranker ล้าง metadata)
-    # ใช้ page_content เป็น Key ในการ Map กลับไปยัง metadata เดิม (ที่มี chunk_uuid)
     candidate_metadata_map = {
         doc.page_content: getattr(doc, 'metadata', {}) 
         for doc in candidates if hasattr(doc, 'page_content') and doc.page_content.strip()
@@ -430,6 +432,8 @@ def retrieve_context_with_filter(
             "source_filename": source,
             "text": pc,
             "pdca_tag": pdca,
+            # 🔑 CRITICAL FIX: เพิ่มการคัดลอกคะแนน Rerank เข้ามาในผลลัพธ์
+            "rerank_score": md.get("relevance_score", 0.0), 
         })
         aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
 
@@ -784,7 +788,6 @@ def build_multichannel_context_for_level(
 def enhance_query_for_statement(
     statement_text: str,
     sub_id: str,
-    # 🟢 FIX: Argument list ที่ถูกต้องตามการเรียกใน seam_assessment.py
     statement_id: str, 
     level: int,
     enabler_id: str,
@@ -793,23 +796,39 @@ def enhance_query_for_statement(
 ) -> List[str]:
     """
     Generates a list of tailored queries (Multi-Query strategy) based on the statement 
-    and PDCA focus. The logic is hardcoded here to generate P/D, C, and A queries 
-    based on the assessment level (L3+ gets C/A queries).
+    และ PDCA focus, โดยกำหนด Query ที่เฉพาะเจาะจงสำหรับแต่ละระดับ
     
     Returns: List[str] of queries.
     """
     
-    # Q1: Base Query (P/D Focus)
-    # เน้นที่ statement หลักและข้อจำกัดของ level, เป็นคำค้นหาหลัก
-    base_query = (
+    # Q1: Base Query (P/D Focus) - แม่แบบเริ่มต้น
+    base_query_template = (
         f"{statement_text}. {focus_hint} หลักฐานแสดงแผน การดำเนินการ และโครงสร้างของ {statement_id} "
         f"ตามบริบทของ {enabler_id}"
     )
     
-    queries = [base_query]
+    queries = []
 
-    # Q2 & Q3: เพิ่ม C/A Focus Queries สำหรับระดับ L3 ขึ้นไป
-    # เพื่อให้แน่ใจว่า RAG จะหาหลักฐานการตรวจสอบ (Check) และการปรับปรุง (Act)
+    # 1. Level 5 Query Refinement (ปรับ Base Query สำหรับ L5 เท่านั้น)
+    if level == 5:
+        # สำหรับ L5, ปรับ Base Query Q1 ให้เน้น L5 มากขึ้น
+        base_query = base_query_template + ". **การบูรณาการ, ความยั่งยืน, การขยายผล, โครงการนำร่อง, นวัตกรรม**"
+        queries.append(base_query)
+        
+        # Q4 (Innovation/Sustainability Focus) - เพิ่ม Query ที่ 4 เฉพาะ L5
+        l5_innovation_query = (
+            f"หลักฐานนวัตกรรม ความยั่งยืน การขยายผล หรือโครงการนำร่องที่เกี่ยวข้องกับ {statement_id}. "
+            f"การใช้ **Best Practice**, **ผลกระทบระยะยาว**, **การบูรณาการข้ามสายงาน**"
+        )
+        queries.append(l5_innovation_query)
+    
+    else:
+        # สำหรับ L1-L4, ใช้ Base Query ปกติ
+        base_query = base_query_template
+        queries.append(base_query)
+
+
+    # 2. Level 3+ (C/A) Query Refinement (เพิ่ม C และ A สำหรับ L3 ขึ้นไป)
     if level >= 3:
         
         # 🟢 C (Check/Evaluation) Focus Query
@@ -830,7 +849,7 @@ def enhance_query_for_statement(
         )
         queries.append(a_query)
     
-    # สำหรับ L1/L2 จะคืนค่าเฉพาะ Base Query เดียว
+    
     logger.info(f"Generated {len(queries)} queries for {sub_id} L{level} (ID: {statement_id}).")
     return queries
 
@@ -900,7 +919,18 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
     return None
 
 
-def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, check_evidence: str = "", act_evidence: str = "", llm_executor: Any = None, **kwargs) -> Dict[str, Any]:
+def evaluate_with_llm(
+    context: str, 
+    sub_criteria_name: str, 
+    level: int, 
+    statement_text: str, 
+    sub_id: str, 
+    check_evidence: str = "", 
+    act_evidence: str = "", 
+    llm_executor: Any = None, 
+    max_evidence_strength: float = 10.0, # 🟢 NEW: รับค่า Capping โดยตรง
+    **kwargs
+) -> Dict[str, Any]:
     """Standard Evaluation for L3+ with robust handling for missing keys."""
     
     context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else ""
@@ -910,7 +940,6 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
         return failure_result
 
     contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
-    # inside evaluate_with_llm before formatting
     baseline_summary = kwargs.get("baseline_summary", "")
     aux_summary = kwargs.get("aux_summary", "")
     
@@ -925,7 +954,9 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
         level_constraint=kwargs.get("level_constraint",""),
         contextual_rules_prompt=contextual_rules_prompt,
         check_evidence=check_evidence, 
-        act_evidence=act_evidence, 
+        act_evidence=act_evidence,
+        # 🟢 NEW: ส่งค่า Cap ให้ User Prompt (เผื่อใช้ในส่วนของ User)
+        max_evi_str_cap_for_llm=max_evidence_strength,
     )
 
     # Insert baseline_summary into the prompt explicitly:
@@ -940,7 +971,13 @@ def evaluate_with_llm(context: str, sub_criteria_name: str, level: int, statemen
     except:
         schema_json = '{"score":0,"reason":"string"}'
 
-    system_prompt = SYSTEM_ASSESSMENT_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+    # 🟢 FIX: จัดรูปแบบ SYSTEM_ASSESSMENT_PROMPT ด้วยค่า Cap ก่อนรวมกับ Schema
+    # (ต้องมั่นใจว่า SYSTEM_ASSESSMENT_PROMPT มี placeholder {max_evi_str_cap_for_llm} แล้ว)
+    system_prompt_formatted = SYSTEM_ASSESSMENT_PROMPT.format(
+        max_evi_str_cap_for_llm=max_evidence_strength
+    )
+
+    system_prompt = system_prompt_formatted + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
     try:
         # 3. เรียก LLM
@@ -1007,7 +1044,16 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     }
     return result
 
-def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int, statement_text: str, sub_id: str, llm_executor: Any, **kwargs) -> Dict[str, Any]:
+def evaluate_with_llm_low_level(
+    context: str, 
+    sub_criteria_name: str, 
+    level: int, 
+    statement_text: str, 
+    sub_id: str, 
+    llm_executor: Any, 
+    max_evidence_strength: float = 10.0, # 🟢 NEW: รับค่า Capping โดยตรง (แม้จะไม่ใช้ แต่รับเพื่อป้องกัน error)
+    **kwargs
+) -> Dict[str, Any]:
     """
     Evaluation สำหรับ L1/L2 แบบ robust และ schema uniform
     """
@@ -1037,11 +1083,14 @@ def evaluate_with_llm_low_level(context: str, sub_criteria_name: str, level: int
     except:
         schema_json = '{"score":0,"reason":"string"}'
 
-    system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+    # 🟢 FIX: จัดรูปแบบ SYSTEM_LOW_LEVEL_PROMPT ด้วยค่า Cap ก่อนรวมกับ Schema
+    system_prompt_formatted = SYSTEM_LOW_LEVEL_PROMPT.format(
+        max_evi_str_cap_for_llm=max_evidence_strength
+    )
+    system_prompt = system_prompt_formatted + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
     try:
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        # parsed = _normalize_keys(_robust_extract_json(raw) or {})
         parsed = _robust_extract_json(raw)
 
         # 🎯 FIX 1: ตรวจสอบและบังคับให้ 'parsed' เป็น dict ก่อนส่งไป extraction
