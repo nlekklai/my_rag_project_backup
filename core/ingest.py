@@ -524,124 +524,166 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
 )
 
 # -------------------- Load & Chunk Document --------------------
+# ------------------------------------------------------------------
+# SE-AM Sub-topic Mapping (จากหน้า 3-15 ของ SE-AM Manual Book 2566)
+# ------------------------------------------------------------------
+SEAM_SUBTOPIC_MAP = {
+    # CG
+    "1.1": "CG-1.1", "1-1": "CG-1.1",
+    # SP
+    "2.1": "SP-2.1", "2-1": "SP-2.1",
+    # RM&IC
+    "3.1": "RMIC-3.1", "3-1": "RMIC-3.1",
+    # SCM
+    "4.1": "SCM-4.1", "4-1": "SCM-4.1",
+    # DT
+    "5.1": "DT-5.1", "5-1": "DT-5.1",
+    # HCM
+    "6.1": "HCM-6.1", "6-1": "HCM-6.1", "6.2": "HCM-6.2", "6.3": "HCM-6.3", "6.4": "HCM-6.4",
+    "6.5": "HCM-6.5", "6.6": "HCM-6.6", "6.7": "HCM-6.7",
+    # KM & IM
+    "7.1": "KM-7.1", "7-1": "KM-7.1",
+    "7.20": "IM-7.20", "7-20": "IM-7.20",
+    # IA
+    "8.1": "IA-8.1", "8-1": "IA-8.1",
+}
+
+# Keywords ที่บ่งบอกว่าเป็นเกณฑ์ระดับต่าง ๆ
+LEVEL_KEYWORDS = ["ระดับ 1", "ระดับ 2", "ระดับ 3", "ระดับ 4", "ระดับ 5"]
+
+def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
+    """
+    ตรวจจับ sub_topic และ page number จากข้อความของ chunk
+    """
+    result = {"sub_topic": None, "page_number": None}
+
+    # 1. จับ page number (เช่น "หน้า 1-1", "หน้า 243")
+    page_match = re.search(r'หน้า\s*(\d+(?:-\d+)?)', text)
+    if page_match:
+        result["page_number"] = page_match.group(1)
+
+    # 2. จับ sub_topic เช่น "4.1", "7-20", "KM topic 4.1"
+    for pattern, code in [
+        (r'(?:KM|topic)?\s*(\d+\.\d+)', None),
+        (r'(\d+-\d+)', None),
+        (r'(\d+\.\d+)', None),
+    ]:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            key = match.group(1).replace("-", ".")
+            if key in SEAM_SUBTOPIC_MAP:
+                result["sub_topic"] = SEAM_SUBTOPIC_MAP[key]
+                break
+
+    # 3. ถ้ายังไม่เจอ ให้ลองจับจากหัวข้อเต็ม (เช่น "4.1 กระบวนการจัดการความรู้ที่เป็นระบบ")
+    if not result["sub_topic"]:
+        for key, code in SEAM_SUBTOPIC_MAP.items():
+            if key.replace(".", "-") in text or key in text:
+                result["sub_topic"] = code
+                break
+
+    return result
+
+
+# ------------------------------------------------------------------
+# load_and_chunk_document – เวอร์ชันสมบูรณ์สุดสำหรับ SE-AM
+# ------------------------------------------------------------------
 def load_and_chunk_document(
     file_path: str,
-    # 🎯 FIX: ลบ doc_id_key ออกไป เพราะไม่ใช้งานแล้ว
-    stable_doc_uuid: str, 
-    # 🟢 เพิ่มพารามิเตอร์ Metadata ที่จำเป็นเข้ามา
-    doc_type: str, 
+    stable_doc_uuid: str,
+    doc_type: str,
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
-    # ----------------------------------------------------
     year: Optional[int] = None,
     version: str = "v1",
     metadata: Optional[Dict[str, Any]] = None,
     ocr_pages: Optional[Iterable[int]] = None
 ) -> List[Document]:
     """
-    Load document, inject metadata, clean, and split into chunks.
-    ใช้ 64-char stable_doc_uuid เป็นตัวระบุเอกสารหลัก (Primary Document ID).
+    Load + Clean + Chunk + ใส่ sub_topic + page_number อัตโนมัติ
     """
     file_extension = os.path.splitext(file_path)[1].lower()
     loader_func = FILE_LOADER_MAP.get(file_extension)
     
     if not loader_func:
-        logger.error(f"No loader found for extension: {file_extension} at {file_path}")
+        logger.error(f"No loader found for {file_extension}")
         return []
-        
-    raw_docs = [] 
+
+    # --- Load Document ---
     try:
         raw_docs = loader_func(file_path)
-        
     except ValidationError as e:
-        loader_name = str(loader_func)
-        if 'Unstructured' in loader_name or 'Unstructured' in str(loader_func):
-             logger.warning(f"⚠️ OCR Crash Handled: {os.path.basename(file_path)} - Loader raised Pydantic ValidationError. Treating as 0 documents loaded.")
-             raw_docs = [] 
+        if 'Unstructured' in str(loader_func):
+            logger.warning(f"OCR crash handled: {os.path.basename(file_path)}")
+            raw_docs = []
         else:
-             raise e 
-             
+            raise e
     except Exception as e:
-        logger.error(f"❌ Critical error during file loading: {file_path}. Error: {e}")
+        logger.error(f"Load failed: {file_path} | {e}")
         raw_docs = []
 
     if not raw_docs:
-        logger.warning(f"Loader returned 0 documents for {os.path.basename(file_path)}. Skipping chunking.")
+        logger.warning(f"No content loaded from {os.path.basename(file_path)}")
         return []
 
-    pre_cleaned_raw_docs = []
+    # --- Normalize to Document objects ---
+    docs = []
     for doc in raw_docs:
         if isinstance(doc, Document):
-            pre_cleaned_raw_docs.append(doc)
+            docs.append(doc)
         else:
-            doc_type_str = str(type(doc)).split("'")[-2]
-            logger.warning(f"⚠️ Loader for '{os.path.basename(file_path)}' returned non-Document object (Type: {doc_type_str}). Skipping normalization.")
+            logger.warning(f"Non-Document object skipped: {type(doc)}")
 
-    docs = normalize_loaded_documents(pre_cleaned_raw_docs, source_path=file_path)
+    # --- Inject Base Metadata ---
+    base_metadata = {
+        "doc_type": doc_type,
+        "stable_doc_uuid": stable_doc_uuid,
+        "source_filename": os.path.basename(file_path),
+        "source": os.path.basename(file_path),
+        "version": version,
+    }
+    if enabler: base_metadata["enabler"] = enabler
+    if subject: base_metadata["subject"] = subject.strip()
+    if year: base_metadata["year"] = year
+    if metadata: base_metadata.update(metadata)
 
     for d in docs:
-        
-        # 🟢 FIX: สร้างชุด Metadata จากพารามิเตอร์ใหม่ทั้งหมด
-        doc_metadata = {}
-        if metadata:
-            # ใช้ metadata ที่ส่งมาจาก process_document เป็นฐาน
-            doc_metadata.update(metadata) 
-        
-        # Metadata ใหม่/หลัก (override ถ้ามีใน metadata ที่ส่งมา)
-        doc_metadata["doc_type"] = doc_type 
-        if enabler: doc_metadata["enabler"] = enabler
+        d.metadata.update(base_metadata)
+        d.metadata = _safe_filter_complex_metadata(d.metadata)
 
-        cleaned_subject = subject.strip() if subject else None
-        if cleaned_subject: doc_metadata["subject"] = cleaned_subject
-
-        # if subject: doc_metadata["subject"] = subject
-        
-        # Metadata เดิม
-        if year: doc_metadata["year"] = year
-        doc_metadata["version"] = version
-        doc_metadata["stable_doc_uuid"] = stable_doc_uuid 
-        
-        base_filename = os.path.basename(file_path)
-        doc_metadata["source_filename"] = base_filename
-        doc_metadata["source"] = base_filename
-        
-        # Update Metadata เข้าไปใน Document
-        try:
-             d.metadata.update(doc_metadata)
-             d.metadata = _safe_filter_complex_metadata(d.metadata)
-        except Exception:
-             d.metadata["injected_metadata_fail"] = str(doc_metadata) 
-        
-        # NOTE: หากต้องการให้ Metadata Field 'doc_id' เก็บค่า 64-char UUID ด้วย 
-        # ต้องใช้ d.metadata["doc_id"] = stable_doc_uuid 
-        
-        d.metadata = _safe_filter_complex_metadata(d.metadata) 
-
+    # --- Split into chunks ---
     try:
-        chunks = TEXT_SPLITTER.split_documents(docs) 
+        chunks = TEXT_SPLITTER.split_documents(docs)
     except Exception as e:
-        logger.error(f"Error during document splitting for {os.path.basename(file_path)}: {e}")
-        chunks = docs 
+        logger.error(f"Split failed: {e}")
+        chunks = docs
 
-    final_cleaned_chunks = []
-    for c in chunks:
-        if isinstance(c, Document):
-             c.page_content = clean_text(c.page_content) 
-             final_cleaned_chunks.append(c)
-        else:
-             logger.error(f"FATAL: Non-Document object found in 'chunks' list after splitting! Type: {type(c)}. Skipping.")
-             
-    chunks = final_cleaned_chunks 
+    # --- Clean text & Inject per-chunk metadata ---
+    final_chunks = []
+    for idx, chunk in enumerate(chunks, start=1):
+        if not isinstance(chunk, Document):
+            continue
 
-    for idx, c in enumerate(chunks, start=1):
-        unique_chunk_id = f"{stable_doc_uuid}_{idx}" 
-        
-        c.metadata["chunk_uuid"] = unique_chunk_id 
-        c.metadata["chunk_index"] = idx
-        c.metadata = _safe_filter_complex_metadata(c.metadata) 
-        
-    logger.info(f"Loaded and chunked {os.path.basename(file_path)} -> {len(chunks)} chunks.")
-    return chunks
+        # Clean text
+        chunk.page_content = clean_text(chunk.page_content)
+
+        # Detect sub_topic & page_number
+        detected = _detect_sub_topic_and_page(chunk.page_content)
+        if detected["sub_topic"]:
+            chunk.metadata["sub_topic"] = detected["sub_topic"]
+        if detected["page_number"]:
+            chunk.metadata["page_number"] = detected["page_number"]
+
+        # Unique chunk ID
+        chunk.metadata["chunk_uuid"] = f"{stable_doc_uuid}_{idx}"
+        chunk.metadata["chunk_index"] = idx
+        chunk.metadata = _safe_filter_complex_metadata(chunk.metadata)
+
+        final_chunks.append(chunk)
+
+    logger.info(f"Loaded {os.path.basename(file_path)} → {len(final_chunks)} chunks | "
+                f"sub_topic detected: {len([c for c in final_chunks if c.metadata.get('sub_topic')])}")
+    return final_chunks
 
 # -------------------- [REVISED] Process single document (Cleaned & Final) --------------------
 def process_document(

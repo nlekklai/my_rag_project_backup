@@ -208,5 +208,89 @@
             "relevance_score": 0.5,
             "chunk_uuid": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d"
         }
+    ],
+    "3.1.L1": [
+        {
+            "doc_id": "a9bf739f1e92769485dfdcfa458a90f6a76ada6c13b601c49c3eccf2ff168132",
+            "filename": "KM2.2L203 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:36:10.803112",
+            "relevance_score": 0.3827,
+            "chunk_uuid": "a9bf739f1e92769485dfdcfa458a90f6a76ada6c13b601c49c3eccf2ff168132"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:36:10.803189",
+            "relevance_score": 0.3205,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        },
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:36:10.803226",
+            "relevance_score": 0.3158,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:36:10.803274",
+            "relevance_score": 0.2755,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:36:10.803298",
+            "relevance_score": 0.2755,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        }
+    ],
+    "3.1.L2": [
+        {
+            "doc_id": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0",
+            "filename": "KM2.1L405 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit หลั.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:37:10.933718",
+            "relevance_score": 0.8058,
+            "chunk_uuid": "6e49ee02029133fddc084fc4e2bf9609a9105a7be61e8bf6e2aedf62ba7dfbc0"
+        },
+        {
+            "doc_id": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235",
+            "filename": "KM2.1L502 PEA KM Master Plan_สำหรับนำเสนอคกก.บริหาร กฟภ._13Dec24_edit.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:37:10.934108",
+            "relevance_score": 0.503,
+            "chunk_uuid": "1a611619c16398739379fe74d801589646d173a86e3df5f701bff3edf0d21235"
+        },
+        {
+            "doc_id": "0551900385eacdd9f26cbbb84340da2973dfbbb8f158d87c64bc18e8136069db",
+            "filename": "KM3.3L201 โครงสร้างคณะกรรมการจัดการความรู้ (KM).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:37:10.934133",
+            "relevance_score": 0.3926,
+            "chunk_uuid": "0551900385eacdd9f26cbbb84340da2973dfbbb8f158d87c64bc18e8136069db"
+        },
+        {
+            "doc_id": "a9bf739f1e92769485dfdcfa458a90f6a76ada6c13b601c49c3eccf2ff168132",
+            "filename": "KM2.2L203 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร 3.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:37:10.934402",
+            "relevance_score": 0.3827,
+            "chunk_uuid": "a9bf739f1e92769485dfdcfa458a90f6a76ada6c13b601c49c3eccf2ff168132"
+        },
+        {
+            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-08T13:37:10.934151",
+            "relevance_score": 0.3795,
+            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+        }
     ]
 }

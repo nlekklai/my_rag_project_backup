@@ -85,93 +85,206 @@ def set_mock_control_mode(enable: bool):
     _MOCK_FLAG = bool(enable)
     logger.info(f"Mock control mode: {_MOCK_FLAG}")
 
-# ------------------------
-# Retrieval: retrieve_context_by_doc_ids (Level 2 Hydration)
-# ------------------------
+# Helper: สร้าง Chroma where filter
+def _create_where_filter(stable_doc_ids: Optional[Set[str]] = None, 
+                         subject: Optional[str] = None,
+                         sub_topic: Optional[str] = None) -> Dict[str, Any]:
+    """สร้าง where filter สำหรับ ChromaDB ที่แข็งแกร่งที่สุด"""
+    filters = []
+    
+    if stable_doc_ids:
+        filters.append({"stable_doc_uuid": {"$in": list(stable_doc_ids)}})
+    
+    if subject:
+        cleaned = subject.strip()
+        if cleaned:
+            filters.append({"subject": cleaned})
+    
+    if sub_topic:
+        filters.append({"sub_topic": {"$eq": sub_topic}})
+    
+    if len(filters) > 1:
+        return {"$and": filters}
+    elif filters:
+        return filters[0]
+    else:
+        return {}
+
+
+# ========================
+# 1. retrieve_context_for_endpoint (เวอร์ชันสุดแม่น + rerank + subtopic)
+# ========================
+def retrieve_context_for_endpoint(
+    vectorstore_manager,
+    query: str = "",
+    stable_doc_ids: Optional[Set[str]] = None,
+    doc_type: Optional[str] = None,
+    enabler: Optional[str] = None,
+    subject: Optional[str] = None,
+    sub_topic: Optional[str] = None,  # ใหม่: เช่น "KM-4.1"
+    k_to_retrieve: int = INITIAL_TOP_K,
+    k_to_rerank: int = FINAL_K_RERANKED,
+) -> Dict[str, Any]:
+    """
+    ดึง context จากเอกสารที่เลือกมาแล้ว (stable_doc_ids) หรือ filter แม่น ๆ
+    รองรับ sub_topic เช่น "KM-4.1" → แม่นสุด
+    """
+    start_time = time.time()
+    vsm = vectorstore_manager
+
+    # 1. กำหนด collection
+    collection_name = f"{doc_type or 'seam'}"
+    if enabler and enabler != DEFAULT_ENABLER:
+        collection_name = f"{doc_type}_{enabler.lower()}"
+
+    chroma = vsm._load_chroma_instance(collection_name)
+    if not chroma:
+        logger.error(f"Collection {collection_name} not found!")
+        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
+
+    # 2. สร้าง filter ที่แข็งแกร่ง
+    where_filter = _create_where_filter(stable_doc_ids, subject, sub_topic)
+    logger.info(f"Retrieval → Collection: {collection_name} | Filter: {where_filter} | Query: {query[:80]}...")
+
+    # 3. Embed query
+    try:
+        emb = get_hf_embeddings()
+        query_emb = emb.embed_query(f"query: {query}")
+    except Exception as e:
+        logger.error(f"Embedding failed: {e}")
+        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
+
+    # 4. Query Chroma
+    try:
+        results = chroma._collection.query(
+            query_embeddings=[query_emb],
+            n_results=k_to_retrieve,
+            where=where_filter if where_filter else None,
+            include=["documents", "metadatas", "distances"]
+        )
+    except Exception as e:
+        logger.error(f"Chroma query failed: {e}")
+        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
+
+    # 5. แปลงเป็น LcDocument
+    raw_chunks: List[LcDocument] = []
+    for doc, meta, dist in zip(
+        results["documents"][0],
+        results["metadatas"][0],
+        results["distances"][0]
+    ):
+        meta["retrieval_distance"] = float(dist)
+        raw_chunks.append(LcDocument(page_content=doc, metadata=meta))
+
+    logger.info(f"Raw retrieval: {len(raw_chunks)} chunks")
+
+    # 6. Rerank (สำคัญมาก!)
+    final_chunks = raw_chunks
+    reranker = get_global_reranker()
+    if reranker and len(raw_chunks) > k_to_rerank:
+        try:
+            reranked = reranker.compress_documents(
+                documents=raw_chunks,
+                query=query,
+                top_n=k_to_rerank
+            )
+            final_chunks = [getattr(r, "document", r) for r in reranked]
+            logger.info(f"Reranked → {len(final_chunks)} chunks")
+        except Exception as e:
+            logger.warning(f"Reranker failed: {e}")
+
+    # 7. สร้าง output
+    top_evidences = []
+    aggregated_parts = []
+    used_chunk_uuids = []
+
+    for doc in final_chunks[:k_to_rerank]:
+        md = doc.metadata or {}
+        text = str(doc.page_content or "").strip()
+        if not text:
+            continue
+
+        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
+        if not chunk_uuid or len(chunk_uuid) < 32:
+            continue  # กรอง TEMP ID
+
+        used_chunk_uuids.append(chunk_uuid)
+
+        top_evidences.append({
+            "doc_id": md.get("stable_doc_uuid"),
+            "chunk_uuid": chunk_uuid,
+            "source": md.get("source") or md.get("filename") or "Unknown",
+            "text": text,
+            "pdca_tag": md.get("pdca_tag", "Other"),
+            "retrieval_distance": md.get("retrieval_distance", 1.0),
+            "sub_topic": md.get("sub_topic"),
+        })
+        aggregated_parts.append(f"[SOURCE: {md.get('source', 'Unknown')}] {text}")
+
+    result = {
+        "top_evidences": top_evidences,
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
+        "retrieval_time": round(time.time() - start_time, 3),
+        "used_chunk_uuids": used_chunk_uuids
+    }
+    logger.info(f"Final retrieval: {len(top_evidences)} chunks | Sub-topic: {sub_topic}")
+    return result
+
+
+# ========================
+# 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
+# ========================
 def retrieve_context_by_doc_ids(
-    doc_uuids: List[str], # <--- Input คือ Chunk UUIDs (64-char_index) หรือ Stable Doc UUID (64-char)
+    doc_uuids: List[str],
     doc_type: str,
     enabler: Optional[str] = None,
-    vectorstore_manager: Optional['VectorStoreManager'] = None
+    vectorstore_manager = None,
+    limit: int = 50
 ) -> Dict[str, Any]:
+    """
+    ดึง chunks จาก stable_doc_uuid หลายตัว (ใช้ตอน hydration sources)
+    """
+    start_time = time.time()
+    vsm = vectorstore_manager or VectorStoreManager()
     
-    # ไม่มี Doc UUID → ไม่มี evidence
+    collection_name = f"{doc_type}"
+    if enabler and enabler != DEFAULT_ENABLER:
+        collection_name = f"{doc_type}_{enabler.lower()}"
+
+    chroma = vsm._load_chroma_instance(collection_name)
+    if not chroma:
+        logger.error(f"Collection {collection_name} not found for hydration")
+        return {"top_evidences": []}
+
     if not doc_uuids:
         return {"top_evidences": []}
 
-    # ใช้ manager ที่ส่งเข้ามา (ถ้ามี) หรือสร้างใหม่
-    manager = vectorstore_manager if vectorstore_manager else VectorStoreManager()
-    if manager is None:
-        logger.error("VectorStoreManager is None.")
-        return {"top_evidences": []}
-
-    # 🟢 NEW FIX: การแปลง ID (Stable Doc ID -> Chunk UUIDs)
-    chunk_uuids_for_chroma = []
-    
-    # ตรวจสอบว่ามี Doc ID Map ไหม
-    if not hasattr(manager, 'doc_id_map') or not manager.doc_id_map:
-        logger.warning("VSM Doc ID Map is missing or empty! Using input IDs directly (may fail Hydration).")
-        # Fallback (เพื่อไม่ให้โค้ดพัง)
-        chunk_uuids_for_chroma = doc_uuids
-        
-    else:
-        for input_id in doc_uuids:
-            input_id_str = str(input_id).strip()
-            # 1. ตรวจสอบว่าเป็น Stable Doc ID (64 ตัว) ที่ต้อง Map หรือไม่
-            if len(input_id_str) == 64 and input_id_str in manager.doc_id_map:
-                # 🎯 แปลง: ใช้ Stable Doc ID ค้นหา Chunk UUIDs ที่ถูกต้อง
-                mapped_info = manager.doc_id_map.get(input_id_str, {})
-                full_chunk_list = mapped_info.get('chunk_uuids', [])
-                chunk_uuids_for_chroma.extend(full_chunk_list)
-            # 2. ถ้าไม่ใช่ 64 ตัว หรือไม่ตรงกับ Stable Doc ID (อาจเป็น Chunk ID ที่ถูกต้องแล้ว) ให้ใช้โดยตรง
-            else:
-                chunk_uuids_for_chroma.append(input_id_str) 
-
-        # Log เพื่อความชัดเจน
-        if len(chunk_uuids_for_chroma) > len(doc_uuids):
-            logger.info(f"VSM: Mapped {len(doc_uuids)} Stable IDs to {len(chunk_uuids_for_chroma)} full Chunk UUIDs for Chroma.")
-
-    # ลบซ้ำก่อนส่งเข้า Chroma
-    final_uuids_to_retrieve = list(set(chunk_uuids_for_chroma))
-    if not final_uuids_to_retrieve:
-        logger.warning("VSM: No valid Chunk UUIDs found after mapping and cleaning.")
-        return {"top_evidences": []}
-    
-    # END OF NEW FIX: ใช้ final_uuids_to_retrieve แทน doc_uuids
+    logger.info(f"Hydration → {len(doc_uuids)} doc IDs from {collection_name}")
 
     try:
-        # 🎯 FIX: เปลี่ยนไปใช้ retrieve_by_chunk_uuids เพื่อดึงเฉพาะ Chunk ที่ระบุเท่านั้น (1:1 Hydration)
-        collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
-        
-        # docs จะเป็นรายการ LcDocument ที่มี page_content และ metadata ที่เกี่ยวข้องกับ Chunk ID นั้น ๆ
-        # ใช้ ID ที่ถูกแปลงแล้ว
-        docs: List[LcDocument] = manager.retrieve_by_chunk_uuids(final_uuids_to_retrieve, collection_name) 
-
-        top_evidences = []
-        for d in docs:
-            md = getattr(d, "metadata", {}) or {}
-            
-            # ✅ FIX: ตรวจสอบและใช้ chunk_uuid ซึ่งตอนนี้ควรเป็น 64-char_index ที่ถูกดึงมา
-            # ใน retrieve_by_chunk_uuids, chunk_uuid จะถูกใส่กลับเข้าไปใน metadata
-            final_chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") 
-            
-            top_evidences.append({
-                # doc_id: ID เอกสารหลัก (64 ตัว)
-                "doc_id": md.get("stable_doc_uuid"),
-                # chunk_uuid: ID ที่ใช้ในการค้นหาและอ้างอิง Chunk (64-char_index)
-                "chunk_uuid": final_chunk_uuid, 
-                "doc_type": md.get("doc_type"),
-                "source": md.get("source") or md.get("doc_source"),
-                "source_filename": md.get("source") or md.get("doc_source"),  
-                "content": getattr(d, "page_content", "").strip(),
-                "chunk_index": md.get("chunk_index")
-            })
-
-        return {"top_evidences": top_evidences}
-
+        results = chroma._collection.get(
+            where={"stable_doc_uuid": {"$in": doc_uuids}},
+            limit=limit,
+            include=["documents", "metadatas"]
+        )
     except Exception as e:
-        logger.error(f"retrieve_context_by_doc_ids error: {e}")
+        logger.error(f"Hydration query failed: {e}")
         return {"top_evidences": []}
+
+    evidences = []
+    for doc, meta in zip(results["documents"], results["metadatas"]):
+        if not doc.strip():
+            continue
+        evidences.append({
+            "doc_id": meta.get("stable_doc_uuid"),
+            "chunk_uuid": meta.get("chunk_uuid"),
+            "source": meta.get("source") or meta.get("filename") or "Unknown",
+            "text": doc,
+            "pdca_tag": meta.get("pdca_tag", "Other"),
+        })
+
+    logger.info(f"Hydration success: {len(evidences)} chunks from {len(doc_uuids)} docs")
+    return {"top_evidences": evidences}
 
 # ------------------------
 # Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
@@ -442,193 +555,6 @@ def retrieve_context_with_filter(
     }
 
     logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
-    return result
-
-# ------------------------------------------------------------------
-# Helper Function: Create ChromaDB Where Filter
-# ------------------------------------------------------------------
-def _create_where_filter(doc_ids: Optional[Set[str]]) -> Dict[str, Any]:
-    """
-    Creates a ChromaDB 'where' filter dictionary to filter by stable document IDs.
-    Assumes the stable document ID is stored in the metadata key 'stable_doc_uuid'.
-    """
-    if not doc_ids:
-        # 🟢 FIX: คืนค่าเป็น Dict ว่าง เมื่อไม่มี ID เพื่อป้องกัน Chroma Error
-        return {}
-    
-    return {
-        "stable_doc_uuid": {
-            "$in": list(doc_ids)
-        }
-    }
-
-
-# ------------------------
-# Retrieval: retrieve_context_for_endpoint (Final, Robust Version)
-# ------------------------
-def retrieve_context_for_endpoint(
-    vectorstore_manager: VectorStoreManager, 
-    collection_name: Optional[str] = None, 
-    query: str = "", 
-    stable_doc_ids: Optional[Set[str]] = None, 
-    doc_type: Optional[str] = None, 
-    enabler: Optional[str] = None, 
-    subject: Optional[str] = None, # 🟢 เพิ่ม subject เข้ามาใน Signature
-    **kwargs: Any, # รับ k_to_retrieve และ k_to_rerank ที่ Router อาจส่งมา
-) -> Dict[str, Any]: 
-    """
-    Directly query a Chroma collection using stable doc IDs (Hard Filter)
-    This is used for endpoints that require specific, already selected documents.
-    """
-    start_time = time.time() 
-    
-    # ------------------------------------------------------------------
-    # 1. จัดการ Collection Name (Fallback Logic)
-    # ------------------------------------------------------------------
-    if not collection_name and doc_type:
-        try:
-            # 💡 Derive collection name จาก doc_type และ enabler
-            collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
-            logger.info(f"Derived collection_name: '{collection_name}' from doc_type='{doc_type}', enabler='{enabler}'")
-        except Exception as e:
-            logger.error(f"Cannot derive collection_name from doc_type/enabler: {e}")
-            collection_name = None 
-
-    if not collection_name:
-        logger.error("FATAL: Cannot determine collection_name. Exiting retrieval.")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
-    
-    logger.critical(f"[QUERY] Running Endpoint Query: '{query[:50]}...' → collection='{collection_name}' (Type: {doc_type or '?'})")
-
-    # 2. โหลด Chroma Instance
-    chroma_instance = vectorstore_manager._load_chroma_instance(collection_name)
-    if chroma_instance is None:
-        logger.error(f"Cannot load Chroma instance for collection: {collection_name}")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
-    
-    # 3. เตรียม Where Filter (รวม Stable Doc IDs และ Subject) 🟢 จุดแก้ไข
-    # ใช้ฟังก์ชันช่วยสร้าง filter สำหรับ Doc IDs (ถ้ามี)
-    where_filter = _create_where_filter(stable_doc_ids)
-
-    # 3.2 Filter: Subject (Secondary Safety Filter) 
-    # 🟢 FIX: Clean Subject String ที่รับมาทันที และใช้ Exact Match (Final Version)
-    cleaned_subject = subject.strip() if subject else None
-
-    if cleaned_subject:
-        # 🎯 ใช้ Exact Match: {"subject": value}
-        subject_filter = {"subject": cleaned_subject}
-        
-        if where_filter:
-            # ใช้ $and เพื่อรวมเงื่อนไข: ID ต้องตรง AND Subject ต้องตรง
-            where_filter = {"$and": [where_filter, subject_filter]}
-            logger.info(f"Applying combined filter: {len(stable_doc_ids or [])} IDs AND Subject='{cleaned_subject}'")
-        else:
-            # กรณีที่ไม่ได้เลือก Doc ID มา
-            where_filter = subject_filter
-            logger.warning(f"Applying Subject filter only: '{cleaned_subject}'")
-    # ------------------------------------------------------------------
-    
-    # 4. Embed Query (แก้ Dimension Mismatch)
-    try:
-        embedding_func = get_hf_embeddings()
-        query_text_with_prefix = "query: " + query
-        query_embeddings = embedding_func.embed_query(query_text_with_prefix)
-        logger.info("✅ Successfully embedded query with 768 dimension.")
-    except Exception as e:
-        logger.error(f"FATAL: Failed to embed query with 768-dim model: {e}")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
-
-    # ------------------------------------------------------------------
-    # 5. Query Chroma DB โดยตรง (ใช้ Hard Filter หรือ Query ทั้งหมด)
-    # ------------------------------------------------------------------
-    results = {'ids': [[]], 'documents': [[]], 'metadatas': [[]], 'distances': [[]]} # Placeholder
-    
-    # 💡 ใช้ INITIAL_TOP_K หรือค่า k_to_retrieve ที่ส่งมาจาก Router (ถ้ามี)
-    n_results = kwargs.get("k_to_retrieve", INITIAL_TOP_K)
-    
-    try:
-        query_params = {
-            "query_embeddings": [query_embeddings], 
-            "n_results": n_results,
-            "include": ['documents', 'metadatas', 'distances']
-        }
-        
-        # 🎯 FIX: ส่ง 'where' ไปก็ต่อเมื่อมี Filter เท่านั้น (แก้ Chroma Error)
-        if where_filter: 
-            query_params["where"] = where_filter
-            filter_summary = f"Doc IDs:{len(stable_doc_ids or [])}"
-            if subject:
-                 filter_summary += f", Subject:'{subject}'"
-            logger.info(f"Running Chroma query with Filter ({filter_summary}) and n_results={n_results}") # 🟢 ปรับปรุง Log
-        else:
-            logger.warning("No stable_doc_ids or subject provided. Querying entire collection (may be slow/incorrect usage).")
-
-        results = chroma_instance._collection.query(**query_params)
-        
-    except Exception as e:
-        logger.error(f"Chroma direct query failed (Endpoint): {e}", exc_info=False)
-        
-    # ------------------------------------------------------------------
-    # 6. Post-process: Convert Chroma results to LcDocument
-    # ------------------------------------------------------------------
-    raw_chunks: List[LcDocument] = []
-    if results and results.get('documents') and results['documents'][0]:
-        for doc_content, metadata, distance in zip(
-            results['documents'][0],
-            results['metadatas'][0],
-            results['distances'][0]
-        ):
-            if not metadata:
-                metadata = {}
-            
-            metadata['retrieval_distance'] = float(distance)
-            metadata['collection_name'] = collection_name
-            
-            raw_chunks.append(LcDocument(page_content=doc_content, metadata=metadata))
-    
-    logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB (Direct): {len(raw_chunks)} documents")
-    final_chunks = list(raw_chunks) 
-    
-    # ------------------------------------------------------------------
-    # 7. Final Output: Convert LcDocument list to expected DICT format
-    # ------------------------------------------------------------------
-    top_evidences = []
-    aggregated_parts = []
-    used_chunk_uuids = []
-    
-    for doc in final_chunks:
-        md = getattr(doc, "metadata", {}) or {}
-        pc = str(doc.page_content or "").strip()
-        
-        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
-        source = md.get("source") or md.get("filename") or md.get("doc_source") or "Unknown"
-        pdca = md.get("pdca_tag", "Other")
-
-        if chunk_uuid:
-            used_chunk_uuids.append(str(chunk_uuid))
-
-        top_evidences.append({
-            "doc_id": md.get("stable_doc_uuid"),
-            "chunk_uuid": chunk_uuid, 
-            "source": source,
-            "source_filename": source,
-            "text": pc,
-            "pdca_tag": pdca,
-            "retrieval_distance": md.get("retrieval_distance", 0.0),
-        })
-        aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
-
-    end_time = time.time()
-    result = {
-        "top_evidences": top_evidences,
-        "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
-        "retrieval_time": round(end_time - start_time, 3),
-        "used_chunk_uuids": used_chunk_uuids 
-    }
-    
-    source_count = len({c.metadata.get('stable_doc_uuid') for c in final_chunks if c.metadata and c.metadata.get('stable_doc_uuid')}) 
-    logger.info(f"Final retrieval (Endpoint): {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s (Sources: {source_count})")
-    
     return result
 
 

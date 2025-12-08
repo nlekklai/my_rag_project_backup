@@ -5,7 +5,7 @@ from typing import Dict, Optional
 # =============================
 #    Intent Detection (ฉลาด + แม่นสุด ๆ)
 # =============================
-def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
+def detect_intent(question: str, doc_type: str = "document") -> Dict[str, any]:
     """
     ตรวจจับ intent ได้แม่นยำสูงมาก รองรับภาษาไทยเต็มรูปแบบ + คำพูดจริงของคน
     """
@@ -14,8 +14,14 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
     intent = {
         "is_faq": False,
         "is_synthesis": False,
-        "is_evidence": False
+        "is_evidence": False,
+        "sub_topic": None  # เพิ่ม field สำหรับ subtopic เช่น "KM-4.1"
     }
+
+    # Extract sub_topic จาก query (e.g. "KM topic 4.1" → "KM-4.1")
+    sub_topic_match = re.search(r"(?:km|topic)\s*(?:topic\s*)?(\d+\.\d+)", q)
+    if sub_topic_match:
+        intent["sub_topic"] = f"KM-{sub_topic_match.group(1)}"  # Assume KM context
 
     # --------------------
     # 1. Intent จาก Keyword + Pattern matching (Priority สูงสุด)
@@ -46,7 +52,7 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
     evidence_signals = [
         "ตามเอกสาร", "ในเอกสาร", "เอกสารบอก", "หลักฐาน", "อ้างอิง", "source", "reference",
         "จากไฟล์", "ระบุแหล่ง", "อิงจาก", "ตามที่ระบุ", "ดำเนินการ", "รายงาน", "ผลลัพธ์",
-        "ประเมิน", "คะแนน", "PDCA" # เพิ่มคำที่เกี่ยวข้องกับ SEAM/KM Evidence
+        "ประเมิน", "คะแนน", "PDCA", "เกณฑ์", "ระดับ", "รายละเอียด", "แยกย่อย"  # เพิ่มสำหรับ SEAM/KM Evidence
     ]
     if any(sig in q for sig in evidence_signals):
         intent["is_evidence"] = True
@@ -69,9 +75,12 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, bool]:
             intent["is_evidence"] = True
             
     # 2.3 Fallback สุดท้าย: ถ้ายังไม่มี Intent ใดถูกจับได้เลย
-    if not any(intent.values()):
-        # ให้เป็น FAQ (Default สำหรับการตอบแบบสรุป) ดีกว่าการเป็น Evidence (ที่ต้องอ้างอิง)
-        intent["is_faq"] = True 
+    if not any([intent["is_faq"], intent["is_synthesis"], intent["is_evidence"]]):
+        # ให้เป็น Evidence สำหรับ seam/doc_type (ดีกว่าสำหรับ query รายละเอียด)
+        if doc_type in ["seam", "document", "evidence"]:
+            intent["is_evidence"] = True
+        else:
+            intent["is_faq"] = True 
         
     return intent
 
@@ -117,6 +126,8 @@ def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
 • **[CRITICAL OVERRIDE]** หากคำถามระบุปี (เช่น 2568) แต่หลักฐานที่ดึงมามีเนื้อหาคล้ายกันแต่ระบุปีที่ใกล้เคียงที่สุด (เช่น 2567) **คุณต้องใช้ Context นั้นตอบ** โดยตอบนโยบายปีที่พบในเอกสาร (2567) และ **ต้องระบุปีที่พบใน Context** อย่างชัดเจนในคำตอบ (เช่น 'ข้อมูลนี้เป็นของปี 2567...')
 • ถ้าไม่พบข้อมูลในเอกสารที่ให้มา ให้ตอบว่า "ไม่พบข้อมูลในเอกสารที่เกี่ยวข้อง"
 • ห้ามเดา ห้ามแต่งข้อมูล
+• **[SUBTOPIC OVERRIDE]** ถ้าคำถามระบุ subtopic เฉพาะ (เช่น KM topic 4.1) ตอบเฉพาะหัวข้อนั้น ห้ามผสมหัวข้ออื่น (เช่น ห้ามใช้ข้อมูลจาก 2.1) ถ้า context ไม่ match subtopic บอก 'ไม่พบข้อมูลที่ตรง subtopic ในเอกสาร'
+• สำหรับรายละเอียด 5 ระดับ: แยกเป็น bullet points ชัดเจน ยึด text จาก context เท่านั้น ห้ามเพิ่ม 'ไม่มีการระบุ' หรือ negation ใดๆ
 """)
     else: # is_faq:
         sections.append("""
@@ -125,5 +136,9 @@ def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
 • ใช้ข้อมูลจากเอกสารที่ให้มาเท่านั้น
 • ห้ามเดา ห้ามแต่งข้อมูล
 """)
+
+    # รวม sub_topic เข้า prompt ถ้ามี
+    if intent.get("sub_topic"):
+        sections.append(f"**[SUBTOPIC FOCUS]** มุ่งเน้นเฉพาะ subtopic: {intent['sub_topic']} เท่านั้น")
 
     return "\n\n".join(sections)

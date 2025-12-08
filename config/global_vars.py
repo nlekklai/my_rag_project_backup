@@ -77,16 +77,15 @@ SUPPORTED_ENABLERS: Final[List[str]] = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM",
 # SE-AM Reference Document Mapping (Updated from latest ingestion)
 # ------------------------------------------------------------------
 SEAM_ENABLER_MAP: Final[dict] = {
-    "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร (Corporate Governance & Leadership)",
-    "SP": "2 การวางแผนเชิงยุทธศาสตร์ (Strategic Planning)",
-    "RM&IC": "3 การบริหารความเสี่ยงและการควบคุมภายใน (Risk Management & Internal Control)",
-    "SM": "4.1 การมุ่งเน้นผู้มีส่วนได้ส่วนเสีย (Stakeholder Management)",
-    "CM": "4.2 การมุ่งเน้นลูกค้า (Customer Management)",
-    "DT": "5 การพัฒนาเทคโนโลยีดิจิทัล (Digital Technology)",
-    "HCM": "6 การบริหารทุนมนุษย์ (Human Capital Management)",
-    "KM": "7.1 การจัดการความรู้ (Knowledge Management)",
-    "IM": "7.2 นวัตกรรม (Innovation Management)",
-    "IA": "8 การตรวจสอบภายใน (Internal Audit)"
+    "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร",
+    "SP": "2 การวางแผนเชิงยุทธศาสตร์",
+    "RM&IC": "3 การบริหารความเสี่ยงและการควบคุมภายใน",
+    "SCM": "4 การมุ่งเน้นผู้มีส่วนได้ส่วนเสีย และลูกค้า",
+    "DT": "5 การพัฒนาเทคโนโลยีดิจิทัล",
+    "HCM": "6 การบริหารทุนมนุษย์",
+    "KM": "7 การจัดการความรู้และนวัตกรรม",
+    "IM": "7 การจัดการความรู้และนวัตกรรม",  # ชี้ไปที่เดียวกับ KM
+    "IA": "8 การตรวจสอบภายใน",
 }
 
 # --- Assessment Constants ---
