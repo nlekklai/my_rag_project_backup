@@ -1255,9 +1255,9 @@ class SEAMPDCAEngine:
 ข้อจำกัด (HARD RULE: L3 CHECK/ACT FOCUS):
 1. การประเมิน L3 นี้ **ต้องพิจารณาหลักฐาน 'การตรวจสอบ (Check)' และ 'การปรับปรุง (Act)' เป็นอันดับแรกเท่านั้น**
 2. บริบทได้ถูกจัดเรียงลำดับความสำคัญแล้ว: หลักฐานที่ปรากฏในช่วงต้นของ Context มีความสำคัญสูงสุด (Priority 1)
-3. หากพบส่วนที่ขึ้นต้นด้วย **[SIMULATED_L3_EVIDENCE]** ให้ถือว่าเป็น **หลักฐานยืนยันผลการตรวจสอบ** ที่เชื่อถือได้ซึ่งถูกสรุปมาจากหลักฐาน Check/Act จริง (จัดเป็น Priority 1)
+3. หากพบส่วนที่ขึ้นต้นด้วย **[L3_SUMMARY_EVIDENCE]** ให้ถือว่าเป็น **หลักฐานยืนยันผลการตรวจสอบ** ที่เชื่อถือได้ซึ่งถูกสรุปมาจากหลักฐาน Check/Act จริง (จัดเป็น Priority 1)
 4. หลักฐาน Plan และ Do ที่อยู่ตอนท้ายของ Context **ห้ามนำมาพิจารณา** ในการตัดสินใจ **FAIL** หากหลักฐาน Check/Act ไม่ครบถ้วน
-5. หากขาดหลักฐาน **Check** หรือ **Act** ที่เพียงพอ (ไม่ว่าจะจาก Simulated Evidence หรือหลักฐานจริง) ให้ตัดสินเป็น **❌ FAIL** ทันที เพื่อป้องกันการให้คะแนน L3 ที่เกินจริง
+5. หากขาดหลักฐาน **Check** หรือ **Act** ที่เพียงพอ (ไม่ว่าจะจาก Summary Evidence หรือหลักฐานจริง) ให้ตัดสินเป็น **❌ FAIL** ทันที เพื่อป้องกันการให้คะแนน L3 ที่เกินจริง
 (L3-Focus: ตรวจสอบ ติดตาม ประเมินผล และการปรับปรุง)
 """
         elif level == 4:
@@ -1621,6 +1621,7 @@ class SEAMPDCAEngine:
                                 # บังคับเขียน relevance_score กลับเข้าไปใน metadata
                                 doc.metadata["relevance_score"] = float(score)
 
+
                             if scores: # ตรวจสอบว่ามี Scores ที่รวบรวมได้
                                 
                                 # 🟢 [แก้ไข] 1. Log สรุปด้วย INFO และ CRITICAL
@@ -1791,180 +1792,17 @@ class SEAMPDCAEngine:
             logging.error(f"❌ Failed to export results to {full_path}: {e}")
             return ""
         
-    # -------------------- Multiprocessing Worker Method --------------------
-    def _assess_single_sub_criteria_worker(self, args) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
+    def rephrase_query_for_retry(self, original_query: str, level: int, sub_id: str) -> str:
         """
-        Worker function for multiprocessing. 
-        ประเมินเกณฑ์ย่อยในระดับที่กำหนด โดยดึงบริบท (Evidence) และให้ LLM ประเมิน
-        
-        Args:
-            args: tuple(statement_data, engine_config_dict)
-        Returns:
-            - raw_results_for_sub: list of final results for each level
-            - final_sub_result: summary of sub-criteria evaluation
-            - level_evidences: dict of evidences to merge later in main process (เฉพาะ Metadata)
+        Helper method to slightly rephrase the query for the next retrieval attempt.
         """
-        statement_data, engine_config_dict = args
-
-        # Unpack engine config
-        llm_executor = engine_config_dict['llm_executor']
-        enabler = engine_config_dict['enabler']
-        doc_type = engine_config_dict['doc_type']
-        vectorstore_manager = engine_config_dict['vectorstore_manager']
-        mapped_uuids = engine_config_dict.get('mapped_uuids')
-        priority_docs_input = engine_config_dict.get('priority_docs_input')
-        contextual_rules_prompt = engine_config_dict.get('contextual_rules_prompt', "")
-        
-        # 🟢 NEW: Unpack Rerank Gate Constants
-        # NOTE: RERANK_THRESHOLD และ MAX_EVI_STR_CAP จะถูกใช้ใน _calculate_evidence_strength_cap()
-        
-        # ดึง Baseline Context ที่ถูก Hydrate (มี Text) จาก Main Process
-        previous_levels_evidence_full = engine_config_dict.get('previous_levels_evidence_full', []) 
-
-        # Statement metadata
-        level = int(statement_data.get("level", 0))
-        statement_text = statement_data.get("statement", "")
-        sub_criteria_name = statement_data.get("sub_criteria_name", "")
-        pdca_phase = statement_data.get("pdca_phase", "")
-        level_constraint = statement_data.get("level_constraint", "")
-        sub_id = statement_data.get("sub_criteria_id", statement_data.get("sub_id", ""))
-
-        # Determine retrieval/evaluation functions (Assuming existence of these helpers)
-        if level <= 2:
-            retrieval_func = self.retrieve_context_for_low_levels 
-            evaluation_func = self.evaluate_with_llm_low_level
-            top_k = 5
-        else:
-            retrieval_func = self.retrieve_context_with_filter
-            evaluation_func = self.evaluate_with_llm
-            top_k = 10
-
-        # Build enhanced query for RAG (Assuming existence of this helper)
-        rag_query_list = self.enhance_query_for_statement(
-            statement_text=statement_text,
-            sub_id=sub_id,
-            statement_id=statement_data.get('statement_id', sub_id),
-            level=level,
-            enabler_id=enabler,
-            focus_hint=level_constraint,
-            llm_executor=llm_executor
-        )
-        rag_query = rag_query_list[0] if rag_query_list else statement_text
-
-        # Retrieval
-        # NOTE: Assuming vectorstore_manager is part of 'self' or passed correctly to the helper
-        self.logger.info(f"   > Starting assessment for {sub_id} L{level} (Attempt: 1)...") # <-- Re-added the missing log
-        retrieval_result = retrieval_func(
-            query=rag_query,
-            doc_type=doc_type,
-            enabler=enabler,
-            vectorstore_manager=vectorstore_manager,
-            top_k=top_k,
-            mapped_uuids=mapped_uuids,
-            priority_docs_input=priority_docs_input,
-            sub_id=sub_id,
-            level=level
-        )
-
-        top_evidences = retrieval_result.get("top_evidences", [])
-        aggregated_context = retrieval_result.get("aggregated_context", "")
-
-        # 🟢 DEBUG: บังคับแสดง Key ทั้งหมดของ retrieval_result (สำคัญมาก!)
-        self.logger.critical(f"🔑 DEBUG L{level}: RETRIEVAL KEYS (All): {list(retrieval_result.keys())}") 
-        if top_evidences: 
-            self.logger.critical(
-                f"DEBUG L{level}: Inspecting first document (Type: {type(top_evidences[0])})"
-                f" | EVIDENCE KEYS: {list(top_evidences[0].keys())}"
-            )
-        # 🟢 END DEBUG
-
-        # ------------------ 🟢 Relevant Score Gate Logic (NEW) ------------------
-        # 🎯 FIX: ใช้ Helper Function ที่สร้างใหม่เพื่อค้นหาคะแนนสูงสุดและกำหนด Cap
-        evi_cap_data = self._calculate_evidence_strength_cap(
-            top_evidences=top_evidences,
-            level=level,
-        )
-        
-        # ดึงค่าที่คำนวณได้จาก Helper มาใช้ต่อ
-        highest_rerank_score = evi_cap_data['highest_rerank_score']
-        max_score_source = evi_cap_data['max_score_source']
-        is_capped = evi_cap_data['is_capped']
-        max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
-        
-        # NOTE: การ Log การ Cap ได้ย้ายไปอยู่ใน _calculate_evidence_strength_cap แล้ว
-
-        # ------------------ END: Relevant Score Gate Logic ------------------
-        
-        # Build multichannel context (Assuming existence of this helper)
-        channels = self.build_multichannel_context_for_level(
-            level=level, 
-            top_evidences=top_evidences, 
-            previous_levels_evidence=previous_levels_evidence_full 
-        )
-
-        # Evaluate statement (Assuming existence of these helpers)
-        evaluation_result = evaluation_func(
-            context=channels.get("direct_context", "") or aggregated_context,
-            sub_criteria_name=sub_criteria_name,
-            level=level,
-            statement_text=statement_text,
-            sub_id=sub_id,
-            llm_executor=llm_executor,
-            pdca_phase=pdca_phase,
-            level_constraint=level_constraint,
-            contextual_rules_prompt=contextual_rules_prompt,
-            baseline_summary=channels.get("baseline_summary", ""),
-            aux_summary=channels.get("aux_summary", ""),
-            # 🟢 Pass max_evidence_strength
-            max_evidence_strength=max_evi_str_for_prompt
-        )
-
-        # Summarize context for report (Assuming existence of this helper)
-        summary_result = self.create_context_summary_llm(
-            context=channels.get("direct_context", "") or aggregated_context,
-            sub_criteria_name=sub_criteria_name,
-            level=level,
-            sub_id=sub_id,
-            llm_executor=llm_executor
-        )
-
-        # Prepare evidences to return (for main process to merge)
-        level_key = f"{sub_id}.L{level}"
-        level_evidences = {
-            level_key: [
-                {
-                    "doc_id": ev.get("doc_id"),
-                    "filename": ev.get("source_filename") or ev.get("source") or ev.get("filename"),
-                    "relevance_score": ev.get("rerank_score", ev.get("score", 0.0)), # ใช้ rerank_score ที่มาจาก top_evidences โดยตรง (ซึ่งถูก patch มาจาก retrieval_func แล้ว)
-                    "mapper_type": "AI_GENERATED", 
-                    "timestamp": datetime.now().isoformat()
-                }
-                for ev in top_evidences if ev.get("doc_id")
-            ]
-        }
-
-        # Final result dict
-        final_sub_result = {
-            "sub_criteria_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
-            "level": level,
-            "statement": statement_text,
-            "pdca_phase": pdca_phase,
-            "llm_result": evaluation_result,
-            "used_doc_ids": [d.get("doc_id") for d in top_evidences if d.get("doc_id")],
-            "channels_debug": channels.get("debug_meta", {}),
-            "summary": summary_result,
-            
-            # 🟢 Relevant Score Gate Metadata
-            "max_relevant_score": evi_cap_data['highest_rerank_score'],
-            "max_relevant_source": evi_cap_data['max_score_source'],
-            "is_evidence_strength_capped": evi_cap_data['is_capped'],
-            "max_evidence_strength_used": evi_cap_data['max_evi_str_for_prompt'],
-        }
-
-        raw_results_for_sub = [final_sub_result]
-
-        return raw_results_for_sub, final_sub_result, level_evidences
+        self.logger.info(f"Rephrasing query for L{level} retry: {original_query[:50]}...")
+        # ตัวอย่างการปรับ query: อาจจะตัดส่วนที่เฉพาะเจาะจงออก หรือใช้ LLM ช่วย rephrase 
+        # สำหรับการทดลอง อาจจะแค่คืน query เดิม หรือเพิ่มคำว่า 'ทั้งหมด'
+        if level >= 3:
+            # สำหรับ Level สูงๆ ลองเน้นบริบทที่กว้างขึ้น
+            return f"หาหลักฐานเพิ่มเติมเกี่ยวกับ {original_query}"
+        return original_query
 
     def _run_sub_criteria_assessment_worker(
             self,
@@ -2144,12 +1982,15 @@ class SEAMPDCAEngine:
         self,
         top_evidences: List[Union[Dict[str, Any], Any]],  # รองรับทั้ง dict และ LcDocument
         level: int,
+        # 🟢 FIX: เพิ่ม Argument ตัวนี้เพื่อแก้ TypeError ที่เกิดจาก _run_single_assessment เรียกใช้
+        highest_rerank_score: Optional[float] = None 
     ) -> Dict[str, Any]:
         """
         Relevant Score Gate เวอร์ชัน DEBUG FINAL: ดึงคะแนนจาก metadata, top-level key/attribute, และ Regex fallback ที่ครอบคลุม
         """
 
-        highest_rerank_score = 0.0
+        # ใช้ตัวแปรนี้ในการคำนวณคะแนนสูงสุดที่ดึงได้จากเอกสาร
+        max_score_found = 0.0 
         max_score_source = "N/A"
 
         score_keys = [
@@ -2164,30 +2005,40 @@ class SEAMPDCAEngine:
         
         # 💡 Fallback: ถ้ายังไม่ได้ตั้งค่า Attribute ให้ดึงจาก config/global_vars
         if not isinstance(threshold, (int, float)):
-            from config.global_vars import RERANK_THRESHOLD as G_RERANK_THRESHOLD
-            from config.global_vars import MAX_EVI_STR_CAP as G_MAX_EVI_STR_CAP
-            threshold = G_RERANK_THRESHOLD
-            cap_value = G_MAX_EVI_STR_CAP
+            try:
+                from config.global_vars import RERANK_THRESHOLD as G_RERANK_THRESHOLD
+                from config.global_vars import MAX_EVI_STR_CAP as G_MAX_EVI_STR_CAP
+                threshold = G_RERANK_THRESHOLD
+                cap_value = G_MAX_EVI_STR_CAP
+            except ImportError:
+                # ใช้ค่า Default หาก Config หายไป
+                threshold = 0.5
+                cap_value = 3.0
+
+        # 💡 ใช้ค่าที่ได้จาก Adaptive Loop (ถ้ามี) เป็นค่าเริ่มต้น
+        if highest_rerank_score is not None and highest_rerank_score > max_score_found:
+             max_score_found = highest_rerank_score
+             max_score_source = "Adaptive_RAG_Loop"
 
 
         for doc in top_evidences:
             
-            # # -------------------- DEBUGGING BLOCK (START) --------------------
-            # if doc is top_evidences[0]:
-            #     self.logger.critical(f"DEBUG L{level}: Inspecting first document (Type: {type(doc)})")
+            # -------------------- DEBUGGING BLOCK (START) --------------------
+            if doc is top_evidences[0]:
+                self.logger.critical(f"DEBUG L{level}: Inspecting first document (Type: {type(doc)})")
                 
-            #     if isinstance(doc, dict):
-            #         content = doc.get("text", "")
-            #         tail_content = content[-200:] if len(content) > 200 else content
-            #         self.logger.critical(f"DEBUG L{level}: Dict keys: {list(doc.keys())}")
-            #         self.logger.critical(f"DEBUG L{level}: END OF 'text' content (last 200 chars): \n***\n{tail_content}\n***")
-            #     else:
-            #         try:
-            #             doc_attrs = [attr for attr in dir(doc) if not attr.startswith('_') and not callable(getattr(doc, attr))]
-            #             self.logger.critical(f"DEBUG L{level}: Doc public attributes (potential score location): {doc_attrs}")
-            #         except:
-            #             self.logger.critical(f"DEBUG L{level}: Cannot inspect attributes of this object type.")
-            # # -------------------- DEBUGGING BLOCK (END) --------------------
+                if isinstance(doc, dict):
+                    content = doc.get("text", "")
+                    tail_content = content[-200:] if len(content) > 200 else content
+                    self.logger.critical(f"DEBUG L{level}: Dict keys: {list(doc.keys())}")
+                    self.logger.critical(f"DEBUG L{level}: END OF 'text' content (last 200 chars): \n***\n{tail_content}\n***")
+                else:
+                    try:
+                        doc_attrs = [attr for attr in dir(doc) if not attr.startswith('_') and not callable(getattr(doc, attr))]
+                        self.logger.critical(f"DEBUG L{level}: Doc public attributes (potential score location): {doc_attrs}")
+                    except:
+                        self.logger.critical(f"DEBUG L{level}: Cannot inspect attributes of this object type.")
+            # -------------------- DEBUGGING BLOCK (END) --------------------
             
             page_content = ""
             metadata = {}
@@ -2225,7 +2076,6 @@ class SEAMPDCAEngine:
             
             # ─── 3. Fallback: ดึงจากท้าย content (Aggressive Regex) ───
             if current_score == 0.0 and page_content and isinstance(page_content, str):
-                # ตรวจสอบว่ามี re import หรือไม่ก่อนเรียกใช้
                 try:
                     import re
                     tail = page_content[-1000:]
@@ -2248,8 +2098,14 @@ class SEAMPDCAEngine:
                             except:
                                 continue
                 except ImportError:
-                    # ถ้า re ไม่ถูก import, ข้ามไป
                     pass
+
+            # 🔴 FIX: เพิ่มการตรวจสอบขอบเขตคะแนน (Score Clamp) สำหรับ Reranker Score
+            # ถ้าคะแนนที่ได้เกิน 1.0 (ซึ่งไม่ควรเกิดขึ้นกับ Cross-Encoder Reranker)
+            # ให้ถือว่าถูกดึงมาผิดและรีเซ็ตเป็น 0.0 เพื่อป้องกันการให้ Evi Str เต็มโดยไม่ได้ตั้งใจ
+            if current_score > 1.0:
+                self.logger.warning(f"🚨 Score Clamp L{level}: Resetting invalid score {current_score:.4f} > 1.0 from source 'Fallback Regex' to 0.0")
+                current_score = 0.0
 
 
             # ─── 4. ดึง source ที่ดีที่สุด ───
@@ -2261,19 +2117,19 @@ class SEAMPDCAEngine:
             )
 
             # ─── 5. อัปเดตคะแนนสูงสุด ───
-            if current_score > highest_rerank_score:
-                highest_rerank_score = current_score
+            if current_score > max_score_found:
+                max_score_found = current_score
                 max_score_source = source
 
         # ─── 6. Relevant Score Gate + Log ───
         
         # NOTE: ใช้ threshold และ cap_value ที่ดึงมาอย่างถูกต้อง
-        if highest_rerank_score < threshold:
+        if max_score_found < threshold: 
             max_evi_str_for_prompt = cap_value
             is_capped = True
             self.logger.warning(
                 f"🚨 Evi Str CAPPED L{level}: "
-                f"Rerank {highest_rerank_score:.4f} (จาก '{max_score_source}') "
+                f"Rerank {max_score_found:.4f} (จาก '{max_score_source}') "
                 f"< {threshold} → จำกัดที่ {cap_value}"
             )
         else:
@@ -2281,16 +2137,16 @@ class SEAMPDCAEngine:
             is_capped = False
             self.logger.info(
                 f"✅ Evi Str FULL L{level}: "
-                f"Rerank {highest_rerank_score:.4f} (จาก '{max_score_source}') "
+                f"Rerank {max_score_found:.4f} (จาก '{max_score_source}') "
                 f">= {threshold} → ปล่อยเต็ม 10.0"
             )
 
         return {
             "is_capped": is_capped,
             "max_evi_str_for_prompt": max_evi_str_for_prompt,
-            "highest_rerank_score": round(float(highest_rerank_score), 4),
+            "highest_rerank_score": round(float(max_score_found), 4), 
             "max_score_source": max_score_source,
-        }
+        }    
         
 
     def run_assessment(
@@ -2445,6 +2301,54 @@ class SEAMPDCAEngine:
 
         return final_results
 
+    def _create_error_result(
+        self,
+        level: int,
+        error_message: str,
+        start_time: float,
+        sub_id: str = "N/A",
+        statement_id: str = "N/A",
+        statement_text: str = "N/A",
+        retrieval_duration: float = 0.0,
+        llm_duration: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Creates a standardized error result dictionary."""
+        end_time = time.time()
+        
+        try:
+            pdca_phase = self._get_pdca_phase(level)
+        except Exception:
+            pdca_phase = "N/A"
+
+        return {
+            "sub_criteria_id": sub_id,
+            "statement_id": statement_id,
+            "level": level,
+            "statement": statement_text,
+            "pdca_phase": pdca_phase,
+            "llm_score": 0,
+            "pdca_breakdown": {},
+            "is_passed": False,
+            "status": "ERROR",
+            "score": 0,
+            "llm_result_full": {"error": error_message, "duration_s": round(end_time - start_time, 2)},
+            "retrieval_duration_s": round(retrieval_duration, 2),
+            "llm_duration_s": round(llm_duration, 2),
+            "top_evidences_ref": [],
+            "temp_map_for_level": [],
+            "evidence_strength": 0.0,
+            "ai_confidence": "LOW",
+            "evidence_count": 0,
+            "pdca_coverage": 0.0,
+            "direct_evidence_count": 0,
+            "rag_query": "N/A",
+            "full_context_meta": {"error": error_message},
+            "max_relevant_score": 0.0,
+            "max_relevant_source": "Error",
+            "is_evidence_strength_capped": True,
+            "max_evidence_strength_used": 0.0,
+        }
+
     def _run_single_assessment(
         self,
         sub_criteria: Dict[str, Any],
@@ -2454,19 +2358,30 @@ class SEAMPDCAEngine:
         attempt: int = 1 # เพิ่ม attempt สำหรับ RetryPolicy ใน L3-L5
     ) -> Dict[str, Any]:
         """
-        รันการประเมิน Level เดียว (L1-L5) อย่างสมบูรณ์
-        - แก้ไขปัญหา LLM คืนค่าเป็น 'int' object โดยการแปลงเป็น dict ทันที
-        - 🟢 NEW: Implement Relevant Score Gate
+        รันการประเมิน Level เดียว (L1-L5) อย่างสมบูรณ์ พร้อม implement Adaptive Retrieval Loop
+        
+        Args:
+            sub_criteria: ข้อมูลเกณฑ์ย่อย
+            statement_data: ข้อมูล Statement ของ Level นั้น
+            vectorstore_manager: ตัวจัดการ Vector Store
+            sequential_chunk_uuids: List ของ chunk IDs จาก Level ก่อนหน้า (สำหรับ Sequential Mode)
+            attempt: จำนวนครั้งที่พยายาม (สำหรับ RetryPolicy)
+            
+        Returns:
+            Dict[str, Any]: ผลลัพธ์การประเมิน Level นั้น
         """
+        # 🎯 Assumed Constants for Adaptive Loop (ท่านควรกำหนดค่าจริงใน self.config)
+        # ใช้ getattr เพื่อให้ค่า Default หากไม่มีใน self.config
+        MIN_RETRY_SCORE = getattr(self.config, 'MIN_RETRY_SCORE', 0.65)
+        MAX_RETRIEVAL_ATTEMPTS = getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3)
 
-        start_time = time.time() # เพิ่ม start_time เพื่อคำนวณ duration
+        start_time = time.time()
         sub_id = sub_criteria['sub_id']
         level = statement_data['level']
         statement_text = statement_data['statement']
         sub_criteria_name = sub_criteria['sub_criteria_name']
         statement_id = statement_data.get('statement_id', sub_id)
         
-        # กำหนดค่าเริ่มต้นของ duration (ถ้าเกิด error ก่อน llm call)
         retrieval_duration = 0.0 
         llm_duration = 0.0
         rag_query = statement_text # กำหนดค่าเริ่มต้น
@@ -2494,39 +2409,115 @@ class SEAMPDCAEngine:
             sub_id=sub_id,
             statement_id=statement_id,
             level=level,
-            enabler_id=self.enabler_id,
+            enabler_id=self.config.enabler,
             focus_hint=full_focus_hint,
             llm_executor=self.llm
         )
-        rag_query = rag_query_list[0] if rag_query_list else statement_text
+        rag_query = rag_query_list[0] if rag_query_list else statement_text # Query ที่ดีที่สุดสำหรับการเริ่มต้น
 
         # ==================== 4. LLM Evaluator Setup ====================
         llm_evaluator_to_use = self.llm_evaluator
         if level <= 2:
             llm_evaluator_to_use = evaluate_with_llm_low_level
 
-        # ==================== 5. RAG Retrieval ====================
+        # ==================== 5. ADAPTIVE RAG RETRIEVAL LOOP ====================
+        
+        current_rag_query = rag_query # Query ที่จะถูก rephrase ในลูป
+        
+        highest_rerank_score = 0.0
+        final_top_evidences = []
+        final_aggregated_context = ""
+        used_chunk_uuids = []
+
         retrieval_start = time.time()
-        try:
-            retrieval_result = self.rag_retriever(
-                query=rag_query_list,
-                doc_type=EVIDENCE_DOC_TYPES,
-                enabler=self.enabler_id,
-                sub_id=sub_id,
-                level=level,
-                vectorstore_manager=vectorstore_manager,
-                mapped_uuids=mapped_stable_doc_ids,
-                priority_docs_input=priority_docs,
-                sequential_chunk_uuids=sequential_chunk_uuids
+        
+        loop_attempt = 1
+        while loop_attempt <= MAX_RETRIEVAL_ATTEMPTS:
+            self.logger.info(
+                f"  > RAG Retrieval {sub_id} L{level} (Attempt: {loop_attempt}/{MAX_RETRIEVAL_ATTEMPTS}). Max Score so far: {highest_rerank_score:.4f}"
             )
-        except Exception as e:
-            self.logger.error(f"RAG retrieval failed for {sub_id} L{level}: {e}")
-            return self._create_error_result(level, 'RAG Retrieval Error', start_time, 0.0)
+            
+            # --- กำหนด Query Input (ต้องเป็น List เพราะ rag_retriever คาดหวัง List) ---
+            query_input = [current_rag_query]
+            if loop_attempt == 1 and rag_query_list:
+                query_input = rag_query_list # ใช้ Query List ที่ Enhance มาในครั้งแรก
 
+            try:
+                retrieval_result = self.rag_retriever(
+                    query=query_input, 
+                    doc_type=EVIDENCE_DOC_TYPES,
+                    enabler=self.config.enabler,
+                    sub_id=sub_id,
+                    level=level,
+                    vectorstore_manager=vectorstore_manager,
+                    mapped_uuids=mapped_stable_doc_ids,
+                    priority_docs_input=priority_docs,
+                    sequential_chunk_uuids=sequential_chunk_uuids,
+                    # ❌ [FIXED 1]: ลบ top_k ออกเพื่อแก้ TypeError
+                )
+            except Exception as e:
+                self.logger.error(f"RAG retrieval failed for {sub_id} L{level} at Attempt {loop_attempt}: {e}")
+                if loop_attempt == 1:
+                    retrieval_duration = time.time() - retrieval_start
+                    # ❌ [FIXED 2]: ส่ง Argument ครบถ้วนสำหรับการจัดการ Error
+                    return self._create_error_result(
+                        level=level, 
+                        error_message=f'RAG Retrieval Error: {str(e)}', 
+                        start_time=start_time, 
+                        retrieval_duration=retrieval_duration,
+                        sub_id=sub_id, 
+                        statement_id=statement_id, 
+                        statement_text=statement_text
+                    )
+                break 
+
+            top_evidences_current = retrieval_result.get("top_evidences", [])
+            
+            # --- Check Max Score in current batch ---
+            current_max_score = 0.0
+            if top_evidences_current:
+                for ev in top_evidences_current:
+                    score = ev.get("rerank_score", ev.get("score", 0.0))
+                    try:
+                        current_max_score = max(current_max_score, float(score))
+                    except (ValueError, TypeError):
+                        pass
+
+            self.logger.debug(f"  > Attempt {loop_attempt} Max Score: {current_max_score:.4f}")
+
+            # --- Update Best Result ---
+            if current_max_score >= highest_rerank_score:
+                highest_rerank_score = current_max_score
+                final_top_evidences = top_evidences_current 
+                final_aggregated_context = retrieval_result.get("aggregated_context", "")
+                used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
+                
+                if loop_attempt > 1:
+                    self.logger.info(f"  > ✨ L{level} Retrieval improved: New max score {highest_rerank_score:.4f} found.")
+            
+            # --- Check Stop Condition ---
+            if highest_rerank_score >= MIN_RETRY_SCORE:
+                self.logger.info(f"  > ✅ Adaptive Retrieval L{level}: Max score {highest_rerank_score:.4f} >= {MIN_RETRY_SCORE}. Stopping loop.")
+                break
+                
+            # --- Prepare for next attempt ---
+            if loop_attempt < MAX_RETRIEVAL_ATTEMPTS:
+                # Rephrase Query (ใช้ Helper ที่ท่านยืนยันว่าคงไว้)
+                current_rag_query = self.rephrase_query_for_retry(current_rag_query, level, sub_id) 
+                # ไม่เพิ่ม Top-K เพราะ rag_retriever ไม่รับ parameter ตรงๆ
+                
+            loop_attempt += 1
+
+        # ใช้ผลลัพธ์ที่ดีที่สุดที่รวบรวมได้จากลูป
+        top_evidences = final_top_evidences
         retrieval_duration = time.time() - retrieval_start
-        top_evidences = retrieval_result.get("top_evidences", [])
-        used_chunk_uuids = retrieval_result.get("used_chunk_uuids", [])
-
+        
+        # ตรวจสอบว่ามีหลักฐานหรือไม่
+        if not top_evidences:
+             self.logger.warning(f"  > Retrieval loop finished but NO evidences found for {sub_id} L{level}. Continuing with empty context.")
+        
+        # =====================================================================================
+        
         # ==================== 6. ดึงหลักฐานจาก Level ก่อนหน้า ====================
         try:
             previous_levels_raw = self._collect_previous_level_evidences(sub_id, current_level=level)
@@ -2572,22 +2563,18 @@ class SEAMPDCAEngine:
         # ==================== 8. LLM Evaluation ====================
         
         # 🟢 NEW: 8.1. Relevant Score Gate - Calculate Max Evidence Strength
-        # self.logger.critical(f"FINAL DEBUG L{level}: DUMPING RAW top_evidences[0] JSON:")
         try:
-            # ใช้ json.dumps เพื่อแปลง Object/Dict ทั้งหมดเป็น String
-            # เราใช้ getattr() เพื่อดึงค่าที่เป็นไปได้ทั้งหมด
-            if isinstance(top_evidences[0], dict):
+            if top_evidences and isinstance(top_evidences[0], dict):
                 raw_doc_data = top_evidences[0]
             else:
-                raw_doc_data = {'page_content': getattr(top_evidences[0], 'page_content', 'N/A'),
-                                'metadata': getattr(top_evidences[0], 'metadata', {}),
-                                'score': getattr(top_evidences[0], 'score', 'N/A')}
-            
-            # self.logger.critical(json.dumps(raw_doc_data, indent=2, ensure_ascii=False))
+                raw_doc_data = {'page_content': 'N/A', 'metadata': {}, 'score': 'N/A'}
         except Exception as e:
              self.logger.critical(f"FINAL DEBUG L{level}: FAILED TO DUMP RAW DOC: {e}")
 
-        evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level)
+        max_score_to_cap = highest_rerank_score
+        
+        evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, 
+                                                               highest_rerank_score=max_score_to_cap)
         max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
         
         context_parts = [
@@ -2609,18 +2596,27 @@ class SEAMPDCAEngine:
                 level_constraint=level_constraint,
                 contextual_rules=contextual_rules_prompt,
                 llm_executor=self.llm,
-                # 🟢 NEW: ส่งค่า Max Evi Str Cap เข้าไปใน LLM Evaluator
-                max_evidence_strength=max_evi_str_for_prompt # <--- ต้องรับใน evaluate_with_llm
+                max_evidence_strength=max_evi_str_for_prompt
             )
         except Exception as e:
             self.logger.error(f"LLM Call failed for {sub_id} L{level}: {e}")
-            llm_result = {}
+            llm_duration = time.time() - llm_start
+            # ❌ [FIXED 2]: ส่ง Argument ครบถ้วนสำหรับการจัดการ Error
+            return self._create_error_result(
+                level=level, 
+                error_message=f'LLM Call Error: {str(e)}', 
+                start_time=start_time, 
+                retrieval_duration=retrieval_duration,
+                llm_duration=llm_duration,
+                sub_id=sub_id, 
+                statement_id=statement_id, 
+                statement_text=statement_text
+            )
         
         llm_duration = time.time() - llm_start
 
         # =====================================================================================
         # 🎯 FINAL FIX: จัดการกับผลลัพธ์ที่เป็นตัวเลข (int) ก่อน RETURN 
-        # (ใช้ calculate_pdca_breakdown_and_pass_status เพื่อคง Business Logic ไว้)
         # =====================================================================================
         
         is_numeric_result = isinstance(llm_result, (int, float)) or \
@@ -2633,18 +2629,14 @@ class SEAMPDCAEngine:
                 f"Converting to standardized dict format to prevent RetryPolicy crash."
             )
             
-            # *** FIX: เรียกฟังก์ชันที่ถูกต้องเพื่อคง Logic การ PASS/FAIL และ PDCA Breakdown ***
             try:
-                # ใช้ calculate_pdca_breakdown_and_pass_status เพื่อให้ใช้ Logic L5/L4 >= 4 ได้ถูกต้อง
-                # NOTE: เนื่องจากฟังก์ชันนี้ไม่ได้รับ max_evi_str_cap_for_llm เราจะใช้ค่า Evidence Strength Default
                 pdca_breakdown_data, is_passed_num, _ = calculate_pdca_breakdown_and_pass_status(level_num, level) 
             except NameError:
-                self.logger.error("calculate_pdca_breakdown_and_pass_status function is missing from scope.")
+                self.logger.error("Required helper function is missing from scope.")
                 is_passed_num = level_num >= level
                 pdca_breakdown_data = {}
 
             status_num = "PASS" if is_passed_num else "FAIL"
-            # *******************************************************************************
 
             return {
                 "sub_criteria_id": sub_id,
@@ -2653,23 +2645,23 @@ class SEAMPDCAEngine:
                 "statement": statement_text,
                 "pdca_phase": pdca_phase,
                 "llm_score": level_num,
-                "pdca_breakdown": pdca_breakdown_data, # ใช้ผลลัพธ์จากฟังก์ชัน
-                "is_passed": is_passed_num,             # ใช้ผลลัพธ์จากฟังก์ชัน
-                "status": status_num,                   # ใช้ผลลัพธ์จากฟังก์ชัน
+                "pdca_breakdown": pdca_breakdown_data, 
+                "is_passed": is_passed_num,             
+                "status": status_num,                   
                 "score": level_num,
                 "llm_result_full": {"raw_number": level_num, "raw_type": type(llm_result).__name__},
                 "retrieval_duration_s": round(retrieval_duration, 2),
                 "llm_duration_s": round(llm_duration, 2),
                 "top_evidences_ref": [],
                 "temp_map_for_level": [],
-                "evidence_strength": self.MAX_EVI_STR_CAP if is_passed_num else 0.0, # ใช้ Evi Str Cap เป็น Default
+                "evidence_strength": self.config.MAX_EVI_STR_CAP if is_passed_num else 0.0,
                 "ai_confidence": "HIGH" if is_passed_num else "LOW",
                 "evidence_count": 0,
                 "pdca_coverage": 0.0,
                 "direct_evidence_count": 0,
                 "rag_query": rag_query,
                 "full_context_meta": debug,
-                # 🟢 NEW: Relevant Score Gate Metadata (ใช้ค่าจาก capiing)
+                # 🟢 NEW: Relevant Score Gate Metadata
                 "max_relevant_score": evi_cap_data['highest_rerank_score'],
                 "max_relevant_source": evi_cap_data['max_score_source'],
                 "is_evidence_strength_capped": evi_cap_data['is_capped'],
@@ -2686,7 +2678,6 @@ class SEAMPDCAEngine:
             llm_result = {}
         
         llm_score = llm_result.get('score', 0)
-        # ใช้ฟังก์ชันนี้จาก Global Scope หรือ Scope ที่กำหนดไว้
         pdca_breakdown, is_passed, _ = calculate_pdca_breakdown_and_pass_status(llm_score, level)
         status = "PASS" if is_passed else "FAIL"
 
@@ -2707,7 +2698,6 @@ class SEAMPDCAEngine:
             for ev in top_evidences:
                 doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
                 
-                # กรอง ID ที่ไม่ถูกต้องและ Chunk ที่ซ้ำ
                 if not doc_id or str(doc_id).startswith(("TEMP-", "HASH-")) or doc_id in seen:
                     continue
 
@@ -2716,18 +2706,16 @@ class SEAMPDCAEngine:
                 metadata = ev.get("metadata", {}) or {}
                 filename_to_use = ev.get("source_filename") or metadata.get("source_filename") or ""
 
-                # 🎯 Priority 1: ดึงจาก 'relevance_score' และ 'score' ที่ Reranker/Retriever เขียนไว้
                 score_sources = [
                     ev.get("relevance_score"), ev.get("score"),
                     metadata.get("relevance_score"), metadata.get("score"),
                     ev.get("rerank_score"), metadata.get("rerank_score"),
-                    metadata.get("_rerank_score_force") # ค่าที่ถูกบังคับใส่
+                    metadata.get("_rerank_score_force")
                 ]
                 
                 for s in score_sources:
                     score = max(score, safe_float(s))
                     
-                # 🎯 Priority 2: ตรวจสอบ distance (ChromaDB Similarity)
                 distance = metadata.get("distance") or ev.get("distance")
                 if distance is not None:
                     try:
@@ -2737,7 +2725,6 @@ class SEAMPDCAEngine:
                     except (TypeError, ValueError):
                         pass
 
-                # 🎯 Priority 3: ตรวจสอบจากชื่อไฟล์ (โค้ดเดิม)
                 if "|SCORE:" in filename_to_use:
                     try:
                         score_str = filename_to_use.split("|SCORE:")[1].split("|")[0]
@@ -2747,7 +2734,6 @@ class SEAMPDCAEngine:
                     except Exception:
                         pass
                 
-                # 💡 FIX: ถ้า score ยังเป็น 0.0 และไม่ใช่ Baseline Chunk ให้กำหนดเป็น 0.5 (Evidence Default)
                 if score == 0.0 and (ev.get("pdca_tag") != "Baseline"):
                     score = 0.5 
                     
@@ -2762,24 +2748,22 @@ class SEAMPDCAEngine:
                     "filename": filename_to_use,
                     "mapper_type": "AI_GENERATED", 
                     "timestamp": datetime.now().isoformat(), 
-                    "relevance_score": score, # 💡 FIX 2: ใช้ score ที่ถูกคำนวณแล้ว
+                    "relevance_score": score, 
                     "chunk_uuid": doc_id,
                 })
-                seen.add(doc_id) # เพิ่มใน seen
+                seen.add(doc_id)
             
             # -------------------- 12. Calculate PDCA Coverage & Strength --------------------
             direct_count = channels.get("debug_meta", {}).get("direct_count", 0)
             
             avg_score = sum(entry.get("relevance_score", 0.0) for entry in evidence_entries) / len(evidence_entries) if evidence_entries else 0.0
             
-            pdca_coverage = sum(1 for score in pdca_breakdown.values() if score > 0) / 4.0 # ใช้ Logic เดิม
+            pdca_coverage = sum(1 for score in pdca_breakdown.values() if score > 0) / 4.0
 
-            # 💡 FIX: ปรับตัวคูณจาก 1.5 เป็น 2.0 เพื่อให้ Evidence Strength มีค่าสูงขึ้น
-            # 💡 FIX 2: บังคับ Evidence Strength ไม่ให้เกินค่า max_evi_str_for_prompt (จาก Capping)
             evidence_strength_raw = (avg_score * 10.0) * (pdca_coverage * 2.0)
             
             evidence_strength = min(
-                max_evi_str_for_prompt, # <--- 🟢 ใช้ค่า Capped เป็นตัวควบคุมสูงสุด
+                max_evi_str_for_prompt, 
                 evidence_strength_raw
             )
 
@@ -2847,10 +2831,8 @@ class SEAMPDCAEngine:
             "max_evidence_strength_used": max_evi_str_for_prompt,
         }
 
-        # 🟢 [แก้ไข] 1. สร้างตัวแปร icon_status
         icon_status = "✅" if status == "PASS" else "❌"
 
-        # 🟢 [แก้ไข] 2. นำ icon_status ไปใส่ใน Log
         self.logger.info(f"  > Assessment {sub_id} L{level} completed → {icon_status} {status} (Score: {llm_score:.1f} | Evi Str: {final_result['evidence_strength']:.1f} | Conf: {ai_confidence})")
 
         return final_result

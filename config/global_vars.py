@@ -18,6 +18,21 @@ MAPPING_BASE_DIR = os.path.join(PROJECT_ROOT, "config", "mapping")
 # RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
 RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
+# =================================================================
+# 🟢 New: EMBEDDING & RERANKER MODEL CONFIGURATION
+# =================================================================
+
+# Embedding Model (ใช้สำหรับสร้าง Vector ในการ Ingest และ Retrieval ครั้งแรก)
+# BAAI/bge-m3 เป็น SOTA Multilingual Model ขนาด 2.27 GB
+EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-m3"
+#previous version intfloat/multilingual-e5-base
+
+# Reranker Model (ใช้สำหรับคัดกรองความเกี่ยวข้องของ Chunk ที่ดึงมา)
+# BAAI/bge-reranker-base เป็น Reranker ที่เหมาะสมกับ BGE-M3 และ Multilingual
+RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base" 
+#previous version "intfloat/multilingual-e5-base" and cross-encoder/ms-marco-MiniLM-L-6-v2
+
+
 # -------------------- Retrieval / Evaluation --------------------
 # L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
 INITIAL_TOP_K: Final[int] = 100             # ใช้สำหรับ retrieval ก่อน rerank

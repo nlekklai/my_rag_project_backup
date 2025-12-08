@@ -66,7 +66,9 @@ from config.global_vars import (
     MAX_PARALLEL_WORKERS,
     DEFAULT_TENANT,
     DEFAULT_YEAR,
-    DEFAULT_ENABLER
+    DEFAULT_ENABLER,
+    RERANKER_MODEL_NAME,
+    EMBEDDING_MODEL_NAME
 )
 
 # -------------------- Vectorstore Constants --------------------
@@ -109,39 +111,38 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
     global _CACHED_EMBEDDINGS, _MPS_WARNING_SHOWN
     device = device_hint or _detect_torch_device()
 
-    # ... (โค้ดเดิมทั้งหมดจนถึงตรงนี้)
-
     if _CACHED_EMBEDDINGS is None:
-        with _EMBED_LOCK:
-            if _CACHED_EMBEDDINGS is None:
-                # เปลี่ยนตรงนี้เด็ดขาด!!!
-                model_name = "intfloat/multilingual-e5-base"  # หรือ large ถ้าเครื่องแรง
-                
-                logger.info(f"Loading BEST Thai RAG embedding 2025: {model_name} on {device}")
-                logger.info("This model was used to build ALL PEA 2568 vectorstores (evidence_km, document, etc.)")
-                
-                try:
-                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
-                        model_name=model_name,
-                        model_kwargs={
-                            "device": device,
-                            # สำคัญมาก: e5 ต้องใช้ prefix!
-                            # ถ้าไม่ใส่ → คะแนนตกฮวบ!
-                        },
-                        encode_kwargs={
-                            "normalize_embeddings": True,
-                            # สำหรับ e5 series ต้องใส่ prefix เท่านั้น!!!
-                            "prompt": "query: "  # สำหรับ query
-                            # หรือถ้าจะ embed เอกสาร → ใช้ "passage: "
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to load {model_name}: {e}")
-                    logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
-                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
-                        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                        model_kwargs={"device": "cpu"}
-                    )
+        # สมมติว่ามีการใช้ _EMBED_LOCK เพื่อจัดการ thread safe
+        # with _EMBED_LOCK: 
+        if _CACHED_EMBEDDINGS is None:
+            
+            # 🟢 เปลี่ยนมาใช้ Global Variable ที่กำหนดไว้ใน global_vars.py
+            model_name = EMBEDDING_MODEL_NAME 
+
+            logger.info(f"Loading BEST Thai RAG embedding 2025: {model_name} on {device}")
+            logger.info("This model will be used to build ALL PEA 2568 vectorstores (evidence_km, document, etc.)")
+            
+            try:
+                # 
+                _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                    model_name=model_name,
+                    model_kwargs={
+                        "device": device,
+                        # BGE-M3 ไม่จำเป็นต้องมี prefix!
+                    },
+                    encode_kwargs={
+                        "normalize_embeddings": True,
+                        # การลบ 'prompt': 'query:' ออก สำหรับ BGE-M3 นั้น ถูกต้องแล้วครับ!
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to load {model_name}: {e}")
+                logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
+                # ใช้ Fallback model ตัวเดิม
+                _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                    model_kwargs={"device": "cpu"}
+                )
     return _CACHED_EMBEDDINGS
 
 # =================================================================
@@ -149,8 +150,7 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
 # =================================================================
 class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor, BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    # default cross-encoder recommended model
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_model: str = RERANKER_MODEL_NAME
     rerank_device: str = "cpu"
     rerank_max_length: int = 512
     _cross_encoder: Any = PrivateAttr(None)
@@ -222,7 +222,8 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
                 return None
 
             instance = HuggingFaceCrossEncoderCompressor(
-                rerank_model="mixedbread-ai/mxbai-rerank-xsmall-v1"
+                # rerank_model="mixedbread-ai/mxbai-rerank-xsmall-v1"
+                rerank_model=RERANKER_MODEL_NAME
             )
 
             from sentence_transformers import CrossEncoder

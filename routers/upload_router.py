@@ -157,41 +157,50 @@ async def upload_document(
 # -----------------------------
 # --- List uploaded documents ---
 # -----------------------------
+# -----------------------------
+# --- List uploaded documents ---
+# -----------------------------
 @upload_router.get("/uploads/{doc_type}", response_model=List[UploadResponse])
 async def list_uploads_by_type(
     doc_type: str, 
+    # 🟢 FIX: เพิ่ม Query Parameters สำหรับการกรองเพิ่มเติม
+    filter_year: Optional[int] = Query(None, alias="year", description="Filter by year (overrides user's year)"),
+    filter_enabler: Optional[str] = Query(None, alias="enabler", description="Filter by enabler code (e.g. KM)"),
     current_user: UserMe = Depends(get_current_user) # <-- User Dependency
 ):
     # --- LOGGING DEBUG INFO ---
     user_id_display = getattr(current_user, 'id', 'N/A')
+    # 💡 ใช้ค่า year ที่ถูก filter แล้ว
+    target_year = str(filter_year) if filter_year is not None else str(current_user.year)
     logger.info(
-        f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={current_user.year} (Filtering with STR year)"
+        f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={target_year} (Filtering with STR year)"
     )
     # --------------------------
+    
+    # กำหนดค่าตัวกรองจริงที่ใช้
+    tenant_to_fetch = current_user.tenant
+    year_to_fetch = target_year
+    enabler_to_fetch = filter_enabler
     
     # Support "all"
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
-    # 💡 TEMPORARY FIX START: บังคับใช้ DEFAULT_ENABLER สำหรับ 'evidence' 💡
-    enabler_to_fetch = None
-    
-    # ตรวจสอบว่าเป็นการลิสต์ 'evidence' หรือไม่ (และไม่ใช่การลิสต์ 'all')
-    if doc_type.lower() == EVIDENCE_DOC_TYPES and len(doc_types_to_fetch) == 1:
-        # *** ใช้ค่า DEFAULT_ENABLER จาก config/global_vars.py ***
+    # 💡 ปรับปรุง FIX ชั่วคราว: หากไม่ได้กำหนด enabler_to_fetch มา (filter_enabler=None) 
+    # และ doc_type เป็น 'evidence' ให้ใช้ DEFAULT_ENABLER (ตามโค้ดเดิม)
+    if doc_type.lower() == EVIDENCE_DOC_TYPES and len(doc_types_to_fetch) == 1 and enabler_to_fetch is None:
         enabler_to_fetch = DEFAULT_ENABLER
         logger.warning(
             f"TEMPORARY FIX: Forcing enabler to '{enabler_to_fetch}' for evidence listing "
-            f"to bypass core logic issue in list_documents."
+            f"due to filter_enabler=None."
         )
-    # 💡 TEMPORARY FIX END 💡
 
     # List documents for the user's specific tenant and year
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
-            tenant=current_user.tenant,  # <-- Pass Tenant
-            year=str(current_user.year),  # <-- Convert year to string for filtering
-            enabler=enabler_to_fetch # 💥 ส่ง enabler ที่ถูกกำหนดชั่วคราวไป
+            tenant=tenant_to_fetch,  # <-- ใช้ค่า Tenant
+            year=year_to_fetch,      # <-- ใช้ค่า Year ที่ถูก Override หรือ Default
+            enabler=enabler_to_fetch # <-- ใช้ค่า Enabler ที่ถูก Override หรือ Default
         )
     )
     uploads: List[UploadResponse] = []

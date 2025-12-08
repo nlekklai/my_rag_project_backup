@@ -62,7 +62,8 @@ from config.global_vars import (
     CHUNK_SIZE,
     DEFAULT_TENANT, 
     DEFAULT_YEAR,
-    EVIDENCE_MAPPING_FILENAME_SUFFIX
+    EVIDENCE_MAPPING_FILENAME_SUFFIX,
+    EMBEDDING_MODEL_NAME
 )
 
 # Logging
@@ -709,6 +710,10 @@ def process_document(
 
 
 # -------------------- Vectorstore / Mapping Utilities --------------------
+# 📌 Assumption: Chroma, HuggingFaceEmbeddings, os, logger, 
+# EMBEDDING_MODEL_NAME, VECTORSTORE_DIR, _parse_collection_name, 
+# และ get_collection_parent_dir ถูก import มาแล้ว
+
 _VECTORSTORE_SERVICE_CACHE: dict = {}
 
 def get_vectorstore(
@@ -718,7 +723,8 @@ def get_vectorstore(
     base_path: str = VECTORSTORE_DIR
 ) -> Chroma:
     """
-    เวอร์ชัน PEA 2568 แท้ ๆ (ไม่มี rag_ prefix ใด ๆ)
+    เวอร์ชัน PEA 2568 แท้ ๆ (ไม่มี rag_ prefix ใด ๆ) 
+    ใช้ BAAI/bge-m3 สำหรับการฝังข้อมูล
     """
 
     # === 1. ใช้ชื่อตรง ๆ ไม่ต้องเติม prefix อัตโนมัติ ===
@@ -729,11 +735,15 @@ def get_vectorstore(
         )
 
     # === 2. สร้าง path ที่ถูกต้องตามโครงสร้าง PEA ===
-    # 📌 FIX 1: ใช้ _parse_collection_name เพื่อดึง doc_type ออกมาอย่างถูกต้อง
-    doc_type_for_path, _ = _parse_collection_name(collection_name)
-    
-    # 📌 FIX 2: ใช้ get_collection_parent_dir ที่แก้ไขแล้ว
-    tenant_dir = get_collection_parent_dir(tenant, year, doc_type_for_path) 
+    # 📌 ใช้ฟังก์ชันช่วยสร้าง path ที่ท่านได้กำหนดไว้
+    try:
+        doc_type_for_path, _ = _parse_collection_name(collection_name)
+        tenant_dir = get_collection_parent_dir(tenant, year, doc_type_for_path) 
+    except NameError:
+        # Fallback สำหรับการทดสอบ หากไม่มีฟังก์ชันช่วย
+        logger.error("Helper functions '_parse_collection_name' or 'get_collection_parent_dir' not found. Using default path.")
+        tenant_dir = os.path.join(base_path, tenant, str(year), "km")
+        
     persist_directory = os.path.join(tenant_dir, collection_name)  # ใช้ชื่อ collection เต็ม ๆ
     cache_key = persist_directory
 
@@ -744,26 +754,36 @@ def get_vectorstore(
 
     # === 4. Embedding model (แชร์ตัวเดียวตลอด process) ===
     embeddings = _VECTORSTORE_SERVICE_CACHE.get("embeddings_model")
+
     if not embeddings:
-        logger.info("กำลังโหลด intfloat/multilingual-e5-base + prefix wrapper (สุดยอดแห่งปี 2025)")
+        logger.info(f"กำลังโหลด {EMBEDDING_MODEL_NAME} (SOTA Multilingual 2024) เพื่อปรับปรุง Retrieval")
 
-        base_emb = HuggingFaceEmbeddings(
-            model_name="intfloat/multilingual-e5-base",
-            model_kwargs={"device": "cpu"},  # เปลี่ยนเป็น "cuda" ถ้ามี GPU
-            encode_kwargs={"normalize_embeddings": True, "batch_size": 32}
-        )
+        # 🟢 FIX: ลบ E5PrefixWrapper ออก และใช้ BGE-M3 โดยตรง
+        try:
+            embeddings = HuggingFaceEmbeddings(
+                model_name= EMBEDDING_MODEL_NAME,
+                model_kwargs={
+                    "device": "cpu", # เปลี่ยนเป็น "cuda" ถ้ามี GPU 
+                },  
+                encode_kwargs={
+                    "normalize_embeddings": True, 
+                    "batch_size": 32,
+                    # BGE-M3 ไม่ต้องการ 'prompt': 'query:' 
+                }
+            )
+            _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
+            logger.info(f"{EMBEDDING_MODEL_NAME} โหลดสำเร็จและแชร์ตลอด process")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load {EMBEDDING_MODEL_NAME}: {e}")
+            logger.warning("⚠️ Falling back to paraphrase-multilingual-MiniLM-L12-v2")
+            # ใช้ Fallback model ตัวเดิม
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                model_kwargs={"device": "cpu"}
+            )
+            _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
 
-        class E5PrefixWrapper:
-            def embed_documents(self, texts):
-                return base_emb.embed_documents([f"passage: {t}" for t in texts])
-            def embed_query(self, text: str):
-                return base_emb.embed_query(f"query: {text}")
-            def __call__(self, texts):
-                return self.embed_documents(texts)
-
-        embeddings = E5PrefixWrapper()
-        _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-        logger.info("multilingual-e5-base + prefix wrapper โหลดสำเร็จและแชร์ตลอด process")
 
     # === 5. สร้างหรือโหลด Chroma ===
     os.makedirs(persist_directory, exist_ok=True)
