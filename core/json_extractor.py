@@ -1,7 +1,12 @@
 #core/json_extractor.py
-import json
+import json, logging
 from typing import Dict, Any, Optional
 import re
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 # ------------------------------------------------------------
 # Constants & Helpers
@@ -91,40 +96,43 @@ def _normalize_keys(data: Any) -> Any:
 # ------------------------------------------------------------
 # Core Extractor
 # ------------------------------------------------------------
+# แทนที่ฟังก์ชัน _extract_normalized_dict เดิม ด้วยโค้ดนี้:
+
 def _extract_normalized_dict(llm_response: str) -> Optional[Dict[str, Any]]:
-    """Extract and normalize JSON from LLM response."""
+    """Extract and normalize JSON from LLM response using robust regex and json5."""
     raw = (llm_response or "").strip()
     if not raw:
         return None
 
-    json_str = None
-
-    # 1. Fenced code block (```json หรือ ```)
-    fenced = re.search(r'```(?:json|JSON)?\s*(\{.*?\})\s*```', raw, re.DOTALL | re.IGNORECASE)
-    if fenced:
-        json_str = fenced.group(1)
-    else:
-        # 2. Balanced braces
-        json_str = _extract_balanced_braces(raw)
-
-    if not json_str:
+    # 1. ใช้ Regex ที่ทนทานสูงเพื่อหา JSON object ทั้งหมดในข้อความ
+    # \{[\s\S]*?\} : หาตั้งแต่ { แรก จนถึง } สุดท้าย
+    # re.DOTALL: สำคัญมาก เพื่อให้ . match \n (multiline JSON)
+    matches = re.findall(r"\{[\s\S]*?\}", raw, re.DOTALL)
+    
+    if not matches:
         return None
 
-    # 3. Parse JSON (with json5 fallback)
+    # เลือก match ที่ยาวที่สุด (น่าจะเป็น JSON object หลัก)
+    best_match = max(matches, key=len)
+    
+    # 2. Parse JSON (ใช้ json5 ก่อน เพราะทนทานกว่า)
+    data = None
     try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError:
+        import json5 # ต้องแน่ใจว่า import json5 มาแล้ว
+        data = json5.loads(best_match)
+    except Exception as e_json5:
+        logger.debug(f"json5 failed on best match: {e_json5}")
+        # Fallback 3: ลองใช้ standard json
         try:
-            import json5
-            data = json5.loads(json_str)
-        except Exception:
-            return None
-    except Exception:
-        return None
+            data = json.loads(best_match)
+        except Exception as e_json:
+            logger.debug(f"Standard json failed: {e_json}")
+            return None # Cannot parse
 
     if not isinstance(data, dict):
         return None
 
+    # 3. Normalize keys (ใช้ฟังก์ชันเดิมของคุณ)
     return _normalize_keys(data)
 
 

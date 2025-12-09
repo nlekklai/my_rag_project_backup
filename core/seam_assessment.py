@@ -130,28 +130,6 @@ CORRECT_PDCA_SCORES_MAP: Final[Dict[int, Dict[str, int]]] = {
     5: {'P': 2, 'D': 2, 'C': 2, 'A': 2},
 }
 
-# 🟢 NOTE: คุณต้องกำหนดตัวแปร Global หรือ Config Flag เพื่อเปิด/ปิดโหมดนี้
-# เช่น: IS_L3_DEBUG_TEST = True 
-# และตรวจสอบว่าคุณส่งค่านี้เข้าสู่ build_simulated_l3_evidence (เช่น via debug_mode argument)
-
-def build_simulated_l3_evidence(check_blocks: list[dict]) -> str:
-
-    if not check_blocks:
-        return ""
-
-    # --- Original Dynamic Logic ---
-    source_files = ", ".join(sorted({b["file"] for b in check_blocks}))
-    extracted_summary = "\n\n".join(
-        f"- จากไฟล์ {b['file']}:\n{b['content'][:600]}"
-        for b in check_blocks
-    )
-
-    return f"""
-[SIMULATED_L3_EVIDENCE]
-หลักฐานการตรวจสอบ (Check Phase) พบในไฟล์: {source_files}
-... (ส่วนที่เหลือของโค้ดเดิม)
-""".strip()
-
 def build_ordered_context(level: int,
                           plan_blocks: list[dict],
                           do_blocks: list[dict],
