@@ -884,5 +884,265 @@
             "page": "",
             "file_reference_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
         }
+    ],
+    "6.1.L1": [
+        {
+            "doc_id": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc",
+            "filename": "KM1.2L403 ผลประเมินผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:23:36.532441",
+            "relevance_score": 0.1796,
+            "chunk_uuid": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc",
+            "page": "",
+            "file_reference_id": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc"
+        },
+        {
+            "doc_id": "6f1f28f73faac2afcaa9f4a88f8b215e3b3d7cca4a459a41583f99839bc16aa7",
+            "filename": "KM6.1L102 KM_6_1_รายงานผลประเมินด้านการจัดการความรู้ด้านผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:23:36.532578",
+            "relevance_score": 0.1796,
+            "chunk_uuid": "6f1f28f73faac2afcaa9f4a88f8b215e3b3d7cca4a459a41583f99839bc16aa7",
+            "page": "",
+            "file_reference_id": "6f1f28f73faac2afcaa9f4a88f8b215e3b3d7cca4a459a41583f99839bc16aa7"
+        },
+        {
+            "doc_id": "c8ff73f6b0127612c14f782b870c560ecdf52bf3495ed5aac3b24dd00f067102",
+            "filename": "KM1.2L502 ผลประเมินผู้บริหาร นำมาปรับปรุง.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:23:36.532603",
+            "relevance_score": 0.1796,
+            "chunk_uuid": "c8ff73f6b0127612c14f782b870c560ecdf52bf3495ed5aac3b24dd00f067102",
+            "page": "",
+            "file_reference_id": "c8ff73f6b0127612c14f782b870c560ecdf52bf3495ed5aac3b24dd00f067102"
+        },
+        {
+            "doc_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "filename": "KM2.1L203 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:23:36.532626",
+            "relevance_score": 0.0796,
+            "chunk_uuid": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9",
+            "page": "",
+            "file_reference_id": "1dfa0ab08d70408d86204c150ad97af0ff1ce588e6683824d43fc57aeec9d2c9"
+        },
+        {
+            "doc_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "filename": "KM1.1L104 แผนแม่บท ปรับปรุงครั้งที่ 4.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:23:36.532646",
+            "relevance_score": 0.0796,
+            "chunk_uuid": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c",
+            "page": "",
+            "file_reference_id": "dc8e8d707725904eeb97071cc6d793d1ee1a514f1b4d0553a90cba9260d94a6c"
+        }
+    ],
+    "6.1.L2": [
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:26:31.186314",
+            "relevance_score": 0.4476,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "page": "",
+            "file_reference_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "filename": "KM6.1L101 KM_6_1_รายงานผลการดำเนินงานด้านการจัดการความรู้ เทียบกับเป้าหมายที่กำหนด.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:26:31.186414",
+            "relevance_score": 0.1373,
+            "chunk_uuid": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c",
+            "page": "",
+            "file_reference_id": "edf25764ac1316225651ccdba41e5243699ef196330c94cb855e3908f78b7b6c"
+        },
+        {
+            "doc_id": "dc58845d7f16d66d62297f0934b68396a62a5d3a805de5632b496452687da15c",
+            "filename": "KM4.2L301 Knowledge Management (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:26:31.186430",
+            "relevance_score": 0.1287,
+            "chunk_uuid": "dc58845d7f16d66d62297f0934b68396a62a5d3a805de5632b496452687da15c",
+            "page": "",
+            "file_reference_id": "dc58845d7f16d66d62297f0934b68396a62a5d3a805de5632b496452687da15c"
+        },
+        {
+            "doc_id": "0a11aadd722310493051a5f465406cf2d2a0a111cdc713646fb718daa0d75f2f",
+            "filename": "KM4.2L201 KM_4_2_2_channel.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:26:31.186445",
+            "relevance_score": 0.1287,
+            "chunk_uuid": "0a11aadd722310493051a5f465406cf2d2a0a111cdc713646fb718daa0d75f2f",
+            "page": "",
+            "file_reference_id": "0a11aadd722310493051a5f465406cf2d2a0a111cdc713646fb718daa0d75f2f"
+        },
+        {
+            "doc_id": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d",
+            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:26:31.186478",
+            "relevance_score": 0.115,
+            "chunk_uuid": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d",
+            "page": "",
+            "file_reference_id": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d"
+        }
+    ],
+    "6.1.L3": [
+        {
+            "doc_id": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6",
+            "filename": "KM3.3L305 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:29:36.257047",
+            "relevance_score": 0.6904,
+            "chunk_uuid": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6",
+            "page": "",
+            "file_reference_id": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6"
+        },
+        {
+            "doc_id": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f",
+            "filename": "KM3.1L201 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:29:36.257157",
+            "relevance_score": 0.6904,
+            "chunk_uuid": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f",
+            "page": "",
+            "file_reference_id": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f"
+        },
+        {
+            "doc_id": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b",
+            "filename": "KM3.3L504 รายงานการจัดฝึกอบรม ISO30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:29:36.257180",
+            "relevance_score": 0.5261,
+            "chunk_uuid": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b",
+            "page": "",
+            "file_reference_id": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b"
+        },
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:29:36.257465",
+            "relevance_score": 0.4476,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "page": "",
+            "file_reference_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "3b078f2d7081c66cd732d5af256a5325d8a5022ad7e4e716463aeef30f2b9e3a",
+            "filename": "KM1.1L502 Learning Form กระบวนการ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:29:36.257215",
+            "relevance_score": 0.3539,
+            "chunk_uuid": "3b078f2d7081c66cd732d5af256a5325d8a5022ad7e4e716463aeef30f2b9e3a",
+            "page": "",
+            "file_reference_id": "3b078f2d7081c66cd732d5af256a5325d8a5022ad7e4e716463aeef30f2b9e3a"
+        }
+    ],
+    "6.1.L4": [
+        {
+            "doc_id": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6",
+            "filename": "KM3.3L305 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:33:09.808382",
+            "relevance_score": 0.6904,
+            "chunk_uuid": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6",
+            "page": "",
+            "file_reference_id": "78ade95a0a15f4fbd764a5350252992ffd811a81c580dd70ead6d59f645a44d6"
+        },
+        {
+            "doc_id": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f",
+            "filename": "KM3.1L201 รายงานการจัดฝึกอบรม ด้านการจัดการความรู้ ปี 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:33:09.808393",
+            "relevance_score": 0.6904,
+            "chunk_uuid": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f",
+            "page": "",
+            "file_reference_id": "c3c2f4e4bff156d2d633c1bf974bc08af78316839328eed42a92b46b7ea8b42f"
+        },
+        {
+            "doc_id": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b",
+            "filename": "KM3.3L504 รายงานการจัดฝึกอบรม ISO30401.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:33:09.808605",
+            "relevance_score": 0.5261,
+            "chunk_uuid": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b",
+            "page": "",
+            "file_reference_id": "099a49b5ba0e85d1ea4bf356693347665084cb43f15b746106d5c9a481641b9b"
+        },
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:33:09.808340",
+            "relevance_score": 0.4476,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "page": "",
+            "file_reference_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc",
+            "filename": "KM1.2L403 ผลประเมินผู้บริหาร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:33:09.807809",
+            "relevance_score": 0.3747,
+            "chunk_uuid": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc",
+            "page": "",
+            "file_reference_id": "ce71e635f735fb2af04a6488bbc6d1bb8f32250347a6368974ca00801ea103dc"
+        }
+    ],
+    "6.1.L5": [
+        {
+            "doc_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "filename": "KM5.2L101 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:38:31.118202",
+            "relevance_score": 0.8594,
+            "chunk_uuid": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f",
+            "page": "",
+            "file_reference_id": "e0ea4d8a915b96016bdc2d5d79ff9d7b1d9ba5d2ad83ca254767f83a882ea30f"
+        },
+        {
+            "doc_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "filename": "KM4.1L301 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:38:31.118388",
+            "relevance_score": 0.8594,
+            "chunk_uuid": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c",
+            "page": "",
+            "file_reference_id": "5fe6b94283c77ae1d2544ed0251147f085353941744daf71f7e4a03a042c705c"
+        },
+        {
+            "doc_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
+            "filename": "KM5.2L208 ตัวชี้วัด 7.1 ปี 2567 (1).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:38:31.118423",
+            "relevance_score": 0.8594,
+            "chunk_uuid": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51",
+            "page": "",
+            "file_reference_id": "c61feb6d3c4fe9dcdb528ecf77f379d4c1aad64ab1c028e5e3e78ff50695ca51"
+        },
+        {
+            "doc_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "filename": "KM4.2L104 KM-ตัวชี้วัดด้านที่7_1ด้านการจัดการความรู้.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:38:31.118490",
+            "relevance_score": 0.8594,
+            "chunk_uuid": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23",
+            "page": "",
+            "file_reference_id": "9a44c278ae2c72a0569da8c3137cf9c563498d2ba08e302de1f58b1384760f23"
+        },
+        {
+            "doc_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
+            "filename": "KM1.1L101 นโยบาย ในระบบ KM-Si.jpg",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T23:38:31.118566",
+            "relevance_score": 0.759,
+            "chunk_uuid": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699",
+            "page": "",
+            "file_reference_id": "040bf0bf7abbad41c32227db22cb7fc83af380b4b263c028dceb98bb5bc65699"
+        }
     ]
 }

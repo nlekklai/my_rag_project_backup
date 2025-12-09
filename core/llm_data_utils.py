@@ -238,6 +238,9 @@ def retrieve_context_for_endpoint(
 # ========================
 # 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
 # ========================
+# ========================
+# 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
+# ========================
 def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
     doc_type: str,
@@ -251,9 +254,13 @@ def retrieve_context_by_doc_ids(
     start_time = time.time()
     vsm = vectorstore_manager or VectorStoreManager()
     
-    collection_name = f"{doc_type}"
-    if enabler and enabler != DEFAULT_ENABLER:
-        collection_name = f"{doc_type}_{enabler.lower()}"
+    # 🎯 FIX: แทนที่การสร้าง collection_name ด้วยตนเอง
+    # collection_name = f"{doc_type}"
+    # if enabler and enabler != DEFAULT_ENABLER:
+    #     collection_name = f"{doc_type}_{enabler.lower()}"
+    
+    # 🟢 ใช้ get_doc_type_collection_key เพื่อความสม่ำเสมอและถูกต้อง
+    collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
 
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
@@ -266,6 +273,7 @@ def retrieve_context_by_doc_ids(
     logger.info(f"Hydration → {len(doc_uuids)} doc IDs from {collection_name}")
 
     try:
+        # การดึงข้อมูลด้วย stable_doc_uuid สำหรับ hydration นั้นถูกต้องแล้ว
         results = chroma._collection.get(
             where={"stable_doc_uuid": {"$in": doc_uuids}},
             limit=limit,
