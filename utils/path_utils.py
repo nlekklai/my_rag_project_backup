@@ -57,6 +57,15 @@ def get_document_source_dir(
     สร้าง Path สมบูรณ์ไปยัง Source Document ที่ใช้ในการ Ingest
     Logic: _build_tenant_base_path / doc_type / [enabler (เฉพาะ Evidence)]
     """
+    
+    # 🟢 FIX: เพิ่มการตรวจสอบ doc_type เป็น None ก่อนเรียก .lower()
+    if doc_type is None:
+        # ควร Raise Error เพื่อให้รู้ว่า Caller ส่งค่าผิดมา
+        raise ValueError(
+            "doc_type cannot be None when calling get_document_source_dir. "
+            "Check the caller (list_documents) logic."
+        )
+
     doc_type_lower = doc_type.lower()
     enabler_lower = enabler.lower() if enabler else None
     
@@ -69,6 +78,7 @@ def get_document_source_dir(
         path_segments.append(enabler_lower)
     
     return os.path.join(*path_segments)
+
 
 def get_evidence_base_dir(tenant: str, year: int, enabler: str) -> str:
     """Helper สำหรับ Evidence Type โดยเฉพาะ (ใช้สำหรับ Source Files)"""
@@ -162,7 +172,61 @@ def get_evidence_mapping_file_path(tenant: str, year: int, enabler: str) -> str:
     path_segments.append(mapping_filename)
     return os.path.join(*path_segments)
 
+# ----------------------------------------------------------------
+# ## 3. Path Builders สำหรับ Mapping File (ต่อ)
+# ----------------------------------------------------------------
 
+def load_doc_id_mapping(
+    doc_type: str, 
+    tenant: str, 
+    year: Optional[int], 
+    enabler: Optional[str] = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    โหลด Document ID Mapping จากไฟล์ โดยใช้บริบท (tenant, year, enabler) เพื่อกำหนด Path
+    """
+    # 📌 NOTE: ใช้ get_mapping_file_path ที่ถูกออกแบบมาเพื่อรองรับ year=None สำหรับ Global Doc Type
+    map_path = get_mapping_file_path(tenant, year, enabler)
+    
+    # ถ้าไฟล์ไม่มีอยู่จริง ให้คืนค่า Dictionary เปล่า
+    if not os.path.exists(map_path):
+        # logger.info(f"Mapping file not found at {map_path}. Returning empty map.")
+        return {}
+        
+    try:
+        with open(map_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logger.error(f"❌ Error decoding JSON from mapping file: {map_path}. Returning empty map.")
+        return {}
+    except Exception as e:
+        logger.error(f"❌ Error loading mapping file {map_path}: {e}")
+        return {}
+
+
+def save_doc_id_mapping(
+    data: Dict[str, Dict[str, Any]], 
+    doc_type: str, # ใช้สำหรับ Contextual Logger/Future Logic
+    tenant: str, 
+    year: Optional[int], 
+    enabler: Optional[str] = None
+) -> None:
+    """
+    บันทึก Document ID Mapping ลงในไฟล์ โดยใช้บริบท (tenant, year, enabler) เพื่อกำหนด Path
+    """
+    map_path = get_mapping_file_path(tenant, year, enabler)
+    
+    try:
+        # สร้าง Directory หากยังไม่มี (รวมถึง dir สำหรับ year/enabler ถ้ามี)
+        os.makedirs(os.path.dirname(map_path), exist_ok=True)
+        
+        with open(map_path, "w", encoding="utf-8") as f:
+            # ใช้ indent 2 เพื่อให้อ่านง่าย
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            
+    except Exception as e:
+        logger.error(f"❌ FATAL: Failed to save mapping file to {map_path}: {e}")
+        
 # ----------------------------------------------------------------
 # ## 4. Document File Path Resolver
 # ----------------------------------------------------------------

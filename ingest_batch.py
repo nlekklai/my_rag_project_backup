@@ -1,11 +1,11 @@
-# ingest_batch.py (เวอร์ชันแก้ไขล่าสุด: แก้ไขปัญหา list command และ Default Year)
+# ingest_batch.py (เวอร์ชันแก้ไขล่าสุด: ปรับการลบ Mapping สำหรับ wipe all ให้เหลือเฉพาะ doc_id_mapping และ Vectorstore)
 
 import argparse
 import logging
 import sys
 import os
 import shutil
-from typing import Final, List, Dict, Any
+from typing import Final, List, Dict, Any, Union
 
 # -------------------- Logging Setup --------------------
 logging.basicConfig(
@@ -38,8 +38,15 @@ try:
         list_documents,
         wipe_vectorstore,
         delete_document_by_uuid,
-        get_target_dir # สำหรับการคำนวณพาธแสดงผล
     )
+    
+    # NEW: Import Path Utility สำหรับการแสดงผล Path/Key
+    from utils.path_utils import (
+        get_doc_type_collection_key,
+        load_doc_id_mapping,
+        save_doc_id_mapping
+    )
+
 
 except ImportError as e:
     logger.critical(f"Cannot import core modules: {e}")
@@ -47,6 +54,8 @@ except ImportError as e:
         logger.critical("HINT: Ensure config/global_vars.py exists and defines DEFAULT_TENANT, DEFAULT_YEAR, etc.")
     elif 'core.ingest' in str(e):
         logger.critical("HINT: Ensure core/ingest.py exists and is correctly defined.")
+    elif 'utils.path_utils' in str(e):
+         logger.critical("HINT: Ensure utils/path_utils.py exists and is correctly defined.")
     sys.exit(1)
 
 
@@ -63,7 +72,7 @@ ingest_parser.add_argument(
 )
 ingest_parser.add_argument(
     # NOTE: ใช้ type=str เพื่อรับค่า 2568, 2569 ได้ แต่ต้องแปลงเป็น int ก่อนส่งให้ core/ingest
-    "--year", type=str, default=DEFAULT_YEAR,
+    "--year", type=str, default=str(DEFAULT_YEAR), 
     help=f"Specify the year (e.g., 2567, 2568). Default: {DEFAULT_YEAR} (Only applies to 'evidence')."
 )
 ingest_parser.add_argument(
@@ -75,7 +84,7 @@ ingest_parser.add_argument(
     help=f"Enabler to ingest (Required for doc_type='evidence'). Supported: {', '.join(SUPPORTED_ENABLERS)}."
 )
 ingest_parser.add_argument(
-    "--subject", type=str, default=None, # 🟢 เพิ่ม subject argument
+    "--subject", type=str, default=None, 
     help="Subject/Topic for Global Doc Types (e.g., 'HR Policy')."
 )
 ingest_parser.add_argument(
@@ -107,7 +116,6 @@ list_parser.add_argument(
     help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
 list_parser.add_argument(
-    # 🟢 FIX 1: เปลี่ยน default เป็น None เพื่อไม่ให้ใช้ year filter โดยไม่จำเป็น
     "--year", type=str, default=None,
     help="Specify the year. Default: None (If doc_type is NOT evidence, year is ignored/not required)."
 )
@@ -132,12 +140,12 @@ wipe_parser.add_argument(
     help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
 wipe_parser.add_argument(
-    "--year", type=str, default=DEFAULT_YEAR,
+    "--year", type=str, default=str(DEFAULT_YEAR),
     help=f"Specify the year. Default: {DEFAULT_YEAR}"
 )
 wipe_parser.add_argument(
     "--doc_type", type=str, required=True,
-    help=f"Document type to wipe. Supported: {', '.join(SUPPORTED_DOC_TYPES)}."
+    help=f"Document type to wipe. Supported: {', '.join(SUPPORTED_DOC_TYPES + ['all'])}."
 )
 wipe_parser.add_argument(
     "--enabler", type=str,
@@ -161,7 +169,7 @@ delete_parser.add_argument(
     help=f"Specify the tenant. Default: {DEFAULT_TENANT}"
 )
 delete_parser.add_argument(
-    "--year", type=str, default=DEFAULT_YEAR,
+    "--year", type=str, default=str(DEFAULT_YEAR),
     help=f"Specify the year. Default: {DEFAULT_YEAR}"
 )
 delete_parser.add_argument(
@@ -205,14 +213,14 @@ if hasattr(args, 'debug') and args.debug:
 # -------------------- COMMAND: list --------------------
 if args.command == "list":
     
-    # 🟢 FIX 2: กำหนด Year ที่จะใช้กรอง (ใช้ DEFAULT_YEAR ก็ต่อเมื่อ doc_type เป็น evidence และไม่มีการระบุปีมา)
-    year_to_filter = args.year
+    # กำหนด Year ที่จะใช้กรอง (ใช้ DEFAULT_YEAR ก็ต่อเมื่อ doc_type เป็น evidence และไม่มีการระบุปีมา)
+    year_to_filter: Union[str, int, None] = args.year
     if doc_type_input == EVIDENCE_DOC_TYPES.lower() and not args.year:
         year_to_filter = DEFAULT_YEAR
 
     list_documents(
         tenant=args.tenant,
-        # 🟢 ส่ง year_to_filter ที่ถูกจัดการแล้ว (จะเป็น None หากไม่ใช่ evidence และไม่ได้ถูกระบุ)
+        # ส่ง year_to_filter ที่ถูกจัดการแล้ว (จะเป็น None หากไม่ใช่ evidence และไม่ได้ถูกระบุ)
         year=year_to_filter, 
         doc_types=[doc_type_input],
         enabler=args.enabler,
@@ -224,12 +232,20 @@ if args.command == "list":
 elif args.command == "delete":
     final_enabler = args.enabler if doc_type_input == EVIDENCE_DOC_TYPES.lower() else None
     
+    # กำหนดปีเป็น None สำหรับ Global Doc Types
+    if doc_type_input == EVIDENCE_DOC_TYPES.lower():
+        # สำหรับ evidence ให้ใช้ year ที่ระบุ หรือ DEFAULT_YEAR
+        year_to_delete = int(args.year) if args.year and str(args.year).isdigit() else DEFAULT_YEAR
+    else:
+        # สำหรับ doc_type อื่น ๆ (document, policy, manual) ให้ใช้ None
+        year_to_delete = None 
+
     delete_document_by_uuid(
         tenant=args.tenant,
-        year=args.year,
+        year=year_to_delete, # ส่งเป็น None หรือ int
         doc_type=doc_type_input,
         enabler=final_enabler,
-        doc_uuid_to_delete=args.doc_uuid,
+        stable_doc_uuid=args.doc_uuid,
         base_path=VECTORSTORE_DIR
     )
     sys.exit(0)
@@ -239,19 +255,24 @@ elif args.command == "delete":
 elif args.command == "wipe":
     logger.warning("!!! WARNING: You are about to wipe the entire Vector Store Collection !!!")
     
-    # คำนวณพาธสำหรับแสดงผล (อิงจากตรรกะใน core/ingest.py)
-    doc_type_key = get_target_dir(doc_type_input, args.enabler)
+    # คำนวณ Year ที่จะใช้จริงสำหรับ WIPE และการแสดงผล
     tenant_clean = args.tenant.lower().replace(" ", "_")
+    if doc_type_input == EVIDENCE_DOC_TYPES.lower():
+        # สำหรับ evidence ให้ใช้ year ที่ระบุ หรือ DEFAULT_YEAR
+        year_to_use: Union[int, None] = int(args.year) if args.year and args.year.isdigit() else DEFAULT_YEAR
+        year_to_display = str(year_to_use)
+    else:
+        # สำหรับ doc_type อื่น ๆ ให้ใช้ None เพื่อระบุ Global/Common Collection
+        year_to_use = None
+        year_to_display = "Global" 
+
+    # ใช้ get_doc_type_collection_key เพื่อคำนวณชื่อ Collection Key สำหรับการแสดงผล
+    doc_type_key = get_doc_type_collection_key(doc_type_input, args.enabler)
     
-    # กำหนดส่วนของ Year หรือ Common
-    year_or_common = str(args.year)
-    if doc_type_input != EVIDENCE_DOC_TYPES.lower():
-         year_or_common = "common" 
+    # เปลี่ยนการแสดงผลให้ชัดเจนขึ้นโดยใช้ Key
+    wipe_path_display = f"Collection Key: {doc_type_key} (Tenant: {tenant_clean}, Year Context: {year_to_display})"
     
-    # ✅ แก้ไข: ลบ "gov_tenants" ออก เนื่องจาก VECTORSTORE_DIR มีอยู่แล้ว
-    wipe_path_display = os.path.join(VECTORSTORE_DIR, tenant_clean, year_or_common, doc_type_key)
-    
-    logger.warning(f"Target Collection Path (based on arguments): {wipe_path_display}")
+    logger.warning(f"Target: {wipe_path_display}")
     
     if not args.yes:
         confirmation = input("Type 'YES' (all caps) to confirm deletion: ")
@@ -261,67 +282,89 @@ elif args.command == "wipe":
 
     # รัน Wipe จริง
     logger.info("Starting actual deletion...")
+
     wipe_vectorstore(
-        tenant=args.tenant, 
-        year=args.year,
         doc_type_to_wipe=doc_type_input,
-        enabler=args.enabler,
+        enabler=args.enabler, 
+        tenant=args.tenant, 
+        year=year_to_use, # ส่ง year_to_use ที่เป็น None หรือ int
         base_path=VECTORSTORE_DIR,
     )
     logger.info("✅ Wipe completed.")
     
-    # 💡 Cleanup: พยายามลบโฟลเดอร์เปล่าที่เหลืออยู่ (ถ้า wipe all)
+    # 🎯 FIX: ปรับ Logic Cleanup สำหรับ wipe all ให้ลบเฉพาะ doc_id_mapping.json และ Vectorstore
     if doc_type_input == 'all':
         try:
-            # ✅ แก้ไข: ลบ "gov_tenants" ออก
-            target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean, year_or_common)
+            # 1. ลบโฟลเดอร์ Vector Store ของ Tenant/Year Context ทั้งหมด
+            if year_to_use is None:
+                # Target: VECTORSTORE_DIR/pea (สำหรับ Global)
+                target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean)
+            else:
+                # Target: VECTORSTORE_DIR/pea/2568
+                target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean, str(year_to_use))
+                
             shutil.rmtree(target_cleanup_dir, ignore_errors=True)
-            logger.info(f"Cleaned up empty directory: {target_cleanup_dir}")
-        except Exception:
-             pass 
+            logger.info(f"🗑️ Cleaned up Vector Store directory: {target_cleanup_dir}")
+            
+            # 2. ลบเฉพาะไฟล์ Doc ID Mapping ทั่วไป (Global)
+            # เราลบเฉพาะ doc_id_mapping.json และคงไฟล์ config อื่นๆ (rubric, rules) ไว้
+            if year_to_use is None:
+                mapping_dir = os.path.abspath(os.path.join(project_root, 'config', 'mapping', tenant_clean))
+                # 📌 FIX: ระบุชื่อไฟล์ mapping ที่ต้องการลบให้ชัดเจน
+                global_doc_id_mapping_file = os.path.join(mapping_dir, f"{tenant_clean}_doc_id_mapping.json")
+                
+                if os.path.exists(global_doc_id_mapping_file):
+                    os.remove(global_doc_id_mapping_file)
+                    logger.info(f"🗑️ Removed shared Global Doc ID Mapping file: {os.path.basename(global_doc_id_mapping_file)}")
+                
+        except Exception as e:
+            logger.error(f"Error during post-wipe all cleanup: {e}")
+            pass 
+    else:
+        # ข้อความเตือนสำหรับ doc_type อื่นๆ ที่ไฟล์ Mapping ร่วมยังคงอยู่
+        logger.info(f"ℹ️ Mapping file '{tenant_clean}_doc_id_mapping.json' remains. It is used for other Global Doc Types. Run 'wipe --doc_type all' to delete it.")
 
     sys.exit(0)
 
 # -------------------- COMMAND: ingest --------------------
 elif args.command == "ingest":
-    # 🎯 NOTE: ต้องมั่นใจว่าใน core/ingest.py มีการตรวจสอบ args.year ก่อนแปลงเป็น int
+    
     if args.doc_type.lower() != EVIDENCE_DOC_TYPES.lower() and args.year and args.year != DEFAULT_YEAR:
         logger.warning(f"⚠️ Warning: Year '{args.year}' provided for doc_type='{doc_type_input}'. Year is usually ignored for non-evidence types.")
-    
-    logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}, subject: {args.subject or 'None'}") # 🟢 Log subject
+
+    logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}, subject: {args.subject or 'None'}") 
     logger.info(f"Dry run: {args.dry_run} | Sequential: {args.sequential} | Debug: {args.debug}")
 
-    # 🟢 ตรวจสอบและแปลงปีเป็น int เมื่อมีค่า
-    year_to_ingest = int(args.year) if args.year else None
+    # ตรวจสอบและแปลงปีเป็น int เมื่อมีค่า
+    year_to_ingest: Union[int, None] = int(args.year) if args.year and str(args.year).isdigit() else None
+    
+    # สำหรับ Global Doc Type ให้ year เป็น None
+    if doc_type_input != EVIDENCE_DOC_TYPES.lower():
+         year_to_ingest = None
 
-    results: List[Dict[str, Any]] = ingest_all_files( # กำหนด Type Hint ให้ชัดเจนว่าเป็น List
+    # ลบ Argument ที่เกินมา 3 ตัว (data_dir, base_path, debug)
+    results: List[Dict[str, Any]] = ingest_all_files( 
         tenant=args.tenant,
         year=year_to_ingest, 
         doc_type=None if doc_type_input == "all" else doc_type_input,
         enabler=args.enabler,
-        subject=args.subject, # 🟢 ส่ง subject ที่ถูกรับเข้ามา
-        data_dir=DATA_DIR,
-        base_path=VECTORSTORE_DIR,
+        subject=args.subject, 
         skip_ext=args.skip_ext,
         sequential=args.sequential,
         log_every=args.log_every,
         dry_run=args.dry_run,
-        debug=args.debug,
     )
 
     total = len(results)
     success = 0
     failed = 0
     
-    # 🎯 FINAL FIX: ปรับ Logic การนับให้วนซ้ำใน List of Dictionaries
     if isinstance(results, list):
-        # 🟢 นับจำนวนรายการที่สถานะเป็น 'chunked'
         success = sum(1 for status_dict in results if status_dict.get('status') == 'chunked')
         failed = total - success
     else:
-        # ❌ จัดการกรณีที่ผลลัพธ์ไม่ใช่ List (ไม่ควรเกิดขึ้นแล้ว)
         logger.error(f"❌ Cannot calculate summary: 'results' expected list, got {type(results)}. Assuming 0 successes.")
-        failed = total # ถ้า total > 0
+        failed = total 
         
     logger.info("-" * 50)
     logger.info(f"🔥 INGESTION SUMMARY: {doc_type_input.upper()} ({args.enabler or 'ALL'})")

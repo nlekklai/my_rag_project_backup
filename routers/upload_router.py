@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Background
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime, timezone
 import logging, os, sys, uuid
 from pathlib import Path as SysPath
@@ -19,7 +19,7 @@ try:
         DATA_DIR,
         VECTORSTORE_DIR,
         SUPPORTED_DOC_TYPES,
-        DEFAULT_ENABLER, # 💡 ต้องมีค่านี้
+        DEFAULT_ENABLER, 
         EVIDENCE_DOC_TYPES
     )
     from core.ingest import (
@@ -66,17 +66,18 @@ class UploadResponse(BaseModel):
     size: Optional[float] = None
     enabler: Optional[str] = None
     tenant: Optional[str] = None
-    year: Optional[int] = None
+    year: Optional[Union[int, str]] = None 
 
 # -----------------------------
 # --- Helper Function for File Path ---
 # -----------------------------
-# 🟢 REVISED: ใช้ get_document_source_dir จาก Path Utility
-def get_save_dir(doc_type: str, tenant: str, year: int, enabler: Optional[str] = None) -> str:
+def get_save_dir(doc_type: str, tenant: str, year: Optional[Union[int, str]], enabler: Optional[str] = None) -> str:
     """Constructs the segregated directory path for saving files using Path Utility."""
+    resolved_year = int(year) if isinstance(year, str) and year.isdigit() else (year if isinstance(year, int) else None)
+    
     return get_document_source_dir(
         tenant=tenant,
-        year=year, 
+        year=resolved_year, 
         enabler=enabler, 
         doc_type=doc_type
     )
@@ -102,14 +103,13 @@ async def upload_document(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type. Must be one of: {SUPPORTED_DOC_TYPES}")
 
-    enabler_code = enabler or DEFAULT_ENABLER # Determine enabler code
+    enabler_code = enabler or (DEFAULT_ENABLER if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() else None) 
 
     # Folder for file storage (segregated by tenant/year/doc_type/enabler)
     save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
     os.makedirs(save_dir, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    # ปรับปรุงการ Sanitized filename ให้มีความยืดหยุ่นมากขึ้นสำหรับภาษาไทย/อักขระพิเศษ
     sanitized_filename = SysPath(file.filename).name
     if not sanitized_filename:
         sanitized_filename = f"uploaded_{timestamp}.tmp"
@@ -130,7 +130,7 @@ async def upload_document(
                 stable_doc_uuid=mock_doc_id,
                 doc_type=doc_type,
                 tenant=current_user.tenant,
-                year=str(current_user.year),
+                year=current_user.year, 
                 enabler=enabler_code,
             )
 
@@ -153,19 +153,17 @@ async def upload_document(
         raise HTTPException(500, detail=f"Upload failed: {e}")
 
 # -----------------------------
-# --- List uploaded documents ---
+# --- List uploaded documents (FIXED) ---
 # -----------------------------
 @upload_router.get("/uploads/{doc_type}", response_model=List[UploadResponse])
 async def list_uploads_by_type(
     doc_type: str, 
-    # 🟢 FIX: เพิ่ม Query Parameters สำหรับการกรองเพิ่มเติม
     filter_year: Optional[int] = Query(None, alias="year", description="Filter by year (overrides user's year)"),
     filter_enabler: Optional[str] = Query(None, alias="enabler", description="Filter by enabler code (e.g. KM)"),
     current_user: UserMe = Depends(get_current_user) # <-- User Dependency
 ):
     # --- LOGGING DEBUG INFO ---
     user_id_display = getattr(current_user, 'id', 'N/A')
-    # 💡 ใช้ค่า year ที่ถูก filter แล้ว
     target_year = str(filter_year) if filter_year is not None else str(current_user.year)
     logger.info(
         f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={target_year} (Filtering with STR year)"
@@ -174,15 +172,25 @@ async def list_uploads_by_type(
     
     # กำหนดค่าตัวกรองจริงที่ใช้
     tenant_to_fetch = current_user.tenant
-    year_to_fetch = target_year
-    enabler_to_fetch = filter_enabler
+    year_to_fetch: Optional[Union[int, str]] = target_year
+    enabler_to_fetch: Optional[str] = filter_enabler
     
     # Support "all"
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
+    # 📌 FIX 1: จัดการกรณี Global Doc Type: ถ้า doc_type ไม่ใช่ EVIDENCE_DOC_TYPES 
+    # ให้บังคับ year/enabler เป็น None เพื่อให้ค้นหาเจอเอกสารที่ไม่มีค่า year/enabler ใน Mapping DB
+    if doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
+         logger.warning(
+             f"FIX: Setting year/enabler to None for Global Doc Type: {doc_type} "
+             f"to match mapping DB where year/enabler are None."
+         )
+         year_to_fetch = None
+         enabler_to_fetch = None
+    
     # 💡 ปรับปรุง FIX ชั่วคราว: หากไม่ได้กำหนด enabler_to_fetch มา (filter_enabler=None) 
-    # และ doc_type เป็น 'evidence' ให้ใช้ DEFAULT_ENABLER (ตามโค้ดเดิม)
-    if doc_type.lower() == EVIDENCE_DOC_TYPES and len(doc_types_to_fetch) == 1 and enabler_to_fetch is None:
+    # และ doc_type เป็น 'evidence' ให้ใช้ DEFAULT_ENABLER 
+    elif doc_type.lower() == EVIDENCE_DOC_TYPES.lower() and enabler_to_fetch is None:
         enabler_to_fetch = DEFAULT_ENABLER
         logger.warning(
             f"TEMPORARY FIX: Forcing enabler to '{enabler_to_fetch}' for evidence listing "
@@ -194,8 +202,8 @@ async def list_uploads_by_type(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
             tenant=tenant_to_fetch,
-            year=year_to_fetch,
-            enabler=enabler_to_fetch
+            year=year_to_fetch, 
+            enabler=enabler_to_fetch 
         )
     )
     uploads: List[UploadResponse] = []
@@ -249,7 +257,7 @@ async def ingest_document(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type: {doc_type}")
 
-    enabler_code = enabler or DEFAULT_ENABLER
+    enabler_code = enabler or (DEFAULT_ENABLER if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() else None)
     
     # Use segregated save directory
     save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
@@ -263,18 +271,26 @@ async def ingest_document(
         await run_in_threadpool(lambda: open(file_path, "wb").write(contents))
 
         # Ingest document
-        doc_info = await run_in_threadpool(
+        chunks, stable_doc_uuid, doc_type_result = await run_in_threadpool(
             lambda: process_document(
-                file_path, 
-                SysPath(file.filename).name, 
-                doc_type, 
-                enabler_code,
+                file_path=file_path, 
+                file_name=SysPath(file.filename).name, 
+                stable_doc_uuid=str(uuid.uuid4().hex), 
+                doc_type=doc_type, 
+                enabler=enabler_code,
                 tenant=current_user.tenant, 
-                year=str(current_user.year)
+                year=current_user.year 
             )
         )
-        # Note: doc_info ควรเป็น dict ที่มี status, doc_id, chunk_count
-        return {"status": "success", "doc_info": doc_info.model_dump()}
+        
+        return {
+             "status": "success", 
+             "doc_info": {
+                 "doc_id": stable_doc_uuid,
+                 "doc_type": doc_type_result,
+                 "chunk_count": len(chunks) if chunks else 0
+             }
+        }
     except Exception as e:
         logger.error(f"Ingest failed: {e}")
         if os.path.exists(file_path):
@@ -282,12 +298,13 @@ async def ingest_document(
         raise HTTPException(500, detail=str(e))
 
 # -----------------------------
-# --- Get all documents ---
+# --- Get all documents (FIXED) ---
 # -----------------------------
 @upload_router.get("/documents", response_model=List[UploadResponse])
 async def get_documents(
     doc_type: Optional[str] = Query(None, description=f"Filter by doc_type: {', '.join(SUPPORTED_DOC_TYPES)}"),
     enabler: Optional[str] = Query(None, description="Filter by enabler (e.g. KM)"),
+    filter_year: Optional[int] = Query(None, alias="year", description="Filter by year (overrides user's year)"),
     current_user: UserMe = Depends(get_current_user), # <-- User Dependency
 ):
     # --- LOGGING DEBUG INFO ---
@@ -299,13 +316,28 @@ async def get_documents(
 
     doc_types_to_fetch = [doc_type] if doc_type and doc_type.lower() != "all" else None
     
+    # กำหนดค่าตัวกรองจริงที่ใช้
+    tenant_to_fetch = current_user.tenant
+    year_to_fetch: Optional[Union[int, str]] = str(filter_year) if filter_year is not None else current_user.year 
+    enabler_to_fetch: Optional[str] = enabler 
+    
+    # 📌 NEW FIX: สำหรับ Global Doc Types (document, seam, faq) ถ้ามีการระบุ doc_type และไม่ใช่ EVIDENCE
+    # ให้บังคับ year/enabler เป็น None เพื่อให้ค้นหาเจอเอกสารที่ไม่มีค่า year/enabler
+    if doc_type and doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
+         logger.warning(
+             f"FIX: Setting year/enabler to None for Global Doc Type: {doc_type} "
+             f"to match mapping DB where year/enabler are None."
+         )
+         year_to_fetch = None
+         enabler_to_fetch = None
+
     # List documents for the user's specific tenant and year
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
-            enabler=enabler, 
-            tenant=current_user.tenant,
-            year=str(current_user.year)
+            enabler=enabler_to_fetch, 
+            tenant=tenant_to_fetch,
+            year=year_to_fetch 
         )
     )
     uploads: List[UploadResponse] = []
@@ -386,14 +418,26 @@ async def download_upload(
     # --------------------------
 
     # 1. ดึงเอกสารเฉพาะของ Tenant/Year นี้เท่านั้น และตรวจสอบ Doc ID
+    year_to_fetch = str(current_user.year)
+    enabler_to_fetch = None
+    
+    # ถ้าเป็น Global Doc Type (document, seam, faq) ให้ year_to_fetch เป็น None
+    if doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
+         year_to_fetch = None
+         enabler_to_fetch = None
+    # ถ้าเป็น Evidence ต้องให้ list_documents หา enabler จาก mapping เอง
+
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=[doc_type], 
             tenant=current_user.tenant,
-            year=str(current_user.year)
+            year=year_to_fetch,
+            enabler=enabler_to_fetch
         )
     )
-    doc_map = {item["doc_id"]: item for item in doc_data.values()}
+    
+    # NOTE: list_documents returns a dict of dicts, where key is doc_id
+    doc_map = doc_data 
 
     target = doc_map.get(file_id)
     if not target:

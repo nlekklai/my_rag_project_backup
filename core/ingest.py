@@ -4,6 +4,7 @@
 
 import os
 import re
+import sys
 import logging
 import unicodedata
 import json
@@ -51,7 +52,7 @@ except ImportError:
 from config.global_vars import (
     DATA_DIR,
     VECTORSTORE_DIR,
-    MAPPING_BASE_DIR, # 📌 FIXED: ค่านี้จะถูกใช้เป็น Root Path สำหรับ Mapping
+    MAPPING_BASE_DIR, 
     SUPPORTED_TYPES,
     SUPPORTED_DOC_TYPES,
     DEFAULT_ENABLER,
@@ -65,6 +66,20 @@ from config.global_vars import (
     EVIDENCE_MAPPING_FILENAME_SUFFIX,
     EMBEDDING_MODEL_NAME
 )
+
+# -------------------- [NEW] Import Path Utilities --------------------
+# 🎯 FIX: นำเข้าฟังก์ชัน Path จาก utils/path_utils.py เพื่อแทนที่ฟังก์ชันภายใน
+from utils.path_utils import (
+    get_document_source_dir,
+    get_doc_type_collection_key,
+    get_vectorstore_collection_path,
+    get_mapping_file_path,
+    get_vectorstore_tenant_root_path, # ใช้สำหรับ wipe
+    get_evidence_mapping_file_path, # ใช้สำหรับ Evidence Map
+    load_doc_id_mapping,
+    save_doc_id_mapping
+)
+# ---------------------------------------------------------------------
 
 # Logging
 logging.basicConfig(
@@ -112,78 +127,13 @@ logging.getLogger('pdfminer.pdfinterp').setLevel(logging.ERROR)
 logging.getLogger('unstructured').setLevel(logging.ERROR)
 logging.getLogger('pypdf').setLevel(logging.ERROR)
 
-# -------------------- [FIXED] Multi-Tenant/Year Path Builders --------------------
-
-def build_tenant_base_path(tenant: str, year: int, doc_type: str) -> str:
-    """
-    สร้าง path หลักของ tenant/context สำหรับ **Input Data (Source Files)**
-    - ใช้ year ในพาธสำหรับ evidence เท่านั้น (เช่น data/pea/2568)
-    """
-    if not tenant:
-        raise ValueError("tenant ห้ามว่าง")
-    tenant_clean = tenant.strip().lower().replace(" ", "_")
-    if ".." in tenant_clean or "/" in tenant_clean or "\\" in tenant_clean:
-        raise ValueError(f"tenant ไม่ถูกต้อง: {tenant}")
-    
-    is_evidence = doc_type.lower() == EVIDENCE_DOC_TYPES.lower()
-    
-    path_components = [DATA_DIR, tenant_clean]
-    if is_evidence:
-        path_components.append(str(year))
-    
-    return os.path.join(*path_components)
-
-
-def get_collection_parent_dir(tenant: str, year: int, doc_type: str) -> str:
-    """
-    Calculates the parent directory where the collection folder resides (using VECTORSTORE_DIR).
-    Expected structure: VECTORSTORE_DIR / tenant / [year]
-    """
-    doc_type_lower = doc_type.strip().lower()
-    
-    # 🎯 FIX 1: เริ่มต้น Path จาก VECTORSTORE_DIR (ซึ่งรวม 'gov_tenants' แล้ว) และตามด้วย tenant
-    path_segments = [VECTORSTORE_DIR, tenant.lower()] 
-    
-    is_evidence = doc_type_lower == EVIDENCE_DOC_TYPES.lower()
-    
-    # 🎯 FIX 2: เพิ่มปี (str(year)) เฉพาะถ้าเป็น 'evidence' เท่านั้น
-    if is_evidence:
-        # Year for evidence
-        path_segments.append(str(year))
-        
-    # 📌 NEW: สำหรับ DocType อื่นๆ (เช่น document, faq) ไม่ต้องใส่ปี
-    # แต่ถ้าเป็น DocType ทั่วไป เราอาจจะต้องการให้มันอยู่ใต้พาธ tenant โดยตรง
-    
-    # 💡 REVISED LOGIC: ให้ Collection อยู่ใต้ VECTORSTORE_DIR / tenant / [year] เสมอ
-    # ถ้าเป็น DocType ทั่วไป (เช่น document) ให้ใช้ DEFAULT_YEAR ในการกำหนดพาธ
-    # เพื่อให้ง่ายต่อการจัดการ Wipe และ List
-    if not is_evidence and str(year) != str(DEFAULT_YEAR):
-         # ถ้าไม่ใช่ evidence และปีไม่ใช่ default ให้เก็บไว้ในพาธแยกปี
-         # เช่น VECTORSTORE_DIR/pea/2569/document
-         # 📌 NOTE: แต่ตาม Logic เดิมที่กำหนดมา ควรจะแยกปีเฉพาะ Evidence เท่านั้น
-         # เพื่อความสอดคล้องกับโค้ดที่คุณเขียนมาแล้ว:
-         pass # ไม่ต้องทำอะไรเพิ่ม: path_segments คือ [VECTORSTORE_DIR, tenant.lower()] 
-         
-    return os.path.join(*path_segments)
-
-
-def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
-    """
-    กำหนดชื่อ Collection สำหรับ ChromaDB (Logical ID)
-    """
-    if not doc_type:
-        return "default"
-
-    doc_type_lower = doc_type.lower()
-    enabler_lower = enabler.lower() if enabler and enabler.strip() else None # 📌 FIX: ตรวจสอบ String ว่างเปล่า
-    
-    # 🎯 FIX: สำหรับ evidence ให้ใช้ DocType_Enabler เสมอ
-    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and enabler_lower:
-        # ✅ ผลลัพธ์: 'evidence_km'
-        return f"{doc_type_lower}_{enabler_lower}"
-    
-    # 2. จัดการ Doc Type อื่น ๆ (document, faq, etc.)
-    return doc_type_lower
+# -------------------- [REMOVED/REPLACED] Path Builders --------------------
+# 📌 ถูกลบออกเนื่องจากถูกแทนที่ด้วยฟังก์ชันจาก utils/path_utils.py:
+# build_tenant_base_path
+# get_collection_parent_dir
+# get_target_dir (ถูกแทนที่ด้วย get_doc_type_collection_key)
+# _get_source_dir (ถูกแทนที่ด้วย get_document_source_dir)
+# --------------------------------------------------------------------------
 
 def _parse_collection_name(
     collection_name: str, 
@@ -215,45 +165,9 @@ def _parse_collection_name(
     if collection_name_lower in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
         return collection_name_lower, None
         
-    # 3. Fallback (สำหรับชื่อยาว/ชื่อที่ไม่ได้มาตรฐาน)
-    # 📌 NOTE: เพื่อความมั่นคง จะไม่ใช้ Fallback ชื่อยาว (pea_2568_evidence_km)
-    # เพราะ Collection Name ไม่ควรมี Tenant/Year อยู่ข้างใน
-    
-    # Fallback to the original name if no match is found (ถือว่าเป็น Doc Type ฐาน)
+    # 3. Fallback to the original name if no match is found (ถือว่าเป็น Doc Type ฐาน)
     return collection_name_lower, None
 
-
-def _get_source_dir(
-    tenant: str, 
-    year: int, 
-    doc_type: str, 
-    enabler: Optional[str] = None
-) -> str:
-    """
-    Constructs the full source directory path where raw documents reside.
-    Expected structure: DATA_DIR / tenant / [year] / doc_type / [enabler]
-    
-    📌 FIX: แก้ไขลำดับพารามิเตอร์เพื่อให้สอดคล้องกับ build_tenant_base_path
-    """
-    if not doc_type:
-        raise ValueError("Doc type must be provided for source directory.")
-        
-    doc_type_lower = doc_type.lower()
-    enabler_lower = enabler.lower() if enabler else None
-    
-    # 🎯 FIX 1: ใช้ build_tenant_base_path เพื่อจัดการ DATA_DIR / tenant / [year]
-    base_path = build_tenant_base_path(tenant, year, doc_type)
-    
-    # เพิ่ม Doc Type (evidence หรือ document)
-    path_segments = [base_path, doc_type_lower]
-    
-    is_evidence = doc_type_lower == EVIDENCE_DOC_TYPES.lower()
-    
-    # เพิ่ม Enabler (km) เฉพาะถ้าเป็น evidence และมี enabler
-    if is_evidence and enabler_lower and enabler_lower in [e.lower() for e in SUPPORTED_ENABLERS]:
-        path_segments.append(enabler_lower)
-    
-    return os.path.join(*path_segments)
 
 # -------------------- Helper: safe metadata filter --------------------
 def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
@@ -686,7 +600,7 @@ def process_document(
     stable_doc_uuid: str, 
     doc_type: Optional[str] = None,
     enabler: Optional[str] = None, 
-    subject: Optional[str] = None,  # 🟢 เพิ่ม subject
+    subject: Optional[str] = None,  
     base_path: str = VECTORSTORE_DIR, 
     year: Optional[int] = None,
     tenant: Optional[str] = None, 
@@ -716,7 +630,7 @@ def process_document(
         injected_metadata["enabler"] = resolved_enabler
     if tenant: 
         injected_metadata["tenant"] = tenant
-    if subject: # 🟢 ใส่ subject ถ้ามีการระบุมา (สำหรับ Global KM)
+    if subject: 
         injected_metadata["subject"] = subject
         
     filter_id_value = filename_doc_id_key 
@@ -728,16 +642,14 @@ def process_document(
     chunks = load_and_chunk_document(
         file_path=file_path,
         stable_doc_uuid=stable_doc_uuid,
-        doc_type=doc_type, # 🟢 ส่ง Doc Type โดยตรง
-        enabler=resolved_enabler, # 🟢 ส่ง Enabler โดยตรง
-        subject=subject, # 🟢 ส่ง Subject โดยตรง
+        doc_type=doc_type, 
+        enabler=resolved_enabler, 
+        subject=subject, 
         year=year,
         version=version,
-        metadata=injected_metadata, # 👈 metadata อื่น ๆ ที่เหลือ
+        metadata=injected_metadata, 
         ocr_pages=ocr_pages
     )
-    
-    # 🔴 FIX: ลบการวนลูปซ้ำซ้อนด้านล่างนี้ทิ้งทั้งหมด
     
     if chunks:
          logger.debug(f"Chunk metadata preview: {chunks[0].metadata}")
@@ -746,9 +658,6 @@ def process_document(
 
 
 # -------------------- Vectorstore / Mapping Utilities --------------------
-# 📌 Assumption: Chroma, HuggingFaceEmbeddings, os, logger, 
-# EMBEDDING_MODEL_NAME, VECTORSTORE_DIR, _parse_collection_name, 
-# และ get_collection_parent_dir ถูก import มาแล้ว
 
 _VECTORSTORE_SERVICE_CACHE: dict = {}
 
@@ -759,8 +668,7 @@ def get_vectorstore(
     base_path: str = VECTORSTORE_DIR
 ) -> Chroma:
     """
-    เวอร์ชัน PEA 2568 แท้ ๆ (ไม่มี rag_ prefix ใด ๆ) 
-    ใช้ BAAI/bge-m3 สำหรับการฝังข้อมูล
+    เวอร์ชัน Multi-Tenant/Multi-Year ที่ใช้ Path Utility ในการสร้าง Path
     """
 
     # === 1. ใช้ชื่อตรง ๆ ไม่ต้องเติม prefix อัตโนมัติ ===
@@ -770,17 +678,23 @@ def get_vectorstore(
             f"(เช่น evidence_km, km42l103) เพื่อป้องกันการชนกันของชื่อ"
         )
 
-    # === 2. สร้าง path ที่ถูกต้องตามโครงสร้าง PEA ===
-    # 📌 ใช้ฟังก์ชันช่วยสร้าง path ที่ท่านได้กำหนดไว้
+    # === 2. สร้าง path ที่ถูกต้องตามโครงสร้าง PEA โดยใช้ Path Utility ===
     try:
-        doc_type_for_path, _ = _parse_collection_name(collection_name)
-        tenant_dir = get_collection_parent_dir(tenant, year, doc_type_for_path) 
-    except NameError:
-        # Fallback สำหรับการทดสอบ หากไม่มีฟังก์ชันช่วย
-        logger.error("Helper functions '_parse_collection_name' or 'get_collection_parent_dir' not found. Using default path.")
-        tenant_dir = os.path.join(base_path, tenant, str(year), "km")
+        doc_type_for_path, enabler_for_path = _parse_collection_name(collection_name)
         
-    persist_directory = os.path.join(tenant_dir, collection_name)  # ใช้ชื่อ collection เต็ม ๆ
+        # 🎯 FIX: ใช้ get_vectorstore_collection_path จาก path_utils.py
+        persist_directory = get_vectorstore_collection_path(
+            tenant=tenant,
+            year=year, # ส่งปีไป, path_utils จะตัดสินใจใช้หรือไม่ใช้เอง
+            doc_type=doc_type_for_path,
+            enabler=enabler_for_path
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to generate vectorstore path using path_utils: {e}. Using default fallback path.")
+        # Fallback path (หาก path_utils มีปัญหา)
+        persist_directory = os.path.join(base_path, tenant, str(year), "km", collection_name) 
+
     cache_key = persist_directory
 
     # === 3. Cache HIT ===
@@ -835,400 +749,327 @@ def get_vectorstore(
     logger.info(
         f"Vectorstore พร้อมใช้งาน!\n"
         f"   Collection  : {collection_name}\n"
-        f"   Path        : {persist_directory}\n"
-        f"   Documents   : {vectorstore._collection.count():,}"
+        f"   Path        : {persist_directory}"
     )
 
     return vectorstore
 
-def create_vectorstore_from_documents(
-    chunks: List[Document],
-    collection_name: str,
-    doc_mapping_db: Dict[str, Dict[str, Any]], 
-    tenant: str = "pwa",
-    year: int = 2568,
-    base_path: str = VECTORSTORE_DIR
-):
-    """
-    Adds documents (chunks) to the Chroma vector store and updates the mapping DB.
-    รองรับ Chroma 0.5+ ขึ้นไป (ไม่มี .persist() แล้ว)
-    """
-    
-    if not chunks:
-        logger.warning(f"No chunks to index for collection '{collection_name}'. Skipping.")
-        return
 
-    # 1. Get Vector Store Instance
-    try:
-        vectorstore = get_vectorstore(collection_name, tenant, year, base_path) 
-        logger.debug(f"Successfully obtained vectorstore for collection: {collection_name}")
-    except Exception as e:
-        logger.error(f"Error getting Vector Store Instance for '{collection_name}': {e}")
-        return
-    
-    # 2. Add Chunks to Vector Store — Chroma 0.5+ ไม่ต้อง persist() อีกต่อไป
-    try:
-        # 🎯 FIX 2A: ดึง Chunk UUID ที่สร้างไว้ใน metadata
-        chunk_ids_to_add = [c.metadata.get("chunk_uuid") for c in chunks]
-        
-        # กรองค่า None ออก (หากมี)
-        valid_chunks = [c for c, id in zip(chunks, chunk_ids_to_add) if id is not None]
-        valid_ids = [id for id in chunk_ids_to_add if id is not None]
-        
-        if len(valid_ids) != len(chunks):
-            logger.warning(f"Found {len(chunks) - len(valid_ids)} chunks without UUIDs. Skipping them.")
-            chunks = valid_chunks
-            chunk_ids_to_add = valid_ids
-            
-        if not chunks:
-            logger.warning(f"No valid chunks with UUIDs found to index for collection '{collection_name}'. Skipping.")
-            return
+# -------------------- Load / Save / Management Mapping DB --------------------
 
-        # 🎯 FIX 2B: ส่ง Chunk IDs ที่สร้างไว้ไปเป็น Primary ID ของ ChromaDB
-        chunk_uuids = vectorstore.add_documents(
-            documents=chunks,
-            ids=chunk_ids_to_add  # <-- แก้ไข: ใช้ IDs ที่เราสร้างขึ้น
-        )
-        
-        logger.info(f"Indexed {len(chunk_uuids)} chunks into collection '{collection_name}' (tenant={tenant}, year={year}).")
+def _get_doc_map_key(doc_type: str, enabler: Optional[str]) -> str:
+    """Helper for internal dict key for mapping DB."""
+    doc_type_lower = doc_type.lower()
+    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and enabler:
+        return f"{doc_type_lower}_{enabler.upper()}"
+    return doc_type_lower
 
-        # Chroma 0.5+ ใช้ PersistentClient + auto-save ทันที ไม่ต้อง persist()
-        logger.info(f"Collection '{collection_name}' auto-saved to disk (Chroma 0.5+ behavior).")
 
-    except Exception as e:
-        logger.error(f"Error during add_documents for collection '{collection_name}': {e}")
-        return
+_MAPPING_DB_CACHE: Dict[str, Dict[str, Any]] = {}
 
-    # 3. อัปเดต Doc ID Mapping Database
-    doc_chunk_map: Dict[str, List[str]] = {}
-    
-    # 📌 Note: chunk_uuids ที่ได้จาก add_documents ตอนนี้คือ ID เดียวกันกับ chunk_ids_to_add
-    for chunk, chunk_id in zip(chunks, chunk_uuids):
-        stable_doc_uuid = chunk.metadata.get("stable_doc_uuid")
-        if stable_doc_uuid:
-            doc_chunk_map.setdefault(stable_doc_uuid, []).append(chunk_id)
-
-    updated_count = 0
-    for stable_doc_uuid, new_ids in doc_chunk_map.items():
-        if stable_doc_uuid in doc_mapping_db:
-            current_ids = set(doc_mapping_db[stable_doc_uuid].get("chunk_uuids", []))
-            all_ids = current_ids.union(set(new_ids))
-            doc_mapping_db[stable_doc_uuid]["chunk_uuids"] = list(all_ids)
-            doc_mapping_db[stable_doc_uuid]["status"] = "Ingested"
-            doc_mapping_db[stable_doc_uuid]["chunk_count"] = len(all_ids)
-            updated_count += 1
-        else:
-            # 📌 FIX: ถ้า Stable UUID ไม่ถูกพบใน Mapping DB (อาจเป็นเพราะไฟล์ใหม่/บั๊ก)
-            # ให้สร้าง Entry ใหม่ขึ้นมาทันที (ป้องกันข้อมูลสูญหาย)
-            doc_mapping_db[stable_doc_uuid] = {
-                "file_name": chunk.metadata.get("source_filename", "UNKNOWN_FILE"),
-                "doc_type": chunk.metadata.get("doc_type", "default"),
-                "enabler": chunk.metadata.get("enabler"),
-                "doc_id_key": chunk.metadata.get("original_stable_id", "UNKNOWN_REF"),
-                "filepath": "UNKNOWN_PATH_AFTER_CHUNK", # ไม่สามารถหา Path เต็มได้จาก Chunk
-                "tenant": tenant, 
-                "year": year,
-                "notes": "CREATED_DURING_INGEST",
-                "statement_id": "",
-                "chunk_uuids": list(set(new_ids)),
-                "status": "Ingested",
-                "chunk_count": len(new_ids)
-            }
-            logger.warning(f"Stable UUID {stable_doc_uuid} not found in mapping DB, auto-created new entry.")
-            updated_count += 1
-
-    logger.info(f"Updated mapping DB for {updated_count} documents in collection '{collection_name}'.")
-        
-# =======================================================
-# 1. get_doc_id_mapping_path (Utility)
-# =======================================================
-# โค้ดนี้ใช้ได้แล้ว ถูกแก้ไขให้รองรับ year/enabler เป็น None
-def get_doc_id_mapping_path(tenant: str, year: Optional[Union[str, int]] = None, enabler: Optional[str] = None) -> str:
-    """
-    Constructs the path for the document ID mapping file.
-    """
-    
-    # 1. สร้าง Base Directory
-    base_dir = os.path.join(MAPPING_BASE_DIR, tenant)
-
-    # ⚠️ ตรวจสอบ year: ถ้ามี year จะใช้สร้างโฟลเดอร์ และต้องใช้ในชื่อไฟล์ด้วย
-    year_str = str(year).strip() if year is not None and str(year).strip() else ""
-    if year_str:
-        base_dir = os.path.join(base_dir, year_str)
-        
-    os.makedirs(base_dir, exist_ok=True)
-    
-    # 2. สร้าง Filename ใหม่
-    enabler_str = str(enabler).lower().strip() if enabler is not None and str(enabler).strip() else ""
-    
-    # Prefix: pea หรือ pea_2568
-    prefix = f"{tenant}"
-    if year_str:
-         prefix += f"_{year_str}"
-    
-    # Enabler Part: _km หรือว่างเปล่า
-    enabler_part = f"_{enabler_str}" if enabler_str else ""
-    
-    # Filename: pea_2568_km_doc_id_mapping.json หรือ pea_doc_id_mapping.json
-    filename = f"{prefix}{enabler_part}_doc_id_mapping.json"
-    
-    return os.path.join(base_dir, filename)
-
-# =======================================================
-# 2. save_doc_id_mapping
-# =======================================================
-# ต้องรับ year เป็น Optional[int] และส่งต่อไปอย่างถูกต้อง
-def save_doc_id_mapping(
-    mapping_data: Dict[str, Dict[str, Any]], 
-    doc_type: str, 
-    tenant: str = "pwa", 
-    year: Optional[int] = None, # 💡 ต้องรับเป็น Optional
-    enabler: Optional[str] = None
-):
-    
-    # 🎯 FIX: แปลง year เป็น str(year) หรือ None ก่อนส่งให้ Path Utility
-    year_for_path = str(year) if year is not None else None
-    
-    # ใช้ Path Utility ใหม่
-    path = get_doc_id_mapping_path(
-        tenant=tenant, 
-        year=year_for_path, 
-        enabler=enabler
-    ) 
-    
-    try:
-        # **Logic การสร้างโฟลเดอร์ถูกย้ายไปใน get_doc_id_mapping_path แล้ว**
-        
-        if not mapping_data:
-             if os.path.exists(path):
-                  os.remove(path)
-                  logger.info(f"✅ Deleted empty Doc ID Mapping file: {path}")
-                  return
-             return
-             
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(mapping_data, f, indent=4, ensure_ascii=False)
-        logger.info(f"✅ Successfully saved Doc ID Mapping to: {path}")
-    except Exception as e:
-        logger.error(f"❌ Failed to save Doc ID Mapping: {e}")
-
-# =======================================================
-# 3. load_doc_id_mapping
-# =======================================================
-# ต้องรับ year เป็น Optional[int] และส่งต่อไปอย่างถูกต้อง
 def load_doc_id_mapping(
     doc_type: str, 
-    tenant: str, 
-    year: Optional[int] = None, # 💡 ต้องรับเป็น Optional
+    tenant: str = DEFAULT_TENANT, 
+    year: Optional[int] = DEFAULT_YEAR, 
     enabler: Optional[str] = None
-) -> Dict[str, Any]:
+) -> Dict[str, Dict[str, Any]]:
     """
-    Loads the document ID mapping dictionary from the specified JSON file path.
+    Load document ID mapping database from JSON file (Multi-Tenant/Year supported).
     """
-    
-    # 🎯 FIX: แปลง year เป็น str(year) หรือ None ก่อนส่งให้ Path Utility
-    year_for_path = str(year) if year is not None else None
+    map_key = _get_doc_map_key(doc_type, enabler)
+    cache_key = f"{tenant.lower()}_{year}_{map_key}"
 
-    # ใช้ Path Utility ใหม่
-    mapping_file_path = get_doc_id_mapping_path(
-        tenant=tenant, 
-        year=year_for_path, 
-        enabler=enabler
-    ) 
+    # 1. Cache HIT
+    if cache_key in _MAPPING_DB_CACHE:
+        logger.debug(f"Cache HIT → Reusing mapping DB: {cache_key}")
+        return _MAPPING_DB_CACHE[cache_key]
+
+    # 2. Determine path
+    # 🎯 FIX: ใช้ get_mapping_file_path จาก path_utils.py
+    mapping_file_path = get_mapping_file_path(tenant, year, enabler)
     
     mapping_db = {}
     if os.path.exists(mapping_file_path):
         try:
-            with open(mapping_file_path, 'r', encoding='utf-8') as f:
+            with open(mapping_file_path, "r", encoding="utf-8") as f:
                 mapping_db = json.load(f)
             logger.debug(f"Loaded {len(mapping_db)} entries from {mapping_file_path}")
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding mapping file {mapping_file_path}: {e}")
-    
+        except Exception as e:
+             logger.error(f"Error loading mapping file {mapping_file_path}: {e}")
+
+    # 3. Cache and Return
+    _MAPPING_DB_CACHE[cache_key] = mapping_db
     return mapping_db
+
+
+def save_doc_id_mapping(
+    mapping_db: Dict[str, Dict[str, Any]],
+    doc_type: str, 
+    tenant: str = DEFAULT_TENANT, 
+    year: Optional[int] = DEFAULT_YEAR, 
+    enabler: Optional[str] = None
+) -> None:
+    """
+    Save document ID mapping database to JSON file.
+    """
+    map_key = _get_doc_map_key(doc_type, enabler)
+    cache_key = f"{tenant.lower()}_{year}_{map_key}"
+
+    # 1. Determine path
+    # 🎯 FIX: ใช้ get_mapping_file_path จาก path_utils.py
+    mapping_file_path = get_mapping_file_path(tenant, year, enabler)
+    
+    # Ensure directory exists (handled by path_utils)
+    os.makedirs(os.path.dirname(mapping_file_path), exist_ok=True)
+
+    try:
+        with open(mapping_file_path, "w", encoding="utf-8") as f:
+            json.dump(mapping_db, f, indent=4, ensure_ascii=False)
+        
+        logger.debug(f"Saved {len(mapping_db)} entries to {mapping_file_path}")
+        
+        # 🎯 FIX: บังคับ Flush Output ทันทีหลังจากการเขียนไฟล์ I/O เสร็จสิ้น
+        # เพื่อให้แน่ใจว่า Log ถูกแสดงผลออกมา
+        sys.stdout.flush() 
+        
+        # 2. Update Cache
+        _MAPPING_DB_CACHE[cache_key] = mapping_db
+        
+    except Exception as e:
+        logger.error(f"Error saving mapping file {mapping_file_path}: {e}")
+
+def load_evidence_mapping(
+    tenant: str = DEFAULT_TENANT, 
+    year: int = DEFAULT_YEAR, 
+    enabler: str = DEFAULT_ENABLER
+) -> Dict[str, Any]:
+    """
+    Load the persistent map for Evidence Statements (for RAG hydration).
+    """
+    # 🎯 FIX: ใช้ get_evidence_mapping_file_path จาก path_utils.py
+    mapping_file_path = get_evidence_mapping_file_path(tenant, year, enabler)
+    
+    evidence_map = {}
+    if os.path.exists(mapping_file_path):
+        try:
+            with open(mapping_file_path, "r", encoding="utf-8") as f:
+                evidence_map = json.load(f)
+            logger.debug(f"Loaded {len(evidence_map)} entries from evidence mapping: {mapping_file_path}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding evidence mapping file {mapping_file_path}: {e}")
+        except Exception as e:
+            logger.error(f"Error loading evidence mapping file {mapping_file_path}: {e}")
+
+    return evidence_map
+
+
+def save_evidence_mapping(
+    evidence_map: Dict[str, Any],
+    tenant: str = DEFAULT_TENANT, 
+    year: int = DEFAULT_YEAR, 
+    enabler: str = DEFAULT_ENABLER
+) -> None:
+    """
+    Save the persistent map for Evidence Statements.
+    """
+    # 🎯 FIX: ใช้ get_evidence_mapping_file_path จาก path_utils.py
+    mapping_file_path = get_evidence_mapping_file_path(tenant, year, enabler)
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(mapping_file_path), exist_ok=True)
+
+    try:
+        with open(mapping_file_path, "w", encoding="utf-8") as f:
+            json.dump(evidence_map, f, indent=4, ensure_ascii=False)
+        logger.debug(f"Saved {len(evidence_map)} entries to evidence mapping: {mapping_file_path}")
+    except Exception as e:
+        logger.error(f"Error saving evidence mapping file {mapping_file_path}: {e}")
+
 
 # -------------------- API Helper: Get UUIDs for RAG Filtering --------------------
 # 📌 REVISED: เพิ่ม tenant และ year
 def get_stable_uuids_by_doc_type(doc_types: List[str], tenant: str = "pwa", year: int = 2568) -> List[str]:
     """Retrieves Stable UUIDs for RAG filtering based on document types (Multi-Tenant/Year)."""
     if not doc_types: return []
-    
     doc_type_set = {dt.lower() for dt in doc_types}
-    
     target_uuids = []
-    
+
     # โหลด mapping db ทั้งหมดสำหรับ doc_types ที่ร้องขอ
     for dt_req in doc_type_set:
-         # load_doc_id_mapping จะจัดการการโหลดไฟล์ Mapping หลายไฟล์ (ถ้าเป็น evidence)
-         doc_mapping_db = load_doc_id_mapping(dt_req, tenant, year) 
-         for s_uuid, entry in doc_mapping_db.items():
-             # NOTE: การกรอง Tenant/Year/Doc Type ถูกทำใน load_doc_id_mapping แล้ว
-             target_uuids.append(s_uuid)
-                 
-    return list(set(target_uuids))
         
+        doc_mapping_db = load_doc_id_mapping(dt_req, tenant, year)
+        
+        for s_uuid, entry in doc_mapping_db.items():
+            # NOTE: การกรอง Tenant/Year/Doc Type ถูกทำใน load_doc_id_mapping แล้ว
+            target_uuids.append(s_uuid)
+
+    return list(set(target_uuids))
+
 # 📌 REVISED: เพิ่ม tenant และ year
 def create_stable_uuid_from_path(
     filepath: str, 
     ref_id_key: Optional[str] = None,
-    tenant: Optional[str] = None, 
-    year: Optional[int] = None    
+    tenant: Optional[str] = None,
+    year: Optional[int] = None
 ) -> str:
     """
-    สร้าง UUID ที่มั่นคงจากพาธไฟล์เต็ม, ขนาดไฟล์, Ref ID Key, Tenant และ Year
+    สร้าง UUID ที่เสถียรสำหรับไฟล์ (64-char Hash)
+    - ใช้ SHA-256 ของ (basename + size + modification time + tenant + year)
     """
+    if not os.path.exists(filepath):
+        logger.warning(f"File not found for UUID creation: {filepath}")
+        return str(uuid.uuid4()) # Fallback to random UUID
+
+    file_name = os.path.basename(filepath)
     try:
-        full_path = os.path.abspath(filepath)
         file_size = os.path.getsize(filepath)
-    except FileNotFoundError:
-        full_path = os.path.abspath(filepath)
+        mod_time = os.path.getmtime(filepath)
+    except Exception as e:
+        logger.error(f"Error getting file metadata for {filepath}: {e}")
         file_size = 0
+        mod_time = 0
+
+    # Key fields that define the 'stable' identity of the document
+    key_fields = (
+        file_name, 
+        file_size, 
+        mod_time,
+        tenant or "",
+        year or ""
+    )
     
-    # 💡 FIX: รวม Tenant และ Year เข้าไปใน Hash Input เพื่อ Isolation
-    unique_string = f"{full_path}-{file_size}-{ref_id_key or 'NO_REF'}-{tenant or 'NO_TENANT'}-{year or 'NO_YEAR'}" 
+    # Combine fields into a single string for hashing
+    hash_input = ":".join(map(str, key_fields)).encode('utf-8')
+
+    # Generate SHA-256 hash
+    stable_hash = hashlib.sha256(hash_input).hexdigest()
     
-    hash_object = hashlib.sha256(unique_string.encode('utf-8'))
-    
-    return hash_object.hexdigest()
+    # Return the 64-character hash
+    return stable_hash
+
+
+# -------------------- CORE INGESTION LOGIC --------------------
+DOC_TYPES_WITH_YEAR_AND_ENABLER = [EVIDENCE_DOC_TYPES.lower()]
+# -------------------- CORE INGESTION LOGIC --------------------
+# 📌 ASSUME:
+# - Helper functions: get_document_source_dir, load_doc_id_mapping, save_doc_id_mapping, 
+#   get_doc_type_collection_key, create_stable_uuid_from_path, process_document, get_vectorstore ถูกนิยามและ import แล้ว
+# - Global variables: DOC_TYPES_WITH_YEAR_AND_ENABLER, EVIDENCE_DOC_TYPES, SUPPORTED_DOC_TYPES, 
+#   SUPPORTED_ENABLERS, DEFAULT_TENANT, DEFAULT_YEAR, SUPPORTED_TYPES, logger ถูกนิยามและ import แล้ว
+# - import os, sys, shutil, json, uuid, List, Dict, Any, Optional, Union, Tuple, Set, 
+#   ThreadPoolExecutor, as_completed, Document ถูกทำไว้แล้ว
+# --------------------------------------------------------------
+
+# DOC_TYPES_WITH_YEAR_AND_ENABLER (Global Variable)
+# e.g., DOC_TYPES_WITH_YEAR_AND_ENABLER = [EVIDENCE_DOC_TYPES.lower()]
 
 def ingest_all_files(
-    tenant: str = "pwa",            
-    year: int = 2568,               
-    data_dir: str = DATA_DIR,       
-    doc_type: Optional[str] = None,
-    enabler: Optional[str] = None, 
+    tenant: str = DEFAULT_TENANT, 
+    year: int = DEFAULT_YEAR,
+    doc_type: Union[str, List[str]] = "all",
+    enabler: Optional[str] = None,
     subject: Optional[str] = None,
-    base_path: str = VECTORSTORE_DIR, 
-    exclude_dirs: Set[str] = set(),
-    version: str = "v1",
-    sequential: bool = True,
-    skip_ext: Optional[List[str]] = None,
-    log_every: int = 50,
-    batch_size: int = 500,
-    dry_run: bool = False,          
-    debug: bool = False             
+    dry_run: bool = False,
+    sequential: bool = False,
+    skip_ext: Optional[Set[str]] = None,
+    log_every: int = 5,
 ) -> List[Dict[str, Any]]:
     """
-    Ingest documents into vectorstore based on doc_type and enabler filters (Multi-Tenant/Year).
+    Scan files in the source directories and ingest them into the relevant Vector Store collections.
     """
-    skip_ext = skip_ext or []
-    os.makedirs(base_path, exist_ok=True)
-    files_to_process = []
     
-    doc_type_req = (doc_type or "all").lower()
-    enabler_req = (enabler or (DEFAULT_ENABLER if doc_type_req == EVIDENCE_DOC_TYPES.lower() else None))
-    if enabler_req:
-        enabler_req = enabler_req.upper()
-
-    # =================================================================
-    # 🎯 FIX 1: OVERRIDE LOGIC สำหรับ Global Doc Types (เพื่อแก้ Path ผิด)
-    # =================================================================
-    DOC_TYPES_WITH_YEAR_AND_ENABLER = [EVIDENCE_DOC_TYPES.lower()]
+    if isinstance(doc_type, list):
+        if len(doc_type) > 1:
+            logger.warning("Multiple doc_types provided. Using only the first one for logic control.")
+        doc_type_req = doc_type[0].lower()
+    else:
+        doc_type_req = doc_type.lower()
+        
+    enabler_req = enabler.upper() if enabler else None
     
+    # --- 🎯 FIX: Path Mismatch Logic ---
     final_year: Optional[int] = year
     final_enabler: Optional[str] = enabler_req
     
     if doc_type_req.lower() not in DOC_TYPES_WITH_YEAR_AND_ENABLER:
-        # ถ้าเป็น Doc Type Global (เช่น document) ให้บังคับใช้ final_year=None, final_enabler=None
+        # ถ้าเป็น Global Doc Type (document, seam, faq) ให้บังคับใช้ final_year=None, final_enabler=None
         if year is not None:
-             logger.warning(f"⚠️ Year ({year}) is ignored for Global Doc Type: {doc_type_req}. Setting year to None.")
+            logger.warning(f"⚠️ Warning: Year '{year}' provided for doc_type='{doc_type_req}'. Year is usually ignored for non-evidence types. Setting year to None.")
         if enabler_req is not None:
-             logger.warning(f"⚠️ Enabler ({enabler_req}) is ignored for Global Doc Type: {doc_type_req}. Setting enabler to None.")
-             
+            logger.warning(f"⚠️ Enabler ({enabler_req}) is ignored for Global Doc Type: {doc_type_req}. Setting enabler to None.")
         final_year = None
         final_enabler = None
-        
-    logger.info(f"Starting ingest_all_files: Tenant={tenant}, Year={final_year}, doc_type_req='{doc_type_req}', enabler_req='{final_enabler}', subject_req='{subject}'") 
+    # -----------------------------------
 
-    # 1. รวบรวมไฟล์ (ใช้ _get_source_dir ที่ถูกแก้ไขแล้ว)
+    logger.info(f"Starting ingest_all_files: Tenant={tenant}, Year={final_year}, doc_type_req='{doc_type_req}', enabler_req='{final_enabler}', subject_req='{subject}'")
+
+    # 1. รวบรวมไฟล์ (ใช้ final_year/final_enabler ในการกำหนด Path)
     scan_roots: List[str] = []
     
-    # 📌 FIX: ปรับ Logic การสร้าง scan_roots โดยใช้ final_year/final_enabler
     if doc_type_req == "all":
         # Scan ทุก Doc Type และทุก Enabler
         for dt in SUPPORTED_DOC_TYPES:
-             if dt.lower() == EVIDENCE_DOC_TYPES.lower():
+            dt_lower = dt.lower()
+            if dt_lower == EVIDENCE_DOC_TYPES.lower():
                 for ena in SUPPORTED_ENABLERS:
-                    scan_roots.append(_get_source_dir(
-                        tenant=tenant, 
-                        year=final_year, # 💡 ใช้ final_year
-                        doc_type=dt, 
-                        enabler=ena
-                    )) 
-             else:
-                scan_roots.append(_get_source_dir(
-                    tenant=tenant, 
-                    year=final_year, # 💡 ใช้ final_year (จะเป็น None)
-                    doc_type=dt, 
-                    enabler=None 
-                )) 
+                    # Evidence: ใช้ final_year และ Enabler
+                    scan_roots.append(get_document_source_dir(
+                        tenant=tenant, year=final_year, doc_type=dt_lower, enabler=ena
+                    ))
+            else:
+                # Global: ใช้ year=None และ Enabler=None
+                scan_roots.append(get_document_source_dir(
+                    tenant=tenant, year=None, doc_type=dt_lower, enabler=None
+                ))
+
     elif doc_type_req in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
         if doc_type_req == EVIDENCE_DOC_TYPES.lower():
-             if final_enabler and final_enabler in SUPPORTED_ENABLERS: # 💡 ใช้ final_enabler
-                 # ถ้ากำหนด Doc Type และ Enabler มาชัดเจน
-                 scan_roots = [_get_source_dir(
-                     tenant=tenant, 
-                     year=final_year, # 💡 ใช้ final_year
-                     doc_type=doc_type_req, 
-                     enabler=final_enabler # 💡 ใช้ final_enabler
-                 )] 
-             else:
-                 # ถ้ากำหนด Evidence แต่ไม่กำหนด Enabler ให้สแกนทุก Enabler
-                 for ena in SUPPORTED_ENABLERS:
-                     scan_roots.append(_get_source_dir(
-                         tenant=tenant, 
-                         year=final_year, # 💡 ใช้ final_year
-                         doc_type=doc_type_req, 
-                         enabler=ena
-                     )) 
+            # ... (Logic สำหรับ Evidence - ใช้ final_year/enabler)
+            if final_enabler and final_enabler in SUPPORTED_ENABLERS:
+                scan_roots = [get_document_source_dir(
+                    tenant=tenant, year=final_year, doc_type=doc_type_req, enabler=final_enabler
+                )]
+            else:
+                for ena in SUPPORTED_ENABLERS:
+                    scan_roots.append(get_document_source_dir(
+                        tenant=tenant, year=final_year, doc_type=doc_type_req, enabler=ena
+                    ))
         else:
-             # Doc Type อื่นๆ final_year จะเป็น None แล้ว
-             scan_roots = [_get_source_dir(
-                 tenant=tenant, 
-                 year=final_year, # 💡 ใช้ final_year (จะเป็น None)
-                 doc_type=doc_type_req, 
-                 enabler=None 
-             )] 
+             # Doc Type อื่น ๆ (document, faq, seam, other) เป็น Global
+             scan_roots = [get_document_source_dir(
+                tenant=tenant, year=None, doc_type=doc_type_req, enabler=None
+            )]
     else:
-        logger.error(f"Invalid doc_type_req for ingestion: {doc_type_req}")
+        logger.error(f"❌ Doc type '{doc_type_req}' is not supported.")
         return []
 
-    # (Scan loop logic)
-    for root_to_scan in set(scan_roots):
-        # ... (โค้ดส่วนการหา doc_type_from_path และ resolved_enabler จาก Path) ...
-        if not os.path.isdir(root_to_scan):
-             logger.warning(f"⚠️ Source directory not found: {root_to_scan}. Skipping scan.")
-             continue
-             
-        # Collection name/doc_type/enabler must be parsed from the Input Path
-        # Input Path: data/pea/2568/evidence/km 
-        
-        # 📌 FIX: ต้องดึง doc_type และ enabler จาก root_to_scan 
-        path_parts = root_to_scan.strip(os.sep).split(os.sep)
-        
-        # ค้นหา Doc Type ในส่วนท้ายของ Path
-        current_path_segment = path_parts[-1].lower()
-        
-        doc_type_from_path = None
+    files_to_process: List[Dict[str, Any]] = []
+    exclude_dirs = ['.DS_Store', '__pycache__', 'backup']
+
+    for root_to_scan in scan_roots:
+        # ... Logic เพื่อหา doc_type_from_path และ resolved_enabler จาก root_to_scan
+        path_segments = root_to_scan.lower().split(os.path.sep)
+        doc_type_from_path = None 
         resolved_enabler = None
 
-        if current_path_segment.upper() in SUPPORTED_ENABLERS: 
-             # Path: .../evidence/km -> current_path_segment='km'
-             resolved_enabler = current_path_segment.upper()
-             # doc_type คือส่วนก่อนหน้า (parts[-2])
-             doc_type_from_path = path_parts[-2].lower() if len(path_parts) >= 2 else None
-             
-        elif current_path_segment in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-             # Path: .../document -> current_path_segment='document'
-             doc_type_from_path = current_path_segment
-             resolved_enabler = None # Doc Type ทั่วไป ไม่มี Enabler
+        if EVIDENCE_DOC_TYPES.lower() in path_segments:
+            doc_type_from_path = EVIDENCE_DOC_TYPES.lower()
+            # Find resolved_enabler from path_segments
+            for ena in SUPPORTED_ENABLERS:
+                 if ena.lower() in path_segments:
+                     resolved_enabler = ena
+                     break
+            
+        elif path_segments and path_segments[-1] in [dt.lower() for dt in SUPPORTED_DOC_TYPES if dt.lower() != EVIDENCE_DOC_TYPES.lower()]:
+            doc_type_from_path = path_segments[-1]
         
-        if not doc_type_from_path:
-             logger.warning(f"Could not determine doc_type from path: {root_to_scan}. Skipping.")
-             continue
-
-        current_collection_name = get_target_dir(doc_type_from_path, resolved_enabler)
-
+        if not os.path.exists(root_to_scan) or doc_type_from_path is None:
+            logger.warning(f"Source directory not found or Doc Type unresolved: {root_to_scan}. Skipping.")
+            continue
+            
+        current_collection_name = get_doc_type_collection_key(doc_type_from_path, resolved_enabler)
         logger.info(f"Scanning source directory: {root_to_scan} (Maps to Collection: {current_collection_name})")
 
         for root, dirs, filenames in os.walk(root_to_scan):
@@ -1236,452 +1077,422 @@ def ingest_all_files(
             if root != root_to_scan: continue 
 
             for f in filenames:
-                if f.startswith('.'): continue
-                file_path = os.path.join(root, f)
                 file_extension = os.path.splitext(f)[1].lower()
-
-                if file_extension not in SUPPORTED_TYPES:
-                    logger.info(f"⚠️ Skipping unsupported file type {file_extension}: {f}")
-                    continue
-                if skip_ext and file_extension in skip_ext:
-                    logger.info(f"⚠️ Skipping excluded extension {file_extension}: {f}")
-                    continue
+                if f.startswith('.') or file_extension not in SUPPORTED_TYPES or (skip_ext and file_extension in skip_ext): continue
 
                 files_to_process.append({
-                    "file_path": file_path,
+                    "file_path": os.path.join(root, f),
                     "file_name": f,
                     "doc_type": doc_type_from_path,
-                    "enabler": resolved_enabler,
+                    "enabler": resolved_enabler, 
                     "collection_name": current_collection_name
                 })
-
+    
     if not files_to_process:
         logger.warning("⚠️ No files found to ingest!")
         return []
 
     # 2. Load Mapping DB และกำหนด Stable IDs
-    relevant_doc_types = {f['doc_type'] for f in files_to_process}
-    
-    # 📌 FIX: ใช้ final_year ในการโหลด Mapping DBs
-    doc_mapping_dbs: Dict[str, Dict[str, Dict[str, Any]]] = {
-        dt: load_doc_id_mapping(dt, tenant, final_year) for dt in relevant_doc_types
-    }
-    
-    # เตรียม lookup table ที่รวมทุก doc_type เข้าด้วยกัน (สำหรับค้นหา UUID ที่มีอยู่)
+    doc_mapping_dbs: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    loading_contexts = set()
+    for f in files_to_process:
+        dt, ena = f['doc_type'], f['enabler'] 
+        # 📌 FIX: ใช้ final_year ที่ถูกกำหนดให้เป็น None สำหรับ Global Doc Type
+        # NOTE: final_year จะเป็น year หรือ None ขึ้นอยู่กับ Doc Type
+        loading_contexts.add((dt, ena, final_year)) 
+
+    for dt, ena, yr in loading_contexts:
+        dt_ena_key = get_doc_type_collection_key(dt, ena) 
+        try:
+            # โหลด Mapping โดยใช้ final_year/ena ที่ถูกต้อง
+            mapping_db = load_doc_id_mapping(dt, tenant, yr, ena)
+            doc_mapping_dbs[dt_ena_key] = mapping_db
+        except FileNotFoundError:
+            doc_mapping_dbs[dt_ena_key] = {}
+        except Exception as e:
+            logger.error(f"❌ Error loading mapping for {dt} / {ena or 'None'} / Year {yr or 'None'}: {e}")
+
     uuid_from_path_lookup: Dict[str, str] = {}
-    for dt, db in doc_mapping_dbs.items():
+    for dt_ena_key, db in doc_mapping_dbs.items():
         for s_uuid, entry in db.items():
-            # 📌 FIX: ตรวจสอบ filepath, tenant, final_year ใน mapping entry
-            if "filepath" in entry and str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year:
-                uuid_from_path_lookup[entry["filepath"]] = s_uuid
+            # NOTE: entry["filepath"] ควรจะเป็น Full Path
+            if "filepath" in entry and str(entry.get("tenant")).lower() == tenant.lower():
+                # ตรวจสอบว่าบริบทใน entry ตรงกับบริบทที่โหลดหรือไม่ (ปี/enabler จะเป็น None สำหรับ Global)
+                entry_dt = entry.get("doc_type")
+                entry_ena = entry.get("enabler")
+                entry_year = entry.get("year")
+                
+                # Logic ตรวจสอบบริบท (ซับซ้อน แต่พยายามให้ครอบคลุม)
+                if entry_dt == dt_ena_key.split('_')[0] and entry_year == final_year:
+                    # ตรวจสอบ Enabler สำหรับ Evidence
+                    if entry_dt == EVIDENCE_DOC_TYPES.lower():
+                        if entry_ena == dt_ena_key.split('_')[1].upper():
+                            uuid_from_path_lookup[entry["filepath"]] = s_uuid
+                    # สำหรับ Global Doc Type
+                    else:
+                        uuid_from_path_lookup[entry["filepath"]] = s_uuid
 
 
+    # Pre-calculate Stable UUIDs
     for file_info in files_to_process:
-        dt = file_info["doc_type"]
-        doc_mapping_db = doc_mapping_dbs[dt] # ใช้ DB ที่เฉพาะเจาะจง
-        
-        filename_doc_id_key = _normalize_doc_id(os.path.splitext(file_info["file_name"])[0])
-        file_info["doc_id_key"] = filename_doc_id_key
-        
-        # 📌 FIX: ใช้ final_year ในการสร้าง UUID
-        stable_uuid_from_path = create_stable_uuid_from_path(
-            file_info["file_path"], 
-            ref_id_key=filename_doc_id_key,
-            tenant=tenant, 
-            year=final_year      # 💡 ใช้ final_year
-        )
-        
-        stable_doc_uuid = uuid_from_path_lookup.get(file_info["file_path"])
-        
-        if stable_doc_uuid and stable_doc_uuid in doc_mapping_db:
-            file_info["stable_doc_uuid"] = stable_doc_uuid
-            # อัปเดต Entry ที่มีอยู่
-            doc_mapping_db[stable_doc_uuid].update({
-                "filename": file_info["file_name"],
-                "doc_type": dt,
-                "enabler": file_info["enabler"],
-                "doc_id_key": filename_doc_id_key,
-                "filepath": file_info["file_path"],
-                "tenant": tenant,  
-                "year": final_year, # 💡 ใช้ final_year
-                "status": "Pending" # อัปเดตสถานะเป็น Pending ก่อน Ingest
-            })
-        else:
-            # สร้าง Entry ใหม่
-            new_uuid = stable_uuid_from_path
-            file_info["stable_doc_uuid"] = new_uuid
-            doc_mapping_db[new_uuid] = {
-                "file_name": file_info["file_name"],
-                "doc_type": dt,
-                "enabler": file_info["enabler"],
-                "doc_id_key": filename_doc_id_key,
-                "filepath": file_info["file_path"],
-                "tenant": tenant, 
-                "year": final_year, # 💡 ใช้ final_year
-                "notes": "",
-                "statement_id": "",
-                "chunk_uuids": [], 
-                "status": "Pending"
-            }
-            uuid_from_path_lookup[file_info["file_path"]] = new_uuid
+        file_path = file_info["file_path"] # Full Path
+        stable_doc_uuid = uuid_from_path_lookup.get(file_path)
 
-    # 3. Load & Chunk (Sequential/Parallel logic is fine)
+        if not stable_doc_uuid:
+            # 📌 FIX: ใช้ final_year ในการสร้าง UUID เพื่อให้ Global Doc Type ได้ UUID ที่ไม่มีปี
+            # NOTE: create_stable_uuid_from_path ต้องรับ file_path ที่เป็น Full Path
+            stable_doc_uuid = create_stable_uuid_from_path(file_path, tenant=tenant, year=final_year)
+        
+        file_info["stable_doc_uuid"] = stable_doc_uuid
+
+
+    # 3. Process files (Load + Chunk)
     all_chunks: List[Document] = []
     results: List[Dict[str, Any]] = []
     
-    def _process_file_task(file_info: Dict[str, str]):
-        return process_document(
-            file_path=file_info["file_path"],
-            file_name=file_info["file_name"],
-            stable_doc_uuid=file_info["stable_doc_uuid"],
-            doc_type=file_info["doc_type"],
-            enabler=file_info["enabler"],
-            subject=subject, 
-            base_path=base_path,
-            year=final_year, # 💡 ใช้ final_year
-            tenant=tenant, 
-            version=version
-        )
+    # ------------------------------------------------------------------
+    # 📌 Worker Function
+    # ------------------------------------------------------------------
+    
+    def _process_file_task(file_info: Dict[str, Any]) -> Tuple[List[Document], str, str]:
+        """Worker function for parallel processing."""
+        file_path = file_info["file_path"] # Full Path
+        file_name = file_info["file_name"]
+        stable_doc_uuid = file_info["stable_doc_uuid"]
+        doc_type = file_info["doc_type"]
+        enabler = file_info["enabler"]
         
-    if sequential:
+        # NOTE: process_document ต้องถูกเรียกใช้ด้วย final_year เพื่อใส่ใน metadata
+        # process_document ต้องใส่ file_path (Full Path) ลงใน chunk.metadata['filepath'] ด้วย
+        chunks, doc_id, dt = process_document(
+            file_path=file_path,
+            file_name=file_name,
+            stable_doc_uuid=stable_doc_uuid,
+            doc_type=doc_type,
+            enabler=enabler,
+            subject=subject,
+            year=final_year, # 💡 ใช้ final_year ใน Metadata
+            tenant=tenant
+        )
+        return chunks, doc_id, dt
+
+    # ... (โค้ด Sequential/Parallel processing) ...
+    if sequential or dry_run:
+        # Sequential processing (Debugging/Dry Run)
         for idx, file_info in enumerate(files_to_process, 1):
-            f = file_info["file_name"]
-            stable_doc_uuid = file_info["stable_doc_uuid"]
+            f, stable_doc_uuid = file_info["file_name"], file_info["stable_doc_uuid"]
             try:
                 chunks, doc_id, dt = _process_file_task(file_info)
                 all_chunks.extend(chunks)
-                results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks), "tenant": tenant, "year": final_year}) # 💡 ใช้ final_year
-                if debug or dry_run:
-                    logger.debug(f"[DRY RUN] {f}: {len(chunks)} chunks, UUID={stable_doc_uuid}")
-                if idx % log_every == 0:
-                    logger.info(f"Processed {idx}/{len(files_to_process)} files...")
+                results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks), "tenant": tenant, "year": final_year, "enabler": file_info["enabler"]})
             except Exception as e:
-                results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e), "tenant": tenant, "year": final_year}) # 💡 ใช้ final_year
-                logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
+                results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e), "tenant": tenant, "year": final_year, "enabler": file_info["enabler"]})
+                logger.error(f"❌ Failed to process {f}: {e}")
+            if idx % log_every == 0: logger.info(f"Processed {idx}/{len(files_to_process)} files...")
+                
     else:
-        max_workers = os.cpu_count() or 4
-        logger.info(f"Using ThreadPoolExecutor with max_workers={max_workers}")
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_file = {executor.submit(_process_file_task, fi): fi for fi in files_to_process}
+        # Parallel processing (Production)
+        with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
+            future_to_file = {executor.submit(_process_file_task, file_info): file_info for file_info in files_to_process}
             for idx, future in enumerate(as_completed(future_to_file), 1):
-                fi = future_to_file[future]
-                f = fi["file_name"]
-                stable_doc_uuid = fi["stable_doc_uuid"]
+                file_info = future_to_file[future]
+                f, stable_doc_uuid = file_info["file_name"], file_info["stable_doc_uuid"]
                 try:
                     chunks, doc_id, dt = future.result()
                     all_chunks.extend(chunks)
-                    results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks), "tenant": tenant, "year": final_year}) # 💡 ใช้ final_year
+                    results.append({"file": f, "doc_id": doc_id, "doc_type": dt, "status": "chunked", "chunks": len(chunks), "tenant": tenant, "year": final_year, "enabler": file_info["enabler"]})
                 except Exception as e:
-                    results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": fi["doc_type"], "status": "failed_chunk", "error": str(e), "tenant": tenant, "year": final_year}) # 💡 ใช้ final_year
-                    logger.error(f"❌ CHUNK/PROCESS FAILED: {f} (ID: {stable_doc_uuid}) - {type(e).__name__} ({e})")
-                if idx % log_every == 0:
-                    logger.info(f"Processed {idx}/{len(files_to_process)} files...")
+                    results.append({"file": f, "doc_id": stable_doc_uuid, "doc_type": file_info["doc_type"], "status": "failed_chunk", "error": str(e), "tenant": tenant, "year": final_year, "enabler": file_info["enabler"]})
+                    logger.error(f"❌ Failed to process {f}: {e}")
+                if idx % log_every == 0: logger.info(f"Processed {idx}/{len(files_to_process)} files...")
 
 
-    # 4. Group & Index Chunks
+    # 4. Ingest Chunks to Vectorstore
+    if dry_run or not all_chunks:
+        logger.warning(f"Dry run or no chunks created. Skipping ingestion to VectorStore.")
+        return results
+
     chunks_by_collection: Dict[str, List[Document]] = {}
     for chunk in all_chunks:
-        dt = chunk.metadata.get("doc_type", "default")
-        ena = chunk.metadata.get("enabler", None)
-        
-        # 🎯 FIX 2: ใช้ get_target_dir เพื่อสร้าง collection name ที่ยาวพอ (เช่น 'evidence_km')
-        collection_name = get_target_dir(dt, ena) 
-        
-        chunks_by_collection.setdefault(collection_name, []).append(chunk)
-        
+        chunk_doc_type = chunk.metadata.get("doc_type")
+        chunk_enabler = chunk.metadata.get("enabler")
+        collection_name = get_doc_type_collection_key(chunk_doc_type, chunk_enabler)
+        if collection_name:
+            chunks_by_collection.setdefault(collection_name, []).append(chunk)
 
-    for coll_name, coll_chunks in chunks_by_collection.items():
-        if not coll_chunks:
-            logger.warning(f"Skipping collection '{coll_name}' - 0 chunks found.")
-            continue
+    ingested_uuids = set()
+
+    for collection_name, chunks in chunks_by_collection.items():
+        logger.info(f"Ingesting {len(chunks)} chunks into collection '{collection_name}'...")
         
-        # 🎯 FIX: ดึง Doc Type ที่ถูกต้องจาก Collection Name
-        doc_type_for_db, _ = _parse_collection_name(coll_name)
-        doc_mapping_db = doc_mapping_dbs.get(doc_type_for_db)
+        # NOTE: ใช้ final_year ในการสร้าง VS object
+        vs_year = final_year if collection_name.startswith(EVIDENCE_DOC_TYPES.lower()) else DEFAULT_YEAR
+        vectorstore = get_vectorstore(collection_name, tenant, vs_year) 
+        
+        texts = [chunk.page_content for chunk in chunks]
+        metadatas = [chunk.metadata for chunk in chunks]
+        
+        try:
+            chunk_uuids = [meta['chunk_uuid'] for meta in metadatas]
+            vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=chunk_uuids)
+            logger.info(f"✅ Ingested {len(chunks)} chunks successfully into '{collection_name}'.")
+            ingested_uuids.update(chunk_uuids)
+
+        except Exception as e:
+            logger.error(f"❌ Failed to ingest chunks into '{collection_name}': {e}", exc_info=True)
+
+
+    # 5. Update Mapping Database
+    
+    updated_contexts: Set[Tuple[str, Optional[str], Optional[int]]] = set()
+    for r in results:
+        if r['status'] == 'chunked':
+            # 📌 ใช้ final_year ในการกำหนด Context ที่จะบันทึก
+            updated_contexts.add((r['doc_type'], r.get('enabler'), final_year))
+                
+    for current_dt, current_enabler, current_year_for_map in updated_contexts:
+        
+        dt_ena_key = get_doc_type_collection_key(current_dt, current_enabler)
+        doc_mapping_db = doc_mapping_dbs.get(dt_ena_key)
         
         if not doc_mapping_db:
-             logger.error(f"FATAL: Mapping DB for doc_type '{doc_type_for_db}' not found during indexing of collection '{coll_name}'. Skipping.")
-             continue
-             
-        logger.info(f"--- Indexing collection '{coll_name}' ({len(coll_chunks)} chunks) ---")
-        for i in range(0, len(coll_chunks), batch_size):
-            batch = coll_chunks[i:i+batch_size]
-            if dry_run:
-                logger.info(f"[DRY RUN] Would index {len(batch)} chunks into collection '{coll_name}' for {tenant}/{final_year}") # 💡 ใช้ final_year
-            else:
-                try:
-                    create_vectorstore_from_documents(
-                        chunks=batch,
-                        collection_name=coll_name,
-                        doc_mapping_db=doc_mapping_db, 
-                        tenant=tenant, 
-                        year=final_year,     # 💡 ใช้ final_year
-                        base_path=base_path
-                    )
-                except Exception as e:
-                    logger.error(f"Error indexing chunks {i+1}-{i+len(batch)}: {e}")
+             # Logic เพื่อโหลดซ้ำหากไม่พบ
+             try:
+                 doc_mapping_db = load_doc_id_mapping(current_dt, tenant, final_year, current_enabler)
+                 doc_mapping_dbs[dt_ena_key] = doc_mapping_db
+             except Exception as e:
+                 logger.error(f"❌ Error reloading mapping DB for save: {e}")
+                 continue
 
-    # 5. Save all updated mapping files
-    # 📌 FIX: ต้องวนซ้ำเพื่อบันทึกไฟล์ Mapping ที่แยกตาม Enabler ด้วย
-    for dt, db in doc_mapping_dbs.items():
-         # ถ้าเป็น Evidence ต้องมีการแยก Enabler ออกมาก่อนบันทึก
-         if dt.lower() == EVIDENCE_DOC_TYPES.lower():
-             db_by_enabler: Dict[Optional[str], Dict[str, Dict[str, Any]]] = {}
+        updated_count = 0
+        doc_chunks: Dict[str, Dict[str, Any]] = {} 
+        
+        # Group chunks ที่ถูก Ingest สำเร็จ
+        for chunk in all_chunks:
+            s_uuid = chunk.metadata.get("stable_doc_uuid")
+            chunk_dt = chunk.metadata.get("doc_type")
+            chunk_ena = chunk.metadata.get("enabler")
+            
+            if chunk_dt == current_dt and chunk_ena == current_enabler:
+                 doc_chunks.setdefault(s_uuid, {})["chunk_uuids"] = doc_chunks.setdefault(s_uuid, {}).get("chunk_uuids", []) + [chunk.metadata['chunk_uuid']]
+                 doc_chunks[s_uuid]['metadata'] = chunk.metadata 
+
+        for stable_doc_uuid, data in doc_chunks.items():
+            
+            new_ids = [uid for uid in data["chunk_uuids"] if uid in ingested_uuids]
+            if not new_ids: continue
+                
+            metadata = data["metadata"]
+            entry = doc_mapping_db.get(stable_doc_uuid)
+            
+            # 🎯 FIX: Year/Enabler ที่จะบันทึกใน Mapping DB
+            year_to_save = final_year
+            enabler_to_save = current_enabler if current_dt == EVIDENCE_DOC_TYPES.lower() else None
+
+            # =========================================================
+            # 💡 START FIX: Reconstruction Logic (ใช้ path_utils.py)
+            # =========================================================
+            filepath_from_metadata = metadata.get("filepath", metadata.get("source_filename"))
+            final_filepath_to_save = filepath_from_metadata
+            
+            # ตรวจสอบ: ถ้า filepath ไม่ใช่ Absolute Path (เช่น "2566-PEA.pdf")
+            if filepath_from_metadata and not os.path.isabs(filepath_from_metadata):
+                 # 3. ใช้ get_document_source_dir จาก utils.path_utils.py
+                 doc_root_dir = get_document_source_dir(
+                     tenant=tenant, 
+                     year=year_to_save,       # final_year (None สำหรับ Global Doc Type)
+                     enabler=enabler_to_save, # None สำหรับ Global Doc Type
+                     doc_type=current_dt
+                 )
+                 # 4. Reconstruct Full Path (Absolute Path)
+                 final_filepath_to_save = os.path.join(doc_root_dir, metadata.get("source_filename"))
+                 logger.warning(f"⚠️ Reconstructed relative filepath for {metadata.get('source_filename')} (Doc Type: {current_dt}) to: {final_filepath_to_save}")
+            # =========================================================
+            # 💡 END FIX: Reconstruction Logic
+            # =========================================================
+
+            if entry:
+                # Update existing entry
+                entry['chunk_uuids'].extend(new_ids)
+                entry['chunk_uuids'] = list(set(entry['chunk_uuids']))
+                entry['chunk_count'] = len(entry['chunk_uuids'])
+                entry['status'] = "Ingested"
+                entry['year'] = year_to_save # อัปเดตปี/enabler เผื่อมีการแก้ไข
+                entry['enabler'] = enabler_to_save
+                entry['filepath'] = final_filepath_to_save # 🎯 UPDATE FILEPATH สำหรับ Entry เก่าด้วย
+                
+            else:
+                # Create new entry
+                entry = {
+                    "doc_id": stable_doc_uuid,
+                    "file_name": metadata.get("source_filename"),
+                    "file_type": os.path.splitext(metadata.get("source_filename", ""))[1].lower(),
+                    "filepath": final_filepath_to_save, # 🎯 ใช้ Absolute Path ที่แก้ไขแล้ว
+                    "doc_type": current_dt, 
+                    "enabler": enabler_to_save,
+                    "tenant": tenant,
+                    "year": year_to_save,
+                    "notes": "CREATED_DURING_INGEST",
+                    "statement_id": "", 
+                    "chunk_uuids": list(set(new_ids)),
+                    "status": "Ingested",
+                    "chunk_count": len(new_ids)
+                }
+                doc_mapping_db[stable_doc_uuid] = entry
+                
+            updated_count += 1
+        
+        # 📌 บันทึก Mapping DB คืน (ใช้ final_year ที่เป็น None สำหรับ Global Doc Type)
+        if updated_count > 0:
+             # ใช้ current_enabler ในการกำหนด Path สำหรับ Evidence, ใช้ None สำหรับ Global
+             save_doc_id_mapping(doc_mapping_db, current_dt, tenant, final_year, enabler=current_enabler) 
              
-             for s_uuid, entry in db.items():
-                 enabler_key = entry.get("enabler") # Enabler ที่ถูกบันทึกไว้ใน Entry
-                 # 📌 FIX: กรองเฉพาะ Entry ที่มี Tenant/Year ตรงกันก่อนบันทึก
-                 if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year: # 💡 ใช้ final_year
-                      db_by_enabler.setdefault(enabler_key, {})[s_uuid] = entry
-                 
-             for enabler_key, small_db in db_by_enabler.items():
-                  save_doc_id_mapping(small_db, dt, tenant, final_year, enabler=enabler_key) # 💡 ใช้ final_year
-         else:
-             # Doc Type อื่นๆ (เช่น document)
-             # 📌 FIX: กรองเฉพาะ Entry ที่มี Tenant/Year ตรงกันก่อนบันทึก
-             db_to_save = {
-                 s_uuid: entry 
-                 for s_uuid, entry in db.items() 
-                 if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year # 💡 ใช้ final_year
-             }
-             # final_year ในกรณีนี้จะเป็น None และ save_doc_id_mapping จะสร้าง Path ที่ไม่มีปีให้
-             save_doc_id_mapping(db_to_save, dt, tenant, final_year) # 💡 ใช้ final_year
-         
-    logger.info(f"✅ Batch ingestion process finished (dry_run={dry_run}) for {tenant}/{final_year}.") # 💡 ใช้ final_year
+        logger.info(f"Updated mapping DB for {updated_count} documents in doc type '{current_dt}' (Enabler: {current_enabler or 'None'}) for tenant '{tenant}/{final_year}'.")
+        
+    
+    logger.info(f"✅ Batch ingestion process finished (dry_run={dry_run}) for {tenant}/{final_year}.")
+    
+    sys.stdout.flush() 
+
     return results
 
-# -------------------- [REVISED] wipe_vectorstore (FINAL - UNCONDITIONAL MAPPING CLEANUP & EXPLICIT LOGS) --------------------
+# -------------------- Wipe Vectorstore / Mapping --------------------
+
 def wipe_vectorstore(
-    doc_type_to_wipe: str = 'all', 
-    enabler: Optional[str] = None, 
-    tenant: str = "pwa",        
-    year: int = 2568,           
+    doc_type_to_wipe: str = "all",
+    enabler: Optional[str] = None,
+    tenant: str = DEFAULT_TENANT,
+    year: int = DEFAULT_YEAR,
     base_path: str = VECTORSTORE_DIR
-):
-    """Wipes the vector store directory/collection(s) and updates the doc_id_mapping file (Multi-Tenant/Year).
-    
-    🎯 Includes Logic Override: Sets year=None for Global Doc Types (e.g., 'document') 
-    to correctly handle mapping path.
+) -> None:
     """
+    Deletes the Vector Store collection(s) and associated mapping files.
+    """
+    logger.critical(f"⚠️ !!! เริ่มกระบวนการ WIPE Vectorstore และ Mapping Files !!!")
     
     doc_type_to_wipe_lower = doc_type_to_wipe.lower()
-    collections_to_delete: List[str] = []
-
-    # =================================================================
-    # 🎯 FIX 1: OVERRIDE LOGIC สำหรับ Global Doc Types (เพื่อแก้ Path ผิด)
-    # =================================================================
-    DOC_TYPES_WITH_YEAR_AND_ENABLER = [EVIDENCE_DOC_TYPES.lower()]
-    
     final_year: Optional[int] = year
-    
-    if doc_type_to_wipe_lower != 'all' and doc_type_to_wipe_lower not in DOC_TYPES_WITH_YEAR_AND_ENABLER:
-        logger.warning(f"⚠️ Year ({year}) is ignored for Global Doc Type wipe: {doc_type_to_wipe_lower}. Setting year to None for Mapping/Collection path.")
+
+    # 🎯 FIX: สำหรับ DocType Global (เช่น document) ให้ใช้ final_year=None
+    if doc_type_to_wipe_lower not in DOC_TYPES_WITH_YEAR_AND_ENABLER and doc_type_to_wipe_lower != 'all':
         final_year = None
     
-    # -------------------- ส่วน 1: การกำหนด Collection ที่จะลบ (Vector Store) --------------------
-    # Root สำหรับ Evidence (แยกปี) - ใช้ year เดิม
-    tenant_vectorstore_root_year = get_collection_parent_dir(tenant, year, EVIDENCE_DOC_TYPES) 
-    # Root สำหรับ Non-Evidence (common) - ใช้ final_year (ซึ่งจะเป็น None ถ้า doc_type เป็น document/policy)
-    # Note: ในกรณี 'all' ตัวแปร final_year จะเป็น year แต่ root_common จะใช้ final_year=None เมื่อถึงจุดลบ Global
+    final_enabler = enabler.upper() if enabler else None
+
+    # 1. กำหนด Collections ที่ต้องการลบ (ใช้ Path Utility)
+    collections_to_delete: List[Tuple[str, Optional[int], Optional[str], str]] = [] # (doc_type, year, enabler, collection_name)
     
-    # เราใช้ doc_type_to_wipe_lower ในการกำหนด parent dir
-    vectorstore_root_to_use = final_year if doc_type_to_wipe_lower != EVIDENCE_DOC_TYPES.lower() else year
-    tenant_vectorstore_root = get_collection_parent_dir(tenant, vectorstore_root_to_use, doc_type_to_wipe_lower)
-    
-    collections_to_delete_with_root = []
-    
-    doc_types_affected = set() 
-    
+    doc_types_to_check = []
     if doc_type_to_wipe_lower == 'all':
-        # ในโหมด 'all' ต้องเช็คทั้ง Root ที่มีปี (Evidence) และ Root ที่ไม่มีปี (Global)
-        tenant_vectorstore_root_common = get_collection_parent_dir(tenant, None, DEFAULT_DOC_TYPES)
-
-        logger.warning(f"Wiping ALL collections in {tenant_vectorstore_root_year} and {tenant_vectorstore_root_common}")
-
-        all_roots = {tenant_vectorstore_root_year, tenant_vectorstore_root_common}
-        
-        doc_types_affected.update([dt.lower() for dt in SUPPORTED_DOC_TYPES])
-        
-        for root_path in all_roots:
-             if os.path.exists(root_path):
-                  for f in os.listdir(root_path):
-                       col_path = os.path.join(root_path, f)
-                       if os.path.isdir(col_path):
-                            doc_type_from_col, _ = _parse_collection_name(f) 
-                            if doc_type_from_col in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-                                collections_to_delete_with_root.append((root_path, f, doc_type_from_col))
-                            else:
-                                logger.warning(f"Collection '{f}' does not map to a supported doc_type. Skipping map update for this collection.")
-
-                            
-    elif doc_type_to_wipe_lower == EVIDENCE_DOC_TYPES.lower():
-        root_path = tenant_vectorstore_root_year # ใช้ year เดิม
-        doc_types_affected.add(EVIDENCE_DOC_TYPES.lower())
-        
-        if enabler and enabler.upper() in SUPPORTED_ENABLERS:
-            collection_name = get_target_dir(EVIDENCE_DOC_TYPES, enabler)
-            collections_to_delete_with_root = [(root_path, collection_name, EVIDENCE_DOC_TYPES.lower())]
-        else:
-            logger.warning("Wiping ALL evidence_* collections.")
-            evidence_paths = glob.glob(os.path.join(root_path, f"{EVIDENCE_DOC_TYPES.lower()}_*"))
-            collections_to_delete_with_root = [
-                (root_path, os.path.basename(p), EVIDENCE_DOC_TYPES.lower()) for p in evidence_paths
-            ]
-            
-    elif doc_type_to_wipe_lower in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-        root_path = get_collection_parent_dir(tenant, final_year, doc_type_to_wipe_lower) # 💡 ใช้ final_year (จะเป็น None)
-        collection_name = get_target_dir(doc_type_to_wipe_lower, None)
-        doc_types_affected.add(doc_type_to_wipe_lower)
-        collections_to_delete_with_root = [(root_path, collection_name, doc_type_to_wipe_lower)]
-        
+        doc_types_to_check.extend([dt.lower() for dt in SUPPORTED_DOC_TYPES])
     else:
-        logger.error(f"Invalid doc_type_to_wipe: {doc_type_to_wipe}")
-        return
-    
-    # -------------------- 1. Delete collection folders (Vector Store) --------------------
-    deleted_collections_names = set()
-    deleted_collections_map: Dict[str, Set[str]] = {} 
-    
-    for root_path, col_name, dt in collections_to_delete_with_root:
-        col_path = os.path.join(root_path, col_name) 
-        if os.path.exists(col_path):
-            try:
-                shutil.rmtree(col_path)
-                logger.info(f"✅ Deleted vector store collection: {col_path}")
-                deleted_collections_names.add(col_name)
-                deleted_collections_map.setdefault(dt, set()).add(col_name)
-            except OSError as e:
-                logger.error(f"❌ Error deleting collection {col_name}: {e}")
-
-    # -------------------- 2. Update Mapping files (Primary: doc_id_mapping.json) - Clean entries --------------------
-    for dt in doc_types_affected:
-        # 📌 FIX: กำหนด year ที่ใช้ในการโหลด/บันทึก Mapping
+        doc_types_to_check.append(doc_type_to_wipe_lower)
+        
+    for dt in doc_types_to_check:
+        
         map_year_to_use = year if dt == EVIDENCE_DOC_TYPES.lower() else final_year
         
-        # 💡 ใช้ map_year_to_use ในการโหลด Mapping
-        mapping_db = load_doc_id_mapping(dt, tenant, map_year_to_use) 
-        uuids_to_keep = {}
-        deletion_count = 0
-        
-        cols_to_check = deleted_collections_map.get(dt, set())
-        
-        # (Logic การสร้าง cols_to_check - ถูกต้องแล้ว)
+        if dt == EVIDENCE_DOC_TYPES.lower():
+            enablers_to_check = []
+            if final_enabler and final_enabler in SUPPORTED_ENABLERS:
+                enablers_to_check.append(final_enabler)
+            elif doc_type_to_wipe_lower == 'all' or (doc_type_to_wipe_lower == EVIDENCE_DOC_TYPES.lower() and not final_enabler):
+                enablers_to_check.extend(SUPPORTED_ENABLERS)
+                
+            for ena in enablers_to_check:
+                collections_to_delete.append((
+                    dt, map_year_to_use, ena, get_doc_type_collection_key(dt, ena) # 🎯 FIX: ใช้ get_doc_type_collection_key
+                ))
+        else:
+            if doc_type_to_wipe_lower == 'all' or doc_type_to_wipe_lower == dt:
+                collections_to_delete.append((
+                    dt, map_year_to_use, None, get_doc_type_collection_key(dt, None) # 🎯 FIX: ใช้ get_doc_type_collection_key
+                ))
 
-        for s_uuid, entry in mapping_db.items():
+
+    if not collections_to_delete and doc_type_to_wipe_lower != 'all':
+        logger.warning(f"⚠️ ไม่พบ Collection ที่ตรงกับเงื่อนไข Tenant='{tenant}', Year='{year}', Doc Type='{doc_type_to_wipe}', Enabler='{enabler}'.")
+        return
+
+    # 2. ลบ Collection Folder และปรับปรุง Doc ID Mapping DB
+    deletion_count = 0
+    
+    for dt, map_year_to_use, ena, col_name in collections_to_delete:
+        
+        # 2a. ลบ Vector Store Folder
+        try:
+            # 🎯 FIX: ใช้ get_vectorstore_collection_path จาก path_utils.py
+            collection_path = get_vectorstore_collection_path(tenant, map_year_to_use, dt, ena)
             
-            # 💡 ใช้ map_year_to_use ในการเช็คปี
-            if str(entry.get("tenant")).lower() != str(tenant).lower() or entry.get("year") != map_year_to_use:
-                 uuids_to_keep[s_uuid] = entry
-                 continue
-            
-            entry_doc_type = entry.get("doc_type")
-            entry_enabler = entry.get("enabler")
-            entry_collection = get_target_dir(entry_doc_type, entry_enabler)
-            
-            # ถ้า collection ที่ entry อ้างถึง ถูกลบไป
-            if entry_collection in cols_to_check:
+            if os.path.exists(collection_path):
+                shutil.rmtree(collection_path)
+                logger.info(f"🗑️ Deleted Collection Folder: {col_name} at {collection_path}")
                 deletion_count += 1
             else:
-                uuids_to_keep[s_uuid] = entry
-                
-        if deletion_count > 0:
-            # ต้องมีการแยก Enabler ในการบันทึก
-            if dt.lower() == EVIDENCE_DOC_TYPES.lower():
-                 db_by_enabler: Dict[Optional[str], Dict[str, Dict[str, Any]]] = {}
-                 for s_uuid, entry in uuids_to_keep.items():
-                      enabler_key = entry.get("enabler")
-                      db_by_enabler.setdefault(enabler_key, {})[s_uuid] = entry
-                 
-                 for enabler_key, small_db in db_by_enabler.items():
-                      save_doc_id_mapping(small_db, dt, tenant, map_year_to_use, enabler=enabler_key) # 💡 ใช้ map_year_to_use
-                      
-                      # ลบไฟล์ Doc ID Mapping (Primary) ถ้าฐานข้อมูลว่างเปล่า 
-                      if not small_db:
-                           mapping_path = get_doc_id_mapping_path(tenant, map_year_to_use, enabler_key) # 💡 ใช้ map_year_to_use
-                           if os.path.exists(mapping_path):
-                               try:
-                                   os.remove(mapping_path)
-                                   logger.info(f"✅ Deleted (empty) Primary Doc ID mapping file: {mapping_path} (Via Step 2)")
-                               except OSError as e:
-                                   logger.error(f"❌ Error deleting mapping file: {e}")
-            else:
-                 save_doc_id_mapping(uuids_to_keep, dt, tenant, map_year_to_use) # 💡 ใช้ map_year_to_use
-                 
-                 # ลบไฟล์ Doc ID Mapping (Primary) ถ้าฐานข้อมูลว่างเปล่า 
-                 if not uuids_to_keep:
-                       mapping_path = get_doc_id_mapping_path(tenant, map_year_to_use, None) # 💡 ใช้ map_year_to_use
-                       if os.path.exists(mapping_path):
-                           try:
-                               os.remove(mapping_path)
-                               logger.info(f"✅ Deleted (empty) Primary Doc ID mapping file: {mapping_path} (Via Step 2)")
-                           except OSError as e:
-                               logger.error(f"❌ Error deleting mapping file: {e}")
-                 
-            logger.info(f"🧹 Removed {deletion_count} entries from mapping file for deleted collections (Doc Type: {dt}) of {tenant}/{map_year_to_use}.")
-    
-    # -------------------- 3. ลบ Mapping Files ที่เกี่ยวข้องกับคำสั่ง Wipe โดยตรง (บังคับลบ) --------------------
-    doc_types_to_force_delete = set()
-    if doc_type_to_wipe_lower == 'all':
-        doc_types_to_force_delete.update([dt.lower() for dt in SUPPORTED_DOC_TYPES])
-    else:
-        doc_types_to_force_delete.add(doc_type_to_wipe_lower)
+                logger.info(f"Collection Folder ไม่พบ: {col_name} ({collection_path}).")
+        except Exception as e:
+            logger.error(f"❌ Error deleting vectorstore folder {col_name}: {e}")
+
+        # 2b. ลบ Entry จาก Doc ID Mapping
+        doc_mapping_db = load_doc_id_mapping(dt, tenant, map_year_to_use, ena) 
+        uuids_to_keep = {}
         
-    for dt_force in doc_types_to_force_delete:
-        map_year_to_use = year if dt_force == EVIDENCE_DOC_TYPES.lower() else final_year # 💡 กำหนดปีที่ใช้
+        # กรอง Entry ที่ไม่เกี่ยวข้องกับ Collection ที่เพิ่งถูกลบ
+        for s_uuid, entry in doc_mapping_db.items():
+            
+            entry_col_name = get_doc_type_collection_key(entry.get('doc_type'), entry.get('enabler')) # 🎯 FIX: ใช้ get_doc_type_collection_key
 
-        if dt_force == EVIDENCE_DOC_TYPES.lower():
-            # Logic สำหรับ Evidence (ใช้ปีจริง)
-            enablers_to_check = []
-            if enabler and enabler.upper() in SUPPORTED_ENABLERS:
-                enablers_to_check.append(enabler.upper())
-            elif doc_type_to_wipe_lower == 'all' or (doc_type_to_wipe_lower == EVIDENCE_DOC_TYPES.lower() and not enabler):
-                 enablers_to_check.extend(SUPPORTED_ENABLERS)
+            if entry.get("tenant").lower() != tenant.lower():
+                 uuids_to_keep[s_uuid] = entry
+                 continue
                  
-            for ena_to_check in set(enablers_to_check):
-                # --- A. Primary Doc ID Mapping File ---
-                primary_mapping_path = get_doc_id_mapping_path(tenant, map_year_to_use, ena_to_check) # 💡 ใช้ map_year_to_use
-                if os.path.exists(primary_mapping_path):
-                     try:
-                         os.remove(primary_mapping_path)
-                         logger.info(f"✅ Deleted (FORCED) Primary Doc ID Mapping file: {primary_mapping_path}")
-                     except OSError as e:
-                         logger.error(f"❌ Error deleting Primary mapping file: {e}")
+            if entry_col_name != col_name:
+                uuids_to_keep[s_uuid] = entry
+            else:
+                logger.debug(f"Removed mapping entry for {s_uuid} (Collection: {col_name})")
 
-                # --- B. Secondary Evidence Mapping File ---
-                secondary_mapping_filename = f"{tenant}_{year}_{ena_to_check.lower()}{EVIDENCE_MAPPING_FILENAME_SUFFIX}" 
-                secondary_mapping_path = os.path.join(MAPPING_BASE_DIR, tenant, str(year), secondary_mapping_filename)
-                
-                if os.path.exists(secondary_mapping_path):
-                     try:
-                         os.remove(secondary_mapping_path)
-                         logger.info(f"✅ Deleted secondary evidence mapping file: {secondary_mapping_path}")
-                     except OSError as e:
-                         logger.error(f"❌ Error deleting secondary mapping file: {e}")
-                
-                # --- C. Lock File ---
-                lock_path = secondary_mapping_path + ".lock"
-                if os.path.exists(lock_path):
-                     try:
-                         os.remove(lock_path)
-                         logger.info(f"✅ Deleted lock file: {lock_path}")
-                     except OSError as e:
-                         logger.error(f"❌ Error deleting lock file: {e}")
-                
+
+        if not uuids_to_keep and len(doc_mapping_db) > 0:
+            # ถ้าไม่มี Entry เหลืออยู่เลย และไฟล์ Mapping มีอยู่จริง ให้ลบไฟล์ Mapping
+            # 🎯 FIX: ใช้ get_mapping_file_path
+            mapping_path = get_mapping_file_path(tenant, map_year_to_use, ena) 
+            if os.path.exists(mapping_path):
+                try:
+                    os.remove(mapping_path)
+                    logger.info(f"✅ Deleted (empty) Doc ID mapping file: {mapping_path} (Via Step 2)")
+                except OSError as e:
+                    logger.error(f"❌ Error deleting mapping file: {e}")
         else:
-             # --- Global Doc Type Mapping File (เช่น document) ---
-             if dt_force in [dt.lower() for dt in SUPPORTED_DOC_TYPES] and dt_force != EVIDENCE_DOC_TYPES.lower():
-                  primary_mapping_path = get_doc_id_mapping_path(tenant, map_year_to_use, None) # 💡 ใช้ map_year_to_use
-                  if os.path.exists(primary_mapping_path):
-                       try:
-                           os.remove(primary_mapping_path)
-                           logger.info(f"✅ Deleted (FORCED) Primary Doc ID Mapping file: {primary_mapping_path} (Global)")
-                       except OSError as e:
-                           logger.error(f"❌ Error deleting Primary mapping file: {e}")
+            save_doc_id_mapping(uuids_to_keep, dt, tenant, map_year_to_use, enabler=ena) 
 
-    # -------------------- 4. Final cleanup: พยายามลบโฟลเดอร์ Mapping ถ้าว่างเปล่า --------------------
+        # 2c. ลบไฟล์ Evidence Mapping ถ้าเป็น Evidence และเงื่อนไขตรง
+        if dt == EVIDENCE_DOC_TYPES.lower():
+            # 🎯 FIX: ใช้ get_evidence_mapping_file_path
+            evidence_map_path = get_evidence_mapping_file_path(tenant, map_year_to_use, ena) 
+            if os.path.exists(evidence_map_path):
+                 try:
+                    os.remove(evidence_map_path)
+                    logger.info(f"✅ Deleted Evidence Mapping file: {evidence_map_path}")
+                 except OSError as e:
+                    logger.error(f"❌ Error deleting evidence mapping file: {e}")
+            
+        logger.info(f"🧹 Removed {len(doc_mapping_db) - len(uuids_to_keep)} entries from mapping file for deleted collection (Doc Type: {dt}/{ena}) of {tenant}/{map_year_to_use}.")
+
+    # 3. ลบ Root Directory ของ Vector Store และ Mapping หากว่างเปล่า
     try:
-        # พยายามลบโฟลเดอร์ปี (2568) ที่ใช้เก็บ Evidence Mapping
-        mapping_dir_year = os.path.join(MAPPING_BASE_DIR, tenant, str(year))
+        # ลบ Vectorstore Root
+        # 🎯 FIX: ใช้ get_vectorstore_tenant_root_path
+        tenant_root_path = get_vectorstore_tenant_root_path(tenant) 
+        if os.path.isdir(tenant_root_path):
+            if not any(f for f in os.listdir(tenant_root_path) if not f.startswith('.')):
+                try:
+                    shutil.rmtree(tenant_root_path) 
+                    logger.info(f"✅ Deleted empty Vector Store root directory: {tenant_root_path}")
+                except OSError as e:
+                    logger.debug(f"Vector Store directory {tenant_root_path} not empty or cannot be deleted: {e}")
+
+        # ลบ Mapping Root
+        mapping_dir_year = os.path.join(MAPPING_BASE_DIR, tenant.lower(), str(year))
         if os.path.isdir(mapping_dir_year):
             if not any(f for f in os.listdir(mapping_dir_year) if not f.startswith('.')):
                 try:
@@ -1689,178 +1500,160 @@ def wipe_vectorstore(
                     logger.info(f"✅ Deleted empty Doc ID mapping directory: {mapping_dir_year}")
                 except OSError as e:
                     logger.debug(f"Mapping directory {mapping_dir_year} not empty or cannot be deleted: {e}")
-            else:
+            else: 
                 logger.info(f"Mapping directory {mapping_dir_year} is not completely empty. Keeping.")
-        
+                
     except Exception as e:
         logger.warning(f"Error during final mapping directory cleanup: {e}")
 
 # -------------------- [REVISED] Document Management Utilities --------------------
 def delete_document_by_uuid(
     stable_doc_uuid: str, 
-    tenant: str = "pwa",        
-    year: int = 2568,           
+    tenant: str = "pwa", 
+    year: int = 2568, 
     collection_name: Optional[str] = None, 
     doc_type: Optional[str] = None, 
     enabler: Optional[str] = None, 
     base_path: str = VECTORSTORE_DIR
 ) -> bool:
     """Deletes all chunks associated with the given Stable Document UUID (Multi-Tenant/Year)."""
-    
     if not doc_type:
         logger.error(f"Cannot delete {stable_doc_uuid}: doc_type must be provided for mapping file isolation.")
         return False
-    
+        
     # =================================================================
     # 🎯 FIX 1: OVERRIDE LOGIC สำหรับ Global Doc Types
     # =================================================================
-    DOC_TYPES_WITH_YEAR_AND_ENABLER = [EVIDENCE_DOC_TYPES.lower()]
     doc_type_lower = doc_type.lower()
-    
     final_year_for_map: Optional[int] = year
+    final_enabler: Optional[str] = enabler.upper() if enabler else None
+    
     if doc_type_lower not in DOC_TYPES_WITH_YEAR_AND_ENABLER:
         logger.warning(f"⚠️ Year ({year}) is ignored for Global Doc Type deletion: {doc_type_lower}. Setting year to None for Mapping.")
         final_year_for_map = None
-        
+        final_enabler = None
+
     # 💡 ใช้ final_year_for_map ในการโหลด Mapping
-    doc_mapping_db = load_doc_id_mapping(doc_type, tenant, final_year_for_map) 
-    
-    if stable_doc_uuid not in doc_mapping_db:
-        logger.warning(f"Deletion skipped: Stable Doc UUID {stable_doc_uuid} not found in mapping for {tenant}/{final_year_for_map}.")
+    doc_mapping_db = load_doc_id_mapping(doc_type, tenant, final_year_for_map, final_enabler) 
+
+    entry = doc_mapping_db.get(stable_doc_uuid)
+    if not entry:
+        logger.warning(f"UUID {stable_doc_uuid} not found in mapping DB for {doc_type}/{final_year_for_map}.")
         return False
 
-    doc_entry = doc_mapping_db[stable_doc_uuid]
-    all_chunk_uuids = doc_entry.get("chunk_uuids", [])
+    final_doc_type = entry.get("doc_type", doc_type_lower)
+    final_enabler = entry.get("enabler", final_enabler)
+    chunk_uuids = entry.get("chunk_uuids", [])
     
-    doc_type_from_map = doc_entry.get("doc_type")
-    enabler_from_map = doc_entry.get("enabler")
-    
-    final_doc_type = doc_type or doc_type_from_map
-    final_enabler = enabler or enabler_from_map
-    
-    if not final_doc_type:
-         logger.error(f"Cannot delete {stable_doc_uuid}: doc_type not found in mapping or provided.")
-         return False
-         
-    final_collection_name = get_target_dir(final_doc_type, final_enabler)
-    
-    if not all_chunk_uuids:
-        logger.warning(f"Deletion skipped: Stable Doc UUID {stable_doc_uuid} has no chunk UUIDs recorded.")
-    else:
-        # 🎯 FIXED: ใช้ get_collection_parent_dir (ใช้ year จริงสำหรับ Evidence, None สำหรับ Global Doc Type)
-        # เนื่องจาก vectorstore directory ยังคงแยกกันตามปีที่รับเข้ามา/หรือไม่แยกปีตาม _get_collection_parent_dir
-        # เราต้องตรวจสอบว่า doc_type เป็น Evidence หรือไม่
-        parent_dir_year = year if final_doc_type.lower() == EVIDENCE_DOC_TYPES.lower() else final_year_for_map
-
-        tenant_vectorstore_parent_dir = get_collection_parent_dir(tenant, parent_dir_year, final_doc_type) # 💡 ใช้ parent_dir_year
-        persist_directory = os.path.join(tenant_vectorstore_parent_dir, final_collection_name) 
+    if not chunk_uuids:
+        logger.warning(f"No chunks found for UUID {stable_doc_uuid}. Deleting mapping entry only.")
+        del doc_mapping_db[stable_doc_uuid]
         
-        if not os.path.isdir(persist_directory):
-            logger.warning(f"Vectorstore directory not found for collection '{final_collection_name}' for {tenant}/{parent_dir_year}. Skipping Chroma deletion.")
-        else:
-            try:
-                vectorstore = get_vectorstore(
-                    collection_name=final_collection_name, 
-                    tenant=tenant, 
-                    year=parent_dir_year, # 💡 ใช้ parent_dir_year
-                    base_path=base_path
-                ) 
-                vectorstore.delete(ids=all_chunk_uuids)
-                logger.info(f"✅ Successfully deleted {len(all_chunk_uuids)} chunks from collection '{final_collection_name}' for UUID: {stable_doc_uuid}")
-            except Exception as e:
-                logger.error(f"❌ Error during Chroma deletion for collection '{final_collection_name}' (UUID: {stable_doc_uuid}): {e}")
+    else:
+        # 1. ลบ Chunks ออกจาก Vectorstore
+        try:
+            # 🎯 FIX: ใช้ get_doc_type_collection_key
+            col_name = get_doc_type_collection_key(final_doc_type, final_enabler)
             
-    # 🎯 FIX: ลบ Entry ออกจาก Mapping DB ที่โหลดมา
-    del doc_mapping_db[stable_doc_uuid]
-    
+            # 💡 ใช้ final_year_for_map (จะเป็น year หรือ None)
+            vectorstore = get_vectorstore(col_name, tenant, final_year_for_map or DEFAULT_YEAR) 
+            
+            vectorstore.delete(ids=chunk_uuids)
+            logger.info(f"✅ Deleted {len(chunk_uuids)} chunks for {stable_doc_uuid} from collection '{col_name}'.")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete chunks from Vectorstore for {stable_doc_uuid}: {e}")
+
+        # 🎯 FIX: ลบ Entry ออกจาก Mapping DB ที่โหลดมา
+        del doc_mapping_db[stable_doc_uuid]
+        
     # 📌 FIX: บันทึก Mapping DB คืน (ต้องมีการแยก Enabler ถ้าเป็น Evidence)
     if final_doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
-         # ... (Logic การบันทึก Evidence - โค้ดเดิม, ใช้ year ที่รับเข้ามา)
-         # ในกรณีนี้ final_year_for_map จะเท่ากับ year
-         db_to_save: Dict[str, Dict[str, Any]] = {}
-         
-         for s_uuid, entry in doc_mapping_db.items():
-              # 📌 FIX: ต้องเช็ค Tenant/Year ด้วย
-              if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year_for_map and entry.get("enabler") == final_enabler:
-                   db_to_save[s_uuid] = entry
-                   
-         save_doc_id_mapping(db_to_save, final_doc_type, tenant, final_year_for_map, enabler=final_enabler)
+        # ... (Logic การบันทึก Evidence - โค้ดเดิม, ใช้ year ที่รับเข้ามา)
+        # ในกรณีนี้ final_year_for_map จะเท่ากับ year
+        db_to_save: Dict[str, Dict[str, Any]] = {}
+        for s_uuid, entry in doc_mapping_db.items():
+            # 📌 FIX: ต้องเช็ค Tenant/Year/Enabler ด้วย
+            if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year_for_map and entry.get("enabler") == final_enabler:
+                db_to_save[s_uuid] = entry
+        save_doc_id_mapping(db_to_save, final_doc_type, tenant, final_year_for_map, enabler=final_enabler)
     else:
-         # สำหรับ Doc Type อื่นๆ (เช่น document) บันทึกเฉพาะ Entry ที่เกี่ยวข้องกับ Tenant/Year
-         # ในกรณีนี้ final_year_for_map จะเป็น None
-         db_to_save = {
-             s_uuid: entry 
-             for s_uuid, entry in doc_mapping_db.items() 
-             if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year_for_map
-         }
-         save_doc_id_mapping(db_to_save, final_doc_type, tenant, final_year_for_map) 
+        # สำหรับ Doc Type อื่นๆ (เช่น document) บันทึกเฉพาะ Entry ที่เกี่ยวข้องกับ Tenant/Year
+        # ในกรณีนี้ final_year_for_map จะเป็น None
+        db_to_save = {
+            s_uuid: entry for s_uuid, entry in doc_mapping_db.items() 
+            if str(entry.get("tenant")).lower() == tenant.lower() and entry.get("year") == final_year_for_map
+        }
+        save_doc_id_mapping(db_to_save, final_doc_type, tenant, final_year_for_map)
         
     return True
 
 def list_documents(
     doc_types: Optional[List[str]] = None,
-    enabler: Optional[str] = None, 
-    tenant: str = "pwa",        
-    year: Union[int, str] = 2568, # 💡 รองรับทั้ง int และ str ที่อาจมาจาก argparse
-    show_results: str = "ingested" 
-) -> Dict[str, Any]: 
-
-    # --- 1. Preparation & Robust Year Conversion ---
-    doc_mapping_db = {}
-    enabler_req = (enabler or "").upper()
+    enabler: Optional[str] = None,
+    tenant: str = "pwa",
+    year: Union[int, str] = 2568, 
+    show_results: str = "ingested"
+) -> Dict[str, Any]:
+    """
+    Scans data directory and mapping DBs to list documents.
+    """
     
-    # 🎯 FIX: Robustly convert the 'year' parameter to an integer for comparison
-    year_int = 0
+    # 💡 NOTE: สมมติว่ามีการกำหนดค่าเหล่านี้ในระดับ Global/Module
+    DEFAULT_DOC_TYPES = ["document", "faq"]
+    SUPPORTED_DOC_TYPES = ["document", "faq", "evidence", "seam", "other"]
+    SUPPORTED_ENABLERS = ["KM", "RM", "IC", "SM", "SP"]
+    SUPPORTED_TYPES = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.png', '.jpg', '.jpeg']
+    EVIDENCE_DOC_TYPES = "evidence"
+    
+    # หากมีการใช้ `_normalize_doc_id` และ `get_document_source_dir`
+    # ต้องมั่นใจว่ามีการ import/defined ไว้ หรือแทนที่ด้วย logic ของคุณ
+    
+    logger.info(f"Listing documents for Tenant={tenant}, Year={year}, Doc Types={doc_types}, Enabler={enabler}, Show={show_results}")
+
+    # --- 1. Resolve Parameters ---
+    year_int: Optional[int]
     try:
-        if year is not None:
-            # ใช้ str(year) เพื่อจัดการ Union[int, str]
-            year_int = int(str(year)) 
-    except (TypeError, ValueError):
-        logger.error(f"Invalid year argument provided: {year}. Defaulting year_int to 0 (Global Context).")
-        year_int = 0
-    # --------------------------------------------------------------------------
+        year_int = int(year) if year is not None and str(year).isdigit() else None
+    except ValueError:
+        year_int = None 
+        
+    doc_types_to_load = {dt.lower() for dt in doc_types or DEFAULT_DOC_TYPES if dt.lower() in [s.lower() for s in SUPPORTED_DOC_TYPES]}
+    if not doc_types_to_load: doc_types_to_load = {dt.lower() for dt in DEFAULT_DOC_TYPES}
     
-    # Determine Doc Types to load
-    doc_types_reqs = {dt.lower() for dt in doc_types} if doc_types and doc_types[0] and doc_types[0].lower() != "all" else set()
-    if not doc_types_reqs:
-        doc_types_to_load = {dt.lower() for dt in SUPPORTED_DOC_TYPES}
-    else:
-        doc_types_to_load = doc_types_reqs
-        
-    # Generate list of (doc_type, enabler, year) contexts to check
-    load_contexts: Set[Tuple[str, Optional[str], Optional[int]]] = set() 
-
-    for dt_lower in doc_types_to_load:
-        
-        # Case 1: Evidence (Requires Year and Enabler context)
-        if dt_lower == EVIDENCE_DOC_TYPES.lower():
-            # Evidence ต้องมีปีเสมอ (ปีต้อง > 0)
-            if year_int > 0: # ใช้ year_int ที่แปลงแล้ว
-                years_to_use = {year_int}
-                
-                if enabler_req and enabler_req in SUPPORTED_ENABLERS:
-                    enablers_to_use = {enabler_req}
-                else:
-                    enablers_to_use = set(SUPPORTED_ENABLERS) 
-                    
-                for ena in enablers_to_use:
-                    for yr in years_to_use:
-                        load_contexts.add((dt_lower, ena, yr))
-        
-        # Case 2: Non-Evidence (document, faq, etc.) - Global Context
+    enabler_req = enabler.upper() if enabler else None
+    
+    # กำหนด Context (dt, ena, yr) ที่ต้องโหลด Mapping DB และ Scan File
+    load_contexts: Set[Tuple[str, Optional[str], Optional[int]]] = set()
+    
+    for dt in doc_types_to_load:
+        # 🎯 แก้ไข 1: Case 1 เหลือไว้แค่ EVIDENCE_DOC_TYPES เท่านั้นที่ต้องมี Year/Enabler
+        if dt.lower() == EVIDENCE_DOC_TYPES.lower(): 
+            # ต้องมีปี
+            if year_int is not None and year_int > 0:
+                 # ถ้ากำหนด Enabler
+                 if enabler_req and enabler_req in SUPPORTED_ENABLERS:
+                    load_contexts.add((dt, enabler_req, year_int))
+                 else:
+                    # Scan All Enablers for the year
+                    for ena in SUPPORTED_ENABLERS:
+                        load_contexts.add((dt, ena, year_int))
+            else:
+                 logger.warning(f"⚠️ Cannot list {dt} without a specific year. Skipping {dt} listing.")
         else:
-            # สำหรับ non-evidence จะไม่ใช้ Year และ Enabler ใน Context (year=None, enabler=None)
-            load_contexts.add((dt_lower, None, None)) 
+            # Case 2: Global Doc Types (document, faq, seam, other): Year และ Enabler ควรเป็น None
+            load_contexts.add((dt, None, None)) 
 
     # --- 2. Load Doc ID Mapping Files (using load_contexts) ---
+    doc_mapping_db: Dict[str, Dict[str, Any]] = {}
+    # สมมติว่า load_doc_id_mapping ดำเนินการและคืนค่า Dict ของ UUID: Entry
     for dt, ena, yr in load_contexts:
         ena_code = ena
-        # Note: load_doc_id_mapping จะใช้ yr=None ในการสร้าง Path Global
         try:
+            # NOTE: load_doc_id_mapping ต้องถูก Import/Defined
             mapping_db = load_doc_id_mapping(
-                doc_type=dt, 
-                tenant=tenant, 
-                year=yr, 
+                doc_type=dt,
+                tenant=tenant,
+                year=yr,
                 enabler=ena_code
             )
             doc_mapping_db.update(mapping_db)
@@ -1868,268 +1661,253 @@ def list_documents(
             pass
         except Exception as e:
             logger.error(f"❌ Error loading mapping for {dt} / {ena_code or 'None'} / Year {yr or 'None'}: {e}")
-            
+
     # --- 3. Filtering Doc ID Mapping for Physical Scan ---
-    
     filepath_to_stable_uuid: Dict[str, str] = {}
     for s_uuid, entry in doc_mapping_db.items():
         if "filepath" not in entry or str(entry.get("tenant")).lower() != str(tenant).lower():
             continue
-        
-        doc_type_in_map = entry.get("doc_type").lower()
+            
+        doc_type_in_map = entry.get("doc_type", "").lower()
         if doc_type_in_map not in doc_types_to_load:
             continue
-        
+            
         doc_year_in_map = entry.get("year")
-        
         is_context_match = False
         
+        # 🎯 แก้ไข 2: DocType ที่ขึ้นกับ Year และ Enabler เหลือไว้แค่ EVIDENCE_DOC_TYPES
         if doc_type_in_map == EVIDENCE_DOC_TYPES.lower():
-            # Evidence: ต้องตรงกับปีที่ร้องขอ (year_int > 0)
-            if year_int > 0 and doc_year_in_map == year_int: 
-                 is_context_match = True
+            # Case 1: Year-Specific Type (Evidence): ต้องตรงกับปีที่ร้องขอ (year_int > 0)
+            if year_int is not None and year_int > 0 and doc_year_in_map == year_int:
+                is_context_match = True
         else:
-            # Non-Evidence (Global): ต้องไม่มีส่วนประกอบของปีใน mapping (year=None หรือ 0)
+            # Case 2: Global Types (รวมถึง 'seam'): ต้องไม่มีส่วนประกอบของปีใน mapping (year=None หรือ 0)
             if doc_year_in_map in [None, 0]:
-                 is_context_match = True
-            
+                is_context_match = True
+                
         if is_context_match:
             filepath_to_stable_uuid[entry["filepath"]] = s_uuid
-
 
     # --- 4. Physical File Scan and Status Check (using load_contexts) ---
     all_docs: Dict[str, Any] = {}
     
+    # โหลดไฟล์ที่มีอยู่จริงในระบบ
     for dt_lower, resolved_enabler, resolved_year in load_contexts:
         
-        # _get_source_dir จะใช้ resolved_year (ซึ่งอาจเป็น None) ในการสร้าง Path
-        root_to_scan = _get_source_dir(tenant, resolved_year, dt_lower, resolved_enabler)
-        
-        if not os.path.isdir(root_to_scan):
-            logger.debug(f"Source directory not found: {root_to_scan}. Skipping scan.")
+        # 🟢 FIX 1: เพิ่มการตรวจสอบเพื่อข้ามบริบทที่ Doc Type เป็น None
+        if dt_lower is None:
+            logger.error(f"❌ Critical Error: Found None in load_contexts for Doc Type. Skipping context: Enabler={resolved_enabler or 'None'}, Year={resolved_year or 'None'}")
             continue
             
-        original_doc_type = dt_lower
+        # 🎯 FIX 2 (Argument Swap): แก้ไขการสลับอาร์กิวเมนต์: (tenant, year, enabler, doc_type)
+        # NOTE: get_document_source_dir ต้องถูก Import/Defined
+        scan_dir = get_document_source_dir(tenant, resolved_year, resolved_enabler, dt_lower)
         
-        for root, _, filenames in os.walk(root_to_scan):
-            if root != root_to_scan: continue 
+        if not os.path.exists(scan_dir):
+            logger.warning(f"Source directory not found: {scan_dir}. Skipping scan.")
+            continue
             
-            for f in filenames:
-                file_extension = os.path.splitext(f)[1].lower()
-                if f.startswith('.') or file_extension not in SUPPORTED_TYPES:
-                    continue
-                    
+        for root, dirs, filenames in os.walk(scan_dir):
+             dirs[:] = [d for d in dirs if d not in ['.DS_Store', '__pycache__', 'backup']]
+             
+             for f in filenames:
                 file_path = os.path.join(root, f)
-                file_name_no_ext = os.path.splitext(f)[0]
-                filename_doc_id_key = _normalize_doc_id(file_name_no_ext)
+                file_extension = os.path.splitext(f)[1].lower()
                 
-                # 1. ลองค้นหาด้วย Absolute Path (วิธีการปกติ)
+                if f.startswith('.') or file_extension not in SUPPORTED_TYPES: continue
+
+                # 🎯 FIX 3 (UnboundLocalError): คำนวณ filename_doc_id_key เสมอ
+                raw_doc_id_input = os.path.splitext(f)[0]
+                # NOTE: _normalize_doc_id ต้องถูก Import/Defined
+                filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) 
+
+                # Determine status from mapping DB
                 stable_doc_uuid = filepath_to_stable_uuid.get(file_path)
                 
-                # 📌 Fallback Search ถ้าหาด้วย Absolute Path ไม่เจอ
-                if stable_doc_uuid is None:
-                    # 2. ลองค้นหาด้วย filename (ซึ่งอยู่ใน Mapping File)
-                    for s_uuid, entry in doc_mapping_db.items():
-                        # ตรวจสอบ file_name และ Context ที่ตรงกัน
-                        if (entry.get("file_name") == f 
-                            and str(entry.get("tenant")).lower() == str(tenant).lower() 
-                            and entry.get("doc_type").lower() == original_doc_type
-                            and entry.get("enabler", "").upper() == (resolved_enabler or "").upper()
-                            # ตรวจสอบ Year: ถ้า resolved_year=None ให้ดูว่า year ใน mapping เป็น None/0
-                            and (entry.get("year") == resolved_year if resolved_year is not None else entry.get("year") in [None, 0])):
-                            stable_doc_uuid = s_uuid
-                            break
-                            
-                doc_entry = doc_mapping_db.get(stable_doc_uuid) if stable_doc_uuid else None
-                
-                # Logic การตรวจสอบสถานะ Ingested
-                chunk_uuids = doc_entry.get("chunk_uuids", []) if doc_entry else []
-                chunk_count = len(chunk_uuids)
-                
-                # 💡 ถ้ามี Stable ID แต่ไม่มี chunk_count (เพราะ Ingest ไม่ได้บันทึกไว้) 
-                if stable_doc_uuid is not None and chunk_count == 0:
-                    chunk_count = 1 
-                
+                if stable_doc_uuid and stable_doc_uuid in doc_mapping_db:
+                    mapping_entry = doc_mapping_db[stable_doc_uuid]
+                    chunk_count = mapping_entry.get("chunk_count", 0)
+                    original_doc_type = mapping_entry.get("doc_type", dt_lower)
+                    
+                else:
+                    # File exists but not in mapping DB (Pending Ingestion)
+                    stable_doc_uuid = None
+                    chunk_count = 0
+                    original_doc_type = dt_lower # Use resolved doc type from scan context
+
+                # Calculate temporary values if needed
+                if stable_doc_uuid and chunk_count == 0:
+                    chunk_count = 1 # Assume 1 chunk if mapped but count is 0
+                    
                 is_ingested = chunk_count > 0
-                
                 final_doc_id = stable_doc_uuid or f"TEMP_ID__{filename_doc_id_key}"
-                
+
                 try:
                     upload_date = datetime.fromtimestamp(os.path.getmtime(file_path), timezone.utc).isoformat()
                     file_size = os.path.getsize(file_path)
                 except FileNotFoundError:
                     upload_date = datetime.now(timezone.utc).isoformat()
                     file_size = 0
-
+                    
                 doc_info: Any = {
                     "doc_id": final_doc_id,
                     "doc_id_key": filename_doc_id_key,
                     "filename": f,
                     "filepath": file_path,
                     "doc_type": original_doc_type,
-                    "enabler": resolved_enabler, 
-                    "tenant": tenant,          
-                    "year": resolved_year, # ใช้ resolved_year (int หรือ None)
+                    "enabler": resolved_enabler, # int/None
+                    "tenant": tenant,
+                    "year": resolved_year, # int/None
                     "upload_date": upload_date,
                     "chunk_count": chunk_count,
-                    "status": "Ingested" if is_ingested else "Pending", 
+                    "status": "Ingested" if is_ingested else "Pending",
                     "size": file_size,
                 }
                 all_docs[final_doc_id] = doc_info
 
-    # --- 5. Final Filtering and Display ---
-    
-    total_supported_files = len(all_docs) 
-    
+    # --- 5. Final Filtering and Data Preparation ---
+    total_supported_files = len(all_docs)
     show_results_lower = show_results.lower()
     filtered_docs_dict: Dict[str, Any] = {}
     
+    # 🎯 FIX 4 (Pydantic): List สำหรับพิมพ์ผลเท่านั้น
+    display_list_for_print: List[Dict[str, Any]] = []
+
     # กำหนด String สำหรับแสดง Year
-    year_request_str = str(year_int) if year_int > 0 else "Global"
+    year_request_str = str(year_int) if year_int is not None and year_int > 0 else "Global"
 
     if total_supported_files == 0:
         doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
         logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}, Year: {year_request_str}) for {tenant}.")
-        return filtered_docs_dict 
-    
-    # ... (Logic Filtering show_results) ...
-    if show_results_lower == "ingested":
-        filtered_docs_dict = {
-            k: d for k, d in all_docs.items() 
-            if d.get('status', '').lower() == 'ingested' and not k.startswith('TEMP_ID__')
-        }
-        filter_name = "INGESTED (Successful / Unique Doc IDs)"
-        display_count_x = len(filtered_docs_dict)
-        
-    elif show_results_lower == "failed":
-        filtered_docs_dict = {
-            k: d for k, d in all_docs.items() 
-            if d.get('status', '').lower() == 'pending'
-        }
-        display_count_x = len(filtered_docs_dict) 
-        filter_name = "PENDING/NOT INGESTED (Physical Files Exist)"
-        
-    elif show_results_lower == "full":
-        filtered_docs_dict = all_docs
-        display_count_x = len(all_docs) 
-        filter_name = "FULL (All Supported Files)"
-        
-    else:
-        filtered_docs_dict = {
-            k: d for k, d in all_docs.items() 
-            if d.get('status', '').lower() == 'ingested' and not k.startswith('TEMP_ID__')
-        }
-        filter_name = "INGESTED (Default / Unique Doc IDs)"
-        display_count_x = len(filtered_docs_dict)
+        return filtered_docs_dict
 
-    display_list = []
-    for doc_info in filtered_docs_dict.values(): 
-        file_size_mb = doc_info['size'] / (1024 * 1024)
-        enabler_display = doc_info['enabler'] if doc_info['enabler'] is not None else '-'
-        # แสดงปีเป็น '-' หากเป็น None หรือ 0
-        year_display = str(doc_info['year']) if doc_info['year'] is not None and doc_info['year'] > 0 else '-'
+    for doc_id, info in all_docs.items():
+        info_status_lower = info['status'].lower()
         
-        display_list.append({
-            "doc_id": doc_info["doc_id"],
-            "file_name": doc_info["filename"],
-            "doc_type": doc_info["doc_type"],
-            "enabler": enabler_display,
-            "size_mb": file_size_mb,
-            "status": doc_info["status"],
-            "chunk_count": doc_info["chunk_count"],
-            "ref_doc_id": doc_info["doc_id_key"],
-            "tenant": doc_info["tenant"], 
-            "year": year_display     
-        })
-        
-    display_list.sort(key=lambda x: (x["doc_type"], x["file_name"]))
-    
-    doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
-    
-    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year_request_str}, Filter: {filter_name}):\n")
+        # Filtering logic
+        if show_results_lower == "all":
+            is_match = True
+        elif show_results_lower == "ingested" and info_status_lower == "ingested":
+            is_match = True
+        elif show_results_lower == "pending" and info_status_lower == "pending":
+            is_match = True
+        elif show_results_lower == "failed" and info_status_lower.startswith("failed"):
+            is_match = True
+        else:
+            is_match = False
+            
+        if is_match:
+            # 🎯 สร้างสำเนาสำหรับ display และแปลง int/None เป็น string '-'
+            display_info = info.copy()
+            
+            display_info["size_mb"] = display_info["size"] / (1024 * 1024)
+            display_info["year_display"] = display_info["year"] if display_info["year"] is not None else "-"
+            display_info["enabler_display"] = display_info["enabler"] if display_info["enabler"] is not None else "-"
+            
+            display_list_for_print.append(display_info)
+            
+            # เก็บข้อมูลต้นฉบับ (info) ที่ year เป็น int/None ไว้สำหรับ Pydantic
+            filtered_docs_dict[doc_id] = info
 
-    if not display_list:
-        print("--- No documents found matching the filter criteria to display ---")
-        return filtered_docs_dict 
+
+    if not display_list_for_print:
+        logger.info(f"--- Found {total_supported_files} supported files but none matched the filter criteria to display ---")
+        return filtered_docs_dict
+        
+    # --- 6. Print Results ---
+    
+    # Sort for consistent display
+    display_list_for_print.sort(key=lambda x: (x['doc_type'], x['enabler_display'], x['filename']))
 
     UUID_COL_WIDTH = 65
-    NEW_TABLE_WIDTH = 197 
+    NEW_TABLE_WIDTH = 197
     
+    print("-" * NEW_TABLE_WIDTH)
+    print(f"--- Document List (Tenant: {tenant.upper()}, Year: {year_request_str}, Filter: {show_results.upper()}) ---")
     print("-" * NEW_TABLE_WIDTH)
     print(f"{'DOC ID (Stable/Temp)':<{UUID_COL_WIDTH}} | {'TENANT':<7} | {'YEAR':<4} | {'FILENAME':<30} | {'EXT':<5} | {'TYPE':<10} | {'ENB':<5} | {'SIZE(MB)':<9} | {'STATUS':<10}")
     print("-" * NEW_TABLE_WIDTH)
     
-    for info in display_list:
-        full_doc_id = info['doc_id'] 
-        file_name, file_ext = os.path.splitext(info['file_name'])
-        short_filename = file_name[:28] if len(file_name) > 28 else file_name 
-        file_ext = file_ext[1:].upper() if file_ext else '-' 
+    for info in display_list_for_print:
+        full_doc_id = info['doc_id']
+        file_name, file_ext = os.path.splitext(info['filename'])
+        short_filename = file_name[:28] if len(file_name) > 28 else file_name
+        file_ext = file_ext[1:].upper() if file_ext else '-'
         size_str = f"{info['size_mb']:.2f}"
-        enabler_display = info['enabler'] 
-        year_display = info['year']
         
-        print(
-            f"{full_doc_id:<{UUID_COL_WIDTH}} | " 
-            f"{info['tenant']:<7} | " 
-            f"{year_display:<4} | "   
-            f"{short_filename:<30} | " 
-            f"{file_ext:<5} | "
-            f"{info['doc_type']:<10} | "
-            f"{enabler_display:<5} | " 
-            f"{size_str:<9} | "
-            f"{info['status']:<10}"
-        )
-    print("-" * NEW_TABLE_WIDTH)
-    print(f"\nFound {display_count_x}/{total_supported_files} supported documents for type '{doc_types_str}' (Tenant: {tenant}, Year: {year_request_str}, Filter: {filter_name}):\n")
+        # ใช้ตัวแปรสำหรับ display
+        enabler_display = info['enabler_display'] 
+        year_display = info['year_display']
+        
+        # Truncate UUID if too long
+        display_doc_id = full_doc_id
+        if len(display_doc_id) > UUID_COL_WIDTH:
+             display_doc_id = display_doc_id[:UUID_COL_WIDTH-3] + "..."
 
+        print(
+            f"{display_doc_id:<{UUID_COL_WIDTH}} | "
+            f"{info['tenant']:<7} | "
+            f"{year_display:<4} | "
+            f"{short_filename:<30} | "
+            f"{file_ext:<5} | "
+            f"{info['doc_type'][:10]:<10} | "
+            f"{enabler_display:<5} | "
+            f"{size_str:<9} | "
+            f"{info['status'][:10]:<10}"
+        )
+        
+        if len(file_name) > 28:
+            # 🎯 FIX 5 (Format Specifier): แก้ไข '>30-3' เป็น '>27'
+            print(f"{'':<{UUID_COL_WIDTH}} | {'':<7} | {'':<4} | ...{file_name[28:]:>27}")
+
+    print("-" * NEW_TABLE_WIDTH)
+    logger.info(f"--- Displaying {len(display_list_for_print)} documents of {total_supported_files} supported files ---")
     
-    return filtered_docs_dict
+    return filtered_docs_dict # คืนค่า Dict ของ doc_id: info
 
 # -------------------- Main Execution --------------------
-if __name__ == "__main__":
-    import sys
-    
-    # 📌 NOTE: Assume necessary global_vars and functions (logger, 
-    # DEFAULT_TENANT, DEFAULT_YEAR, ingest_all_files, wipe_vectorstore, 
-    # list_documents) are imported or defined.
 
+if __name__ == "__main__":
     try:
         import argparse
-        parser = argparse.ArgumentParser(description="Manage document ingestion and listing for Chroma Vector Store (Multi-Tenant/Year).")
         
-        # --- Common Arguments ---
-        parser.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help=f"Tenant code (default: {DEFAULT_TENANT}).")
-        parser.add_argument("--year", type=str, default=str(DEFAULT_YEAR), help=f"Fiscal year (default: {DEFAULT_YEAR}). Use 'None' or '0' for global context.")
-        parser.add_argument("--doc-type", nargs='+', type=str, default=["all"], help=f"Document type(s) to target (e.g., 'document', 'evidence', 'all').")
-        parser.add_argument("--enabler", type=str, default=None, help="Enabler code, usually required for 'evidence' doc type (e.g., 'km').")
+        # ... (Argument Parser setup - โค้ดเดิม) ...
+        parser = argparse.ArgumentParser(description="Multi-Tenant RAG Ingestion and Management Tool (SE-AM Ready)")
         
-        # --- Ingest Arguments ---
-        parser.add_argument("--ingest", action="store_true", help="Activate document ingestion mode.")
-        parser.add_argument("--subject", type=str, default=None, help="Subject/Topic for Global Doc Types (e.g., 'HR Policy').") 
-        parser.add_argument("--dry-run", action="store_true", help="Process files but do not save to vectorstore or mapping (Ingest mode only).")
-        parser.add_argument("--sequential", action="store_true", help="Process files sequentially (Ingest mode only).")
-        parser.add_argument("--wipe", action="store_true", help="Wipe the target vector store collection(s) and associated mappings before ingesting.")
-        
-        # --- List Arguments ---
-        parser.add_argument("--list", action="store_true", help="Activate document listing mode.")
-        parser.add_argument("--show-results", type=str, default="ingested", choices=["ingested", "failed", "full"], help="Filter results: 'ingested', 'failed' (pending), or 'full'. (List mode only)")
+        # Global Settings
+        parser.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help="Tenant code (e.g., 'pea', 'pwa').")
+        parser.add_argument("--year", type=str, default=str(DEFAULT_YEAR), help="Assessment year (e.g., '2568').")
+        parser.add_argument("--doc-type", nargs='+', default=[EVIDENCE_DOC_TYPES], help="Document type(s) to process ('evidence', 'document', 'all').")
+        parser.add_argument("--enabler", type=str, default=DEFAULT_ENABLER, help="Enabler code (e.g., 'KM', 'HCM').")
+        parser.add_argument("--subject", type=str, default=None, help="Subject/Topic tag for documents (optional).")
 
-        parser.add_args = parser.parse_args()
+        # Ingest Mode
+        parser.add_argument("--ingest", action="store_true", help="Run ingestion mode.")
+        parser.add_argument("--dry-run", action="store_true", help="Simulate ingestion without writing to Chroma/DB.")
+        parser.add_argument("--sequential", action="store_true", help="Run ingestion in sequential mode (for debugging).")
+        parser.add_argument("--skip-wipe", action="store_true", help="Skip the wiping of vector store before ingestion.")
+
+        # List Mode
+        parser.add_argument("--list", action="store_true", help="Run document listing mode.")
+        parser.add_argument("--show-results", type=str, default="all", choices=["all", "ingested", "pending"], help="Filter results for list mode.")
+        
+        # Wipe Mode
+        parser.add_argument("--wipe", action="store_true", help="Wipe (delete) vector store and mapping files for the specified context.")
+        
         args = parser.parse_args()
         
-        # Convert doc-type list back to single string or maintain list format based on target function needs
-        doc_type_for_ingest_wipe = args.doc_type[0] if len(args.doc_type) == 1 else ",".join(args.doc_type)
-
-        # -------------------- Execution Logic --------------------
+        logger.info(f"--- STARTING EXECUTION: Tenant={args.tenant}, Year={args.year}, DocType={args.doc_type}, Enabler={args.enabler} ---")
         
+        doc_type_for_ingest_wipe = args.doc_type[0] if isinstance(args.doc_type, list) and args.doc_type else DEFAULT_DOC_TYPES
+
         if args.ingest:
-            logger.info("--- INGEST MODE ACTIVATED ---")
+            logger.info("--- INGESTION MODE ACTIVATED ---")
             
-            # 1. WIPE LOGIC (ถ้ามีการสั่ง --wipe)
-            if args.wipe:
-                logger.warning(f"!!! WIPE MODE ACTIVATED for {doc_type_for_ingest_wipe} !!!")
+            if not args.skip_wipe and not args.dry_run:
+                # 1. WIPE LOGIC (Optional)
+                logger.warning("⚠️ Wiping Vector Store before ingestion!!!")
                 wipe_vectorstore(
-                    doc_type_to_wipe=doc_type_for_ingest_wipe, 
+                    doc_type_to_wipe=doc_type_for_ingest_wipe,
                     enabler=args.enabler, 
                     tenant=args.tenant, 
                     year=int(args.year) if args.year.isdigit() else DEFAULT_YEAR
@@ -2147,7 +1925,7 @@ if __name__ == "__main__":
             )
             
         elif args.list:
-            logger.info("--- LIST MODE ACTIVATED ---")
+            logger.info("--- LIST MODE ACTIVATED ---\n")
             
             # 3. LIST LOGIC
             list_documents(
@@ -2158,8 +1936,18 @@ if __name__ == "__main__":
                 show_results=args.show_results 
             )
             
+        elif args.wipe:
+            logger.info("--- WIPE MODE ACTIVATED ---")
+            logger.critical("⚠️ Wiping Vector Store and Mapping Files as requested!!!")
+            wipe_vectorstore(
+                doc_type_to_wipe=doc_type_for_ingest_wipe,
+                enabler=args.enabler, 
+                tenant=args.tenant, 
+                year=int(args.year) if args.year.isdigit() else DEFAULT_YEAR
+            )
+            
         else:
-            print("\nUsage: Specify --ingest or --list mode.")
+            print("\nUsage: Specify --ingest, --list, or --wipe mode.")
             parser.print_help()
 
         logger.info("Execution finished.")
@@ -2169,4 +1957,4 @@ if __name__ == "__main__":
          
     except Exception as e:
          logger.critical(f"FATAL ERROR DURING MAIN EXECUTION: {e}", exc_info=True)
-         print(f"--- FATAL ERROR: {e} ---")
+         print(f"--- FATAL ERROR: Check ingest.log for details. ---")
