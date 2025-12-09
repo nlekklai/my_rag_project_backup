@@ -500,7 +500,7 @@ class SEAMPDCAEngine:
             # Mock function pointers (will point to real functions by default)
             self.llm_evaluator = evaluate_with_llm
             self.rag_retriever = retrieve_context_with_filter
-            self.action_plan_generator = create_structured_action_plan
+            self.create_structured_action_plan = create_structured_action_plan
 
             # Apply mocking if enabled
             if config.mock_mode in ["random", "control"]:
