@@ -1,5 +1,12 @@
 # app.py
-import os
+import sys
+import os # 🟢 เพิ่ม os และ sys เข้ามาจัดการ Path
+
+# 🟢 FIX: เพิ่ม Root Project ลงใน Python Path ก่อนการ Import อื่นๆ
+# ช่วยให้สามารถ Import โมดูลย่อย เช่น 'utils' ได้
+sys.path.append(os.path.dirname(os.path.abspath(__file__))) 
+# -------------------------------------------------------------
+
 import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -25,12 +32,13 @@ logger = logging.getLogger("KM-RAG-API")
 logging.getLogger("routers.assessment_router").setLevel(logging.INFO)
 
 # -----------------------------
-# Import Routers ← เพิ่มบรรทัดนี้!!!
+# Import Routers 
 # -----------------------------
 from routers.upload_router import upload_router
 from routers.llm_router import llm_router
-from routers.assessment_router import assessment_router   # เพิ่มบรรทัดนี้!
-from routers.auth_router import auth_router   # <-- เพิ่มบรรทัดนี้!!!
+# ✅ เพิ่ม assessment_router และ auth_router
+from routers.assessment_router import assessment_router   
+from routers.auth_router import auth_router   
 
 # -----------------------------
 # Lifespan
@@ -63,12 +71,13 @@ app.add_middleware(
 )
 
 # -----------------------------
-# Routers ← เพิ่มบรรทัดนี้!!!
+# Routers 
 # -----------------------------
 app.include_router(upload_router)
 app.include_router(llm_router)
-app.include_router(assessment_router)   # เพิ่มบรรทัดนี้!
-app.include_router(auth_router)  # <-- เพิ่มบรรทัดนี้!!!
+# ✅ รวม assessment_router และ auth_router เข้าสู่แอปพลิเคชัน
+app.include_router(assessment_router)   
+app.include_router(auth_router)  
 
 # -----------------------------
 # Health check endpoints

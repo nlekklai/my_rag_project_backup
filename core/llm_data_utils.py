@@ -37,7 +37,9 @@ from config.global_vars import (
 # ===================================================================
 # 2. Critical Utilities (ต้องมีจริง — ไม่มี fallback)
 # ===================================================================
-from core.vectorstore import _get_collection_name, get_hf_embeddings
+# 🎯 FIX 1: เปลี่ยน Import จาก _get_collection_name ไปเป็น get_doc_type_collection_key
+from core.vectorstore import get_hf_embeddings
+from utils.path_utils import get_doc_type_collection_key # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
 from core.json_extractor import (
     _robust_extract_json,
     _normalize_keys,
@@ -136,6 +138,8 @@ def retrieve_context_for_endpoint(
     collection_name = f"{doc_type or 'seam'}"
     if enabler and enabler != DEFAULT_ENABLER:
         collection_name = f"{doc_type}_{enabler.lower()}"
+    
+    # 🔑 NOTE: ฟังก์ชันนี้ใช้การกำหนดชื่อ collection แบบง่าย ซึ่งไม่ควรมีปัญหา
 
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
@@ -357,7 +361,8 @@ def retrieve_context_with_filter(
                 guaranteed_priority_chunks.append(doc)
 
     # 4. ดึง collection name ให้ตรงตัว
-    collection_name = _get_collection_name(doc_type, enabler or DEFAULT_ENABLER)
+    # 🎯 FIX 2: เปลี่ยนไปใช้ get_doc_type_collection_key แทน _get_collection_name
+    collection_name = get_doc_type_collection_key(doc_type, enabler or DEFAULT_ENABLER)
     logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
 
     # 🟢 Logic สร้าง Filter WHERE จาก stable_doc_ids และ subject
@@ -1244,7 +1249,6 @@ def _extract_json_array_for_action_plan(llm_response: str) -> List[Dict[str, Any
         return []
     return [item for item in data if isinstance(item, dict)]
 
-
 def create_structured_action_plan(
     failed_statements: List[Dict[str, Any]],
     sub_id: str,
@@ -1326,11 +1330,30 @@ def create_structured_action_plan(
         level = s.get("level", "?")
         text = str(s.get("statement") or "").strip()
         reason = str(s.get("reason") or "").strip()
+        
+        # 🟢 NEW: ดึงข้อมูลประเภทคำแนะนำและความแข็งแกร่งของหลักฐาน
+        rec_type = s.get("recommendation_type", "FAILED") # ค่า default คือ FAILED
+        evidence_strength = s.get("evidence_strength", 0.0)
+        
+        # 🟢 NEW: สร้าง Context ให้ LLM เข้าใจสถานการณ์ที่แตกต่างกัน
+        status_line = ""
+        instruction = ""
+        if rec_type == 'FAILED':
+            status_line = f"❌ สถานะ: ไม่ผ่านเกณฑ์ (FAIL) | เหตุผลหลัก: {reason}"
+            instruction = "โปรดสร้างแผนปฏิบัติการเพื่อ **แก้ไขข้อบกพร่อง** นี้โดยตรง"
+        elif rec_type == 'WEAK_EVIDENCE':
+            status_line = f"⚠️ สถานะ: ผ่านเกณฑ์ (PASS) แต่หลักฐานอ่อนแอ (Strength: {evidence_strength:.1f})"
+            instruction = "โปรดสร้างแผนปฏิบัติการเพื่อ **เสริมความแข็งแกร่งและคุณภาพของหลักฐาน** (เช่น การจัดเก็บ, ความเป็นปัจจุบัน)"
+        else:
+             status_line = f"❔ สถานะ: {rec_type} | เหตุผลหลัก: {reason}"
+             instruction = "โปรดสร้างแผนปฏิบัติการตามข้อบกพร่องที่ระบุ"
+
         stmt_blocks.append(
             f"ลำดับที่ {i}\n"
             f"Statement ID: {sid} (Level {level})\n"
             f"ข้อความ: {text}\n"
-            f"เหตุผลที่ไม่ผ่าน: {reason}\n"
+            f"{status_line}\n"
+            f"คำแนะนำสำหรับ LLM: {instruction}\n" # LLM จะใช้บรรทัดนี้ในการตัดสินใจ
         )
 
     human_prompt = ACTION_PLAN_PROMPT.format(

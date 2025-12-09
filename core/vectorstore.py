@@ -33,6 +33,16 @@ from langchain_chroma import Chroma
 import chromadb
 from chromadb.config import Settings
 
+# 💡 NEW: Import Path Utilities (อัปเดตชื่อฟังก์ชันให้ตรงกับ utils/path_utils.py ใหม่)
+from utils.path_utils import (
+    get_doc_type_collection_key, # ใช้แทน _get_collection_name
+    get_vectorstore_collection_path, 
+    get_vectorstore_tenant_root_path,
+    get_mapping_file_path, # ใช้แทนทั้ง year_specific และ tenant_root
+    # ไม่ต้องใช้ get_vectorstore_collection_parent_dir แล้ว
+)
+
+
 # Logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -56,10 +66,9 @@ except Exception:
     except Exception:
         pass
 
-# -------------------- Global Config --------------------
+# -------------------- Global Config (Path Vars Removed) --------------------
 from config.global_vars import (
-    VECTORSTORE_DIR,
-    MAPPING_BASE_DIR,
+    # 💥 ลบ VECTORSTORE_DIR, MAPPING_BASE_DIR
     FINAL_K_RERANKED,
     INITIAL_TOP_K,
     EVIDENCE_DOC_TYPES,
@@ -70,7 +79,6 @@ from config.global_vars import (
     RERANKER_MODEL_NAME,
     EMBEDDING_MODEL_NAME
 )
-
 # -------------------- Vectorstore Constants --------------------
 ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or ""
 ENV_DISABLE_ACCEL = os.getenv("VECTOR_DISABLE_ACCEL", "").lower() in ("1", "true", "yes")
@@ -245,46 +253,8 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
 
     return _CACHED_RERANKER_INSTANCE
 
-# -------------------- Path Helper Function (REVISED for Lowercase Path Suffix and Optional Year) --------------------
-def _build_vectorstore_path_by_doc_type(tenant: str, year: Optional[int], doc_type: str, enabler: Optional[str] = None) -> str:
-    """
-    สร้าง Full Path สำหรับ Collection โดยใช้ตรรกะ EVIDENCE_DOC_TYPES
-    - Evidence (มี year): VECTORSTORE_DIR / tenant / year / collection_name
-    - Docs/FAQ (ไม่มี year): VECTORSTORE_DIR / tenant / collection_name
-    """
-    doc_type_lower = doc_type.lower()
-    collection_name = _get_collection_name(doc_type, enabler)
-    
-    path_segments = [VECTORSTORE_DIR, tenant.lower()]
-    
-    # 🎯 FIX: ตรวจสอบปี (year is not None) สำหรับ Evidence เท่านั้น
-    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
-        # Path สำหรับ evidence คือ /tenant/year/collection_name
-        path_segments.append(str(year))
-        
-    path_segments.append(collection_name)
-    
-    return os.path.join(*path_segments)
-
-
-def _get_collection_name(doc_type: str, enabler: Optional[str] = None) -> str:
-    """
-    Calculates the Chroma collection name (Internal identifier).
-    """
-    doc_type_norm = doc_type.strip().lower()
-    
-    if doc_type_norm == EVIDENCE_DOC_TYPES.lower():
-        # สำหรับ Evidence: ชื่อ Collection ต้องรวม enabler เสมอ
-        enabler_norm = (enabler or "km").strip().lower()
-        collection_name = f"{doc_type_norm}_{enabler_norm}"
-        
-    else:
-        # สำหรับเอกสารทั่วไป: ชื่อ Collection คือ doc_type เท่านั้น
-        collection_name = doc_type_norm
-        
-    logger.debug(f"🧭 DEBUG: _get_collection_name(doc_type={doc_type}, enabler={enabler}) => {collection_name}")
-    return collection_name
-
+# -------------------- Path Helper Function (REVISED to use Path Utility) --------------------
+# ⚠️ ลบฟังก์ชัน _get_collection_name (ใช้ get_doc_type_collection_key แทน)
 
 def get_vectorstore_path(
     tenant: str, 
@@ -294,13 +264,20 @@ def get_vectorstore_path(
 ) -> str:
     """
     Calculates the full persist directory path for the vector store instance
-    based on the Centralized KM Logic.
+    based on the Centralized KM Logic by calling path_utils.
     """
+    # 🎯 FIX: เปลี่ยนไปใช้ get_vectorstore_tenant_root_path
     if not doc_type:
-        # ถ้าไม่มี doc_type ให้ return root ของ tenant
-        return os.path.join(VECTORSTORE_DIR, tenant.lower()) 
+        return get_vectorstore_tenant_root_path(tenant=tenant)
         
-    return _build_vectorstore_path_by_doc_type(tenant, year, doc_type, enabler)
+    # 🎯 FIX: เปลี่ยนไปใช้ get_vectorstore_collection_path
+    return get_vectorstore_collection_path(
+        tenant=tenant, 
+        year=year, 
+        doc_type=doc_type, 
+        enabler=enabler, 
+        # EVIDENCE_DOC_TYPES ไม่จำเป็นต้องส่งแล้ว ถูก hardcode ใน path_utils
+    )
 
 def vectorstore_exists(
     doc_id: str = "N/A", # รักษาไว้ตาม Signature เดิม
@@ -308,7 +285,7 @@ def vectorstore_exists(
     year: Optional[int] = DEFAULT_YEAR, # <--- รองรับ None สำหรับ General Docs
     doc_type: Optional[str] = None, 
     enabler: Optional[str] = None, 
-    base_path: str = VECTORSTORE_DIR # base_path จะถูกละเลยเนื่องจากใช้ global VECTORSTORE_DIR
+    base_path: str = "" # base_path ถูกละเลย เนื่องจากใช้ global VECTORSTORE_DIR ภายใน path_utils
 ) -> bool:
     """
     Checks if the Vector Store directory exists for the given context.
@@ -316,8 +293,8 @@ def vectorstore_exists(
     if not doc_type:
         return False
         
-    # 1. Get the full path using the updated logic
-    # path จะมีหรือไม่มีปีก็ได้ ขึ้นอยู่กับ doc_type และ year
+    # 1. Get the full path using the updated logic (เรียก get_vectorstore_path ใหม่)
+    # NOTE: get_vectorstore_path จะคำนวณ Path ที่ถูกต้องโดยอิงจาก doc_type (มีปี/ไม่มีปี)
     path = get_vectorstore_path(tenant, year, doc_type, enabler) 
     
     # 2. Check for the actual data file created by Chroma
@@ -331,42 +308,35 @@ def vectorstore_exists(
     logger.error(f"❌ V-Exists Check: FAILED to find file chroma.sqlite3 at {file_path} in {path}")
     return False
 
-def _get_collection_parent_dir(tenant: str, year: Optional[int], doc_type: str) -> str: 
-    """
-    Calculates the parent directory where the collection folder resides.
-    - evidence: VECTORSTORE_DIR / tenant / year 
-    - others:   VECTORSTORE_DIR / tenant 
-    """
-    doc_type_lower = doc_type.lower()
-    path_segments = [VECTORSTORE_DIR, tenant.lower()]
-    
-    # 🎯 FIX: ตรวจสอบปี (year is not None) สำหรับ Evidence เท่านั้น
-    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
-        # Parent ของ evidence คือมีปี
-        path_segments.append(str(year))
-        
-    return os.path.join(*path_segments)
+# ⚠️ ลบฟังก์ชัน _get_collection_parent_dir ออก (Logic ถูกยุบรวมและถูกใช้งานโดยตรงใน list_vectorstore_folders)
 
 def list_vectorstore_folders(
     tenant: str, 
     year: int, # NOTE: ใช้ปีปัจจุบันที่รัน (int)
     doc_type: Optional[str] = None, 
     enabler: Optional[str] = None, 
-    base_path: str = VECTORSTORE_DIR
+    base_path: str = "" # base_path ถูกละเลย
 ) -> List[str]:
     """
     Lists the actual collection folder names (e.g., 'evidence_km', 'document')
     that exist under the specified tenant and year context.
     """
+    # 🎯 FIX: ใช้ get_vectorstore_tenant_root_path แทน
+    tenant_root = get_vectorstore_tenant_root_path(tenant) # VECTORSTORE_DIR / tenant
     
     # Scenario 1: Specific doc_type/enabler is requested
     if doc_type:
         doc_type_norm = doc_type.lower().strip()
-        collection_name = _get_collection_name(doc_type_norm, enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(doc_type_norm, enabler)
         
-        # 🎯 FIX: ใช้ get_vectorstore_path ที่แก้ไขแล้ว (ต้องส่งปีที่ถูกต้อง)
-        # year จะถูกใช้หรือไม่ขึ้นอยู่กับ doc_type ภายใน get_vectorstore_path
-        full_collection_path = get_vectorstore_path(tenant, year, doc_type_norm, enabler)
+        # ต้องคำนวณ target_year ที่ถูกต้องก่อน (None สำหรับ General Docs)
+        target_year = year
+        if doc_type_norm != EVIDENCE_DOC_TYPES.lower():
+            target_year = None
+            
+        # 🎯 FIX: ใช้ get_vectorstore_collection_path
+        full_collection_path = get_vectorstore_collection_path(tenant, target_year, doc_type_norm, enabler)
         
         if os.path.isdir(full_collection_path) and os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
             return [collection_name] 
@@ -376,26 +346,26 @@ def list_vectorstore_folders(
     
     collections: Set[str] = set()
     
-    # 1. Scan the Year Root (สำหรับ Doc Type: evidence)
-    root_year = _get_collection_parent_dir(tenant, year, EVIDENCE_DOC_TYPES) 
-    if os.path.isdir(root_year):
+    # 1. Scan the Year Root (สำหรับ Doc Type: evidence) - Path: V_ROOT/tenant/year
+    root_year_evidence = os.path.join(tenant_root, str(year)) 
+    if os.path.isdir(root_year_evidence):
         # ค้นหา evidence_... collections ภายในโฟลเดอร์ปี
-        for sub_dir in os.listdir(root_year):
+        for sub_dir in os.listdir(root_year_evidence):
              sub_dir_lower = sub_dir.lower()
              if sub_dir_lower.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"): 
-                 full_collection_path = os.path.join(root_year, sub_dir)
+                 full_collection_path = os.path.join(root_year_evidence, sub_dir)
                  if os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
                     collections.add(sub_dir_lower) 
 
-    # 2. Scan the Common Root (สำหรับ Doc Type: document, faq, ฯลฯ)
-    # Common Root: VECTORSTORE_DIR / tenant
-    root_common = _get_collection_parent_dir(tenant, year=None, doc_type="document") 
+    # 2. Scan the Common Root (สำหรับ Doc Type: document, faq, ฯลฯ) - Path: V_ROOT/tenant
+    root_common = tenant_root 
     if os.path.isdir(root_common):
         # ค้นหาโฟลเดอร์ Doc Type
         for sub_dir in os.listdir(root_common):
             sub_dir_lower = sub_dir.lower()
-            # ข้ามโฟลเดอร์ evidence และโฟลเดอร์ที่เป็นตัวเลข (ปี)
-            if sub_dir_lower == EVIDENCE_DOC_TYPES.lower() or sub_dir.isdigit():
+            
+            # ข้ามโฟลเดอร์ที่เป็นตัวเลข (ปี) เพราะถูกสแกนในขั้นตอนที่ 1 แล้ว
+            if sub_dir.isdigit():
                  continue 
             
             # ตรวจสอบว่าโฟลเดอร์นั้นเป็น Collection จริง (มีไฟล์ Chroma)
@@ -434,36 +404,22 @@ class VectorStoreManager:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_path: str = VECTORSTORE_DIR, tenant: str = DEFAULT_TENANT, year: int = DEFAULT_YEAR):
+    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT, year: int = DEFAULT_YEAR):
         if not self._is_initialized:
-            self._base_path = base_path
+            self._base_path = base_path # base_path จะถูกละเลย
             self.tenant = tenant.lower()        # ต้อง .lower() ด้วยนะ!
             self.year = year
             self.enabler = DEFAULT_ENABLER   
             self._chroma_cache = {}
             self._embeddings = get_hf_embeddings()
             
-            # # 1. สร้างชื่อ Collection ที่ถูกต้อง (evidence_km)
-            # collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, self.enabler)
-            
-            # # 2. ใช้ Path Helper ที่คุณมีอยู่ เพื่อสร้าง Full Path
-            # chroma_root_path = _build_vectorstore_path_by_doc_type(
-            #     tenant=self.tenant, 
-            #     year=self.year, 
-            #     doc_type=EVIDENCE_DOC_TYPES, 
-            #     enabler=self.enabler
-            # )
-            
-            # self._client = chromadb.PersistentClient(path=chroma_root_path)
-
-            chroma_client_root = os.path.join(
-                VECTORSTORE_DIR, 
-                self.tenant
+            # 🎯 FIX: ใช้ get_vectorstore_tenant_root_path แทน get_vectorstore_tenant_root
+            chroma_client_root = get_vectorstore_tenant_root_path(
+                tenant=self.tenant
             )
             
             self._client = chromadb.PersistentClient(path=chroma_client_root)
 
-            # logger.info(f"ChromaDB Client initialized at FULL COLLECTION PATH: {chroma_root_path}")
             logger.info(f"ChromaDB Client initialized at TENANT ROOT PATH: {chroma_client_root}")
             
             # โหลด mapping หลังจากตั้งค่า tenant/year แล้ว
@@ -505,21 +461,19 @@ class VectorStoreManager:
         self._uuid_to_doc_id = {}
         
         # 1. PATH A: Year-Specific/Enabler Mapping (เช่น Evidence)
-        mapping_filename_A = f"{self.tenant.lower()}_{self.year}_{self.enabler.lower()}_doc_id_mapping.json"
-        path_A = os.path.join(
-            MAPPING_BASE_DIR, 
-            self.tenant.lower(), 
-            str(self.year), 
-            mapping_filename_A
+        # 🎯 FIX: ใช้ get_mapping_file_path (มีปี/enabler)
+        path_A = get_mapping_file_path(
+            tenant=self.tenant, 
+            year=self.year, 
+            enabler=self.enabler
         )
         
         # 2. PATH B: Global/Tenant Root Mapping (สำหรับเอกสารทั่วไป)
-        # NOTE: สมมติชื่อไฟล์เป็น tenant_doc_id_mapping.json
-        mapping_filename_B = f"{self.tenant.lower()}_doc_id_mapping.json" 
-        path_B = os.path.join(
-            MAPPING_BASE_DIR, 
-            self.tenant.lower(), 
-            mapping_filename_B
+        # 🎯 FIX: ใช้ get_mapping_file_path (ไม่มีปี/enabler)
+        path_B = get_mapping_file_path(
+            tenant=self.tenant,
+            year=None, # For global/legacy mapping
+            enabler=None # For global/legacy mapping
         )
 
         # จัดลำดับการโหลด: โหลด Global (Path B) ก่อน เพื่อให้ Evidence (Path A) ทับได้
@@ -584,15 +538,16 @@ class VectorStoreManager:
             # ------------------------------------------------------------------
             # 4. กำหนด target_year
             # ------------------------------------------------------------------
-            if doc_type.startswith("evidence"):
+            if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
                 target_year: Optional[int] = self.year
             else:
                 target_year = None
 
             # ------------------------------------------------------------------
             # 5. สร้าง persist_directory ที่ถูกต้อง 100% (Full Path ของ Collection)
+            # 🎯 FIX: เรียกใช้ get_vectorstore_collection_path
             # ------------------------------------------------------------------
-            persist_directory = get_vectorstore_path(
+            persist_directory = get_vectorstore_collection_path(
                 tenant=self.tenant,
                 year=target_year,
                 doc_type=doc_type,
@@ -609,9 +564,7 @@ class VectorStoreManager:
                     f"   Expected path: {persist_directory}\n"
                     f"   tenant={self.tenant} | year={self.year} | doc_type={doc_type} | enabler={enabler or 'None'}"
                 )
-                alt_path = get_vectorstore_path(self.tenant, self.year, doc_type, enabler)
-                if os.path.exists(alt_path):
-                    logger.warning(f"   BUT found at alternative path: {alt_path} ← อาจตั้งค่า year ผิด?")
+                # ลบ alt_path ออกเนื่องจาก Logic การสร้าง Path ได้รวมศูนย์แล้ว
                 return None
 
             # ------------------------------------------------------------------
@@ -619,9 +572,6 @@ class VectorStoreManager:
             # ------------------------------------------------------------------
             if self._client is None:
                 logger.error("Chroma PersistentClient is None! ต้อง init ก่อนใช้งาน")
-                # สำหรับ FIX 6 เราจะปล่อยให้ LangChain สร้าง Client ภายในเอง
-                # จึงไม่มีผลต่อการทำงาน แต่เตือนให้ทราบ
-                
             
             # 🎯 ดึง Global Embedding Model (768-dim) มาใช้โดยตรง
             try:
@@ -677,7 +627,8 @@ class VectorStoreManager:
             return []
 
         # 1. กำหนดชื่อ Collection และโหลด Instance
-        collection_name = _get_collection_name(doc_type=doc_type, enabler=enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
         chroma_instance = self._load_chroma_instance(collection_name)
         
         if not chroma_instance:
@@ -761,7 +712,9 @@ class VectorStoreManager:
         
         # กำหนดชื่อ collection เริ่มต้นหากไม่ได้ระบุ
         if collection_name is None:
-            collection_name = f"evidence_{getattr(self, 'enabler', 'km').lower()}"
+            # 🎯 FIX: ใช้ get_doc_type_collection_key แทนการสร้าง string เอง
+            collection_name = get_doc_type_collection_key(doc_type=EVIDENCE_DOC_TYPES, 
+            enabler=getattr(self, 'enabler', 'km'))
 
         # โหลด Chroma instance
         chroma_instance = self._load_chroma_instance(collection_name)
@@ -834,7 +787,8 @@ class VectorStoreManager:
         if not vector_search_query:
             logger.warning("Limited chunk search skipped: Query is empty.")
             return []
-        collection_name = _get_collection_name(doc_type, enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(doc_type, enabler)
         chroma_instance = self._load_chroma_instance(collection_name)
         if not chroma_instance:
             logger.error(f"Collection '{collection_name}' is not loaded.")
@@ -843,6 +797,7 @@ class VectorStoreManager:
         total_chunks_retrieved = 0
         for stable_id in stable_doc_ids:
             stable_id_clean = stable_id.strip()
+            # 🎯 FIX: ใช้ 'stable_doc_uuid' เป็น filter key แทน 'doc_id' เพื่อความแน่นอน
             doc_filter = {"stable_doc_uuid": stable_id_clean}
             try:
                 custom_retriever = ChromaRetriever(vectorstore=chroma_instance, k=limit_per_doc, filter=doc_filter)
@@ -870,13 +825,10 @@ class VectorStoreManager:
             try:
                 original_query = query
                 
-                # 🛑 FIX: ลบ Logic เก่าที่ตั้งใจข้าม Prefix และเปลี่ยนมาใช้ Prefix ที่เหมาะสมกับ BAAI/bge-m3 แทน
-                
                 # BGE-M3 แนะนำให้ใส่ Query Instruction/Prefix
                 bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
                 query_with_prefix = f"{bge_prefix}{query.strip()}"
                 
-                # เปลี่ยน logger.critical เป็น logger.info เพื่อยืนยันการใช้ Prefix ใหม่
                 logger.info(f"[BGE-M3 PREFIX ADDED] Using prefixed query: '{query_with_prefix[:100]}...'")
                 # -------------------------------------------------------------
 
@@ -899,8 +851,10 @@ class VectorStoreManager:
         def retrieve_with_rerank(query: str, config: Optional[dict] = None):
             filter_dict = None
             if config and isinstance(config, dict):
-                filter_dict = config.get("configurable", {}).get("search_kwargs", {}).get("filter")
-
+                # 🎯 FIX: ต้องดึง filter จาก 'where' key หากมี
+                search_kwargs = config.get("configurable", {}).get("search_kwargs", {})
+                filter_dict = search_kwargs.get("filter") or search_kwargs.get("where")
+            
             # ดึงเอกสารด้วย k เต็ม
             docs = raw_retrieve(query, filter_dict, k=top_k)
 
@@ -917,15 +871,33 @@ class VectorStoreManager:
                 )
                 # ดึง score จาก reranker (วิธีที่แน่นอนที่สุด)
                 scores = getattr(reranker, "scores", None)
+                # 🎯 FIX: scores ที่ได้จาก predict() ต้องถูกจัดเรียงก่อน
                 if scores and len(scores) >= len(reranked):
-                    for doc, score in zip(reranked, scores[:len(reranked)]):
-                        score = float(score) if score is not None else 0.0
-                        # ฉีดแค่ key เดียวที่แน่นอน → _rerank_score_force
-                        doc.metadata["_rerank_score_force"] = score
-                        # และ source_filename (สำคัญมากสำหรับ extraction)
-                        orig = doc.metadata.get("source_filename", "UNKNOWN")
-                        doc.metadata["source_filename"] = f"{orig}|SCORE:{score:.4f}"
-
+                    # scores ที่ CrossEncoder.predict คืนมา ไม่ได้ถูกจัดเรียง
+                    # เราต้องใช้ doc_scores จาก compress_documents เพื่อดึง score ที่ตรงกับ doc
+                    doc_scores = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+                    
+                    for i, (doc, score) in enumerate(doc_scores[:len(reranked)]):
+                        # หา doc ที่ตรงกันใน reranked list เพื่ออัปเดต metadata
+                        for reranked_doc in reranked:
+                            # ตรวจสอบว่า page_content ตรงกัน (อาจจะไม่สมบูรณ์ 100% แต่ดีกว่าไม่มี)
+                            if reranked_doc.page_content == doc.page_content:
+                                score = float(score) if score is not None else 0.0
+                                # ฉีดแค่ key เดียวที่แน่นอน → _rerank_score_force
+                                reranked_doc.metadata["_rerank_score_force"] = score
+                                # และ source_filename (สำคัญมากสำหรับ extraction)
+                                orig = reranked_doc.metadata.get("source_filename", "UNKNOWN")
+                                reranked_doc.metadata["source_filename"] = f"{orig}|SCORE:{score:.4f}"
+                                break
+                else:
+                    # Fallback: ใช้ score จาก reranked doc.metadata ถ้ามี (จากการทำงานของ compress_documents)
+                    for doc in reranked:
+                        score = doc.metadata.get("relevance_score")
+                        if score is not None:
+                             orig = doc.metadata.get("source_filename", "UNKNOWN")
+                             doc.metadata["source_filename"] = f"{orig}|SCORE:{score:.4f}"
+                             doc.metadata["_rerank_score_force"] = score # ใส่ key ให้เหมือนกัน
+                             
                 logger.info(f"Reranking success → kept {len(reranked)} docs")
                 return reranked
 
@@ -945,7 +917,8 @@ class VectorStoreManager:
         return UltimateRetriever()
 
     def get_all_collection_names(self) -> List[str]:
-        return list_vectorstore_folders(tenant=self.tenant, year=self.year, base_path=self._base_path)
+        # 🎯 FIX: ลบ base_path ออกจากการเรียก list_vectorstore_folders
+        return list_vectorstore_folders(tenant=self.tenant, year=self.year)
 
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
@@ -953,7 +926,8 @@ class VectorStoreManager:
         stable_doc_ids = [uid for uid in stable_doc_ids if uid]
         if not stable_doc_ids:
             return []
-        collection_name = _get_collection_name(doc_type, enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(doc_type, enabler)
         all_chunk_uuids = []
         skipped_docs = []
         found_stable_ids = []
@@ -1008,7 +982,8 @@ def get_vectorstore_manager() -> VectorStoreManager:
     return VectorStoreManager()
 
 def load_vectorstore(doc_type: str, enabler: Optional[str] = None) -> Optional[Chroma]:
-    collection_name = _get_collection_name(doc_type, enabler)
+    # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+    collection_name = get_doc_type_collection_key(doc_type, enabler)
     return get_vectorstore_manager()._load_chroma_instance(collection_name)
 
 class VectorStoreExecutorSingleton:
@@ -1092,7 +1067,7 @@ class NamedRetriever(BaseModel):
     doc_type: str
     top_k: int = INITIAL_TOP_K
     final_k: int = FINAL_K_RERANKED
-    base_path: str = VECTORSTORE_DIR
+    # 🎯 FIX: ลบ base_path ออก
     enabler: Optional[str] = None
     tenant: str = DEFAULT_TENANT
     year: Optional[int] = DEFAULT_YEAR # <--- 🎯 FIX: เปลี่ยนเป็น Optional[int] เพื่อรองรับ None
@@ -1106,11 +1081,12 @@ class NamedRetriever(BaseModel):
         # ⚠️ VSM Singleton ต้องถูก init ด้วยปีเสมอ เพื่อโหลด Doc ID Mapping
         # ถ้า self.year เป็น None (เช่น เป็น General Docs ที่ใช้ร่วมกันทุกปี) ให้ใช้ DEFAULT_YEAR
         manager = VectorStoreManager(
-            base_path=self.base_path, 
+            # 🎯 FIX: ลบ base_path ออก
             tenant=self.tenant, 
             year=self.year if self.year is not None else DEFAULT_YEAR # <--- 🎯 FIX: ใช้ DEFAULT_YEAR ถ้า self.year เป็น None
         ) 
-        collection_name = _get_collection_name(self.doc_type, self.enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(self.doc_type, self.enabler)
         
         retriever = manager.get_retriever(collection_name=collection_name, top_k=self.top_k, final_k=self.final_k) 
         
@@ -1149,7 +1125,8 @@ class MultiDocRetriever(BaseRetriever):
         
         self._all_retrievers = {}
         for named_r in retrievers_list:
-            collection_name = _get_collection_name(named_r.doc_type, named_r.enabler)
+            # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+            collection_name = get_doc_type_collection_key(named_r.doc_type, named_r.enabler)
             try:
                 # Load the RerankRetriever instance
                 retriever_instance = named_r.load_instance()
@@ -1218,16 +1195,21 @@ class MultiDocRetriever(BaseRetriever):
             search_kwargs = {"k": named_r.top_k}
             if chroma_filter:
                 # The Chroma filter is applied as 'where' in Chroma's implementation
+                # 🎯 FIX: ต้องใช้ key 'where' ใน config ของ invoke()
                 search_kwargs["where"] = chroma_filter 
                 
-            config = {"configurable": {"search_kwargs": search_kwargs}}
+            # 🎯 FIX: ต้องส่ง filter เป็น 'where' ใน config ด้วย
+            config = {"configurable": {"search_kwargs": {"where": chroma_filter}}}
+            if not chroma_filter:
+                config = {"configurable": {"search_kwargs": {}}} # ส่ง config เปล่าถ้าไม่มี filter
             
             # retriever_instance is a RerankRetriever (which implements Runnable.invoke)
             docs = retriever_instance.invoke(query, config=config)
             
             for doc in docs:
                 doc.metadata["retrieval_source"] = named_r.doc_type
-                doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+                # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+                doc.metadata["collection_name"] = get_doc_type_collection_key(named_r.doc_type, named_r.enabler)
                 
                 # 🎯 FIX 1A: Ensure chunk_uuid is present for final filtering.
                 chunk_uuid = doc.metadata.get("chunk_uuid") 
@@ -1262,16 +1244,21 @@ class MultiDocRetriever(BaseRetriever):
             search_kwargs = {"k": named_r.top_k}
             if chroma_filter:
                 # The Chroma filter is applied as 'where' in Chroma's implementation
+                # 🎯 FIX: ต้องใช้ key 'where' ใน config ของ invoke()
                 search_kwargs["where"] = chroma_filter 
                 
-            config = {"configurable": {"search_kwargs": search_kwargs}}
+            # 🎯 FIX: ต้องส่ง filter เป็น 'where' ใน config ด้วย
+            config = {"configurable": {"search_kwargs": {"where": chroma_filter}}}
+            if not chroma_filter:
+                config = {"configurable": {"search_kwargs": {}}} # ส่ง config เปล่าถ้าไม่มี filter
 
             # retriever_instance is a RerankRetriever (which implements Runnable.invoke)
             docs = retriever_instance.invoke(query, config=config)
             
             for doc in docs:
                 doc.metadata["retrieval_source"] = named_r.doc_type
-                doc.metadata["collection_name"] = _get_collection_name(named_r.doc_type, named_r.enabler)
+                # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+                doc.metadata["collection_name"] = get_doc_type_collection_key(named_r.doc_type, named_r.enabler)
 
                 # 🎯 FIX 1A: Ensure chunk_uuid is present for final filtering.
                 chunk_uuid = doc.metadata.get("chunk_uuid") 
@@ -1358,7 +1345,7 @@ def load_vectorstore_retriever(
     top_k: int = INITIAL_TOP_K, 
     final_k: int = FINAL_K_RERANKED, 
     doc_types: Union[list, str] = "default_collection", 
-    base_path: str = VECTORSTORE_DIR, 
+    base_path: str = "", # 🎯 FIX: ลบ base_path ออก
     enabler: Optional[str] = None, 
     tenant: str = DEFAULT_TENANT,
     year: int = DEFAULT_YEAR      
@@ -1370,27 +1357,29 @@ def load_vectorstore_retriever(
     else:
         raise ValueError("doc_types must be a single string or a non-empty list containing the target doc_type.")
         
-    collection_name = _get_collection_name(target_doc_type, enabler)
+    # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+    collection_name = get_doc_type_collection_key(target_doc_type, enabler)
     
     # 🎯 FIX 3: ส่ง tenant และ year เข้าไปใน VectorStoreManager
-    manager = VectorStoreManager(base_path=base_path, tenant=tenant, year=year) 
+    manager = VectorStoreManager(tenant=tenant, year=year) 
     retriever = None
     
     # NOTE: load_vectorstore_retriever ใช้ปีเสมอ เนื่องจากเป็น context ที่เรียกมา
-    if vectorstore_exists(doc_id="N/A", base_path=base_path, doc_type=target_doc_type, enabler=enabler, tenant=tenant, year=year):
+    if vectorstore_exists(doc_id="N/A", doc_type=target_doc_type, enabler=enabler, tenant=tenant, year=year):
         retriever = manager.get_retriever(collection_name, top_k, final_k)
         
     if retriever is None:
         raise ValueError(f"❌ Vectorstore for collection '{collection_name}' not found.")
     return retriever
 
+# core/vectorstore.py (ส่วนของฟังก์ชัน load_all_vectorstores)
 def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลับเข้าไปเป็น 'def'
     tenant: str, 
     year: int,    
     doc_types: Optional[Union[str, List[str]]] = None, 
     top_k: int = INITIAL_TOP_K, 
     final_k: int = FINAL_K_RERANKED, 
-    base_path: Path = VECTORSTORE_DIR, 
+    base_path: Path = "", # 🎯 FIX: base_path ถูกละเลย
     evidence_enabler: Optional[str] = None, 
     doc_ids: Optional[List[str]] = None
 ) -> VectorStoreManager:
@@ -1403,33 +1392,35 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
     doc_type_filter = {dt.strip().lower() for dt in doc_types}
     
     # 🎯 FIX 1: VSM ต้องสร้างด้วย tenant/year ของ RUN (ปีที่ใช้สำหรับ Doc ID Mapping)
-    manager = VectorStoreManager(base_path=base_path, tenant=tenant, year=year) 
+    manager = VectorStoreManager(tenant=tenant, year=year) 
     
     all_retrievers: List[NamedRetriever] = []
     target_collection_names: Set[str] = set()
 
-    # --- 1. Collection Discovery ---
+    # --- 1. Collection Discovery (ส่วนที่ได้รับการแก้ไขปัญหาแล้ว) ---
     if not doc_type_filter:
         logger.error("Must specify doc_types for multi-year compatibility.")
         raise ValueError("Must specify doc_types when using multi-tenant setup.")
     
-    # 🎯 NEW: เราไม่สามารถ list collections ทั้งหมดได้โดยไม่รู้ว่าเอกสารไหนใช้ปี/ไม่ใช้ปี 
+    # NEW: เราไม่สามารถ list collections ทั้งหมดได้โดยไม่รู้ว่าเอกสารไหนใช้ปี/ไม่ใช้ปี 
     # เราจึงใช้ doc_type_filter ในการสร้าง collection_name แทนการ list จาก folder
     for dt_norm in doc_type_filter:
         if dt_norm == EVIDENCE_DOC_TYPES.lower(): 
             if evidence_enabler:
-                # Specific evidence collection: ใช้ year
-                collection_name = _get_collection_name(EVIDENCE_DOC_TYPES, evidence_enabler)
+                # ✅ FIX: Specific evidence collection: ใช้ year และ enabler
+                # **โค้ดนี้ทำให้ไม่เกิดการโหลด 'evidence_default'**
+                collection_name = get_doc_type_collection_key(EVIDENCE_DOC_TYPES, evidence_enabler)
                 target_collection_names.add(collection_name)
                 logger.info(f"🔍 Added specific evidence collection: {collection_name} (Year-Specific)")
             else:
                 # All evidence collections: ต้อง list จาก folder ภายใต้ tenant/year
-                evidence_collections = list_vectorstore_folders(tenant=tenant, year=year, doc_type=EVIDENCE_DOC_TYPES, base_path=base_path)
+                # (ใช้ในกรณีที่ไม่ได้ระบุ evidence_enabler เช่น ในโหมด Admin)
+                evidence_collections = list_vectorstore_folders(tenant=tenant, year=year, doc_type=EVIDENCE_DOC_TYPES)
                 target_collection_names.update(evidence_collections)
                 logger.info(f"🔍 Added all evidence collections found: {evidence_collections} (Year-Specific)")
         else:
             # Standard Collections: ไม่ใช้ year
-            collection_name = _get_collection_name(dt_norm, None)
+            collection_name = get_doc_type_collection_key(dt_norm, None)
             target_collection_names.add(collection_name)
             logger.info(f"🔍 Added standard collection: {collection_name} (Shared/General)")
     
@@ -1457,7 +1448,7 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
             enabler=enabler_for_check, 
             top_k=top_k, 
             final_k=final_k, 
-            base_path=base_path,
+            # 🎯 FIX: ลบ base_path ออก
             tenant=tenant, 
             year=target_year # <--- ส่ง None สำหรับ General Docs
         )
@@ -1484,7 +1475,7 @@ def get_multi_doc_retriever(
     doc_types: List[str] = [],
     doc_ids: Optional[List[str]] = None,
     evidence_enabler: Optional[str] = None,
-    base_path: str = VECTORSTORE_DIR,
+    base_path: str = "", # 🎯 FIX: base_path ถูกละเลย
     top_k: int = INITIAL_TOP_K,
     final_k: int = FINAL_K_RERANKED
 ) -> MultiDocRetriever:
@@ -1498,12 +1489,13 @@ def get_multi_doc_retriever(
     # Loop through requested doc_types and check against the target year
     target_year = year
     for doc_type_for_check in doc_types:
-        collection_name = _get_collection_name(doc_type_for_check, evidence_enabler)
+        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        collection_name = get_doc_type_collection_key(doc_type_for_check, evidence_enabler)
         
         enabler_for_check = evidence_enabler
         
         # Check if collection exists for the specific year
-        if not vectorstore_exists(base_path=base_path, tenant=tenant, year=target_year, doc_type=doc_type_for_check, enabler=enabler_for_check):
+        if not vectorstore_exists(tenant=tenant, year=target_year, doc_type=doc_type_for_check, enabler=enabler_for_check):
             logger.warning(f"🔍 DEBUG: Skipping collection '{collection_name}' (vectorstore_exists failed at tenant={tenant}, year={target_year}).")
             continue
             
@@ -1514,7 +1506,7 @@ def get_multi_doc_retriever(
             enabler=enabler_for_check, 
             top_k=top_k, 
             final_k=final_k, 
-            base_path=base_path,
+            # 🎯 FIX: ลบ base_path ออก
             tenant=tenant, 
             year=target_year # <--- ส่งค่าปีที่ถูกต้อง
         )

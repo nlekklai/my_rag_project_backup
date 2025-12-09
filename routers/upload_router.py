@@ -31,9 +31,11 @@ try:
     # --- NEW IMPORT for Auth ---
     from routers.auth_router import UserMe, get_current_user
     # ---------------------------
+    
+    # 🟢 FIX: Import Path Utility
+    from utils.path_utils import get_document_source_dir 
 
 except ImportError as e:
-    # ❌ Import error: [ชื่อโมดูลที่หายไป]
     print(f"❌ Import error: {e}")
     raise
 
@@ -69,17 +71,15 @@ class UploadResponse(BaseModel):
 # -----------------------------
 # --- Helper Function for File Path ---
 # -----------------------------
-# 💥 REVISED: เพิ่ม enabler สำหรับ Evidence file path
+# 🟢 REVISED: ใช้ get_document_source_dir จาก Path Utility
 def get_save_dir(doc_type: str, tenant: str, year: int, enabler: Optional[str] = None) -> str:
-    """Constructs the segregated directory path for saving files (DATA_DIR/tenant/year/doc_type/[enabler])."""
-    # Structure: DATA_DIR/tenant/year/doc_type
-    base_path = os.path.join(DATA_DIR, tenant, str(year), doc_type)
-    
-    # ถ้าเป็น Evidence และมี Enabler ให้เพิ่ม Enabler เป็น subfolder
-    if doc_type.lower() == "evidence" and enabler:
-        return os.path.join(base_path, enabler)
-        
-    return base_path
+    """Constructs the segregated directory path for saving files using Path Utility."""
+    return get_document_source_dir(
+        tenant=tenant,
+        year=year, 
+        enabler=enabler, 
+        doc_type=doc_type
+    )
 
 # -----------------------------
 # --- Upload with background processing ---
@@ -88,7 +88,6 @@ def get_save_dir(doc_type: str, tenant: str, year: int, enabler: Optional[str] =
 async def upload_document(
     doc_type: str = Path(..., description=f"Document type. Must be one of: {SUPPORTED_DOC_TYPES}"),
     file: UploadFile = File(..., description="Document file to upload"),
-    # 💥 ADDED: เพิ่ม enabler เป็น Form Parameter
     enabler: Optional[str] = Form(None, description="Enabler code (used for evidence doc_type)"),
     background_tasks: BackgroundTasks = None,
     current_user: UserMe = Depends(get_current_user), # <-- User Dependency
@@ -106,7 +105,6 @@ async def upload_document(
     enabler_code = enabler or DEFAULT_ENABLER # Determine enabler code
 
     # Folder for file storage (segregated by tenant/year/doc_type/enabler)
-    # 💥 REVISED: ใช้ enabler_code ในการสร้าง save_dir
     save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -131,9 +129,9 @@ async def upload_document(
                 file_name=file.filename,
                 stable_doc_uuid=mock_doc_id,
                 doc_type=doc_type,
-                tenant=current_user.tenant,  # <-- Pass Tenant
-                year=str(current_user.year),     # <-- FIX: Ensure year is stored as string
-                enabler=enabler_code, # 💥 ADDED: ส่ง enabler_code ไปให้ process_document
+                tenant=current_user.tenant,
+                year=str(current_user.year),
+                enabler=enabler_code,
             )
 
         return UploadResponse(
@@ -146,7 +144,7 @@ async def upload_document(
             message="Document accepted for background processing.",
             tenant=current_user.tenant,
             year=current_user.year,
-            enabler=enabler_code, # 💥 ADDED: เพิ่ม enabler_code ใน Response
+            enabler=enabler_code,
         )
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -154,9 +152,6 @@ async def upload_document(
             os.remove(file_path)
         raise HTTPException(500, detail=f"Upload failed: {e}")
 
-# -----------------------------
-# --- List uploaded documents ---
-# -----------------------------
 # -----------------------------
 # --- List uploaded documents ---
 # -----------------------------
@@ -198,9 +193,9 @@ async def list_uploads_by_type(
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
-            tenant=tenant_to_fetch,  # <-- ใช้ค่า Tenant
-            year=year_to_fetch,      # <-- ใช้ค่า Year ที่ถูก Override หรือ Default
-            enabler=enabler_to_fetch # <-- ใช้ค่า Enabler ที่ถูก Override หรือ Default
+            tenant=tenant_to_fetch,
+            year=year_to_fetch,
+            enabler=enabler_to_fetch
         )
     )
     uploads: List[UploadResponse] = []
@@ -257,7 +252,6 @@ async def ingest_document(
     enabler_code = enabler or DEFAULT_ENABLER
     
     # Use segregated save directory
-    # 💥 REVISED: ใช้ enabler_code ในการสร้าง save_dir
     save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -275,10 +269,11 @@ async def ingest_document(
                 SysPath(file.filename).name, 
                 doc_type, 
                 enabler_code,
-                tenant=current_user.tenant, # <-- Pass Tenant
-                year=str(current_user.year)      # <-- FIX: Convert year to string for indexing
+                tenant=current_user.tenant, 
+                year=str(current_user.year)
             )
         )
+        # Note: doc_info ควรเป็น dict ที่มี status, doc_id, chunk_count
         return {"status": "success", "doc_info": doc_info.model_dump()}
     except Exception as e:
         logger.error(f"Ingest failed: {e}")
@@ -309,8 +304,8 @@ async def get_documents(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
             enabler=enabler, 
-            tenant=current_user.tenant,  # <-- Pass Tenant
-            year=str(current_user.year)       # <-- FIX: Convert year to string for filtering
+            tenant=current_user.tenant,
+            year=str(current_user.year)
         )
     )
     uploads: List[UploadResponse] = []
@@ -362,8 +357,8 @@ async def delete_document(
     success = await run_in_threadpool(
         lambda: delete_document_by_uuid(
             doc_id, 
-            tenant=current_user.tenant,  # <-- Pass Tenant
-            year=str(current_user.year)       # <-- FIX: Convert year to string for deletion lookup
+            tenant=current_user.tenant,
+            year=str(current_user.year)
         )
     )
     if not success:
@@ -394,8 +389,8 @@ async def download_upload(
     doc_data = await run_in_threadpool(
         lambda: list_documents(
             doc_types=[doc_type], 
-            tenant=current_user.tenant,  # <-- Pass Tenant
-            year=str(current_user.year)       # <-- FIX: Convert year to string for filtering
+            tenant=current_user.tenant,
+            year=str(current_user.year)
         )
     )
     doc_map = {item["doc_id"]: item for item in doc_data.values()}

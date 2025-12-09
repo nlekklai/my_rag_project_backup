@@ -34,6 +34,7 @@ from config.global_vars import (
     QUERY_INITIAL_K,
     QUERY_FINAL_K,
     DEFAULT_LLM_MODEL_NAME
+    # 💥 ลบ DATA_DIR และ VECTORSTORE_DIR ออกเพราะไม่ถูกใช้งานใน Router นี้แล้ว
 )
 
 logger = logging.getLogger(__name__)

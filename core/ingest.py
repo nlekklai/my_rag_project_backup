@@ -167,8 +167,6 @@ def get_collection_parent_dir(tenant: str, year: int, doc_type: str) -> str:
     return os.path.join(*path_segments)
 
 
-    
-
 def get_target_dir(doc_type: str, enabler: Optional[str] = None) -> str:
     """
     กำหนดชื่อ Collection สำหรับ ChromaDB (Logical ID)
@@ -258,10 +256,6 @@ def _get_source_dir(
     return os.path.join(*path_segments)
 
 # -------------------- Helper: safe metadata filter --------------------
-# (No change to _safe_filter_complex_metadata, _normalize_doc_id, clean_text, _is_pdf_image_only, _load_document_with_loader, FILE_LOADER_MAP, normalize_loaded_documents, TEXT_SPLITTER)
-# (นำส่วนที่ไม่มีการแก้ไขออกเพื่อให้โค้ดสั้นลงในการส่งคืน แต่ในไฟล์จริงยังคงอยู่)
-# ... [Original content of _safe_filter_complex_metadata to TEXT_SPLITTER remains unchanged] ...
-
 def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
     """Ensure metadata is serializable and safe for Chroma / storage. (No Change)"""
     if not isinstance(meta, dict):

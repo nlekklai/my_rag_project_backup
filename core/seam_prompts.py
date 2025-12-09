@@ -201,9 +201,9 @@ LOW_LEVEL_PROMPT = PromptTemplate(
 SYSTEM_ACTION_PLAN_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Strategic Planning และ SEAM PDCA Maturity ระดับองค์กร
 หน้าที่:
-- วิเคราะห์ Failed Statements
-- ระบุ PDCA Gap จาก reason + pdca_breakdown
-- สร้าง Action Plan แบบ Actionable (โดยทำ Action Plan สำหรับแต่ละ Statement ที่ล้มเหลว)
+- วิเคราะห์ Failed Statements และ Weak Evidence Statements (ตามที่ระบุในคำสั่ง)
+- ระบุ PDCA Gap จาก reason หรือระบุ Gap ในการจัดเก็บหลักฐาน
+- สร้าง Action Plan แบบ Actionable (โดยทำ Action Plan สำหรับแต่ละ Statement)
 
 กฎ:
 1. ตอบกลับด้วย JSON ARRAY เท่านั้น โดยที่แต่ละ Element ใน Array คือ Action Plan 1 ชุด
@@ -215,15 +215,15 @@ ACTION_PLAN_TEMPLATE = """
 --- ข้อมูล ---
 Sub-Criteria: {sub_id}
 Target Next Level: L{target_level}
-Failed Statements:
+Statements ที่ต้องสร้างแผนปฏิบัติการ:
 {failed_statements_list}
 
 --- JSON Schema ---
 [
   {{
-    "Failed_Statement": "ข้อความจาก Statement ที่ล้มเหลว",
-    "Missing_PDCA": "P, D, C, หรือ A",
-    "Goal": "เป้าหมายที่ชัดเจนในการแก้ไข Gap",
+    "Statement_ID": "ID ของ Statement (เช่น 1.2.L3)",
+    "Recommendation_Type": "ระบุ 'FAILED' หรือ 'WEAK_EVIDENCE'",
+    "Goal": "เป้าหมายที่ชัดเจนในการแก้ไข Gap/เสริมหลักฐาน",
     "Actions": [
       "ระบุขั้นตอนที่ต้องทำ 1",
       "ระบุขั้นตอนที่ต้องทำ 2",
@@ -237,7 +237,9 @@ Failed Statements:
 ]
 
 --- คำสั่ง ---
-- วิเคราะห์ Failed Statements ทีละข้อ
+- วิเคราะห์ Statements ทีละข้อ
+- หาก 'Recommendation_Type' เป็น **FAILED**: ให้สร้าง Action Plan เพื่อ **แก้ไขข้อบกพร่อง** ให้บรรลุเกณฑ์
+- หาก 'Recommendation_Type' เป็น **WEAK_EVIDENCE**: ให้สร้าง Action Plan เพื่อ **เสริมความแข็งแกร่ง** และ **เพิ่มคุณภาพของหลักฐาน**
 - สร้าง JSON Array โดยที่แต่ละ Object ใน Array คือ Action Plan ที่ปฏิบัติได้จริงสำหรับ Statement นั้นๆ
 - Action Plan ทั้งหมดต้องเป็นภาษาไทย
 """
@@ -246,7 +248,6 @@ ACTION_PLAN_PROMPT = PromptTemplate(
     input_variables=["sub_id","target_level","failed_statements_list"],
     template=ACTION_PLAN_TEMPLATE
 )
-
 
 # =================================================================
 # 4. EVIDENCE DESCRIPTION PROMPT
