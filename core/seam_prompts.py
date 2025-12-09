@@ -196,19 +196,19 @@ LOW_LEVEL_PROMPT = PromptTemplate(
 
 
 # =================================================================
-# 3. SYSTEM PROMPT — ACTION PLAN
+# 3. SYSTEM PROMPT — ACTION PLAN (Strategic Action Plan Generator)
 # =================================================================
 SYSTEM_ACTION_PLAN_PROMPT = f"""
 คุณคือผู้เชี่ยวชาญด้าน Strategic Planning และ SEAM PDCA Maturity ระดับองค์กร
 หน้าที่:
 - วิเคราะห์ Failed Statements
 - ระบุ PDCA Gap จาก reason + pdca_breakdown
-- สร้าง Action Plan แบบ Actionable
+- สร้าง Action Plan แบบ Actionable (โดยทำ Action Plan สำหรับแต่ละ Statement ที่ล้มเหลว)
 
 กฎ:
-1. JSON Array เท่านั้น
+1. ตอบกลับด้วย JSON ARRAY เท่านั้น โดยที่แต่ละ Element ใน Array คือ Action Plan 1 ชุด
 2. ห้ามปรับ reason เดิม
-3. ต้องระบุ Responsible, Key Metric, Verification Evidence
+3. ต้องระบุ Responsible, Key_Metric, Verification_Outcome, และ Tools_Templates
 """
 
 ACTION_PLAN_TEMPLATE = """
@@ -221,21 +221,25 @@ Failed Statements:
 --- JSON Schema ---
 [
   {{
-    "Failed_Statement": "",
-    "Missing_PDCA": "",
-    "Goal": "",
-    "Actions": [],
-    "Responsible": "",
-    "Key_Metric": "",
-    "Tools_Templates": "",
-    "Verification_Outcome": ""
+    "Failed_Statement": "ข้อความจาก Statement ที่ล้มเหลว",
+    "Missing_PDCA": "P, D, C, หรือ A",
+    "Goal": "เป้าหมายที่ชัดเจนในการแก้ไข Gap",
+    "Actions": [
+      "ระบุขั้นตอนที่ต้องทำ 1",
+      "ระบุขั้นตอนที่ต้องทำ 2",
+      "..."
+    ],
+    "Responsible": "ตำแหน่ง/หน่วยงานที่รับผิดชอบ",
+    "Key_Metric": "ตัวชี้วัดความสำเร็จ (เชิงปริมาณ)",
+    "Tools_Templates": "เครื่องมือ/Template ที่แนะนำให้ใช้ (ถ้ามี)",
+    "Verification_Outcome": "หลักฐานที่ใช้ในการตรวจสอบ (เช่น รายงาน, คู่มือ, Log)"
   }}
 ]
 
 --- คำสั่ง ---
 - วิเคราะห์ Failed Statements ทีละข้อ
-- ระบุ Gap PDCA
-- เขียน Action Plan ที่ปฏิบัติได้จริง
+- สร้าง JSON Array โดยที่แต่ละ Object ใน Array คือ Action Plan ที่ปฏิบัติได้จริงสำหรับ Statement นั้นๆ
+- Action Plan ทั้งหมดต้องเป็นภาษาไทย
 """
 
 ACTION_PLAN_PROMPT = PromptTemplate(
@@ -264,8 +268,8 @@ USER_EVIDENCE_DESCRIPTION_TEMPLATE = """
 
 --- JSON Schema ---
 {{
-  "summary": "",
-  "suggestion_for_next_level": ""
+  "summary": "สรุปเนื้อหาหลักฐานที่ใช้ในการประเมินเป็นภาษาไทย",
+  "suggestion_for_next_level": "ข้อแนะนำที่เป็น Actionable เพื่อให้บรรลุ Level ถัดไป เป็นภาษาไทย"
 }}
 
 --- คำสั่ง ---
@@ -282,3 +286,4 @@ EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
 # =================================================================
 # END OF PATCHED v16 B++ PROMPTS
 # =================================================================
+

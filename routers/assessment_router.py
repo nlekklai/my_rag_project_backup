@@ -17,7 +17,7 @@ from models.llm import create_llm_instance
 
 # Import Global Variables ที่จำเป็นทั้งหมดสำหรับ Pre-Check และ Path
 from config.global_vars import (
-    LLM_MODEL_NAME, DATA_DIR, EVIDENCE_DOC_TYPES,
+    DEFAULT_LLM_MODEL_NAME, DATA_DIR, EVIDENCE_DOC_TYPES,
     MAPPING_BASE_DIR, DOCUMENT_ID_MAPPING_FILENAME_SUFFIX
 
 )
@@ -213,7 +213,7 @@ async def _run_assessment_background(record_id: str, request: StartAssessmentReq
             target_level=5,
             mock_mode="none",
             force_sequential=False,
-            model_name=LLM_MODEL_NAME,
+            model_name=DEFAULT_LLM_MODEL_NAME,
             temperature=0.0,
             tenant=request.tenant,
             year=request.year      
@@ -222,7 +222,7 @@ async def _run_assessment_background(record_id: str, request: StartAssessmentReq
         # สร้าง engine
         engine = SEAMPDCAEngine(
             config=config,
-            llm_instance=create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+            llm_instance=create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
         )
 
         # 💥 ใช้ชื่อ field ใหม่: request.sub_criteria
@@ -275,7 +275,7 @@ async def start_assessment(
             detail="Cannot start assessment for another tenant or year."
         )
 
-    llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
     if not llm:
         raise HTTPException(status_code=503, detail="LLM service unavailable")
     

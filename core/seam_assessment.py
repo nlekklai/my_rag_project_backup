@@ -41,7 +41,10 @@ try:
         DEFAULT_TENANT,
         DEFAULT_YEAR,
         RERANK_THRESHOLD,
-        MAX_EVI_STR_CAP
+        MAX_EVI_STR_CAP,
+        DEFAULT_LLM_MODEL_NAME,
+        LLM_TEMPERATURE
+
     )
     
     from core.llm_data_utils import ( 
@@ -227,8 +230,10 @@ def get_correct_pdca_required_score(level: int) -> int:
     return 8
 
 
-# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม document_map (8 elements)
-def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, str, str, str, float, Optional[Dict[str, str]]]) -> Dict[str, Any]:
+# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม config parameter ทั้งหมด (10 elements)
+def _static_worker_process(worker_input_tuple: Tuple[
+    Dict[str, Any], str, int, str, str, str, float, float, int, Optional[Dict[str, str]]
+]) -> Dict[str, Any]:
     """
     Static worker function for multiprocessing pool. 
     It reconstructs SeamAssessment in the new process and executes the assessment 
@@ -237,6 +242,7 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
     Args:
         worker_input_tuple: (sub_criteria_data, enabler: str, target_level: int, mock_mode: str, 
                              evidence_map_path: str, model_name: str, temperature: float, 
+                             min_retry_score: float, max_retrieval_attempts: int,
                              document_map: Optional[Dict[str, str]]) 
 
     Returns:
@@ -244,6 +250,7 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
     """
     
     # 🟢 NEW FIX: PATH SETUP สำหรับ Worker Process
+    # การตั้งค่า path ซ้ำเพื่อความมั่นใจว่า worker process เห็น package หลัก
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -251,21 +258,36 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
     worker_logger = logging.getLogger(__name__)
 
     try:
-        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 8 ตัว (รวม document_map)
-        sub_criteria_data, enabler, target_level, mock_mode, evidence_map_path, model_name, temperature, document_map = worker_input_tuple
+        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 10 ตัว
+        (
+            sub_criteria_data, 
+            enabler, 
+            target_level, 
+            mock_mode, 
+            evidence_map_path, 
+            model_name, 
+            temperature,
+            min_retry_score,            # ⬅️ NEW CONFIG (8th element)
+            max_retrieval_attempts,     # ⬅️ NEW CONFIG (9th element)
+            document_map                # (10th element)
+        ) = worker_input_tuple
     except ValueError as e:
-        worker_logger.critical(f"Worker input tuple unpack failed (expected 8 elements): {e}")
+        # ใช้ len(worker_input_tuple) เพื่อให้ข้อมูลการ Debug ครบถ้วน
+        worker_logger.critical(f"Worker input tuple unpack failed (expected 10 elements, got {len(worker_input_tuple)}): {e}")
         return {"error": f"Invalid worker input: {e}"}
         
     # 1. Reconstruct Config 
     try:
-        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process
+        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process พร้อมใส่ค่า config ใหม่
+        # (Tenant/Year จะใช้ค่า Default จาก AssessmentConfig)
         worker_config = AssessmentConfig(
             enabler=enabler,
             target_level=target_level,
             mock_mode=mock_mode,
             model_name=model_name, 
-            temperature=temperature
+            temperature=temperature,
+            min_retry_score=min_retry_score,            # ⬅️ Pass new config
+            max_retrieval_attempts=max_retrieval_attempts # ⬅️ Pass new config
         )
     except Exception as e:
         worker_logger.critical(f"Failed to reconstruct AssessmentConfig in worker: {e}")
@@ -276,12 +298,14 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
 
     # 2. Re-instantiate SeamAssessment 
     try:
-        # 🟢 FIX (สำคัญ): ส่ง document_map เข้าไปใน SEAMPDCAEngine
+        # 🟢 FIX (สำคัญ): ส่ง document_map และ worker_config เข้าไปใน SEAMPDCAEngine
+        # SEAMPDCAEngine จะใช้ worker_config ที่มีค่า min_retry_score และ max_retrieval_attempts
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=None, 
-            vectorstore_manager=None, 
+            llm_instance=None,              # LLM จะถูก Initialized ใน Engine หากไม่มี
+            vectorstore_manager=None,       # VSM จะถูก Initialized ใน Engine หากไม่มี
+            # doc_type ต้องถูก set ใน SEAMPDCAEngine constructor (สมมติว่ามีค่า Default)
             logger_instance=worker_logger,
             document_map=document_map # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
         )
@@ -294,7 +318,6 @@ def _static_worker_process(worker_input_tuple: Tuple[Dict[str, Any], str, int, s
     
     # 3. Execute the worker logic
     return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
-
 
 def merge_evidence_mappings(results_list: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -319,16 +342,31 @@ def merge_evidence_mappings(results_list: List[Dict[str, Any]]) -> Dict[str, Lis
 @dataclass
 class AssessmentConfig:
     """Configuration for the SEAM PDCA Assessment Run."""
+    
+    # ------------------ 1. Assessment Context ------------------
     enabler: str = DEFAULT_ENABLER
-    target_level: int = MAX_LEVEL
-    mock_mode: str = "none" # 'none', 'random', 'control'
-    force_sequential: bool = field(default=False) # Flag to force sequential ru
-    # 🟢 FIX: เพิ่ม LLM Configuration Fields เข้าไปใน Dataclass
-    model_name: str = "llama3.1:8b" # ใช้ค่า default ตามที่คุณใช้
-    temperature: float = 0.0
-    # 🟢 FIX: เพิ่ม Tenant และ Year
     tenant: str = DEFAULT_TENANT
     year: int = DEFAULT_YEAR
+    target_level: int = MAX_LEVEL
+    mock_mode: str = "none" # 'none', 'random', 'control'
+    force_sequential: bool = field(default=False) # Flag เพื่อบังคับรันแบบ Sequential
+
+    # ------------------ 2. LLM Configuration (Configurable) ------------------
+    # ใช้ค่า Default จาก global_vars.py
+    model_name: str = DEFAULT_LLM_MODEL_NAME 
+    temperature: float = LLM_TEMPERATURE
+
+    # ------------------ 3. Adaptive RAG Retrieval Configuration ------------------
+    # 🟢 NEW: เกณฑ์คะแนน Rerank ขั้นต่ำก่อนหยุดการค้นหา Adaptive Loop (MIN_RETRY_SCORE)
+    # ใช้ค่า Default 0.65 ตามที่พบในโค้ด Logic
+    min_retry_score: float = 0.65 
+    # 🟢 NEW: จำนวนรอบสูงสุดของ Adaptive RAG Loop (MAX_RETRIEVAL_ATTEMPTS)
+    # ใช้ค่า Default 3
+    max_retrieval_attempts: int = 3
+    
+    # ------------------ 4. Export Configuration ------------------
+    export_output: bool = field(default=False) # Flag เพื่อเปิด/ปิดการ Export ผลลัพธ์
+    export_path: str = "" # Path สำหรับไฟล์ Export (ทางเลือก)
 
 
 # =================================================================
@@ -1075,106 +1113,122 @@ class SEAMPDCAEngine:
 
         return cleaned_map
 
+
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
-            """
-            บันทึก evidence map อย่างปลอดภัย 100% - Atomic + Lock + Clean + Sort + Score
-            """
-            map_file_path = self.evidence_map_path
-            lock_path = map_file_path + ".lock"
-            tmp_path = None
+        """
+        บันทึก evidence map อย่างปลอดภัย 100% - Atomic + Lock + Clean + Sort + Score
+        
+        Args:
+            map_to_save: หากระบุ จะใช้ Dict นี้ในการเขียนโดยตรง (แทนการ Merge)
+        """
+        map_file_path = self.evidence_map_path
+        lock_path = map_file_path + ".lock"
+        tmp_path = None
 
-            logger.info(f"[EVIDENCE] Saving evidence map → {map_file_path}")
+        self.logger.info(f"[EVIDENCE] Saving evidence map → {map_file_path}")
 
-            try:
-                with FileLock(lock_path, timeout=60):
-                    logger.debug("[EVIDENCE] Lock acquired.")
+        # 1. Acquire Lock (ใช้ with FileLock เพื่อรับประกันการปล่อย Lock เสมอ)
+        try:
+            # สมมติว่า FileLock ถูก Import และมีอยู่ใน Environment
+            # 🚨 NOTE: ตัวแปร FileLock ต้องถูกนำเข้า
+            with FileLock(lock_path, timeout=60):
+                self.logger.debug("[EVIDENCE] Lock acquired.")
 
-                    if map_to_save is not None:
-                        final_map_to_write = map_to_save
-                    else:
-                        # 1. โหลดของเก่าจากดิสก์
-                        existing_map = self._load_evidence_map(is_for_merge=True) or {}
-                        runtime_map = deepcopy(self.evidence_map)
+                if map_to_save is not None:
+                    final_map_to_write = map_to_save
+                else:
+                    # 1. โหลดของเก่าจากดิสก์
+                    # (สมมติว่า self._load_evidence_map ถูก implement ไว้แล้ว)
+                    existing_map = self._load_evidence_map(is_for_merge=True) or {}
+                    runtime_map = deepcopy(self.evidence_map)
 
-                        # 2. Merge: เก่า + ใหม่ (ไม่ทับ แต่รวม)
-                        final_map_to_write = existing_map
-                        for key, entries in runtime_map.items():
-                            if key not in final_map_to_write:
-                                final_map_to_write[key] = []
-                                
-                            # 🟢 FIX 1: Deduplicate โดยใช้ Chunk UUID (หรือ doc_id เป็น Fallback)
-                            existing_ids = {
-                                e.get("chunk_uuid", e.get("doc_id", "N/A")) 
-                                for e in final_map_to_write[key]
-                            }
+                    # 2. Merge: เก่า + ใหม่ (ไม่ทับ แต่รวม)
+                    final_map_to_write = existing_map
+                    for key, entries in runtime_map.items():
+                        if key not in final_map_to_write:
+                            final_map_to_write[key] = []
                             
-                            # 🟢 FIX 1: ใช้ Logic ID เดียวกันในการตรวจสอบ
-                            new_entries = [
-                                e for e in entries 
-                                if e.get("chunk_uuid", e.get("doc_id", "N/A")) not in existing_ids
-                            ]
-                            final_map_to_write[key].extend(new_entries)
+                        # 🟢 FIX 1: Deduplicate โดยใช้ Chunk UUID (หรือ doc_id เป็น Fallback)
+                        existing_ids = {
+                            e.get("chunk_uuid", e.get("doc_id", "N/A")) 
+                            for e in final_map_to_write[key]
+                        }
+                        
+                        # 🟢 FIX 1: ใช้ Logic ID เดียวกันในการตรวจสอบ
+                        new_entries = [
+                            e for e in entries 
+                            if e.get("chunk_uuid", e.get("doc_id", "N/A")) not in existing_ids
+                        ]
+                        final_map_to_write[key].extend(new_entries)
 
-                        # 3. ทำความสะอาดสุดท้าย (TEMP-, HASH-, Unknown)
-                        final_map_to_write = self._clean_temp_entries(final_map_to_write)
+                    # 3. ทำความสะอาดสุดท้าย (TEMP-, HASH-, Unknown)
+                    # (สมมติว่า self._clean_temp_entries ถูก implement ไว้แล้ว)
+                    final_map_to_write = self._clean_temp_entries(final_map_to_write)
 
-                        # 4. เรียงลำดับในแต่ละ key จาก relevance_score สูง → ต่ำ (ถ้ามี)
-                        for key, entries in final_map_to_write.items():
-                            if entries and "relevance_score" in entries[0]:
-                                entries.sort(
-                                    key=lambda x: x.get("relevance_score", 0.0),
-                                    reverse=True
-                                )
+                    # 4. เรียงลำดับในแต่ละ key จาก relevance_score สูง → ต่ำ
+                    for key, entries in final_map_to_write.items():
+                        if entries and "relevance_score" in entries[0]:
+                            entries.sort(
+                                key=lambda x: x.get("relevance_score", 0.0),
+                                reverse=True
+                            )
 
-                    if not final_map_to_write:
-                        logger.warning("[EVIDENCE] Nothing to save.")
-                        return
+                if not final_map_to_write:
+                    self.logger.warning("[EVIDENCE] Nothing to save.")
+                    return
 
-                    # เตรียมโฟลเดอร์
-                    os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
+                # 5. Atomic Write
+                os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
-                    # Atomic write
-                    with tempfile.NamedTemporaryFile(
-                        mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
-                    ) as tmp_file:
-                        cleaned_for_json = self._clean_map_for_json(final_map_to_write)
-                        json.dump(cleaned_for_json, tmp_file, indent=4, ensure_ascii=False)
-                        tmp_path = tmp_file.name
+                # เขียนไฟล์ลงในไฟล์ชั่วคราว
+                with tempfile.NamedTemporaryFile(
+                    mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
+                ) as tmp_file:
+                    # (สมมติว่า self._clean_map_for_json ถูก implement ไว้แล้ว)
+                    cleaned_for_json = self._clean_map_for_json(final_map_to_write)
+                    json.dump(cleaned_for_json, tmp_file, indent=4, ensure_ascii=False)
+                    tmp_path = tmp_file.name
 
-                    shutil.move(tmp_path, map_file_path)
-                    tmp_path = None
+                # ย้ายไฟล์ชั่วคราวไปทับไฟล์จริง (Atomic Operation)
+                shutil.move(tmp_path, map_file_path)
+                tmp_path = None # ล้าง path เนื่องจากย้ายสำเร็จแล้ว
 
-                    # สรุปสถิติสุดท้าย (สวยมาก)
-                    total_keys = len(final_map_to_write)
-                    total_items = sum(len(v) for v in final_map_to_write.values())
-                    file_size_kb = os.path.getsize(map_file_path) / 1024
+                # 6. สรุปสถิติสุดท้าย
+                total_keys = len(final_map_to_write)
+                total_items = sum(len(v) for v in final_map_to_write.values())
+                file_size_kb = os.path.getsize(map_file_path) / 1024
 
-                    logger.info(f"[EVIDENCE] Evidence map saved successfully!")
-                    logger.info(f"   Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB")
+                self.logger.info(f"[EVIDENCE] Evidence map saved successfully!")
+                self.logger.info(f"   Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB")
 
-                    # โชว์ Top 1 ของแต่ละ sub-criteria (สุดยอดมาก)
-                    preview = []
-                    for key in sorted(final_map_to_write.keys())[:5]:  # แสดงแค่ 5 อันแรก
-                        entries = final_map_to_write[key]
-                        if entries:
-                            top = entries[0]
-                            score = top.get("relevance_score", "-")
-                            preview.append(f"{key}: {top['filename'][:50]} ({score})")
-                    if preview:
-                        logger.info(f"   Top evidence preview → {', '.join(preview[:3])}{'...' if len(preview)>3 else ''}")
+                # โชว์ Top 1 ของแต่ละ sub-criteria
+                preview = []
+                for key in sorted(final_map_to_write.keys())[:5]: 
+                    entries = final_map_to_write[key]
+                    if entries:
+                        top = entries[0]
+                        score = top.get("relevance_score", "-")
+                        # ดึงแค่ filename 50 ตัวอักษรแรก
+                        filename_preview = top.get('filename', 'Unknown')[:50] 
+                        preview.append(f"{key}: {filename_preview} ({score})")
+                if preview:
+                    self.logger.info(f"   Top evidence preview → {', '.join(preview[:3])}{'...' if len(preview)>3 else ''}")
 
-            except TimeoutError:
-                logger.critical(f"[EVIDENCE] Lock timeout! Another process may be stuck: {lock_path}")
-                raise
-            except Exception as e:
-                logger.critical("[EVIDENCE] FATAL SAVE ERROR")
-                logger.exception(e)
-                raise
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try: os.unlink(tmp_path)
-                    except: pass
-                logger.debug(f"[EVIDENCE] Lock released: {lock_path}")
+        except TimeoutError:
+            self.logger.critical(f"[EVIDENCE] Lock timeout! Another process may be stuck: {lock_path}")
+            raise
+        except Exception as e:
+            self.logger.critical("[EVIDENCE] FATAL SAVE ERROR")
+            self.logger.exception(e)
+            raise
+        finally:
+            # 7. Cleanup (สำหรับกรณีที่เกิด Exception ก่อน shutil.move)
+            if tmp_path and os.path.exists(tmp_path):
+                try: os.unlink(tmp_path)
+                except: pass
+            # 🚨 Note: Lock ถูกปล่อยโดย 'with FileLock' ไม่ใช่ใน finally block นี้ (ยกเว้น Lock ที่ custom)
+            # โค้ดด้านล่างนี้อาจจะถูกเรียกซ้ำ แต่ไม่เป็นอันตราย
+            self.logger.debug(f"[EVIDENCE] Lock released by context manager.")
 
 
     def _load_evidence_map(self, is_for_merge: bool = False):

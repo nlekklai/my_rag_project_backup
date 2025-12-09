@@ -33,7 +33,7 @@ from config.global_vars import (
     FINAL_K_RERANKED,
     QUERY_INITIAL_K,
     QUERY_FINAL_K,
-    LLM_MODEL_NAME
+    DEFAULT_LLM_MODEL_NAME
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def query_llm(
     subject: Optional[str] = Form(None), # 🟢 เพิ่ม subject argument
     conversation_id: Optional[str] = Form(None),
 ):
-    llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
     if not llm:
         raise HTTPException(status_code=503, detail="LLM service unavailable")
 
@@ -250,7 +250,7 @@ async def compare_documents(
     doc_type: str = Form("document"),
     enabler: str = Form("KM")
 ):
-    llm = create_llm_instance(model_name=LLM_MODEL_NAME, temperature=0.0)
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
     vsm = get_vectorstore_manager()
     if not vsm:
         raise HTTPException(503, "Vector store not available")

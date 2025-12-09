@@ -1,0 +1,170 @@
+{
+    "1.1.L1": [
+        {
+            "doc_id": "fd52c3cc5a146e29e1110028a5f15cbfc0a0d0fc7971b9394ea11f718383d45a",
+            "filename": "KM6.1L301 KM_6_3_PEA_Assessment Report.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:18:35.692267",
+            "relevance_score": 0.8745,
+            "chunk_uuid": "fd52c3cc5a146e29e1110028a5f15cbfc0a0d0fc7971b9394ea11f718383d45a"
+        },
+        {
+            "doc_id": "12d048250b8e1ffa1b13a9f451c8bd82bb531811102aa23670dfde17c475404e",
+            "filename": "KM1.1L308 คำจำกัดความและเกณฑ์ Enablers สายงานสำนัก 2567 ณ วันที่ 10 เม.ย.67 (อัพเดท 4.2 CM) (3).pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:18:35.692306",
+            "relevance_score": 0.8452,
+            "chunk_uuid": "12d048250b8e1ffa1b13a9f451c8bd82bb531811102aa23670dfde17c475404e"
+        },
+        {
+            "doc_id": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d",
+            "filename": "KM2.2L101 เกณฑ์การจัดสรรร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:18:35.692328",
+            "relevance_score": 0.7727,
+            "chunk_uuid": "f76e6ffd4415e37515415de9e05c0268b73afadbc12841eb0a0dab3b1c16d97d"
+        },
+        {
+            "doc_id": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42",
+            "filename": "KM2.1L503 Sipoc หลังปรับ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:18:35.692340",
+            "relevance_score": 0.7645,
+            "chunk_uuid": "b5038e2988406e1d367a15d918407b5083cba1445d01d8b2f0392e27f56b8d42"
+        },
+        {
+            "doc_id": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a",
+            "filename": "KM1.1L505 Sipoc กระบวนการจัดทำแผนแม่บทฯ.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:18:35.692351",
+            "relevance_score": 0.7645,
+            "chunk_uuid": "7742f4b1c6c6a4dc31916bf52802c7c3c9c246bfe8cd609b77cc03260d628c6a"
+        }
+    ],
+    "1.1.L2": [
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:20:29.856481",
+            "relevance_score": 0.9555,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51",
+            "filename": "KM2.2L202 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:20:29.856627",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51"
+        },
+        {
+            "doc_id": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6",
+            "filename": "KM2.2L303 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:20:29.856642",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:20:29.856656",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:20:29.856669",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        }
+    ],
+    "1.1.L4": [
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:28:18.566407",
+            "relevance_score": 0.9555,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51",
+            "filename": "KM2.2L202 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:28:18.566428",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51"
+        },
+        {
+            "doc_id": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6",
+            "filename": "KM2.2L303 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:28:18.566448",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:28:18.566461",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:28:18.566477",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        }
+    ],
+    "1.1.L5": [
+        {
+            "doc_id": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd",
+            "filename": "KM2.2L305 ตัวอย่างหนังสือให้ดำเนินการรายงานผลการดำเนินงาน.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:32:52.704552",
+            "relevance_score": 0.9555,
+            "chunk_uuid": "4644ee4a59b22d6ac6c80da5e21c81fdc663459a28541d0171c437de62e48efd"
+        },
+        {
+            "doc_id": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51",
+            "filename": "KM2.2L202 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:32:52.704564",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "8e57f95ccad36c2cb8836e88e21a912de6c9ce12645532bb5c09758278f7dc51"
+        },
+        {
+            "doc_id": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6",
+            "filename": "KM2.2L303 ตัวอย่างการดำเนินการจัดทำแผน และทรัพยากร.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:32:52.704578",
+            "relevance_score": 0.9478,
+            "chunk_uuid": "2d88cba6f95f6a3f95a4f969ce271481031093e770216fa365611ba4f351fdb6"
+        },
+        {
+            "doc_id": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8",
+            "filename": "KM1.1L306 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:32:52.704595",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "4a99bb05244de15764413c612bea53157f8c12739c8f1d8fe7ea192ac68beec8"
+        },
+        {
+            "doc_id": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53",
+            "filename": "KM1.2L202 นโยบาย KM 2567.pdf",
+            "mapper_type": "AI_GENERATED",
+            "timestamp": "2025-12-09T14:32:52.704606",
+            "relevance_score": 0.9474,
+            "chunk_uuid": "8fa303807d182a459c70c8598312c56037c352457fc29a290087fc6127a73d53"
+        }
+    ]
+}

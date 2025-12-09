@@ -51,7 +51,7 @@ QUERY_FINAL_K = 5
 IS_LOG_L3_CONTEXT = True
 
 # LLM Model (ใช้ตัวเดียว)
-LLM_MODEL_NAME = "llama3.1:8b"
+DEFAULT_LLM_MODEL_NAME = "llama3.1:8b"
 # LLM_MODEL_NAME = "llama3:8b-instruct-q4_0"
 LLM_TEMPERATURE: Final[float] = 0.0
 LLM_CONTEXT_WINDOW: Final[int] = 4096

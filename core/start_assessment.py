@@ -26,7 +26,7 @@ try:
     # Import Config & Core Modules
     # 📌 เพิ่ม DEFAULT_TENANT และ DEFAULT_YEAR
     from config.global_vars import (
-        EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, LLM_MODEL_NAME, 
+        EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, DEFAULT_LLM_MODEL_NAME, 
         DEFAULT_TENANT, DEFAULT_YEAR
     ) 
     from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
@@ -34,13 +34,11 @@ try:
     from core.vectorstore import load_all_vectorstores, VectorStoreManager 
     
     # 🟢 ASSUMPTION: load_document_map is available in core.vectorstore
-    # (หากไม่มี ต้องแก้ไข core.vectorstore ให้มีฟังก์ชันนี้)
     try:
         from core.vectorstore import load_document_map
     except ImportError:
         def load_document_map(tenant: str, year: int, enabler: str) -> Dict[str, str]:
              """MOCK: Returns an empty dictionary if the real function is not imported."""
-             # 🟢 FIX: ลบ Log Warning ออก เนื่องจากเราทราบแล้วว่าฟังก์ชันนี้ไม่มี
              return {}
 
     import assessments.seam_mocking as seam_mocking 
@@ -64,9 +62,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--export", action="store_true", help="Export results to JSON file.")
     p.add_argument("--mock", choices=["none", "random", "control"], default="none", help="Mock mode ('none', 'random', 'control').")
     p.add_argument("--sequential", action="store_true", help="Force sequential execution, even when assessing all sub-criteria (recommended for low-resource machines).")
-    # 🟢 NEW: Arguments for Evidence Mapping scope
+    # 🟢 Arguments for Evidence Mapping scope
     p.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help="Tenant ID for mapping file scope (e.g., 'EGAT').")
     p.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Assessment year for mapping file scope (e.g., 2024).")
+    
+    # 📌 NEW FIX: Arguments for Adaptive RAG Tuning
+    # ใช้ค่า default จาก AssessmentConfig เพื่อให้สอดคล้อง
+    p.add_argument("--min-retry-score", type=float, default=0.65, help="Min Rerank score to stop adaptive retrieval loop.")
+    p.add_argument("--max-retrieval-attempts", type=int, default=3, help="Max attempts for adaptive RAG retrieval loop.")
+    
     return p.parse_args()
 
 # -------------------- MAIN EXECUTION --------------------
@@ -84,7 +88,7 @@ def main():
 
     # 1. Load Vectorstores and Document Map (โหลดเพียงครั้งเดียวใน Process หลัก)
     vsm: Optional[VectorStoreManager] = None
-    document_map: Optional[Dict[str, str]] = None # 🟢 FIX: เตรียมตัวแปรสำหรับ Document Map
+    document_map: Optional[Dict[str, str]] = None 
     
     # 🟢 FIX: Skip VSM loading if running in Sequential Mode 
     if args.sequential and args.mock == "none":
@@ -117,7 +121,6 @@ def main():
         )
         logger.info(f"Loaded {len(document_map)} document mappings.")
     except Exception as e:
-        # 🟢 Log นี้จะปรากฏหากการเรียก Mock function ล้มเหลว (ซึ่งไม่ควรเกิดขึ้นแล้ว)
         logger.warning(f"Failed to load document map: {e}. Assessment will continue, but filenames in results may be limited.")
         document_map = {} # Ensure it's an empty dictionary if failed
         
@@ -126,7 +129,7 @@ def main():
     llm_for_classification = None
     try:
         llm_for_classification = create_llm_instance(
-            model_name=LLM_MODEL_NAME, 
+            model_name=DEFAULT_LLM_MODEL_NAME, 
             temperature=0.0
         )
         if not llm_for_classification:
@@ -139,16 +142,20 @@ def main():
             raise
 
     # 2. Instantiate Engine
+    # 📌 FIX: สร้าง Config และส่งค่า Adaptive RAG ใหม่เข้าไป
     config = AssessmentConfig(
         enabler=args.enabler, 
         target_level=args.target_level,
         mock_mode=args.mock,
-        # 🟢 PASS THE NEW ARGUMENTS
+        # 🟢 Pass the core arguments
         force_sequential=args.sequential,
-        model_name=LLM_MODEL_NAME,
+        model_name=DEFAULT_LLM_MODEL_NAME,
         temperature=0.0, 
         tenant=args.tenant,  
-        year=args.year,      
+        year=args.year, 
+        # 🟢 NEW: RAG Adaptive Tuning
+        min_retry_score=args.min_retry_score,           # ⬅️ New Config
+        max_retrieval_attempts=args.max_retrieval_attempts # ⬅️ New Config
     )
     engine = SEAMPDCAEngine(
         config=config,
@@ -182,6 +189,7 @@ def main():
     print("="*60)
     print(f"Tenant/Year: {args.tenant}/{args.year}")
     print(f"Target Level: {summary.get('target_level', config.target_level)}")
+    print(f"RAG Config (Score/Attempts): {config.min_retry_score}/{config.max_retrieval_attempts}") # ⬅️ Show new config
     print(f"Total sub-criteria run: {summary.get('total_subcriteria', 0)}")
     print(f"Percentage Achieved: {summary.get('percentage_achieved_run', 0.0):.3f}%")
     print(f"Duration (s): {duration_s:.2f}")

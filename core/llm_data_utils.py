@@ -829,8 +829,8 @@ def _fetch_llm_response(
         # ใช้ Mock LLM ที่ถูกตั้งค่าไว้
         try:
              resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config={"temperature": 0.0})
-             if hasattr(resp, "content"): return resp.content.strip()
-             return str(resp).strip()
+             # ใช้ _clean_llm_response_content เพื่อจัดการ response ที่ถูกห่อหุ้ม
+             return _clean_llm_response_content(resp)
         except Exception as e:
             logger.error(f"Mock LLM invocation failed: {e}")
             raise ConnectionError("Mock LLM failed to respond.")
@@ -839,15 +839,59 @@ def _fetch_llm_response(
     for attempt in range(max_retries):
         try:
             resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config=config)
-            if hasattr(resp, "content"): return resp.content.strip()
-            if isinstance(resp, dict) and "content" in resp: return resp["content"].strip()
-            if isinstance(resp, str): return resp.strip()
-            return str(resp).strip()
+            
+            # 🎯 NEW LOGIC: ใช้ฟังก์ชันตัวช่วยทำความสะอาด
+            return _clean_llm_response_content(resp)
+            
         except Exception as e:
             logger.warning(f"LLM attempt {attempt+1} failed: {e}")
             time.sleep(0.5)
             
     raise ConnectionError("LLM calls failed after retries")
+
+# ------------------------------------------------------------------
+# ฟังก์ชันตัวช่วยใหม่: ทำความสะอาดและดึงค่า String/Dict ออกจาก Response
+# ------------------------------------------------------------------
+def _clean_llm_response_content(resp: Any) -> str:
+    """
+    พยายามดึง content ออกมาในรูปแบบ string ที่สะอาดที่สุด
+    รองรับการห่อหุ้มแบบ Tuple/List ที่มี Dict/String อยู่ภายใน และใช้ Regex Cleanup 
+    เพื่อดึงเฉพาะ JSON Object
+    """
+    
+    # --- 1. การทำความสะอาดเบื้องต้น (Existing Logic) ---
+    cleaned_resp_str: str = ""
+
+    # 1.1 จัดการการห่อหุ้ม (Handle Tuple/List wrapper)
+    if isinstance(resp, (list, tuple)) and resp:
+        resp = resp[0]
+        logger.debug(f"LLM Response was wrapped in {type(resp).__name__}, extracted first element.")
+
+    # 1.2 จัดการ Response Object/Dict ที่มี 'content' field
+    if hasattr(resp, "content"): 
+        cleaned_resp_str = str(resp.content).strip()
+    elif isinstance(resp, dict) and "content" in resp: 
+        cleaned_resp_str = str(resp["content"]).strip()
+    elif isinstance(resp, str): 
+        cleaned_resp_str = resp.strip()
+    else: 
+        # 1.3 Fallback: แปลงเป็น String
+        cleaned_resp_str = str(resp).strip()
+    
+    # --- 2. การทำความสะอาด Regex (The CRITICAL Fix for Malform) ---
+    
+    # 2.1 ค้นหาและดึงเฉพาะส่วนที่อยู่ในเครื่องหมายปีกกา { ... }
+    # re.DOTALL: เพื่อให้ . จับคู่ได้แม้กระทั่งอักขระขึ้นบรรทัดใหม่
+    match = re.search(r'\{.*\}', cleaned_resp_str, re.DOTALL)
+    
+    if match:
+        json_string_only = match.group(0)
+        logger.debug("Regex Cleanup performed: Extracted pure JSON string.")
+        return json_string_only
+    
+    # 2.2 หากไม่พบ JSON Object: คืนค่า String ที่ทำความสะอาดเบื้องต้นไป
+    logger.warning("Regex Cleanup failed: Could not find JSON object. Returning original cleaned string.")
+    return cleaned_resp_str
 
 # ------------------------
 # Evaluation

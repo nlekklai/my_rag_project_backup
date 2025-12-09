@@ -1,16 +1,19 @@
-#core/json_extractor.py
-import json, logging
-from typing import Dict, Any, Optional
+import json
+import logging
+from typing import Dict, Any, Optional, List
 import re
+import json5 # ต้องแน่ใจว่าได้ติดตั้ง pip install json5 แล้ว
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
+    # ตั้งค่า Log พื้นฐานหากยังไม่มี (ปรับระดับตามต้องการ)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 # ------------------------------------------------------------
 # Constants & Helpers
 # ------------------------------------------------------------
+# UUID_PATTERN ยังไม่ได้ถูกใช้ในโค้ดปัจจุบัน
 UUID_PATTERN = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
 
 def _safe_int_parse(value: Any, default: int = 0) -> int:
@@ -83,7 +86,7 @@ def _normalize_keys(data: Any) -> Any:
         normalized = {}
         for k, v in data.items():
             key_lower = k.strip().lower() if isinstance(k, str) else k
-            std_key = mapping.get(key_lower, k)  # ใช้ key เดิมถ้าไม่มีใน mapping
+            std_key = mapping.get(key_lower, k)
             normalized[std_key] = _normalize_keys(v)
         return normalized
 
@@ -96,43 +99,56 @@ def _normalize_keys(data: Any) -> Any:
 # ------------------------------------------------------------
 # Core Extractor
 # ------------------------------------------------------------
-# แทนที่ฟังก์ชัน _extract_normalized_dict เดิม ด้วยโค้ดนี้:
 
 def _extract_normalized_dict(llm_response: str) -> Optional[Dict[str, Any]]:
-    """Extract and normalize JSON from LLM response using robust regex and json5."""
+    """
+    Extract and normalize JSON from LLM response using balanced brace counting 
+    and robust JSON parsing (json5 -> json).
+    """
     raw = (llm_response or "").strip()
     if not raw:
         return None
 
-    # 1. ใช้ Regex ที่ทนทานสูงเพื่อหา JSON object ทั้งหมดในข้อความ
-    # \{[\s\S]*?\} : หาตั้งแต่ { แรก จนถึง } สุดท้าย
-    # re.DOTALL: สำคัญมาก เพื่อให้ . match \n (multiline JSON)
-    matches = re.findall(r"\{[\s\S]*?\}", raw, re.DOTALL)
+    # 1. PRIORITY 1: ใช้ Balanced Brace Extractor (ดีกว่า regex ดิบสำหรับ nested JSON)
+    best_match: Optional[str] = _extract_balanced_braces(raw)
+
+    # 2. PRIORITY 2: ถ้า Balanced Brace ไม่เจอ → ลองใช้ Regex ดิบเพื่อหา Object ที่ยาวที่สุด
+    if not best_match:
+        # \{[\s\S]*?\} : หาตั้งแต่ { แรก จนถึง } สุดท้าย
+        # re.DOTALL: สำคัญมาก เพื่อให้ . match \n (multiline JSON)
+        matches = re.findall(r"\{[\s\S]*?\}", raw, re.DOTALL)
+        
+        if not matches:
+            return None
+
+        # เลือก match ที่ยาวที่สุด (น่าจะเป็น JSON object หลัก)
+        best_match = max(matches, key=len)
     
-    if not matches:
+    if not best_match:
         return None
 
-    # เลือก match ที่ยาวที่สุด (น่าจะเป็น JSON object หลัก)
-    best_match = max(matches, key=len)
-    
-    # 2. Parse JSON (ใช้ json5 ก่อน เพราะทนทานกว่า)
+    # 3. Parse JSON (ใช้ json5 ก่อน เพราะทนทานกว่า)
     data = None
     try:
-        import json5 # ต้องแน่ใจว่า import json5 มาแล้ว
         data = json5.loads(best_match)
     except Exception as e_json5:
         logger.debug(f"json5 failed on best match: {e_json5}")
-        # Fallback 3: ลองใช้ standard json
+        # Fallback 4: ลองใช้ standard json
         try:
             data = json.loads(best_match)
         except Exception as e_json:
             logger.debug(f"Standard json failed: {e_json}")
             return None # Cannot parse
 
+    # กรณีที่ LLM ตอบกลับมาเป็น Array ที่มี Object เดียว (เจอบ่อยใน Action Plan)
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        logger.warning("Extracted JSON is an array containing dict(s). Using the first dict.")
+        data = data[0]
+
     if not isinstance(data, dict):
         return None
 
-    # 3. Normalize keys (ใช้ฟังก์ชันเดิมของคุณ)
+    # 4. Normalize keys (ใช้ฟังก์ชันเดิมของคุณ)
     return _normalize_keys(data)
 
 
@@ -151,7 +167,11 @@ def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
         "P_Plan_Score": 0,
         "D_Do_Score": 0,
         "C_Check_Score": 0,
-        "A_Act_Score": 0
+        "A_Act_Score": 0,
+        # ต้องใส่ Fields ใหม่ เพื่อป้องกัน KeyError ใน Logic ภายนอก
+        "low_confidence_reason": "N/A",  
+        "suggested_action_on_low_conf": "N/A",  
+        "suggested_action_on_failure": "Failed to extract JSON/data." 
     }
 
     if not llm_response or not isinstance(llm_response, str):
@@ -192,7 +212,20 @@ def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
             result["A_Act_Score"]
         ])
 
-    # Optional: ป้องกัน score เกิน (L5 max = 8)
+    # Optional: ป้องกัน score เกิน (L5 max = 10)
     result["score"] = min(result["score"], 10)
+
+    # 5. รวม Key ที่ไม่ได้ Normalize (เช่น low_confidence_reason, suggested_action_on_failure) กลับเข้ามา
+    for k, v in data.items():
+        # ป้องกันการเขียนทับ key หลักที่ถูก Parse แล้ว (score, reason, is_passed, PDCA scores)
+        if k not in result:
+             # สำหรับ Actionable Fields และ Confidence Fields
+             result[k] = v 
+    
+    # 6. รับประกันว่า Field ใหม่มีค่าเสมอแม้ LLM จะไม่ส่งมา (ป้องกัน KeyError ใน Logic ภายนอก)
+    result["low_confidence_reason"] = result.get("low_confidence_reason", "N/A")
+    result["suggested_action_on_low_conf"] = result.get("suggested_action_on_low_conf", "N/A")
+    result["suggested_action_on_failure"] = result.get("suggested_action_on_failure", "ระบุหลักฐานที่ขาดหาย")
+    
 
     return result
