@@ -870,17 +870,22 @@ class VectorStoreManager:
             try:
                 original_query = query
                 
-                # สำคัญมาก: PEA 2568 ingest ด้วย paraphrase-multilingual-MiniLM-L12-v2 → ไม่มี prefix
-                # ดังนั้นห้ามใส่ query: เด็ดขาด!
-                query = query.strip()
-                logger.critical(f"[NO PREFIX FOR PEA] Using raw query: '{query[:100]}...'")
+                # 🛑 FIX: ลบ Logic เก่าที่ตั้งใจข้าม Prefix และเปลี่ยนมาใช้ Prefix ที่เหมาะสมกับ BAAI/bge-m3 แทน
+                
+                # BGE-M3 แนะนำให้ใส่ Query Instruction/Prefix
+                bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
+                query_with_prefix = f"{bge_prefix}{query.strip()}"
+                
+                # เปลี่ยน logger.critical เป็น logger.info เพื่อยืนยันการใช้ Prefix ใหม่
+                logger.info(f"[BGE-M3 PREFIX ADDED] Using prefixed query: '{query_with_prefix[:100]}...'")
+                # -------------------------------------------------------------
 
                 search_kwargs = {"k": k}
                 if filter_dict:
                     search_kwargs["filter"] = filter_dict
                 
                 docs = chroma_instance.similarity_search(
-                    query=query,
+                    query=query_with_prefix, # 🟢 ใช้ Query ที่มี Prefix แล้ว
                     k=k,
                     filter=filter_dict
                 )

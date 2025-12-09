@@ -1842,7 +1842,7 @@ class SEAMPDCAEngine:
         ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
             """
             รันการประเมิน L1-L5 แบบ sequential สำหรับ sub-criteria หนึ่งตัว
-            และส่ง evidence map กลับไปให้ main process รวม
+            และส่ง evidence map กลับไปให้ main process รวม (รวมถึงการสร้าง Action Plan)
             """
             sub_id = sub_criteria['sub_id']
             sub_criteria_name = sub_criteria['sub_criteria_name']
@@ -1852,13 +1852,16 @@ class SEAMPDCAEngine:
             highest_full_level = 0
             is_passed_current_level = True
             raw_results_for_sub_seq: List[Dict[str, Any]] = []
+            start_ts = time.time() # บันทึกเวลาเริ่มต้น
 
             self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
 
-            # รีเซ็ต temp_map_for_save เฉพาะ worker นี้ (สำคัญมากสำหรับ Parallel!)
+            # รีเซ็ต temp_map_for_save เฉพาะ worker นี้ (สำคัญมากสำหรับ Parallel/Async!)
             self.temp_map_for_save = {}
 
-            # 1. Loop ผ่านทุก Level (L1 → L5)
+            # -----------------------------------------------------------
+            # 1. LOOP THROUGH LEVELS (L1 → L5)
+            # -----------------------------------------------------------
             for statement_data in sub_criteria.get('levels', []):
                 level = statement_data.get('level')
                 if level is None or level > self.config.target_level:
@@ -1868,13 +1871,29 @@ class SEAMPDCAEngine:
                 dependency_failed = level > 1 and not is_passed_current_level
                 previous_level = level - 1
                 persistence_key = f"{sub_id}.L{previous_level}"
-                sequential_chunk_uuids = self.evidence_map.get(persistence_key, [])
+                # ดึงหลักฐานที่ผ่านจาก Level ก่อนหน้า (ถ้ามี)
+                sequential_chunk_uuids = self.evidence_map.get(persistence_key, []) 
 
                 level_result = {}
                 level_temp_map: List[Dict[str, Any]] = []
 
-                # --- เรียก _run_single_assessment (รับ 2 ค่า: result, temp_map) ---
-                if level >= 3:
+                # --- 1.1 CALL _run_single_assessment (with Retry/Attempt Logic) ---
+                if dependency_failed:
+                    # ถ้า Dependency Failed ให้ข้ามการรัน LLM และสร้างผลลัพธ์ CAPPED
+                    error_msg = f"Assessment capped: L{previous_level} did not pass fully."
+                    level_result = self._create_error_result(
+                        level=level, 
+                        error_message=error_msg, 
+                        start_time=start_ts, 
+                        sub_id=sub_id, 
+                        statement_id=statement_data.get('statement_id', sub_id), 
+                        statement_text=statement_data['statement']
+                    )
+                    level_result['is_capped'] = True
+                    level_result['status'] = "CAPPED"
+                    self.logger.info(f"  > 🛑 CAPPED L{level}: Due to L{previous_level} failure.")
+
+                elif level >= 3:
                     # L3-L5: ใช้ RetryPolicy
                     wrapper = self.retry_policy.run(
                         fn=lambda attempt: self._run_single_assessment(
@@ -1888,14 +1907,8 @@ class SEAMPDCAEngine:
                         context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
                         logger=self.logger
                     )
-
-                    # สำคัญ: wrapper.result ตอนนี้เป็น tuple (result, temp_map)
-                    if isinstance(wrapper, RetryResult) and wrapper.result is not None:
-                        level_result = wrapper.result
-                        level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา
-                    else:
-                        level_result = {}
-                        level_temp_map = []
+                    level_result = wrapper.result if isinstance(wrapper, RetryResult) and wrapper.result is not None else {}
+                    level_temp_map = level_result.get("temp_map_for_level", []) 
 
                 else:
                     # L1-L2: ลองสูงสุด 2 ครั้ง
@@ -1906,54 +1919,49 @@ class SEAMPDCAEngine:
                             vectorstore_manager=self.vectorstore_manager,
                             sequential_chunk_uuids=sequential_chunk_uuids
                         )
-                        level_temp_map = level_result.get("temp_map_for_level", []) # <-- ดึง List Evidence ออกมา
+                        level_temp_map = level_result.get("temp_map_for_level", []) 
                         if level_result.get('is_passed', False):
                             break
 
-                # ใช้ result ที่ได้มา
+                # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
                 result_to_process = level_result or {}
                 result_to_process.setdefault("used_chunk_uuids", [])
 
-                # ตัดสิน pass/fail สุดท้าย (รวม dependency cap)
+                # ตัดสิน pass/fail สุดท้าย (LLM result AND NOT dependency cap)
                 is_passed_llm = result_to_process.get('is_passed', False)
                 is_passed_final = is_passed_llm and not dependency_failed
 
                 result_to_process['is_passed'] = is_passed_final
                 result_to_process['is_capped'] = is_passed_llm and not is_passed_final
-                result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level)
+                # NOTE: Assuming get_correct_pdca_required_score is defined elsewhere
+                result_to_process['pdca_score_required'] = get_correct_pdca_required_score(level) 
 
                 # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
                 if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
-                
-                    # 🟢 FIX 1: ใช้วิธี Lookup Filename จาก doc_id_to_filename_map ถ้า filename เป็น 'Unknown' หรือขาดหาย
+                    
+                    # 🟢 FIX: Resolve Filename จาก Doc ID Map (ใช้ self.doc_id_to_filename_map)
                     resolved_temp_map = []
                     for ev in level_temp_map:
                         filename = ev.get("filename")
                         doc_id = ev.get("doc_id")
                         
-                        # หาก filename ไม่ถูกต้อง (e.g., 'Unknown' หรือ None) ให้พยายาม lookup
                         if not filename or filename == "Unknown":
-                            # ใช้แผนที่หลักของ Engine ในการค้นหาชื่อไฟล์จาก doc_id
-                            # NOTE: self.doc_id_to_filename_map คือ map ที่โหลดไว้ตอน Engine Init
                             resolved_filename = self.doc_id_to_filename_map.get(doc_id) 
                             if resolved_filename:
                                 ev['filename'] = resolved_filename
                                 self.logger.debug(f"Resolved 'Unknown' filename for {doc_id} to {resolved_filename}")
-                            else:
-                                self.logger.warning(f"Could not find filename for doc_id: {doc_id} in mapping. Keeping filename: {filename}")
                         
                         resolved_temp_map.append(ev)
                         
                     current_key = f"{sub_id}.L{level}"
-                    self.temp_map_for_save[current_key] = resolved_temp_map # ใช้ resolved_temp_map ที่แก้ไขแล้ว
+                    self.temp_map_for_save[current_key] = resolved_temp_map 
                     self.logger.info(f"[EVIDENCE SAVED] {current_key} → {len(resolved_temp_map)} chunks")
 
-                    # 🎯 FIX SEQUENTIAL DEPENDENCY: อัปเดต self.evidence_map ทันทีใน Sequential Mode
+                    # 🎯 FIX SEQUENTIAL DEPENDENCY: อัปเดต self.evidence_map ทันที
                     if self.is_sequential:
-                        self.evidence_map[current_key] = resolved_temp_map # ใช้ resolved_temp_map ที่แก้ไขแล้ว
+                        self.evidence_map[current_key] = resolved_temp_map
                         self.logger.info(f"[SEQUENTIAL UPDATE] {current_key} added to engine's main evidence_map for L{level+1} dependency.")
-                    # END FIX
-
+                    
                 # อัปเดตสถานะสำหรับ level ถัดไป
                 is_passed_current_level = is_passed_final
 
@@ -1965,12 +1973,11 @@ class SEAMPDCAEngine:
                 # อัปเดต highest level
                 if is_passed_final:
                     highest_full_level = level
-                else:
-                    self.logger.info(f"[WORKER STOP] {sub_id} failed at L{level}. Highest achieved: L{highest_full_level}")
-                    # break  # หยุดทันทีเมื่อ fail 
-                    pass
-
-            # สรุปผล sub-criteria
+                # ไม่ break ทันที แต่ปล่อยให้ loop ดำเนินไปเพื่อ log CAPPED
+            
+            # -----------------------------------------------------------
+            # 2. CALCULATE SUMMARY
+            # -----------------------------------------------------------
             weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
             num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False))
 
@@ -1981,6 +1988,52 @@ class SEAMPDCAEngine:
                 "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
             }
 
+
+            # -----------------------------------------------------------
+            # 3. GENERATE ACTION PLAN (POST-PROCESSING) 🚀
+            # -----------------------------------------------------------
+
+            target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
+            
+            # กรองเฉพาะ Statement ที่ FAIL จริงๆ (ไม่ถูก Capped)
+            failed_statements = [
+                r for r in raw_results_for_sub_seq 
+                if not r.get('is_passed', False) and not r.get('is_capped', False)
+            ]
+
+            action_plan_result = []
+            try:
+                # 🟢 เรียกใช้ self.create_structured_action_plan
+                action_plan_result = self.create_structured_action_plan( 
+                    failed_statements=failed_statements,
+                    sub_id=sub_id,
+                    target_level=target_next_level,
+                    llm_executor=self.llm
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to generate Action Plan for {sub_id}: {e}")
+                action_plan_result = [{
+                    "Phase": "Error", 
+                    "Goal": "ไม่สามารถสร้าง Action Plan ได้", 
+                    "Actions": [{
+                        "Statement_ID": "ERROR", 
+                        "Recommendation": f"เกิดข้อผิดพลาดในการเรียกใช้ LLM สำหรับ Action Plan: {str(e)}"
+                    }]
+                }]
+
+            # -----------------------------------------------------------
+            # 4. FINAL RESULT
+            # -----------------------------------------------------------
+            
+            # รวบรวม Evidence Map ที่จะส่งคืน
+            final_temp_map = {}
+            if self.is_sequential:
+                for key in self.evidence_map:
+                    if key.startswith(sub_criteria['sub_id'] + "."):
+                        final_temp_map[key] = self.evidence_map[key]
+            else:
+                final_temp_map = self.temp_map_for_save.copy()
+
             final_sub_result = {
                 "sub_criteria_id": sub_id,
                 "sub_criteria_name": sub_criteria_name,
@@ -1988,25 +2041,14 @@ class SEAMPDCAEngine:
                 "weight": sub_weight,
                 "target_level_achieved": highest_full_level >= self.config.target_level,
                 "weighted_score": weighted_score,
-                "action_plan": [],
+                "action_plan": action_plan_result, # 🟢 แนบ Action Plan
                 "raw_results_ref": raw_results_for_sub_seq,
                 "sub_summary": sub_summary,
+                "worker_duration_s": round(time.time() - start_ts, 2) # เพิ่มระยะเวลาทำงาน
             }
 
-            # final_temp_map = self.temp_map_for_save  # ส่งกลับทั้ง dict
-            # เป็น
-            final_temp_map = {}
-            if self.is_sequential:
-                # ใน sequential เราใช้ self.evidence_map โดยตรงอยู่แล้ว
-                # แต่ส่ง snapshot กลับไปเพื่อความปลอดภัย
-                for key in self.evidence_map:
-                    if key.startswith(sub_criteria['sub_id'] + "."):
-                        final_temp_map[key] = self.evidence_map[key]
-            else:
-                final_temp_map = self.temp_map_for_save.copy()
 
-            self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Evidence keys: {len(final_temp_map)}")
-            self.logger.debug(f"Evidence keys returned: {list(final_temp_map.keys())}")
+            self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Action Plans: {len(action_plan_result)} phase(s) | Duration: {final_sub_result['worker_duration_s']:.2f}s")
 
             return final_sub_result, final_temp_map
 
