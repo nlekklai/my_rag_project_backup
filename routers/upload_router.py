@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Background
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 from datetime import datetime, timezone
 import logging, os, sys, uuid
 from pathlib import Path as SysPath
@@ -16,8 +16,6 @@ try:
         sys.path.append(project_root)
 
     from config.global_vars import (
-        DATA_DIR,
-        VECTORSTORE_DIR,
         SUPPORTED_DOC_TYPES,
         DEFAULT_ENABLER, 
         EVIDENCE_DOC_TYPES
@@ -32,8 +30,8 @@ try:
     from routers.auth_router import UserMe, get_current_user
     # ---------------------------
     
-    # 🟢 FIX: Import Path Utility
-    from utils.path_utils import get_document_source_dir 
+    # 🟢 FIX: Import Path Utility และ Central Logic ที่ถูกย้ายมา
+    from utils.path_utils import get_document_source_dir, get_normalized_metadata 
 
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -69,16 +67,27 @@ class UploadResponse(BaseModel):
     year: Optional[Union[int, str]] = None 
 
 # -----------------------------
-# --- Helper Function for File Path ---
+# --- Helper Function for File Path (USES CENTRAL LOGIC) ---
 # -----------------------------
 def get_save_dir(doc_type: str, tenant: str, year: Optional[Union[int, str]], enabler: Optional[str] = None) -> str:
-    """Constructs the segregated directory path for saving files using Path Utility."""
-    resolved_year = int(year) if isinstance(year, str) and year.isdigit() else (year if isinstance(year, int) else None)
+    """
+    Constructs the segregated directory path for saving files using Path Utility.
+    The actual path is normalized based on doc_type (Global vs. Evidence).
+    """
+    
+    # 📌 ใช้ Central Logic เพื่อหาค่า Year/Enabler ที่ถูก Normalize สำหรับ Path
+    normalized_year, normalized_enabler = get_normalized_metadata(
+        doc_type=doc_type,
+        year_input=year, 
+        enabler_input=enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
     
     return get_document_source_dir(
         tenant=tenant,
-        year=resolved_year, 
-        enabler=enabler, 
+        # ใช้ normalized values สำหรับ path construction
+        year=normalized_year, 
+        enabler=normalized_enabler, 
         doc_type=doc_type
     )
 
@@ -102,11 +111,17 @@ async def upload_document(
     
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type. Must be one of: {SUPPORTED_DOC_TYPES}")
+        
+    # 📌 ใช้ Logic Normalized Metadata สำหรับการบันทึก (ปีและ Enabler ที่จะถูกบันทึกใน Mapping DB)
+    normalized_year, normalized_enabler = get_normalized_metadata(
+        doc_type=doc_type,
+        year_input=current_user.year,
+        enabler_input=enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
 
-    enabler_code = enabler or (DEFAULT_ENABLER if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() else None) 
-
-    # Folder for file storage (segregated by tenant/year/doc_type/enabler)
-    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
+    # Folder for file storage (ส่งค่าเดิมไปให้ get_save_dir ซึ่งจะ Normalize ภายใน)
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler)
     os.makedirs(save_dir, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -130,8 +145,9 @@ async def upload_document(
                 stable_doc_uuid=mock_doc_id,
                 doc_type=doc_type,
                 tenant=current_user.tenant,
-                year=current_user.year, 
-                enabler=enabler_code,
+                # 📌 ส่งค่า Normalized ไปให้ process_document เพื่อบันทึกใน Mapping DB
+                year=normalized_year, 
+                enabler=normalized_enabler,
             )
 
         return UploadResponse(
@@ -144,7 +160,7 @@ async def upload_document(
             message="Document accepted for background processing.",
             tenant=current_user.tenant,
             year=current_user.year,
-            enabler=enabler_code,
+            enabler=normalized_enabler,
         )
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -153,7 +169,7 @@ async def upload_document(
         raise HTTPException(500, detail=f"Upload failed: {e}")
 
 # -----------------------------
-# --- List uploaded documents (FIXED) ---
+# --- List uploaded documents (CLEANED) ---
 # -----------------------------
 @upload_router.get("/uploads/{doc_type}", response_model=List[UploadResponse])
 async def list_uploads_by_type(
@@ -164,39 +180,25 @@ async def list_uploads_by_type(
 ):
     # --- LOGGING DEBUG INFO ---
     user_id_display = getattr(current_user, 'id', 'N/A')
-    target_year = str(filter_year) if filter_year is not None else str(current_user.year)
+    target_year_log = str(filter_year) if filter_year is not None else str(current_user.year)
     logger.info(
-        f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={target_year} (Filtering with STR year)"
+        f"USER CONTEXT (List Uploads): ID={user_id_display}, DocType={doc_type}, Tenant={current_user.tenant}, Year={target_year_log} (Filtering with STR year)"
     )
     # --------------------------
     
-    # กำหนดค่าตัวกรองจริงที่ใช้
+    # 📌 ใช้ CENTRAL LOGIC เพื่อหาค่า Year/Enabler ที่จะใช้ในการ Query
+    year_to_fetch, enabler_to_fetch = get_normalized_metadata(
+        doc_type=doc_type,
+        year_input=filter_year, 
+        enabler_input=filter_enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
+    
     tenant_to_fetch = current_user.tenant
-    year_to_fetch: Optional[Union[int, str]] = target_year
-    enabler_to_fetch: Optional[str] = filter_enabler
     
     # Support "all"
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
-    # 📌 FIX 1: จัดการกรณี Global Doc Type: ถ้า doc_type ไม่ใช่ EVIDENCE_DOC_TYPES 
-    # ให้บังคับ year/enabler เป็น None เพื่อให้ค้นหาเจอเอกสารที่ไม่มีค่า year/enabler ใน Mapping DB
-    if doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
-         logger.warning(
-             f"FIX: Setting year/enabler to None for Global Doc Type: {doc_type} "
-             f"to match mapping DB where year/enabler are None."
-         )
-         year_to_fetch = None
-         enabler_to_fetch = None
-    
-    # 💡 ปรับปรุง FIX ชั่วคราว: หากไม่ได้กำหนด enabler_to_fetch มา (filter_enabler=None) 
-    # และ doc_type เป็น 'evidence' ให้ใช้ DEFAULT_ENABLER 
-    elif doc_type.lower() == EVIDENCE_DOC_TYPES.lower() and enabler_to_fetch is None:
-        enabler_to_fetch = DEFAULT_ENABLER
-        logger.warning(
-            f"TEMPORARY FIX: Forcing enabler to '{enabler_to_fetch}' for evidence listing "
-            f"due to filter_enabler=None."
-        )
-
     # List documents for the user's specific tenant and year
     doc_data = await run_in_threadpool(
         lambda: list_documents(
@@ -257,10 +259,16 @@ async def ingest_document(
     if doc_type not in SUPPORTED_DOC_TYPES:
         raise HTTPException(400, detail=f"Invalid doc_type: {doc_type}")
 
-    enabler_code = enabler or (DEFAULT_ENABLER if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() else None)
+    # 📌 ใช้ Logic Normalized Metadata สำหรับการบันทึก
+    normalized_year, normalized_enabler = get_normalized_metadata(
+        doc_type=doc_type,
+        year_input=current_user.year,
+        enabler_input=enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
     
-    # Use segregated save directory
-    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler_code)
+    # Use segregated save directory (ส่งค่าเดิมไปให้ get_save_dir ซึ่งจะ Normalize ภายใน)
+    save_dir = get_save_dir(doc_type, current_user.tenant, current_user.year, enabler)
     os.makedirs(save_dir, exist_ok=True)
 
     # ใช้ SysPath เพื่อจัดการชื่อไฟล์ให้ปลอดภัยยิ่งขึ้น
@@ -277,9 +285,9 @@ async def ingest_document(
                 file_name=SysPath(file.filename).name, 
                 stable_doc_uuid=str(uuid.uuid4().hex), 
                 doc_type=doc_type, 
-                enabler=enabler_code,
+                enabler=normalized_enabler, # 📌 ใช้ค่า Normalized
                 tenant=current_user.tenant, 
-                year=current_user.year 
+                year=normalized_year # 📌 ใช้ค่า Normalized
             )
         )
         
@@ -298,7 +306,7 @@ async def ingest_document(
         raise HTTPException(500, detail=str(e))
 
 # -----------------------------
-# --- Get all documents (FIXED) ---
+# --- Get all documents (CLEANED) ---
 # -----------------------------
 @upload_router.get("/documents", response_model=List[UploadResponse])
 async def get_documents(
@@ -316,20 +324,17 @@ async def get_documents(
 
     doc_types_to_fetch = [doc_type] if doc_type and doc_type.lower() != "all" else None
     
-    # กำหนดค่าตัวกรองจริงที่ใช้
-    tenant_to_fetch = current_user.tenant
-    year_to_fetch: Optional[Union[int, str]] = str(filter_year) if filter_year is not None else current_user.year 
-    enabler_to_fetch: Optional[str] = enabler 
+    # 📌 ใช้ CENTRAL LOGIC เพื่อหาค่า Year/Enabler ที่จะใช้ในการ Query
+    doc_type_for_filter = doc_type if doc_type else EVIDENCE_DOC_TYPES 
     
-    # 📌 NEW FIX: สำหรับ Global Doc Types (document, seam, faq) ถ้ามีการระบุ doc_type และไม่ใช่ EVIDENCE
-    # ให้บังคับ year/enabler เป็น None เพื่อให้ค้นหาเจอเอกสารที่ไม่มีค่า year/enabler
-    if doc_type and doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
-         logger.warning(
-             f"FIX: Setting year/enabler to None for Global Doc Type: {doc_type} "
-             f"to match mapping DB where year/enabler are None."
-         )
-         year_to_fetch = None
-         enabler_to_fetch = None
+    year_to_fetch, enabler_to_fetch = get_normalized_metadata(
+        doc_type=doc_type_for_filter,
+        year_input=filter_year, 
+        enabler_input=enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
+    
+    tenant_to_fetch = current_user.tenant
 
     # List documents for the user's specific tenant and year
     doc_data = await run_in_threadpool(
@@ -376,28 +381,44 @@ async def get_documents(
 @upload_router.delete("/documents/{doc_id}")
 async def delete_document(
     doc_id: str,
+    # 💡 REVISED: เพิ่ม doc_type และ enabler เพื่อให้การลบถูกต้องตามบริบทของ Path
+    doc_type: Optional[str] = Query(None, description=f"Document type of the file being deleted"),
+    enabler: Optional[str] = Query(None, description="Enabler code (used for evidence)"),
     current_user: UserMe = Depends(get_current_user) # <-- User Dependency
 ):
     # --- LOGGING DEBUG INFO ---
     user_id_display = getattr(current_user, 'id', 'N/A')
     logger.info(
-        f"USER CONTEXT (Delete Doc): ID={user_id_display}, DocID={doc_id}, Tenant={current_user.tenant}, Year={current_user.year}"
+        f"USER CONTEXT (Delete Doc): ID={user_id_display}, DocID={doc_id}, Tenant={current_user.tenant}, Year={current_user.year}, DocType={doc_type}, Enabler={enabler}"
     )
     # --------------------------
     
-    # NOTE: เพื่อให้ปลอดภัย ต้องแน่ใจว่า Doc ID เป็นของ User นี้เท่านั้น
+    # 1. 💡 REVISED: ใช้ get_normalized_metadata เพื่อหาบริบทปีและ enabler ที่ใช้ในการค้นหา Mapping
+    doc_type_for_lookup = doc_type if doc_type else EVIDENCE_DOC_TYPES # หากไม่ระบุ ให้เดาว่าเป็น Evidence
+
+    normalized_year, normalized_enabler = get_normalized_metadata(
+        doc_type=doc_type_for_lookup,
+        year_input=current_user.year,
+        enabler_input=enabler,
+        default_enabler=DEFAULT_ENABLER
+    )
+
     success = await run_in_threadpool(
         lambda: delete_document_by_uuid(
             doc_id, 
             tenant=current_user.tenant,
-            year=str(current_user.year)
+            # 📌 ส่งค่า Normalized ไปให้ delete_document_by_uuid
+            year=normalized_year, 
+            enabler=normalized_enabler
         )
     )
     if not success:
-        # ถ้าไม่พบไฟล์ อาจเป็นเพราะ Doc ID ผิด หรือ User ไม่มีสิทธิ์เข้าถึง
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, 
-            detail=f"Document {doc_id} not found or access denied (Tenant: {current_user.tenant}, Year: {current_user.year})."
+            detail=(
+                f"Document {doc_id} not found or access denied. "
+                f"(Tenant: {current_user.tenant}, Context: {normalized_year}/{normalized_enabler})"
+            )
         )
     return {"status": "success", "message": f"Document {doc_id} deleted successfully."}
 
@@ -417,15 +438,13 @@ async def download_upload(
     )
     # --------------------------
 
-    # 1. ดึงเอกสารเฉพาะของ Tenant/Year นี้เท่านั้น และตรวจสอบ Doc ID
-    year_to_fetch = str(current_user.year)
-    enabler_to_fetch = None
-    
-    # ถ้าเป็น Global Doc Type (document, seam, faq) ให้ year_to_fetch เป็น None
-    if doc_type.lower() != EVIDENCE_DOC_TYPES.lower():
-         year_to_fetch = None
-         enabler_to_fetch = None
-    # ถ้าเป็น Evidence ต้องให้ list_documents หา enabler จาก mapping เอง
+    # 📌 ใช้ CENTRAL LOGIC เพื่อหาค่า Year/Enabler ในการ Query
+    year_to_fetch, enabler_to_fetch = get_normalized_metadata(
+        doc_type=doc_type,
+        year_input=current_user.year,
+        enabler_input=None, # ไม่มีการกรอง enabler จาก Query
+        default_enabler=DEFAULT_ENABLER
+    )
 
     doc_data = await run_in_threadpool(
         lambda: list_documents(
@@ -436,7 +455,6 @@ async def download_upload(
         )
     )
     
-    # NOTE: list_documents returns a dict of dicts, where key is doc_id
     doc_map = doc_data 
 
     target = doc_map.get(file_id)

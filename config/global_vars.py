@@ -3,17 +3,21 @@ import os
 from typing import Final, List
 
 
-# -------------------- Tenant / Context Configuration (NEW) --------------------
+# -------------------- Tenant / Context Configuration --------------------
 DEFAULT_TENANT: Final[str] = "pea" 
 DEFAULT_YEAR: Final[int] = 2568    
 
-# ==================== Project Paths (CORRECTED for Clean Multi-Tenant) ====================
+# ==================== Project Paths (Tenant-Centric Structure) ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
+# 💡 NEW ROOT: ทุกอย่างที่เกี่ยวกับ Tenant Data จะเริ่มต้นที่นี่
+# โครงสร้างใหม่: DATA_STORE_ROOT / tenant / {data, vectorstore, mapping}
+DATA_STORE_ROOT: Final[str] = os.path.join(PROJECT_ROOT, "data_store")
 
-MAPPING_BASE_DIR = os.path.join(PROJECT_ROOT, "config", "mapping") 
+# ❌ Path เดิมที่ถูกแทนที่โดย DATA_STORE_ROOT (ไม่ควรใช้แล้ว)
+# DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+# VECTORSTORE_DIR = os.path.join(PROJECT_ROOT, "vectorstore")
+# MAPPING_BASE_DIR = os.path.join(PROJECT_ROOT, "config", "mapping") 
 
 # RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
 RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
@@ -98,8 +102,8 @@ PRIORITY_CHUNK_LIMIT: Final[int] = 30
 
 # 💡 Rubric / Export Paths
 RUBRIC_FILENAME_PATTERN: Final[str] = "{tenant}_{enabler}_rubric.json"
-# RUBRIC_CONFIG_DIR: Final[str] = "config"
-RUBRIC_CONFIG_DIR: Final[str] = MAPPING_BASE_DIR
+# 📌 FIX: กำหนด Path สำหรับ Rubric Config ที่ไม่ได้อยู่ใน DATA_STORE_ROOT
+RUBRIC_CONFIG_DIR: Final[str] = os.path.join(PROJECT_ROOT, "config", "mapping") 
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 # KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
 DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"

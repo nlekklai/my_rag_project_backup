@@ -23,8 +23,7 @@ try:
 
     # ต้องมั่นใจว่าไฟล์ config.global_vars มีการกำหนดค่าเหล่านี้
     from config.global_vars import (
-        DATA_DIR,
-        VECTORSTORE_DIR,
+        DATA_STORE_ROOT,
         SUPPORTED_DOC_TYPES,
         SUPPORTED_ENABLERS,
         EVIDENCE_DOC_TYPES,
@@ -44,7 +43,8 @@ try:
     from utils.path_utils import (
         get_doc_type_collection_key,
         load_doc_id_mapping,
-        save_doc_id_mapping
+        save_doc_id_mapping,
+        get_mapping_file_path # ✅ เพิ่ม get_mapping_file_path เพื่อใช้ในการ cleanup
     )
 
 
@@ -100,7 +100,7 @@ ingest_parser.add_argument(
     help="Only scan and log, do not perform ingestion."
 )
 ingest_parser.add_argument(
-    "--log_every", type=int, default=100,
+    "--log_every", type=int, default=100, # NOTE: Argument นี้ถูกลบออกจากการเรียกใช้ ingest_all_files แล้ว
     help="Log progress every N files."
 )
 ingest_parser.add_argument(
@@ -246,7 +246,7 @@ elif args.command == "delete":
         doc_type=doc_type_input,
         enabler=final_enabler,
         stable_doc_uuid=args.doc_uuid,
-        base_path=VECTORSTORE_DIR
+        base_path=DATA_STORE_ROOT
     )
     sys.exit(0)
 
@@ -288,48 +288,55 @@ elif args.command == "wipe":
         enabler=args.enabler, 
         tenant=args.tenant, 
         year=year_to_use, # ส่ง year_to_use ที่เป็น None หรือ int
-        base_path=VECTORSTORE_DIR,
+        base_path=DATA_STORE_ROOT,
     )
     logger.info("✅ Wipe completed.")
     
-    # 🎯 FIX: ปรับ Logic Cleanup สำหรับ wipe all ให้ลบเฉพาะ doc_id_mapping.json และ Vectorstore
+    # 🎯 FIX: ปรับ Logic Cleanup สำหรับ wipe all
     if doc_type_input == 'all':
         try:
-            # 1. ลบโฟลเดอร์ Vector Store ของ Tenant/Year Context ทั้งหมด
-            if year_to_use is None:
-                # Target: VECTORSTORE_DIR/pea (สำหรับ Global)
-                target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean)
-            else:
-                # Target: VECTORSTORE_DIR/pea/2568
-                target_cleanup_dir = os.path.join(VECTORSTORE_DIR, tenant_clean, str(year_to_use))
-                
-            shutil.rmtree(target_cleanup_dir, ignore_errors=True)
-            logger.info(f"🗑️ Cleaned up Vector Store directory: {target_cleanup_dir}")
+            # 1. ลบโฟลเดอร์ Physical Data/Vector Store ของ Tenant/Year Context ทั้งหมด
+            if year_to_use:
+                # Target: DATA_STORE_ROOT/pea/2568
+                target_cleanup_dir = os.path.join(DATA_STORE_ROOT, tenant_clean, str(year_to_use))
+                shutil.rmtree(target_cleanup_dir, ignore_errors=True)
+                logger.info(f"🗑️ Cleaned up physical data directory: {target_cleanup_dir}")
             
-            # 2. ลบเฉพาะไฟล์ Doc ID Mapping ทั่วไป (Global)
-            # เราลบเฉพาะ doc_id_mapping.json และคงไฟล์ config อื่นๆ (rubric, rules) ไว้
-            if year_to_use is None:
-                mapping_dir = os.path.abspath(os.path.join(project_root, 'config', 'mapping', tenant_clean))
-                # 📌 FIX: ระบุชื่อไฟล์ mapping ที่ต้องการลบให้ชัดเจน
-                global_doc_id_mapping_file = os.path.join(mapping_dir, f"{tenant_clean}_doc_id_mapping.json")
-                
-                if os.path.exists(global_doc_id_mapping_file):
-                    os.remove(global_doc_id_mapping_file)
-                    logger.info(f"🗑️ Removed shared Global Doc ID Mapping file: {os.path.basename(global_doc_id_mapping_file)}")
-                
+            # 2. ลบไฟล์ Doc ID Mapping ที่เกี่ยวข้อง
+            
+            # 📌 ลบ Mapping สำหรับ Evidence Doc Types (ถ้ามี Enabler และ Year)
+            if args.enabler and year_to_use:
+                mapping_file_path = get_mapping_file_path(
+                    tenant=args.tenant, year=year_to_use, enabler=args.enabler
+                )
+                if os.path.exists(mapping_file_path):
+                    os.remove(mapping_file_path)
+                    logger.info(f"🗑️ Removed Evidence Mapping file: {os.path.basename(mapping_file_path)}")
+            
+            # 📌 ลบ Mapping สำหรับ Doc Types ทั่วไป/Global (ถ้า year_to_use เป็น None)
+            elif year_to_use is None:
+                # ลองดึง Mapping Path สำหรับ Global Doc ID (ไม่มี Enabler, ไม่มี Year)
+                mapping_file_path = get_mapping_file_path(
+                    tenant=args.tenant, year=None, enabler=None 
+                )
+                if os.path.exists(mapping_file_path):
+                    os.remove(mapping_file_path)
+                    logger.info(f"🗑️ Removed Global Doc ID Mapping file: {os.path.basename(mapping_file_path)}")
+                    
+            
         except Exception as e:
             logger.error(f"Error during post-wipe all cleanup: {e}")
             pass 
     else:
         # ข้อความเตือนสำหรับ doc_type อื่นๆ ที่ไฟล์ Mapping ร่วมยังคงอยู่
-        logger.info(f"ℹ️ Mapping file '{tenant_clean}_doc_id_mapping.json' remains. It is used for other Global Doc Types. Run 'wipe --doc_type all' to delete it.")
+        logger.info(f"ℹ️ Mapping file remains. It is used for other Global Doc Types. Run 'wipe --doc_type all' to clean up all physical files/mappings for the specified tenant/year.")
 
     sys.exit(0)
 
 # -------------------- COMMAND: ingest --------------------
 elif args.command == "ingest":
     
-    if args.doc_type.lower() != EVIDENCE_DOC_TYPES.lower() and args.year and args.year != DEFAULT_YEAR:
+    if args.doc_type.lower() != EVIDENCE_DOC_TYPES.lower() and args.year and args.year != str(DEFAULT_YEAR):
         logger.warning(f"⚠️ Warning: Year '{args.year}' provided for doc_type='{doc_type_input}'. Year is usually ignored for non-evidence types.")
 
     logger.info(f"Starting ingestion → tenant: {args.tenant}, year: {args.year}, type: {doc_type_input}, enabler: {args.enabler or 'ALL'}, subject: {args.subject or 'None'}") 
@@ -342,16 +349,20 @@ elif args.command == "ingest":
     if doc_type_input != EVIDENCE_DOC_TYPES.lower():
          year_to_ingest = None
 
+    # 🎯 FIX 1: สร้าง List ของ Document Types ที่จะ Ingest
+    # ใช้ SUPPORTED_DOC_TYPES ถ้า doc_type เป็น "all" ไม่เช่นนั้นให้ใช้ doc_type ที่ระบุเป็น List
+    doc_types_to_ingest = SUPPORTED_DOC_TYPES if doc_type_input == "all" else [doc_type_input]
+
     # ลบ Argument ที่เกินมา 3 ตัว (data_dir, base_path, debug)
     results: List[Dict[str, Any]] = ingest_all_files( 
+        doc_types=doc_types_to_ingest, # 🟢 FIX: ใช้ doc_types แทน doc_type
         tenant=args.tenant,
         year=year_to_ingest, 
-        doc_type=None if doc_type_input == "all" else doc_type_input,
         enabler=args.enabler,
         subject=args.subject, 
         skip_ext=args.skip_ext,
         sequential=args.sequential,
-        log_every=args.log_every,
+        # 🔴 ลบ log_every=args.log_every ออกไป
         dry_run=args.dry_run,
     )
 
@@ -360,16 +371,19 @@ elif args.command == "ingest":
     failed = 0
     
     if isinstance(results, list):
-        success = sum(1 for status_dict in results if status_dict.get('status') == 'chunked')
+        # NOTE: การนับผลลัพธ์ควรปรับตามโครงสร้างผลลัพธ์จริงของ ingest_all_files
+        success = sum(1 for status_dict in results if 'chunks' in status_dict and status_dict.get('chunks', 0) > 0)
+        # เนื่องจากโค้ดของคุณไม่ได้มี 'status' == 'chunked' ผมจะใช้ 'chunks' > 0
         failed = total - success
     else:
         logger.error(f"❌ Cannot calculate summary: 'results' expected list, got {type(results)}. Assuming 0 successes.")
+        # total ในที่นี้อาจเป็นจำนวนไฟล์ที่ถูกสแกนทั้งหมด
         failed = total 
         
     logger.info("-" * 50)
     logger.info(f"🔥 INGESTION SUMMARY: {doc_type_input.upper()} ({args.enabler or 'ALL'})")
     logger.info(f"Tenant/Year: {args.tenant.upper()}/{args.year or 'N/A'}")
-    logger.info(f"Total files scanned: {total}")
+    logger.info(f"Total files scanned: {total}") # NOTE: ต้องมั่นใจว่า results มีจำนวนเท่ากับ files_to_ingest
     logger.info(f"✅ Successfully chunked: {success}")
     logger.info(f"❌ Failed or skipped chunking: {failed}")
     logger.info("-" * 50)

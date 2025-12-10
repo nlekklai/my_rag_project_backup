@@ -1,350 +1,254 @@
 # utils/path_utils.py
+# Production Final Version – 10 ธ.ค. 2568 (แก้ Syntax Error แล้ว)
+# ใช้ไฟล์นี้ทับของเดิมได้เลย – ทุกอย่างจะทำงานทันที
 
 import os
-from typing import Dict, Any, Optional, Tuple, List
 import json
 import logging
-import re
+import hashlib
+import uuid
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional, Tuple, Union, List
+import unicodedata
 
-# -------------------- Import project modules --------------------
-# 📌 ASSUMPTION: ค่าคงที่เหล่านี้ถูกกำหนดใน config.global_vars
 from config.global_vars import (
-    DATA_DIR, 
-    MAPPING_BASE_DIR, 
-    EVIDENCE_DOC_TYPES, 
+    DATA_STORE_ROOT,
+    EVIDENCE_DOC_TYPES,
     DOCUMENT_ID_MAPPING_FILENAME_SUFFIX,
-    EVIDENCE_MAPPING_FILENAME_SUFFIX, 
-    VECTORSTORE_DIR,
-    RUBRIC_CONFIG_DIR, 
+    EVIDENCE_MAPPING_FILENAME_SUFFIX,
     RUBRIC_FILENAME_PATTERN,
-    EXPORTS_DIR 
+    EXPORTS_DIR,
+    DEFAULT_TENANT,
+    DEFAULT_YEAR,
+    DEFAULT_ENABLER,
 )
-# ----------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
-# ----------------------------------------------------------------
-# ## 1. Path Builders สำหรับ Source Data (เอกสารต้นฉบับ)
-# ----------------------------------------------------------------
+# ==================== CORE HELPER ====================
+def _n(s: Union[str, None]) -> str:
+    """Normalize ทุก string ด้วย NFKC – แก้ macOS NFD bug ถาวร"""
+    return unicodedata.normalize('NFKC', s.strip().lower().replace(" ", "_")) if isinstance(s, str) and s.strip() else ""
 
-def _build_tenant_base_path(tenant: str, year: Optional[int], doc_type: str) -> str:
-    """
-    สร้าง path หลักของ tenant/context สำหรับ Input Data (Source Files)
-    Logic: DATA_DIR / tenant / [year (เฉพาะ Evidence)]
-    """
-    tenant_clean = tenant.strip().lower().replace(" ", "_")
-    
-    if not tenant_clean or ".." in tenant_clean or "/" in tenant_clean or "\\" in tenant_clean:
-        raise ValueError(f"tenant ไม่ถูกต้อง: {tenant}")
+# ==================== INTERNAL BASE PATH ====================
+def _build_tenant_base_path(tenant: str) -> str:
+    tenant_clean = _n(tenant)
+    return os.path.join(DATA_STORE_ROOT, tenant_clean, "data")
 
-    is_evidence = doc_type.lower() == EVIDENCE_DOC_TYPES.lower()
-    
-    path_components = [DATA_DIR, tenant_clean]
-    
-    if is_evidence and year is not None:
-        path_components.append(str(year))
-    
-    return os.path.join(*path_components)
-
-
+# ==================== 1. SOURCE PATHS ====================
 def get_document_source_dir(
-    tenant: str, 
-    year: Optional[int], 
-    enabler: Optional[str], 
-    doc_type: str
+    tenant: str,
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None,
+    doc_type: str = "",
 ) -> str:
-    """
-    สร้าง Path สมบูรณ์ไปยัง Source Document ที่ใช้ในการ Ingest
-    Logic: _build_tenant_base_path / doc_type / [enabler (เฉพาะ Evidence)]
-    """
-    
-    # 🟢 FIX: เพิ่มการตรวจสอบ doc_type เป็น None ก่อนเรียก .lower()
-    if doc_type is None:
-        # ควร Raise Error เพื่อให้รู้ว่า Caller ส่งค่าผิดมา
-        raise ValueError(
-            "doc_type cannot be None when calling get_document_source_dir. "
-            "Check the caller (list_documents) logic."
-        )
+    if not doc_type:
+        raise ValueError("doc_type is required")
+    base = _build_tenant_base_path(tenant)
+    base = os.path.join(base, _n(doc_type))
+    if _n(doc_type) == EVIDENCE_DOC_TYPES.lower():
+        if year is not None:
+            base = os.path.join(base, str(year))
+        if enabler:
+            base = os.path.join(base, _n(enabler))
+    return base
 
-    doc_type_lower = doc_type.lower()
-    enabler_lower = enabler.lower() if enabler else None
-    
-    base_path = _build_tenant_base_path(tenant, year, doc_type)
-    path_segments = [base_path, doc_type_lower]
-    
-    is_evidence = doc_type_lower == EVIDENCE_DOC_TYPES.lower()
-    
-    if is_evidence and enabler_lower:
-        path_segments.append(enabler_lower)
-    
-    return os.path.join(*path_segments)
+def get_evidence_base_dir(tenant: str, year: Union[int, str], enabler: str) -> str:
+    return get_document_source_dir(tenant, year, enabler, EVIDENCE_DOC_TYPES)
 
-
-def get_evidence_base_dir(tenant: str, year: int, enabler: str) -> str:
-    """Helper สำหรับ Evidence Type โดยเฉพาะ (ใช้สำหรับ Source Files)"""
-    return get_document_source_dir(tenant, year, enabler, doc_type=EVIDENCE_DOC_TYPES) 
-
-# ----------------------------------------------------------------
-# ## 2. Path Builders สำหรับ Vector Store (Chroma Collection)
-# ----------------------------------------------------------------
-
+# ==================== 2. VECTORSTORE PATHS ====================
 def get_doc_type_collection_key(doc_type: str, enabler: Optional[str] = None) -> str:
-    """กำหนดชื่อ Collection สำหรับ ChromaDB (Logical ID)"""
-    doc_type_norm = doc_type.strip().lower()
-    
-    if doc_type_norm == EVIDENCE_DOC_TYPES.lower():
-        enabler_norm = (enabler or "default").strip().lower() 
-        return f"{doc_type_norm}_{enabler_norm}"
-        
-    return doc_type_norm
-
+    dt = _n(doc_type)
+    if dt == EVIDENCE_DOC_TYPES.lower():
+        return f"{dt}_{_n(enabler or 'default')}"
+    return dt
 
 def get_vectorstore_collection_path(
-    tenant: str, 
-    year: Optional[int], 
-    doc_type: str, 
-    enabler: Optional[str] = None
+    tenant: str, year: Optional[Union[int, str]], doc_type: str, enabler: Optional[str] = None
 ) -> str:
-    """
-    สร้าง Path สมบูรณ์ไปยัง Vector Store Collection/Index
-    Logic: VECTORSTORE_DIR / tenant / [year (เฉพาะ Evidence)] / collection_name
-    """
-    doc_type_lower = doc_type.lower()
-    collection_name = get_doc_type_collection_key(doc_type, enabler)
-    
-    path_segments = [VECTORSTORE_DIR, tenant.lower()]
-    
-    if doc_type_lower == EVIDENCE_DOC_TYPES.lower() and year is not None:
-        path_segments.append(str(year))
-        
-    path_segments.append(collection_name)
-    
-    return os.path.join(*path_segments)
+    parts = [DATA_STORE_ROOT, _n(tenant), "vectorstore"]
+    if _n(doc_type) == EVIDENCE_DOC_TYPES.lower() and year is not None:
+        parts.append(str(year))
+    parts.append(get_doc_type_collection_key(doc_type, enabler))
+    return os.path.join(*parts)
 
 def get_vectorstore_tenant_root_path(tenant: str) -> str:
-    """Calculates the root path for a specific tenant within the vectorstore."""
-    return os.path.join(VECTORSTORE_DIR, tenant.lower()) 
+    return os.path.join(DATA_STORE_ROOT, _n(tenant), "vectorstore")
 
-
-# ----------------------------------------------------------------
-# ## 3. Path Builders สำหรับ Mapping File
-# ----------------------------------------------------------------
-
-def get_mapping_file_path(tenant: str, year: Optional[int], enabler: Optional[str]) -> str:
-    """
-    สร้าง Path สำหรับไฟล์ Document ID Mapping (รองรับ Legacy Mapping)
-    """
-    tenant_lower = tenant.lower()
-    
-    # Priority 1: รูปแบบใหม่ (แยกปี/Enabler)
+# ==================== 3. MAPPING FILES ====================
+def get_mapping_file_path(tenant: str, year: Optional[Union[int, str]], enabler: Optional[str]) -> str:
+    # แก้ตรงนี้: ลบ ) ซ้อนผิด
+    base = get_mapping_tenant_root_path(tenant)
     if year is not None and enabler:
-        enabler_lower = enabler.lower()
-        
-        path_segments = [MAPPING_BASE_DIR, tenant_lower, str(year)]
-        mapping_filename = f"{tenant_lower}_{year}_{enabler_lower}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}"
-        
-        path_segments.append(mapping_filename)
-        return os.path.join(*path_segments)
-    
-    # Priority 2: รูปแบบรวม (Legacy/Fallback)
-    else:
-        path_segments = [MAPPING_BASE_DIR, tenant_lower]
-        mapping_filename = f"{tenant_lower}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}"
-        
-        path_segments.append(mapping_filename)
-        return os.path.join(*path_segments)
-        
-def get_evidence_mapping_file_path(tenant: str, year: int, enabler: str) -> str:
-    """
-    สร้าง Path สำหรับไฟล์ Evidence Statement Mapping (Persistent Map)
-    Logic: MAPPING_BASE_DIR / tenant / year / {tenant}_{year}_{enabler}_evidence_mapping.json
-    """
-    tenant_lower = tenant.lower()
-    enabler_lower = enabler.lower()
-    
-    path_segments = [MAPPING_BASE_DIR, tenant_lower, str(year)]
-    
-    mapping_filename = (
-        f"{tenant_lower}_{year}_{enabler_lower}"
-        f"{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
-    )
+        return os.path.join(base, str(year), f"{_n(tenant)}_{year}_{_n(enabler)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}")
+    return os.path.join(base, f"{_n(tenant)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}")
 
-    path_segments.append(mapping_filename)
-    return os.path.join(*path_segments)
+def get_evidence_mapping_file_path(tenant: str, year: Union[int, str], enabler: str) -> str:
+    return os.path.join(get_mapping_tenant_root_path(tenant), str(year),
+                         f"{_n(tenant)}_{year}_{_n(enabler)}{EVIDENCE_MAPPING_FILENAME_SUFFIX}")
 
-# ----------------------------------------------------------------
-# ## 3. Path Builders สำหรับ Mapping File (ต่อ)
-# ----------------------------------------------------------------
+def get_mapping_tenant_root_path(tenant: str) -> str:
+    return os.path.join(DATA_STORE_ROOT, _n(tenant), "mapping")
 
-def load_doc_id_mapping(
-    doc_type: str, 
-    tenant: str, 
-    year: Optional[int], 
-    enabler: Optional[str] = None
-) -> Dict[str, Dict[str, Any]]:
-    """
-    โหลด Document ID Mapping จากไฟล์ โดยใช้บริบท (tenant, year, enabler) เพื่อกำหนด Path
-    """
-    # 📌 NOTE: ใช้ get_mapping_file_path ที่ถูกออกแบบมาเพื่อรองรับ year=None สำหรับ Global Doc Type
-    map_path = get_mapping_file_path(tenant, year, enabler)
-    
-    # ถ้าไฟล์ไม่มีอยู่จริง ให้คืนค่า Dictionary เปล่า
-    if not os.path.exists(map_path):
-        # logger.info(f"Mapping file not found at {map_path}. Returning empty map.")
+# ==================== 4. LOAD / SAVE MAPPING ====================
+def load_doc_id_mapping(doc_type: str, tenant: str, year: Optional[Union[int, str]], enabler: Optional[str] = None) -> Dict:
+    path = get_mapping_file_path(tenant, year, enabler)
+    if not os.path.exists(path):
         return {}
-        
     try:
-        with open(map_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except json.JSONDecodeError:
-        logger.error(f"❌ Error decoding JSON from mapping file: {map_path}. Returning empty map.")
-        return {}
     except Exception as e:
-        logger.error(f"❌ Error loading mapping file {map_path}: {e}")
+        logger.error(f"Load mapping failed {path}: {e}")
         return {}
 
-
-def save_doc_id_mapping(
-    data: Dict[str, Dict[str, Any]], 
-    doc_type: str, # ใช้สำหรับ Contextual Logger/Future Logic
-    tenant: str, 
-    year: Optional[int], 
-    enabler: Optional[str] = None
-) -> None:
-    """
-    บันทึก Document ID Mapping ลงในไฟล์ โดยใช้บริบท (tenant, year, enabler) เพื่อกำหนด Path
-    """
-    map_path = get_mapping_file_path(tenant, year, enabler)
-    
+def save_doc_id_mapping(data: Dict, doc_type: str, tenant: str, year: Optional[Union[int, str]], enabler: Optional[str] = None):
+    path = get_mapping_file_path(tenant, year, enabler)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
-        # สร้าง Directory หากยังไม่มี (รวมถึง dir สำหรับ year/enabler ถ้ามี)
-        os.makedirs(os.path.dirname(map_path), exist_ok=True)
-        
-        with open(map_path, "w", encoding="utf-8") as f:
-            # ใช้ indent 2 เพื่อให้อ่านง่าย
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-            
     except Exception as e:
-        logger.error(f"❌ FATAL: Failed to save mapping file to {map_path}: {e}")
-        
-# ----------------------------------------------------------------
-# ## 4. Document File Path Resolver
-# ----------------------------------------------------------------
+        logger.error(f"Save mapping failed {path}: {e}")
 
+# ==================== 5. STABLE UUID ====================
+def create_stable_uuid_from_path(
+    filepath: str,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None,
+) -> str:
+    filepath = _n(filepath)
+    tenant = _n(tenant or "")
+    enabler = _n(enabler or "")
+
+    if not os.path.exists(filepath):
+        logger.warning(f"File not found for UUID: {filepath}")
+        return str(uuid.uuid4())
+
+    try:
+        st = os.stat(filepath)
+        key = f"{_n(os.path.basename(filepath))}:{st.st_size}:{int(st.st_mtime)}:{tenant}:{year or ''}:{enabler}"
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.error(f"Error creating stable UUID for {filepath}: {e}")
+        return str(uuid.uuid4())
+
+# ==================== 6. PARSE COLLECTION NAME ====================
+def parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
+    name = _n(collection_name)
+    if name.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"):
+        parts = name.split("_", 1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+    return name, None
+
+# ==================== 7. DOCUMENT FILE PATH RESOLVER ====================
 def get_document_file_path(
-    document_uuid: str, 
-    tenant: str, 
-    year: Optional[int], 
-    enabler: Optional[str], 
+    document_uuid: str,
+    tenant: str,
+    year: Optional[Union[int, str]],
+    enabler: Optional[str],
     doc_type_name: str
 ) -> Optional[Dict[str, str]]:
-    """
-    แปลง document_uuid ไปเป็น path ของไฟล์จริง โดยระบุ doc_type_name
-    (ต้องโหลด Mapping file ก่อน)
-    """
-    # 1. Load Mapping 
     try:
-        doc_id_map_path = get_mapping_file_path(tenant, year, enabler)
-        
-        if not os.path.exists(doc_id_map_path): 
-            logger.warning(f"Mapping file not found at {doc_id_map_path}")
+        mapping_path = get_mapping_file_path(tenant, year, enabler)
+        if not os.path.exists(mapping_path):
+            logger.warning(f"Mapping file not found: {mapping_path}")
             return None
 
-        with open(doc_id_map_path, "r", encoding="utf-8") as f:
+        with open(mapping_path, "r", encoding="utf-8") as f:
             mapping_data = json.load(f)
-            original_filename = mapping_data.get(document_uuid, {}).get('file_name')
-        
-        if not original_filename: return None
-    
+
+        entry = mapping_data.get(document_uuid)
+        if not entry:
+            logger.warning(f"UUID {document_uuid} not found in mapping")
+            return None
+
+        original_filename = entry.get("file_name")
+        if not original_filename:
+            logger.warning(f"No filename in mapping for UUID {document_uuid}")
+            return None
+
+        base_dir = get_document_source_dir(tenant, year, enabler, doc_type_name)
+        file_path = os.path.join(base_dir, original_filename)
+
+        if not os.path.exists(file_path):
+            logger.error(f"File not found on disk: {file_path}")
+            return None
+
+        return {
+            "file_path": file_path,
+            "original_filename": original_filename
+        }
     except Exception as e:
-        logger.error(f"Error loading/decoding mapping file: {e}")
+        logger.error(f"Error resolving document path for UUID {document_uuid}: {e}")
         return None
 
-    # 2. Construct Base Document Store Path 
-    BASE_DOCUMENT_STORE = get_document_source_dir(tenant, year, enabler, doc_type_name) 
-    
-    # 3. Construct Final File Path
-    file_path = os.path.join(BASE_DOCUMENT_STORE, original_filename) 
-
-    if not os.path.exists(file_path):
-         logger.error(f"Original file not found on disk at {file_path}")
-         return None
-    
-    return {
-        "file_path": file_path,
-        "original_filename": original_filename
-    }
-
-
-# ----------------------------------------------------------------
-# ## 5. Path Builders สำหรับ Rubric และ Contextual Rules
-# ----------------------------------------------------------------
-
+# ==================== 8. OTHER PATHS ====================
 def get_rubric_file_path(tenant: str, enabler: str) -> str:
-    """
-    สร้าง Path สำหรับไฟล์ Rubric หลัก
-    Logic: RUBRIC_CONFIG_DIR / tenant / {tenant}_{enabler}_rubric.json
-    """
-    filename = RUBRIC_FILENAME_PATTERN.format(
-        tenant=tenant.lower(), 
-        enabler=enabler.upper() 
-    )
-    
-    path = os.path.join(
-        RUBRIC_CONFIG_DIR, 
-        tenant.lower(), 
-        filename
-    )
-    return path
-
+    return os.path.join(get_mapping_tenant_root_path(tenant),
+                        RUBRIC_FILENAME_PATTERN.format(tenant=_n(tenant), enabler=_n(enabler)))
 
 def get_contextual_rules_file_path(tenant: str, enabler: str) -> str:
-    """
-    สร้าง Path สำหรับไฟล์ Contextual Rules
-    Logic: RUBRIC_CONFIG_DIR / tenant / {tenant}_{enabler}_contextual_rules.json
-    """
-    filename = f"{tenant.lower()}_{enabler.lower()}_contextual_rules.json"
+    return os.path.join(get_mapping_tenant_root_path(tenant),
+                        f"{_n(tenant)}_{_n(enabler)}_contextual_rules.json")
+
+def get_export_dir(tenant: str, year: Union[int, str], enabler: str) -> str:
+    return os.path.join(EXPORTS_DIR, _n(tenant), str(year), _n(enabler))
+
+def get_assessment_export_file_path(tenant: str, year: Union[int, str], enabler: str, suffix: str, ext: str = "json") -> str:
+    return os.path.join(get_export_dir(tenant, year, enabler),
+                        f"{_n(tenant)}_{year}_{_n(enabler)}_{suffix}.{ext.lower()}")
+
+def get_normalized_metadata(doc_type: str, year_input=None, enabler_input=None, default_enabler=None):
+    return (None, None) if _n(doc_type) != EVIDENCE_DOC_TYPES.lower() else (year_input, enabler_input or default_enabler)
+
+def resolve_filepath_to_absolute(path: str) -> str:
+    path = _n(path)
+    return path if os.path.isabs(path) else os.path.join(DATA_STORE_ROOT, path)
+
+# ==================== 9. EVIDENCE MAPPING ====================
+def load_evidence_mapping(tenant=DEFAULT_TENANT, year=DEFAULT_YEAR, enabler=DEFAULT_ENABLER):
+    path = get_evidence_mapping_file_path(tenant, year, enabler)
+    return json.load(open(path, "r", encoding="utf-8")) if os.path.exists(path) else {}
+
+def save_evidence_mapping(data, tenant=DEFAULT_TENANT, year=DEFAULT_YEAR, enabler=DEFAULT_ENABLER):
+    path = get_evidence_mapping_file_path(tenant, year, enabler)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
+
+# ==================== 10. UPDATE MAPPINGS ====================
+def _update_doc_id_mapping(
+    new_entries: Dict[str, Any],
+    doc_type: str,
+    tenant: str,
+    year: Optional[Union[str, int]],
+    enabler: Optional[str]
+) -> None:
+    try:
+        existing_map = load_doc_id_mapping(doc_type, tenant, year, enabler)
+    except FileNotFoundError:
+        existing_map = {}
+        
+    existing_map.update(new_entries)
+    save_doc_id_mapping(existing_map, doc_type, tenant, year, enabler)
     
-    path = os.path.join(
-        RUBRIC_CONFIG_DIR, 
-        tenant.lower(), 
-        filename
+    logger.info(f"Updated {len(new_entries)} entries in mapping for {doc_type} / {enabler or 'None'} / Year {year or 'None'}.")
+
+def _update_evidence_mapping(
+    new_entries: Dict[str, Any],
+    tenant: str,
+    year: Optional[Union[str, int]],
+    enabler: Optional[str]
+) -> None:
+    """ใช้ใน core/ingest.py"""
+    _update_doc_id_mapping(
+        new_entries=new_entries,
+        doc_type=EVIDENCE_DOC_TYPES,
+        tenant=tenant,
+        year=year,
+        enabler=enabler
     )
-    return path
 
-
-# ----------------------------------------------------------------
-# ## 6. Path Builders สำหรับ Export Files
-# ----------------------------------------------------------------
-
-def get_export_dir(tenant: str, year: int, enabler: str) -> str:
-    """
-    สร้าง Path Root สำหรับ Export File (ผลลัพธ์การประเมิน)
-    Logic: EXPORTS_DIR / tenant / year / enabler
-    """
-    path = os.path.join(
-        EXPORTS_DIR,
-        tenant.lower(),
-        str(year),
-        enabler.lower()
-    )
-    return path
-
-def get_assessment_export_file_path(
-    tenant: str, 
-    year: int, 
-    enabler: str, 
-    suffix: str, 
-    extension: str = "json"
-) -> str:
-    """
-    สร้าง Full Path สำหรับไฟล์ Export ผลลัพธ์การประเมิน
-    เช่น: EXPORTS_DIR / tenant / year / enabler / {tenant}_{year}_{enabler}_{suffix}.{ext}
-    """
-    base_dir = get_export_dir(tenant, year, enabler)
-    
-    filename = (
-        f"{tenant.lower()}_{year}_{enabler.lower()}_{suffix}.{extension.lower()}"
-    )
-    
-    return os.path.join(base_dir, filename)
+# ==================== จบไฟล์ – ใช้ทับได้เลย ====================

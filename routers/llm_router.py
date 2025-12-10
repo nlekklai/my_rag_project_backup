@@ -4,7 +4,7 @@ import uuid
 import asyncio
 from typing import List, Optional
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Request, Depends
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,8 @@ from core.rag_prompts import (
 )
 from core.llm_guardrails import detect_intent, build_prompt
 from models.llm import create_llm_instance
+# 🟢 FIX: ต้อง Import UserMe และ get_current_user มาใช้ในการ Dependency Injection
+from routers.auth_router import UserMe, get_current_user 
 
 from config.global_vars import (
     DEFAULT_ENABLER,
@@ -86,16 +88,28 @@ async def query_llm(
     enabler: Optional[str] = Form(None),
     subject: Optional[str] = Form(None), # 🟢 เพิ่ม subject argument
     conversation_id: Optional[str] = Form(None),
+    current_user: UserMe = Depends(get_current_user), # <--- 🟢 FIX: เพิ่ม User Dependency
 ):
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
     if not llm:
         raise HTTPException(status_code=503, detail="LLM service unavailable")
 
+    # 📌 ดึงบริบท Tenant และ Year ของผู้ใช้งาน
+    tenant_context = current_user.tenant
+    year_context = current_user.year
+    
     conversation_id = conversation_id or str(uuid.uuid4())
     # ใช้ enabler ที่ส่งมา หรือใช้ DEFAULT_ENABLER หากไม่มีค่า (เช่น 'KM')
     enabler = enabler or DEFAULT_ENABLER 
-    doc_types = doc_types or EVIDENCE_DOC_TYPES
+    doc_types = doc_types or [EVIDENCE_DOC_TYPES] # 💡 FIX: ต้องส่งเป็น list เสมอ
     doc_ids = doc_ids or []
+    
+    # --- LOGGING DEBUG INFO ---
+    user_id_display = getattr(current_user, 'id', 'N/A')
+    logger.info(
+        f"USER CONTEXT (Query): ID={user_id_display}, Tenant={tenant_context}, Year={year_context}, DocTypes={doc_types}"
+    )
+    # --------------------------
 
     vsm = get_vectorstore_manager()
 
@@ -121,11 +135,13 @@ async def query_llm(
                 enabler=enabler,
                 subject=subject, # 🟢 ส่ง subject เข้าไปใน kwargs
                 vectorstore_manager=vsm,
-                # ✅ FIX ที่สมบูรณ์: ใช้ Keyword Argument 'stable_doc_ids' 
-                # และส่งค่าที่เป็น Set (final_doc_set)
                 stable_doc_ids=final_doc_set,
-                k_to_retrieve=QUERY_INITIAL_K, # กำหนด k จาก config
-                k_to_rerank=QUERY_FINAL_K
+                k_to_retrieve=QUERY_INITIAL_K,
+                k_to_rerank=QUERY_FINAL_K,
+                # 🟢 FIX: ส่ง Tenant และ Year เข้าไปใน Retrieval
+                tenant=tenant_context,
+                year=year_context
+                # ---------------------------------------------
             )
             for d_type in doc_types
         ]
@@ -205,7 +221,11 @@ async def query_llm(
                 doc_uuids=doc_ids,
                 doc_type=doc_types[0], # ใช้ doc_type แรกในการดึงข้อมูล
                 enabler=enabler,
-                vectorstore_manager=vsm
+                vectorstore_manager=vsm,
+                # 🟢 FIX: ส่ง Tenant และ Year เข้าไปใน Retrieval
+                tenant=tenant_context,
+                year=year_context
+                # ---------------------------------------------
             )
             
             # สกัดชื่อไฟล์ที่ไม่ซ้ำกัน
@@ -249,19 +269,28 @@ async def compare_documents(
     doc2_id: str = Form(...),
     final_query: str = Form("เปรียบเทียบเอกสารทั้งสองฉบับอย่างละเอียด"),
     doc_type: str = Form("document"),
-    enabler: str = Form("KM")
+    enabler: str = Form("KM"),
+    current_user: UserMe = Depends(get_current_user), # <--- 🟢 FIX: เพิ่ม User Dependency
 ):
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
     vsm = get_vectorstore_manager()
     if not vsm:
         raise HTTPException(503, "Vector store not available")
 
+    # 📌 ดึงบริบท Tenant และ Year ของผู้ใช้งาน
+    tenant_context = current_user.tenant
+    year_context = current_user.year
+
     docs = await run_in_threadpool(
         retrieve_context_by_doc_ids,
         doc_uuids=[doc1_id, doc2_id],
         doc_type=doc_type,
         enabler=enabler,
-        vectorstore_manager=vsm
+        vectorstore_manager=vsm,
+        # 🟢 FIX: ส่ง Tenant และ Year เข้าไปใน Retrieval
+        tenant=tenant_context,
+        year=year_context
+        # ---------------------------------------------
     )
 
     evidences = docs.get("top_evidences", [])

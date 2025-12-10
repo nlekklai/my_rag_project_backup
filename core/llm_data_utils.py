@@ -119,6 +119,8 @@ def _create_where_filter(stable_doc_ids: Optional[Set[str]] = None,
 def retrieve_context_for_endpoint(
     vectorstore_manager,
     query: str = "",
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
     stable_doc_ids: Optional[Set[str]] = None,
     doc_type: Optional[str] = None,
     enabler: Optional[str] = None,
@@ -135,11 +137,19 @@ def retrieve_context_for_endpoint(
     vsm = vectorstore_manager
 
     # 1. กำหนด collection
-    collection_name = f"{doc_type or 'seam'}"
-    if enabler and enabler != DEFAULT_ENABLER:
-        collection_name = f"{doc_type}_{enabler.lower()}"
+    # collection_name = f"{doc_type or 'seam'}"
+    # if enabler and enabler != DEFAULT_ENABLER:
+    #     collection_name = f"{doc_type}_{enabler.lower()}"
     
-    # 🔑 NOTE: ฟังก์ชันนี้ใช้การกำหนดชื่อ collection แบบง่าย ซึ่งไม่ควรมีปัญหา
+    # # 🔑 NOTE: ฟังก์ชันนี้ใช้การกำหนดชื่อ collection แบบง่าย ซึ่งไม่ควรมีปัญหา
+
+    # 🎯 FIX: ใช้ get_doc_type_collection_key จาก utils/path_utils.py
+    collection_name = get_doc_type_collection_key(
+        # ใช้ 'seam' เป็นค่า Default ถ้า doc_type เป็น None
+        doc_type=doc_type or 'seam', 
+        enabler=enabler
+    )
+
 
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
@@ -238,15 +248,14 @@ def retrieve_context_for_endpoint(
 # ========================
 # 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
 # ========================
-# ========================
-# 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
-# ========================
 def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
     doc_type: str,
     enabler: Optional[str] = None,
     vectorstore_manager = None,
-    limit: int = 50
+    limit: int = 50,
+    tenant: Optional[str] = None, # <-- ต้องมี
+    year: Optional[Union[int, str]] = None, # <-- ต้องมี (แก้ไขล่าสุด)
 ) -> Dict[str, Any]:
     """
     ดึง chunks จาก stable_doc_uuid หลายตัว (ใช้ตอน hydration sources)
@@ -304,6 +313,8 @@ def retrieve_context_by_doc_ids(
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
     doc_type: str,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
     subject: Optional[str] = None, # 🟢 เพิ่ม subject
     vectorstore_manager: Optional['VectorStoreManager'] = None,

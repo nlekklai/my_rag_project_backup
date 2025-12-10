@@ -14,6 +14,7 @@ uploads/
 *.sqlite3
 # Ignore folders
 vectorstore/
+data_store/
 data/
 db/
 results/

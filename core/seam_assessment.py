@@ -491,7 +491,6 @@ class SEAMPDCAEngine:
                     year=self.config.year,
                     enabler=self.enabler_id
                 )
-
             
             # 2. เตรียม Attribute สำหรับ Persistent Mapping
             self.evidence_map: Dict[str, List[str]] = {}
