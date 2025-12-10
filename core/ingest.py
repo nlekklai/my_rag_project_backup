@@ -14,7 +14,7 @@ import hashlib
 import shutil
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Set, Iterable, Dict, Any, Union, Tuple, TypedDict
+from typing import List, Optional, Set, Iterable, Dict, Any, Union, Tuple, TypedDict, Literal # 🟢 FIX: เพิ่ม Literal
 import pandas as pd
 import numpy as np
 from pydantic import ValidationError
@@ -62,7 +62,8 @@ from config.global_vars import (
     DEFAULT_TENANT, 
     DEFAULT_YEAR,
     EMBEDDING_MODEL_NAME,
-    DATA_STORE_ROOT
+    DATA_STORE_ROOT,
+    SUPPORTED_DOC_TYPES
 )
 
 # -------------------- [NEW] Import Path Utilities --------------------
@@ -82,7 +83,8 @@ from utils.path_utils import (
     create_stable_uuid_from_path,
     parse_collection_name,
     get_mapping_tenant_root_path,
-    _update_evidence_mapping
+    _update_evidence_mapping,
+    get_mapping_key_from_physical_path
 )
 # ---------------------------------------------------------------------
 
@@ -442,7 +444,6 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     is_separator_regex=False
 )
 
-# -------------------- Load & Chunk Document --------------------
 # ------------------------------------------------------------------
 # SE-AM Sub-topic Mapping (จากหน้า 3-15 ของ SE-AM Manual Book 2566)
 # ------------------------------------------------------------------
@@ -505,7 +506,7 @@ def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
 
 
 # ------------------------------------------------------------------
-# load_and_chunk_document – เวอร์ชันสมบูรณ์สุดสำหรับ SE-AM
+# load_and_chunk_document – เวอร์ชันสมบูรณ์สุดสำหรับ SE-AM (ใช้ Key เดียว: chunk_uuid)
 # ------------------------------------------------------------------
 def load_and_chunk_document(
     file_path: str,
@@ -521,9 +522,6 @@ def load_and_chunk_document(
     """
     Load + Clean + Chunk + ใส่ sub_topic + page_number อัตโนมัติ
     """
-    # 📌 ASSUME: os, List, Document, Dict, Any, Iterable, logger, datetime, 
-    #            FILE_LOADER_MAP, TEXT_SPLITTER, _safe_filter_complex_metadata, 
-    #            clean_text, _detect_sub_topic_and_page ถูก Import/ประกาศแล้ว
     
     file_extension = os.path.splitext(file_path)[1].lower()
     loader_func = FILE_LOADER_MAP.get(file_extension)
@@ -598,17 +596,23 @@ def load_and_chunk_document(
         if detected["sub_topic"]:
             chunk.metadata["sub_topic"] = detected["sub_topic"]
         if detected["page_number"]:
-            chunk.metadata["page_number"] = detected["page_number"]
+            page_val = detected["page_number"]
+            chunk.metadata["page_number"] = page_val
+            chunk.metadata["page"] = f"P{page_val}"  # แสดงเป็น P45 ทันที!
 
-        # 🟢 CRITICAL FIX: Unique chunk ID - ใช้ Key "chunk_id"
+        # 🟢 CRITICAL FIX: ใช้ Key "chunk_uuid" เป็น Key หลักเพียง Key เดียว
         chunk_id_prefix = stable_doc_uuid[:16] # ใช้แค่ 16 ตัวแรกของ UUID ก็เพียงพอ
-        chunk.metadata["chunk_id"] = f"{chunk_id_prefix}-{idx:04d}" # e.g., '99adebfbacce3181-0001'
+        
+        # 1. กำหนด ID หลักเป็น chunk_uuid
+        unique_chunk_id = f"{chunk_id_prefix}-{idx:04d}" 
+        chunk.metadata["chunk_uuid"] = unique_chunk_id
+        
+        # 2. ✅ ลบ chunk_id ทิ้งเพื่อความสะอาดและใช้ Key เดียว
+        if "chunk_id" in chunk.metadata:
+            del chunk.metadata["chunk_id"]
+        
         chunk.metadata["chunk_index"] = idx
         
-        # 📌 ลบ chunk_uuid เดิม (ถ้ามี)
-        if "chunk_uuid" in chunk.metadata:
-            del chunk.metadata["chunk_uuid"] 
-            
         chunk.metadata = _safe_filter_complex_metadata(chunk.metadata)
 
         final_chunks.append(chunk)
@@ -829,6 +833,7 @@ def ingest_all_files(
 ) -> Dict[str, Any]:
     logger.info("--- STARTING INGESTION PROCESS ---")
     import unicodedata
+    from collections import defaultdict # ต้องมั่นใจว่ามีการ import defaultdict ใน core/ingest.py
 
     tenant_clean = unicodedata.normalize('NFKC', tenant.lower().replace(" ", "_"))
 
@@ -872,12 +877,19 @@ def ingest_all_files(
                 file_path_abs = os.path.join(root, f)
 
                 # สร้าง UUID เสถียรด้วย NFKC + relative path
-                try:
-                    rel_path = os.path.relpath(file_path_abs, DATA_STORE_ROOT)
-                except ValueError:
-                    rel_path = file_path_abs
-                normalized_path = unicodedata.normalize('NFKC', rel_path)
-                stable_doc_uuid = create_stable_uuid_from_path(normalized_path)
+                # try:
+                #     rel_path = os.path.relpath(file_path_abs, DATA_STORE_ROOT)
+                # except ValueError:
+                #     rel_path = file_path_abs
+                # normalized_path = unicodedata.normalize('NFKC', rel_path)
+                # stable_doc_uuid = create_stable_uuid_from_path(normalized_path)
+    
+                stable_doc_uuid = create_stable_uuid_from_path(
+                    file_path_abs, 
+                    tenant=tenant_clean, 
+                    year=resolved_year, 
+                    enabler=resolved_enabler
+                )
 
                 info = {
                     "file_path": file_path_abs,
@@ -920,6 +932,7 @@ def ingest_all_files(
     results: List[Dict] = []
 
     def process_one(info: Dict):
+        # NOTE: process_document ต้องเรียก load_and_chunk_document ที่แก้ไขแล้ว
         chunks, doc_uuid, _ = process_document(
             file_path=info["file_path"],
             file_name=info["file_name"],
@@ -949,15 +962,31 @@ def ingest_all_files(
     for coll, chunks in chunks_by_collection.items():
         if not chunks:
             continue
-        vs = get_vectorstore(coll, tenant_clean, chunks[0].metadata.get("year"))
-        for i in range(0, len(chunks), 500):
+        # 1. Initialize Vector Store
+        # ดึงปีจาก Chunk แรกเพื่อใช้กำหนด Vector Store (ถ้ามี)
+        vs = get_vectorstore(coll, tenant_clean, chunks[0].metadata.get("year")) 
+        
+        total_chunks = len(chunks)
+        
+        # 2. Batch Indexing
+        for i in range(0, total_chunks, 500):
             batch = chunks[i:i+500]
+            
+            # --- ✅ Log ---
+            start_index = i + 1
+            end_index = min(i + 500, total_chunks)
+            logger.info(f"Indexing batch {start_index}-{end_index}/{total_chunks} chunks into Collection: {coll}")
+            # ---------------------------
+            
             vs.add_texts(
                 texts=[c.page_content for c in batch],
                 metadatas=[c.metadata for c in batch],
-                ids=[c.metadata["chunk_id"] for c in batch],
+                # 🎯 FIX 1: เปลี่ยนมาใช้ chunk_uuid
+                ids=[c.metadata["chunk_uuid"] for c in batch], 
             )
-        logger.info(f"Indexed {len(chunks)} → {coll}")
+        
+        # Log สรุปหลังจบ Collection นั้น
+        logger.info(f"✅ Indexed {total_chunks} chunks successfully into Collection: {coll}")
 
     # Update mapping (แยก context)
     updated = 0
@@ -986,6 +1015,8 @@ def ingest_all_files(
                 "status": "Ingested",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "size": os.path.getsize(info["file_path"]),
+                # 🎯 FIX 2: บันทึก chunk_uuids สำหรับการลบ (Deletion)
+                "chunk_uuids": [c.metadata["chunk_uuid"] for c in chunks], 
             }
             updated += 1
 
@@ -1315,309 +1346,169 @@ def delete_document_by_uuid(
         
     return True
 
-def list_documents(
-    doc_types: Optional[List[str]] = None,
-    enabler: Optional[str] = None,
-    tenant: str = "pwa",
-    year: Union[int, str] = 2568, 
-    show_results: str = "ingested"
-) -> Dict[str, Any]:
-    """
-    Scans data directory and mapping DBs to list documents.
-    """
-    
-    # 💡 NOTE: สมมติว่ามีการกำหนดค่าเหล่านี้ในระดับ Global/Module
-    DEFAULT_DOC_TYPES = ["document", "faq"]
-    SUPPORTED_DOC_TYPES = ["document", "faq", "evidence", "seam", "other"]
-    SUPPORTED_ENABLERS = ["KM", "RM", "IC", "SM", "SP"]
-    SUPPORTED_TYPES = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.png', '.jpg', '.jpeg']
-    EVIDENCE_DOC_TYPES = "evidence"
-    # DEFAULT_ENABLER, get_normalized_metadata, get_document_source_dir, load_doc_id_mapping, _normalize_doc_id
-    # DATA_STORE_ROOT ต้องถูก Import/Define ใน Scope นี้
-    
-    logger.info(f"Listing documents for Tenant={tenant}, Year={year}, Doc Types={doc_types}, Enabler={enabler}, Show={show_results}")
+# core/ingest.py: ฟังก์ชัน list_documents (แทนที่ของเดิมทั้งหมด)
 
-    # --- 1. Resolve Parameters & Load Contexts ---
-    year_int: Optional[int]
-    try:
-        year_int = int(year) if year is not None and str(year).isdigit() else None
-    except ValueError:
-        year_int = None 
-        
-    tenant_clean = tenant.lower().replace(" ", "_")
-        
-    doc_types_to_load = {dt.lower() for dt in doc_types or DEFAULT_DOC_TYPES if dt.lower() in [s.lower() for s in SUPPORTED_DOC_TYPES]}
-    if not doc_types_to_load: doc_types_to_load = {dt.lower() for dt in DEFAULT_DOC_TYPES}
+def list_documents(
+    doc_types: List[str],
+    tenant: str = DEFAULT_TENANT,
+    year: Optional[Union[str, int]] = None,
+    enabler: Optional[str] = None,
+    show_results: Literal["all", "missing", "ingested"] = "missing",
+    skip_ext: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    List files and compare them with existing mapping database.
+    (รวมการแก้ไข NFKC/NFD Path Matching อย่างถาวร)
+    """
+    logger.info("--- STARTING DOCUMENT LISTING ---")
     
-    enabler_req = enabler.upper() if enabler else None
+    tenant_clean = unicodedata.normalize('NFKC', tenant.lower().replace(" ", "_"))
     
     load_contexts: Set[Tuple[str, Optional[str], Optional[Union[str, int]]]] = set()
-    
-    for dt in doc_types_to_load:
+    files_on_disk: List[Dict[str, Any]] = []
+
+    # 1. Determine Contexts (Doc Type, Enabler, Year)
+    for dt in doc_types:
         dt_lower = dt.lower()
-        is_evidence = dt_lower == EVIDENCE_DOC_TYPES.lower()
-        
-        enablers_to_check = []
-        if is_evidence and enabler_req is None:
-            enablers_to_check.extend(SUPPORTED_ENABLERS)
-        elif enabler_req is not None:
-            enablers_to_check.append(enabler_req)
-        
-        if not is_evidence or (is_evidence and not enablers_to_check):
-            enablers_to_check.append(None)
-        
-        enablers_to_check = list(set(enablers_to_check)) 
-        
-        for ena_req_context in enablers_to_check:
-            resolved_year, resolved_enabler = get_normalized_metadata(
-                doc_type=dt_lower,
-                year_input=year_int,
-                enabler_input=ena_req_context,
-                default_enabler=DEFAULT_ENABLER 
-            )
-            
-            # กรองบริบทที่ไม่ได้ถูกใช้ (เช่น Evidence ที่ไม่มี Enabler/Year)
-            if is_evidence and resolved_year is None:
-                logger.debug(f"⚠️ Skipping {dt} context: Year required but resolved to None.")
-                continue
 
-            load_contexts.add((dt_lower, resolved_enabler, resolved_year))
+        resolved_year, resolved_enabler = get_normalized_metadata(
+            doc_type=dt_lower,
+            year_input=year,
+            enabler_input=enabler,
+            default_enabler=DEFAULT_ENABLER,
+        )
+        
+        # Evidence ต้องมีปี
+        if dt_lower == EVIDENCE_DOC_TYPES.lower() and resolved_year is None:
+            logger.error("Evidence requires --year. Skipping evidence listing.")
+            continue
             
-    logger.debug(f"Resolved load contexts: {load_contexts}")
+        load_contexts.add((dt_lower, resolved_enabler, resolved_year))
+        
+        root_path = get_document_source_dir(tenant_clean, resolved_year, resolved_enabler, dt_lower)
+        logger.info(f" [SCAN] '{dt_lower}' Context: {dt_lower} / {resolved_enabler} / {resolved_year} | Path: {root_path}")
+
+        # 2. Scan Files on Disk (Physical Path)
+        if not os.path.exists(root_path):
+            logger.warning(f"Directory not found: {root_path}")
+            continue
+
+        for root, dirs, files in os.walk(root_path):
+            dirs[:] = [d for d in dirs if d not in ['.DS_Store', '__pycache__', 'backup']]
+            for f in files:
+                ext = os.path.splitext(f)[1].lower()
+                if f.startswith('.') or ext not in SUPPORTED_TYPES:
+                    continue
+                if skip_ext and ext in skip_ext:
+                    continue
+
+                file_path_abs = os.path.join(root, f)
+                
+                # 📌 NEW: สร้าง UUID เสถียรจาก Physical Path
+                stable_doc_uuid = create_stable_uuid_from_path(
+                    file_path_abs,
+                    tenant=tenant_clean,
+                    year=resolved_year,
+                    enabler=resolved_enabler
+                )
+                
+                files_on_disk.append({
+                    "doc_type": dt_lower,
+                    "enabler": resolved_enabler,
+                    "year": resolved_year,
+                    "file_name": f,
+                    "file_path_abs": file_path_abs,
+                    "stable_doc_uuid": stable_doc_uuid,
+                    "status": "MISSING",
+                    "chunk_count": 0
+                })
+
+    if not files_on_disk:
+        logger.warning("--- NO FILES FOUND ON DISK ---")
+        return pd.DataFrame(columns=["Doc Type", "Enabler", "Year", "File Name", "Status", "Chunks"])
+
+    # 3. Load Mappings (Saved Path)
+    full_mapping: Dict[str, Dict] = {}
+    # Key: Relative Key (tenant/data/...) -> Value: Stable UUID
+    filepath_to_stable_uuid: Dict[str, str] = {} 
     
-    # --- 2. Load Doc ID Mapping Files ---
-    doc_mapping_db: Dict[str, Dict[str, Any]] = {}
-    
-    for dt, ena, yr in load_contexts:
+    for ctx in load_contexts:
+        dt, ena, yr = ctx
         try:
-            mapping_db = load_doc_id_mapping(
-                doc_type=dt,
-                tenant=tenant_clean,
-                year=yr,
-                enabler=ena
-            )
-            doc_mapping_db.update(mapping_db)
+            doc_mapping_db = load_doc_id_mapping(dt, tenant_clean, yr, ena)
+            full_mapping.update(doc_mapping_db)
         except FileNotFoundError:
-            pass
-        except Exception as e:
-            logger.error(f"❌ Error loading mapping for {dt} / {ena or 'None'} / Year {yr or 'None'}: {e}")
-
-    # --- 3. Filtering Doc ID Mapping for Physical Scan ---
-    filepath_to_stable_uuid: Dict[str, str] = {}
-    
-    # Key ใน filepath_to_stable_uuid จะเป็น Path ที่ถูกบันทึกในไฟล์ Mapping (Absolute หรือ Relative ก็ได้)
-    for s_uuid, entry in doc_mapping_db.items():
-        if "filepath" not in entry or str(entry.get("tenant", "")).lower() != tenant_clean:
             continue
+        
+        for s_uuid, entry in doc_mapping_db.items():
+            entry_context = (entry.get("doc_type", dt), entry.get("enabler", ena), entry.get("year", yr))
             
-        doc_type_in_map = entry.get("doc_type", "").lower()
-        doc_year_in_map = entry.get("year")
-        doc_enabler_in_map = entry.get("enabler")
-        
-        # ต้อง Normalize Context ของ Entry เพื่อใช้ในการเปรียบเทียบกับ load_contexts
-        normalized_year, normalized_enabler = get_normalized_metadata(
-            doc_type=doc_type_in_map,
-            year_input=doc_year_in_map,
-            enabler_input=doc_enabler_in_map,
-            default_enabler=DEFAULT_ENABLER 
-        )
-        
-        entry_context = (doc_type_in_map, normalized_enabler, normalized_year)
-        
-        if entry_context in load_contexts:
-             filepath_to_stable_uuid[entry["filepath"]] = s_uuid # Key คือ Path ใน Mapping DB
+            # ตรวจสอบว่า entry นี้เป็นของ context ที่กำลังโหลดหรือไม่
+            if entry_context in load_contexts: 
+                 saved_filepath = entry["filepath"] # saved_filepath คือ relative path ที่ถูกเก็บไว้ใน mapping
+                 
+                 # 🟢 CRITICAL FIX: ใช้ get_mapping_key_from_physical_path เพื่อสร้าง Key จาก Saved Path
+                 # Note: saved_filepath ที่ถูกเก็บไว้ใน mapping มักจะเป็น relative path ที่มีปัญหา NFD/NFKC
+                 stable_lookup_key = get_mapping_key_from_physical_path(saved_filepath)
+                 
+                 if stable_lookup_key:
+                     filepath_to_stable_uuid[stable_lookup_key] = s_uuid
+                 else:
+                     logger.warning(f"Could not create stable lookup key from saved path: {saved_filepath}")
 
-    # --- 4. Physical File Scan and Status Check (CRITICAL FIX: Path Lookup) ---
-    all_docs: Dict[str, Any] = {}
+
+    # 4. Compare Files on Disk with Mappings
+    results: List[Dict] = []
     
-    for dt_lower, resolved_enabler, resolved_year in load_contexts:
+    for info in files_on_disk:
+        file_path_abs = info["file_path_abs"]
         
-        if dt_lower is None:
-            logger.error(f"❌ Critical Error: Found None in load_contexts for Doc Type. Skipping context.")
-            continue
-            
-        scan_dir = get_document_source_dir(tenant_clean, resolved_year, resolved_enabler, dt_lower)
+        # 🟢 CRITICAL FIX REVISED: Prepare lookup key from physical file (ใช้ Absolute Path ที่สแกนเจอ)
+        # get_mapping_key_from_physical_path จะจัดการแปลง Path:
+        # 1. Absolute Path
+        # 2. NFKC Normalize
+        # 3. Relative to DATA_STORE_ROOT
+        # 4. Forward Slashes
+        relative_key_candidate = get_mapping_key_from_physical_path(file_path_abs) 
         
-        if not os.path.exists(scan_dir):
-            logger.warning(f"Source directory not found: {scan_dir}. Skipping scan.")
-            continue
-            
-        for root, dirs, filenames in os.walk(scan_dir):
-             dirs[:] = [d for d in dirs if d not in ['.DS_Store', '__pycache__', 'backup']]
-             
-             for f in filenames:
-                file_path_abs = os.path.join(root, f) 
-                file_extension = os.path.splitext(f)[1].lower()
-                
-                if f.startswith('.') or file_extension not in SUPPORTED_TYPES: continue
-
-                # ----------------------------------------------------------------------
-                # 🟢 CRITICAL FIX REVISED: Prepare lookup paths for backward compatibility 
-                # ----------------------------------------------------------------------
-                
-                # 1. เตรียม Path Candidates: Absolute Path (สำหรับไฟล์เก่า)
-                path_for_lookup_candidates: List[str] = [file_path_abs]
-                
-                # 2. ลองแปลงเป็น Relative Path (สำหรับไฟล์ใหม่) และใส่เป็น Priority
-                try:
-                    relative_path = os.path.relpath(file_path_abs, DATA_STORE_ROOT)
-                    
-                    if not relative_path.startswith('..'):
-                         # ใส่ Relative Path เป็นตัวแรกใน List เพื่อให้ค้นหาด้วย Relative ก่อน
-                         path_for_lookup_candidates.insert(0, relative_path)
-                         
-                except Exception as e:
-                    # อาจจะเกิด ValueError ถ้าไฟล์อยู่คนละ Drive/Root
-                    logger.debug(f"Path conversion failed for lookup (ignoring): {e}")
-
-                # 3. วนหา Stable UUID โดยใช้ Path Candidates
-                stable_doc_uuid = None
-                for path_candidate in path_for_lookup_candidates:
-                    stable_doc_uuid = filepath_to_stable_uuid.get(path_candidate)
-                    if stable_doc_uuid:
-                        break # Found a match
-                # ----------------------------------------------------------------------
-
-
-                raw_doc_id_input = os.path.splitext(f)[0]
-                filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) 
-
-                # --- Logic การตรวจสอบสถานะและสร้าง doc_info ที่เหลือ ---
-                
-                if stable_doc_uuid and stable_doc_uuid in doc_mapping_db:
-                    mapping_entry = doc_mapping_db[stable_doc_uuid]
-                    chunk_count = mapping_entry.get("chunk_count", 0)
-                    original_doc_type = mapping_entry.get("doc_type", dt_lower)
-                    
-                else:
-                    stable_doc_uuid = None
-                    chunk_count = 0
-                    original_doc_type = dt_lower 
-
-                if stable_doc_uuid and chunk_count == 0:
-                    # ถือว่า Ingest ไม่สำเร็จ
-                    is_ingested = False
-                elif stable_doc_uuid and chunk_count > 0:
-                    is_ingested = True
-                else:
-                    is_ingested = False
-                    
-                final_doc_id = stable_doc_uuid or f"TEMP_ID__{filename_doc_id_key}"
-
-                try:
-                    # getmtime/getsize ต้องใช้ Absolute Path
-                    upload_date = datetime.fromtimestamp(os.path.getmtime(file_path_abs), timezone.utc).isoformat()
-                    file_size = os.path.getsize(file_path_abs)
-                except FileNotFoundError:
-                    upload_date = datetime.now(timezone.utc).isoformat()
-                    file_size = 0
-                except Exception as e:
-                    logger.warning(f"Failed to get size/time for {f}: {e}")
-                    upload_date = datetime.now(timezone.utc).isoformat()
-                    file_size = 0
-                    
-                doc_info: Any = {
-                    "doc_id": final_doc_id,
-                    "doc_id_key": filename_doc_id_key,
-                    "filename": f,
-                    "filepath": file_path_abs, 
-                    "doc_type": original_doc_type,
-                    "enabler": resolved_enabler, 
-                    "tenant": tenant_clean,
-                    "year": resolved_year, 
-                    "upload_date": upload_date,
-                    "chunk_count": chunk_count,
-                    "status": "Ingested" if is_ingested else "Pending",
-                    "size": file_size,
-                }
-                all_docs[final_doc_id] = doc_info
-
-    # --- (ส่วนที่เหลือของ list_documents) ---
-    total_supported_files = len(all_docs)
-    show_results_lower = show_results.lower()
-    filtered_docs_dict: Dict[str, Any] = {}
-    display_list_for_print: List[Dict[str, Any]] = []
-
-    year_request_str = str(year_int) if year_int is not None and year_int > 0 else "Global"
-
-    if total_supported_files == 0:
-        doc_types_str = doc_types[0] if doc_types and doc_types[0] else "all"
-        logger.warning(f"⚠️ No documents found in DATA_DIR matching the requested type '{doc_types_str}' (Enabler: {enabler_req or 'ALL'}, Year: {year_request_str}) for {tenant}.")
-        return filtered_docs_dict
-
-    for doc_id, info in all_docs.items():
-        info_status_lower = info['status'].lower()
+        stable_doc_uuid = None
+        if relative_key_candidate:
+            # ค้นหา Stable UUID จาก Key ที่สร้างขึ้น (ซึ่งมาจาก saved_filepath ที่ถูก normalize แล้วใน Section 3)
+            stable_doc_uuid = filepath_to_stable_uuid.get(relative_key_candidate)
         
-        if show_results_lower == "all" or \
-           (show_results_lower == "ingested" and info_status_lower == "ingested") or \
-           (show_results_lower == "pending" and info_status_lower == "pending") or \
-           (show_results_lower == "failed" and info_status_lower.startswith("failed")):
-            
-            display_info = info.copy()
-            
-            display_info["size_mb"] = display_info["size"] / (1024 * 1024)
-            display_info["year_display"] = display_info["year"] if display_info["year"] is not None else "-"
-            display_info["enabler_display"] = display_info["enabler"] if display_info["enabler"] is not None else "-"
-            
-            display_list_for_print.append(display_info)
-            
-            filtered_docs_dict[doc_id] = info
-
-
-    if not display_list_for_print:
-        logger.info(f"--- Found {total_supported_files} supported files but none matched the filter criteria to display ---")
-        return filtered_docs_dict
         
-    # --- 6. Print Results ---
+        entry = None
+        if stable_doc_uuid:
+            entry = full_mapping.get(stable_doc_uuid)
+        elif info["stable_doc_uuid"] in full_mapping:
+             # Fallback: ตรวจสอบด้วย UUID ปกติ (กรณีไฟล์ไม่ถูก normalize ตอน ingest รอบเก่าๆ)
+             entry = full_mapping.get(info["stable_doc_uuid"])
+
+        if entry:
+            info["status"] = entry.get("status", "Ingested")
+            info["chunk_count"] = entry.get("chunk_count", 0)
+            if info["chunk_count"] == 0:
+                 info["status"] = "PENDING_REINGEST" # Chunk หาย ต้อง ingest ใหม่
+
+        if show_results == "all" or (show_results == "missing" and info["status"] in ["MISSING", "PENDING_REINGEST"]) or (show_results == "ingested" and info["status"] == "Ingested"):
+            results.append({
+                "Doc Type": info["doc_type"].upper(),
+                "Enabler": info["enabler"] or "-",
+                "Year": info["year"] or "-",
+                "File Name": info["file_name"],
+                "Status": info["status"],
+                "Chunks": info["chunk_count"],
+                "UUID": info["stable_doc_uuid"]
+            })
+
+    logger.info(f"--- DOCUMENT LISTING COMPLETE | Total files found: {len(files_on_disk)} | Displayed results: {len(results)} ---")
     
-    display_list_for_print.sort(key=lambda x: (x['doc_type'], x['enabler_display'], x['filename']))
-
-    UUID_COL_WIDTH = 65
-    NEW_TABLE_WIDTH = 197
-    
-    print("-" * NEW_TABLE_WIDTH)
-    print(f"--- Document List (Tenant: {tenant.upper()}, Year: {year_request_str}, Filter: {show_results.upper()}) ---")
-    print("-" * NEW_TABLE_WIDTH)
-    print(f"{'DOC ID (Stable/Temp)':<{UUID_COL_WIDTH}} | {'TENANT':<7} | {'YEAR':<4} | {'FILENAME':<30} | {'EXT':<5} | {'TYPE':<10} | {'ENB':<5} | {'SIZE(MB)':<9} | {'STATUS':<10}")
-    print("-" * NEW_TABLE_WIDTH)
-    
-    for info in display_list_for_print:
-        full_doc_id = info['doc_id']
-        file_name, file_ext = os.path.splitext(info['filename'])
-        short_filename = file_name[:28] if len(file_name) > 28 else file_name
-        file_ext = file_ext[1:].upper() if file_ext else '-'
-        size_str = f"{info['size_mb']:.2f}"
-        
-        enabler_display = info['enabler_display'] 
-        year_display = info['year_display']
-        
-        display_doc_id = full_doc_id
-        if len(display_doc_id) > UUID_COL_WIDTH:
-             display_doc_id = display_doc_id[:UUID_COL_WIDTH-3] + "..."
-
-        print(
-            f"{display_doc_id:<{UUID_COL_WIDTH}} | "
-            f"{info['tenant']:<7} | "
-            f"{year_display:<4} | "
-            f"{short_filename:<30} | "
-            f"{file_ext:<5} | "
-            f"{info['doc_type'][:10]:<10} | "
-            f"{enabler_display:<5} | "
-            f"{size_str:<9} | "
-            f"{info['status'][:10]:<10}"
-        )
-        
-        if len(file_name) > 28:
-            print(f"{'':<{UUID_COL_WIDTH}} | {'':<7} | {'':<4} | ...{file_name[28:]:>27}")
-
-    print("-" * NEW_TABLE_WIDTH)
-    logger.info(f"--- Displaying {len(display_list_for_print)} documents of {total_supported_files} supported files ---")
-    
-    return filtered_docs_dict
+    df = pd.DataFrame(results)
+    if not df.empty:
+        df.sort_values(by=["Doc Type", "Enabler", "Year", "File Name"], inplace=True)
+    return df
 
 # -------------------- Main Execution --------------------
-
-# Note: ส่วนนี้สมมติว่ามีการ Import sys และ ArgumentParser แล้ว
 
 if __name__ == "__main__":
     try:

@@ -1,6 +1,5 @@
 # utils/path_utils.py
-# Production Final Version – 10 ธ.ค. 2568 (แก้ Syntax Error แล้ว)
-# ใช้ไฟล์นี้ทับของเดิมได้เลย – ทุกอย่างจะทำงานทันที
+# Production Final Version – 11 ธ.ค. 2568 (Path Matching Fixes)
 
 import os
 import json
@@ -9,7 +8,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple, Union, List
-import unicodedata
+import unicodedata # 🟢 NEW: เพิ่ม import สำหรับการจัดการ Path/Filename encoding บน macOS
 
 from config.global_vars import (
     DATA_STORE_ROOT,
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ==================== CORE HELPER ====================
 def _n(s: Union[str, None]) -> str:
-    """Normalize ทุก string ด้วย NFKC – แก้ macOS NFD bug ถาวร"""
+    """Normalize ทุก string ด้วย NFKC – แก้ macOS NFD bug ถาวร และแปลงเป็น clean key"""
     return unicodedata.normalize('NFKC', s.strip().lower().replace(" ", "_")) if isinstance(s, str) and s.strip() else ""
 
 # ==================== INTERNAL BASE PATH ====================
@@ -77,8 +76,8 @@ def get_vectorstore_tenant_root_path(tenant: str) -> str:
 
 # ==================== 3. MAPPING FILES ====================
 def get_mapping_file_path(tenant: str, year: Optional[Union[int, str]], enabler: Optional[str]) -> str:
-    # แก้ตรงนี้: ลบ ) ซ้อนผิด
     base = get_mapping_tenant_root_path(tenant)
+    # FIX: แก้ปัญหาวงเล็บซ้อน
     if year is not None and enabler:
         return os.path.join(base, str(year), f"{_n(tenant)}_{year}_{_n(enabler)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}")
     return os.path.join(base, f"{_n(tenant)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}")
@@ -111,6 +110,7 @@ def save_doc_id_mapping(data: Dict, doc_type: str, tenant: str, year: Optional[U
     except Exception as e:
         logger.error(f"Save mapping failed {path}: {e}")
 
+# utils/path_utils.py
 # ==================== 5. STABLE UUID ====================
 def create_stable_uuid_from_path(
     filepath: str,
@@ -118,21 +118,44 @@ def create_stable_uuid_from_path(
     year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
 ) -> str:
-    filepath = _n(filepath)
-    tenant = _n(tenant or "")
-    enabler = _n(enabler or "")
-
-    if not os.path.exists(filepath):
-        logger.warning(f"File not found for UUID: {filepath}")
-        return str(uuid.uuid4())
-
+    """
+    Creates a 64-character stable UUID.
+    Prioritizes (Filename + Stat) for maximum stability.
+    Falls back to (Cleaned Relative Path + Context) if Stat fails (e.g., NFD/NFKC bug on macOS).
+    """
+    # 1. Normalize and Resolve Path (เพื่อให้ได้ NFKC-normalized Absolute Path)
+    resolved_filepath = resolve_filepath_to_absolute(filepath)
+    
+    tenant_clean = _n(tenant or "")
+    enabler_clean = _n(enabler or "")
+    
+    # 🎯 STEP 1: Try Stat-based hash (Most stable, but fails on NFD/NFKC systems)
     try:
-        st = os.stat(filepath)
-        key = f"{_n(os.path.basename(filepath))}:{st.st_size}:{int(st.st_mtime)}:{tenant}:{year or ''}:{enabler}"
+        # 🟢 FIX: เรายังคงพยายาม os.stat() อยู่ แต่รู้ว่าอาจล้มเหลว
+        st = os.stat(resolved_filepath)
+        
+        # Key 1 (Stat-based): Filename (Normalized) + Size + Mtime + Context
+        key = f"{_n(os.path.basename(filepath))}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year or ''}:{enabler_clean}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
+        
     except Exception as e:
-        logger.error(f"Error creating stable UUID for {filepath}: {e}")
-        return str(uuid.uuid4())
+        # 🎯 STEP 2: Fallback to Path-based 64-char hash (Stable enough, works even if stat fails)
+        logger.error(f"Error creating stable UUID (Failed to stat file) for {filepath} / Resolved: {resolved_filepath}: {e}")
+        
+        # 🟢 FIX: ใช้ get_mapping_key_from_physical_path เพื่อสร้าง Canonical Key (Relative Path)
+        # เราจะไม่ใช้ UUID สุ่ม 36 ตัวอักษรอีกต่อไป
+        relative_key = get_mapping_key_from_physical_path(filepath)
+        
+        if relative_key:
+            # Key 2 (Path-based): Cleaned Relative Key + Context
+            # การใช้ relative_key + Context เป็นการสร้าง Stable Identity ที่ไม่ขึ้นกับ File Stat
+            stable_key = f"{relative_key}:{tenant_clean}:{year or ''}:{enabler_clean}"
+            logger.warning(f"Forced Path-based 64-char Stable UUID for {filepath}")
+            return hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
+        else:
+             # Final Fallback: Random UUID (Should never happen)
+             logger.error(f"Cannot generate stable key for: {filepath} | {e}")
+             return str(uuid.uuid4())
 
 # ==================== 6. PARSE COLLECTION NAME ====================
 def parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
@@ -151,6 +174,7 @@ def get_document_file_path(
     enabler: Optional[str],
     doc_type_name: str
 ) -> Optional[Dict[str, str]]:
+    # ... (Logic เดิม ไม่ต้องแก้ไข)
     try:
         mapping_path = get_mapping_file_path(tenant, year, enabler)
         if not os.path.exists(mapping_path):
@@ -171,11 +195,18 @@ def get_document_file_path(
             return None
 
         base_dir = get_document_source_dir(tenant, year, enabler, doc_type_name)
+        # 🟢 FIX: ใช้ os.path.join() เพื่อประกอบ Path ของไฟล์จริง
         file_path = os.path.join(base_dir, original_filename)
 
         if not os.path.exists(file_path):
-            logger.error(f"File not found on disk: {file_path}")
-            return None
+            # 🟢 FIX: เพิ่มการตรวจสอบด้วย Path Resolver ที่ถูก normalize 
+            # (เนื่องจาก macOS อาจมีปัญหาเรื่องการเข้ารหัสชื่อไฟล์)
+            resolved_path = resolve_filepath_to_absolute(file_path)
+            if os.path.exists(resolved_path):
+                file_path = resolved_path # ใช้ resolved path ถ้าเจอ
+            else:
+                logger.error(f"File not found on disk: {file_path}")
+                return None
 
         return {
             "file_path": file_path,
@@ -191,17 +222,14 @@ def get_config_tenant_root_path(tenant: str) -> str:
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "config")
 
 def get_rubric_file_path(tenant: str, enabler: str) -> str:
-    # *** เปลี่ยนจาก get_mapping_tenant_root_path() เป็น get_config_tenant_root_path() ***
     return os.path.join(get_config_tenant_root_path(tenant),
                         RUBRIC_FILENAME_PATTERN.format(tenant=_n(tenant), enabler=_n(enabler)))
 
 def get_contextual_rules_file_path(tenant: str, enabler: str) -> str:
-    # *** เปลี่ยนจาก get_mapping_tenant_root_path() เป็น get_config_tenant_root_path() ***
     return os.path.join(get_config_tenant_root_path(tenant),
                         f"{_n(tenant)}_{_n(enabler)}_contextual_rules.json")
 
 def get_export_dir(tenant: str, year: Union[int, str], enabler: str) -> str:
-    # *** แก้ไข: ใช้ DATA_STORE_ROOT/tenant/exports แทน EXPORTS_DIR เก่า ***
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year), _n(enabler))
 
 def get_assessment_export_file_path(tenant: str, year: Union[int, str], enabler: str, suffix: str, ext: str = "json") -> str:
@@ -209,11 +237,17 @@ def get_assessment_export_file_path(tenant: str, year: Union[int, str], enabler:
                         f"{_n(tenant)}_{year}_{_n(enabler)}_{suffix}.{ext.lower()}")
 
 def get_normalized_metadata(doc_type: str, year_input=None, enabler_input=None, default_enabler=None):
+    # Logic: Evidence ต้องมีปี/Enabler, Doc/Global ใช้ None
     return (None, None) if _n(doc_type) != EVIDENCE_DOC_TYPES.lower() else (year_input, enabler_input or default_enabler)
 
 def resolve_filepath_to_absolute(path: str) -> str:
-    path = _n(path)
-    return path if os.path.isabs(path) else os.path.join(DATA_STORE_ROOT, path)
+    """
+    แปลง Path ให้เป็น Absolute Path และ Normalize (NFKC) เพื่อแก้ปัญหา macOS
+    """
+    # 1. ทำให้เป็น Absolute Path
+    abs_path = os.path.abspath(path)
+    # 2. Normalize เพื่อให้ Path ที่มีอักขระพิเศษ (ภาษาไทย) มีการเข้ารหัสที่ถูกต้อง
+    return unicodedata.normalize('NFKC', abs_path)
 
 # ==================== 9. EVIDENCE MAPPING ====================
 def load_evidence_mapping(tenant=DEFAULT_TENANT, year=DEFAULT_YEAR, enabler=DEFAULT_ENABLER):
@@ -249,7 +283,6 @@ def _update_evidence_mapping(
     year: Optional[Union[str, int]],
     enabler: Optional[str]
 ) -> None:
-    """ใช้ใน core/ingest.py"""
     _update_doc_id_mapping(
         new_entries=new_entries,
         doc_type=EVIDENCE_DOC_TYPES,
@@ -258,4 +291,38 @@ def _update_evidence_mapping(
         enabler=enabler
     )
 
+# ==================== 11. PATH KEY RESOLUTION (New Critical Logic) ====================
+def get_mapping_key_from_physical_path(physical_path: str) -> str:
+    """
+    แปลง Physical Path (Absolute Path ที่สแกนเจอ) ให้เป็น Relative Key (format: tenant/data/doc_type/...) 
+    ที่ใช้ในการค้นหาใน Doc ID Mapping
+    
+    ใช้ NFKC normalization และ forward slashes ('/').
+    """
+    if not physical_path:
+        return ""
+    
+    # 1. Normalize Path and make Absolute
+    # 🟢 ใช้ resolve_filepath_to_absolute เพื่อให้แน่ใจว่าได้ NFKC-normalized Absolute Path
+    normalized_abs_path = resolve_filepath_to_absolute(physical_path)
+    
+    # 2. Normalize DATA_STORE_ROOT เพื่อให้การเปรียบเทียบ Path ทำงานถูกต้อง
+    normalized_abs_data_store_root = resolve_filepath_to_absolute(DATA_STORE_ROOT)
+
+    # 3. Get Path relative to DATA_STORE_ROOT
+    try:
+        relative_path = os.path.relpath(normalized_abs_path, normalized_abs_data_store_root)
+    except ValueError as e:
+        logger.debug(f"Error getting relative path for {physical_path}: {e}")
+        return ""
+
+    # 4. Use forward slashes for the final key format and ensure it doesn't start with '..'
+    relative_key = relative_path.replace('\\', '/')
+    
+    # Safety check: ถ้า Path อยู่นอก Root
+    if relative_key.startswith('..'):
+         logger.debug(f"File path is outside DATA_STORE_ROOT after relpath: {physical_path}")
+         return ""
+         
+    return relative_key
 # ==================== จบไฟล์ – ใช้ทับได้เลย ====================
