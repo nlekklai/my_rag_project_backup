@@ -22,12 +22,11 @@ from config.global_vars import (
 )
 from routers.auth_router import UserMe, get_current_user 
 
-# 🟢 Import Path Utility (ใช้แทนการสร้าง Path เองทั้งหมด)
+# 🟢 Import Path Utility (ปรับปรุง: ลบ get_assessment_export_file_path ออก)
 from utils.path_utils import (
     get_mapping_file_path, 
     get_document_file_path as util_get_document_file_path, 
     get_document_source_dir,
-    get_assessment_export_file_path # อาจใช้ใน _run_assessment_background
 )
 
 logger = logging.getLogger(__name__)
@@ -250,6 +249,7 @@ async def _run_assessment_background(record_id: str, request: StartAssessmentReq
             else "all"
         )
         
+        # Engine จะเรียกใช้ _export_results ซึ่งใช้ get_assessment_export_file_path ที่ถูกแก้ไขแล้ว
         result = engine.run_assessment(
             target_sub_id=target_id_to_use,
             export=True,
@@ -409,6 +409,7 @@ async def download_original_document(
     try:
         file_path, original_filename = _get_document_file_path(document_id, current_user, enabler)
         
+        # 🟢 Download Path ใช้ file_path ที่ดึงมาจาก path_utils
         return FileResponse(
             path=file_path,
             filename=original_filename, 
@@ -451,7 +452,8 @@ async def download_result_file(
     # ตรวจสอบ Tenant Isolation
     if record.tenant.lower() != current_user.tenant.lower() or record.year != current_user.year:
         raise HTTPException(status_code=403, detail="Access denied to this assessment record.")
-
+    
+    # 🟢 Download Path ใช้ record.export_path ซึ่งตอนนี้ชี้ไปที่ data_store/tenant/exports/...
     return FileResponse(
         path=record.export_path,
         media_type="application/json",

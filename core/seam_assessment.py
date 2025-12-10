@@ -66,9 +66,11 @@ try:
         get_evidence_mapping_file_path, 
         get_contextual_rules_file_path,
         get_doc_type_collection_key,
+        get_assessment_export_file_path,
+        get_export_dir,
         get_rubric_file_path # <--- ต้อง Import ฟังก์ชันนี้ด้วย
     )
-        
+
     import assessments.seam_mocking as seam_mocking 
     
 except ImportError as e:
@@ -621,69 +623,62 @@ class SEAMPDCAEngine:
                 raise # Re-raise the exception to หยุดโปรแกรม
         
     def _resolve_evidence_filenames(self, evidence_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            """
-            ฟังก์ชันสำหรับแก้ไขชื่อไฟล์ในรายการหลักฐานอ้างอิง
-            1. จัดการหลักฐานที่ doc_id ขึ้นต้นด้วย 'UNKNOWN-' (หลักฐานภายใน/ที่ไม่ใช่เอกสาร)
-            2. แปลง doc_id (ที่เป็น Hash/UUID) ให้เป็นชื่อไฟล์ที่มนุษย์อ่านได้ โดยใช้ doc_id_to_filename_map
-            """
-            # ต้องมั่นใจว่า re และ deepcopy ถูก import ไว้ที่ส่วนหัวของไฟล์แล้ว
-            from copy import deepcopy
-            import re
+        """
+        ฟังก์ชันสำหรับแก้ไขชื่อไฟล์ในรายการหลักฐานอ้างอิง
+        1. จัดการหลักฐานที่ doc_id ขึ้นต้นด้วย 'UNKNOWN-' (หลักฐานภายใน/ที่ไม่ใช่เอกสาร)
+        2. แปลง doc_id (ที่เป็น Hash/UUID) ให้เป็นชื่อไฟล์ที่มนุษย์อ่านได้ โดยใช้ doc_id_to_filename_map
+        """
+        # (สมมติว่า re และ deepcopy ถูก import ไว้ที่ส่วนหัวของไฟล์แล้ว)
+        from copy import deepcopy # *ย้ายไปข้างบน*
+        import re # *ย้ายไปข้างบน*
+        
+        resolved_entries = []
+        
+        for entry in evidence_entries:
+            # ใช้ deepcopy เพื่อป้องกันการแก้ไขข้อมูลต้นฉบับ
+            resolved_entry = deepcopy(entry)
+            doc_id = resolved_entry.get("doc_id", "")
+            current_filename = resolved_entry.get("filename", "") # ชื่อเดิมจาก Metadata (ถ้ามี)
             
-            resolved_entries = []
-            for entry in evidence_entries:
-                # ใช้ deepcopy เพื่อป้องกันการแก้ไขข้อมูลต้นฉบับ
-                resolved_entry = deepcopy(entry)
-                # ใช้ doc_id เป็นค่าหลักในการค้นหาชื่อไฟล์
-                doc_id = resolved_entry.get("doc_id", "")
-                # ตรวจสอบชื่อไฟล์ปัจจุบัน (จาก metadata ของ vectorstore ถ้ามี)
-                current_filename = resolved_entry.get("filename", "")
-                
-                # --- 1. จัดการกรณี UNKNOWN- (AI-GENERATED or Lost Source) ---
-                if doc_id.startswith("UNKNOWN-"):
-                    # ให้ใช้ชื่อไฟล์ที่สื่อสารชัดเจนว่าไม่ใช่ไฟล์เอกสารจริง
-                    # เช่น "UNKNOWN-2fac2f11" --> "AI-GENERATED-REF-2fac2f11"
-                    resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
+            # --- 1. จัดการกรณี UNKNOWN- (AI-GENERATED or Lost Source) ---
+            if doc_id.startswith("UNKNOWN-"):
+                resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
+                resolved_entries.append(resolved_entry)
+                continue
+
+            # --- 2. จัดการกรณี Doc ID (Hash/UUID) ที่ถูกต้อง ---
+            if doc_id:
+                # A. ลองค้นหาชื่อไฟล์จาก Map
+                if doc_id in self.doc_id_to_filename_map:
+                    resolved_entry["filename"] = self.doc_id_to_filename_map[doc_id]
                     resolved_entries.append(resolved_entry)
                     continue
 
-                # --- 2. จัดการกรณี Doc ID (Hash/UUID) ที่ถูกต้อง ---
-                if doc_id:
-                    # A. ลองค้นหาชื่อไฟล์จาก Map
-                    if doc_id in self.doc_id_to_filename_map:
-                        resolved_entry["filename"] = self.doc_id_to_filename_map[doc_id]
-                        # ชื่อถูกต้องแล้ว
-                        resolved_entries.append(resolved_entry)
-                        continue
-
-                    # B. ถ้าค้นหาไม่เจอ (Map Fail)
-                    else:
-                        # ตรวจสอบว่าชื่อไฟล์ปัจจุบันเป็นชื่อที่ไม่เหมาะสม (เช่น "Unknown" หรือ Hash.pdf)
-                        is_generic_name = (
-                            current_filename.lower() == "unknown" or
-                            # ✅ รองรับ Hash/UUID 64 ตัวอักษรอย่างเดียว หรือตามด้วยนามสกุล
-                            re.match(r"^[0-9a-f]{64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
-                        )
+                # B. ถ้าค้นหาไม่เจอ (Map Fail)
+                else:
+                    # ตรวจสอบว่าชื่อไฟล์เดิมที่มากับ Metadata เป็นชื่อที่ไม่สื่อความหมายหรือไม่
+                    is_generic_name = (
+                        not current_filename.strip() or # ถ้าเป็น String ว่าง
+                        current_filename.lower() == "unknown" or
+                        # รองรับ Hash/UUID 64 ตัวอักษรอย่างเดียว หรือตามด้วยนามสกุล
+                        re.match(r"^[0-9a-f]{64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
+                    )
+                    
+                    if is_generic_name:
+                        # ใช้ชื่อไฟล์ Fallback ที่สื่อว่า Map ไม่สำเร็จ
+                        resolved_entry["filename"] = f"MAPPING-FAILED-{doc_id[:8]}..."
+                        self.logger.warning(f"Failed to map doc_id {doc_id[:8]}... to filename. Using fallback.")
                         
-                        if is_generic_name:
-                            # ใช้ชื่อไฟล์ Fallback ที่สื่อว่า Map ไม่สำเร็จ แต่มี ID
-                            resolved_entry["filename"] = f"MAPPING-FAILED-{doc_id[:8]}..."
-                            self.logger.warning(f"Failed to map doc_id {doc_id[:8]}... to filename. Using fallback.")
-                        # else: หากชื่อไฟล์ปัจจุบันที่มาจาก metadata ไม่ใช่ Generic Name 
-                        # (เช่นเป็นชื่อไฟล์ที่ดีอยู่แล้ว) จะใช้ชื่อไฟล์นั้นต่อไปโดยปริยาย
+            # --- 3. กรณีไม่มี Doc ID หรือเข้าถึงชื่อไฟล์ไม่ได้เลย (เหลือเป็น Unknown) ---
+            elif not doc_id and (not current_filename.strip() or current_filename.lower() == "unknown"):
+                # โค้ดนี้จะทำงานเฉพาะเมื่อไม่มี doc_id และ filename เดิมก็เป็น Unknown/Empty
+                resolved_entry["filename"] = "MISSING-SOURCE-METADATA"
+                self.logger.error("Evidence found with no doc_id and generic filename.")
+            
+            # เพิ่ม entry เข้าไป (ไม่ว่าจะได้รับการแก้ไขหรือไม่)
+            resolved_entries.append(resolved_entry)
 
-                # --- 3. กรณีไม่มี Doc ID หรือเข้าถึงชื่อไฟล์ไม่ได้เลย (เหลือเป็น Unknown) ---
-                elif not doc_id:
-                    # ถ้าไม่มี doc_id และ filename เป็น Unknown
-                    if current_filename.lower() == "unknown":
-                        resolved_entry["filename"] = "MISSING-SOURCE-METADATA"
-                        self.logger.error("Evidence found with no doc_id and generic filename.")
-                
-                # เพิ่ม entry เข้าไป (ไม่ว่าจะได้รับการแก้ไขหรือไม่)
-                resolved_entries.append(resolved_entry)
-
-            return resolved_entries
-
+        return resolved_entries
     
     # -------------------- Contextual Rules Handlers (FIXED) --------------------
     def _load_contextual_rules_map(self) -> Dict[str, Dict[str, str]]:
@@ -938,26 +933,35 @@ class SEAMPDCAEngine:
         """ Loads the SEAM rubric JSON file using path_utils. """
         
         # 🎯 FIX: ใช้ get_rubric_file_path จาก path_utils แทนการสร้าง Path เอง
+        filepath = None # กำหนดค่าเริ่มต้นเพื่อป้องกัน UnboundLocalError
+        
         try:
+            # 1. รับ Path จาก path_utils ซึ่งตอนนี้ชี้ไปที่ 'config/' แล้ว
             filepath = get_rubric_file_path(
                 tenant=self.config.tenant,
                 enabler=self.enabler_id
             )
-        except Exception:
-            self.logger.error("❌ FATAL: get_rubric_file_path is not available.")
+        except Exception as e:
+            # ดักจับ Exception หากเกิดปัญหาในการเรียกใช้ฟังก์ชัน path_utils
+            self.logger.error(f"❌ FATAL: Error calling get_rubric_file_path: {e}")
             return {} 
 
-        if not os.path.exists(filepath):
-            self.logger.error(f"⚠️ Rubric file not found at: {filepath}")
+        # 2. ตรวจสอบว่าไฟล์มีอยู่จริงหรือไม่
+        if filepath is None or not os.path.exists(filepath):
+            self.logger.error(f"⚠️ Rubric file not found at expected path: {filepath}")
             return {}
 
-        self.logger.info(f"✅ Rubric loaded from: {filepath}")
+        # 3. โหลดไฟล์ JSON
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            self.logger.info(f"✅ Rubric loaded successfully from: {filepath}")
             return data
+        except json.JSONDecodeError:
+            self.logger.error(f"❌ Error decoding Rubric JSON. File might be corrupted: {filepath}")
+            return {}
         except Exception as e:
-            self.logger.error(f"Error loading/decoding Rubric JSON from {filepath}: {e}")
+            self.logger.error(f"❌ Error loading Rubric file from {filepath}: {e}")
             return {}
     
     # -------------------- Helper Function for Map Processing --------------------
@@ -1768,44 +1772,29 @@ class SEAMPDCAEngine:
                 "target_level": self.config.target_level
             }
             return self.total_stats
-            
+
     def _export_results(self, results: dict, sub_criteria_id: str, **kwargs) -> str:
         """
         Exports the assessment results (for a specific sub-criteria or the final run) 
         to a JSON file, using utils/path_utils.py for full path determination.
-        
-        Args:
-            results: The dictionary containing the assessment summary and results.
-            sub_criteria_id: The specific sub-criteria ID being exported (e.g., 2.2).
-            
-        Returns:
-            The path to the saved JSON file, or an empty string on failure.
         """
         
-        # **kwargs รับ Argument ที่เกินมา (เช่น enabler, target_level) โดยไม่ใช้งาน
-        
-        # โค้ดส่วนนี้ยังคงใช้ self.enabler_id และ self.config.target_level ตามเดิม
         enabler = self.enabler_id
         target_level = self.config.target_level
         
-        try:
-            # 1. Import ฟังก์ชันที่จำเป็น (ต้องมี os, json, datetime ถูก import ไว้ที่ส่วนบนของไฟล์)
-            from utils.path_utils import get_export_dir, get_assessment_export_file_path
-            from datetime import datetime # ต้องมั่นใจว่ามีการ import datetime
+        # 1. กำหนดค่าสำหรับ Path Utility (ย้ายการกำหนดค่าที่ใช้ร่วมกันออกมาก่อน try/except)
+        tenant = self.config.tenant
+        year = self.config.year
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = f"assessment_results_{sub_criteria_id}_{timestamp}"
 
-            # 2. กำหนดค่าสำหรับ Path Utility
-            tenant = self.config.tenant
-            year = self.config.year
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # 3. สร้าง Suffix สำหรับชื่อไฟล์ (ไม่รวม tenant/year/enabler)
-            # ตัวอย่าง Suffix: "assessment_results_2.2_20251209_100000"
-            suffix = f"assessment_results_{sub_criteria_id}_{timestamp}"
-            
-            # 4. ใช้ Path Utility สร้าง Full Path (รวมทั้ง Directory และ Filename)
-            # *จะใช้ self.config.export_path ก็ต่อเมื่อต้องการ override directory เท่านั้น*
+        full_path = ""
+        export_dir = ""
+
+        try:
+            # 2. ใช้ Path Utility สร้าง Full Path
             if self.config.export_path:
-                # ถ้ามีการกำหนด export_path (Override) ให้ใช้ directory นั้นและสร้างชื่อไฟล์แบบเดิม
+                # ถ้ามีการกำหนด export_path (Override)
                 export_dir = self.config.export_path
                 file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
                 full_path = os.path.join(export_dir, file_name)
@@ -1816,20 +1805,29 @@ class SEAMPDCAEngine:
                     year=year,
                     enabler=enabler,
                     suffix=suffix,
-                    extension="json"
+                    ext="json"
                 )
-                export_dir = get_export_dir(tenant, year, enabler)
+                # ดึง export_dir จาก full_path แทนการเรียก get_export_dir ซ้ำ
+                export_dir = os.path.dirname(full_path)
 
-        except ImportError:
-            self.logger.error("❌ FATAL: Cannot import path_utils. Falling back to manual path.")
-            # 📌 ASSUMPTION: EXPORTS_DIR ถูก import จาก config.global_vars
-            export_dir = self.config.export_path or EXPORTS_DIR
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        except ImportError as e:
+            self.logger.error(f"❌ FATAL: Cannot import path_utils: {e}. Falling back to manual path.")
+            
+            # Fallback Logic: ใช้ DATA_STORE_ROOT เพื่อให้ Path อยู่ในโครงสร้างเดิม
+            data_store_root_path = os.environ.get('DATA_STORE_ROOT', 'data_store') 
+            
+            if self.config.export_path:
+                export_dir = self.config.export_path
+            else:
+                # Fallback สู่ Path มาตรฐาน: data_store/tenant/exports/year/enabler
+                export_dir = os.path.join(data_store_root_path, tenant, "exports", str(year), enabler)
+            
             file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
             full_path = os.path.join(export_dir, file_name)
-            
-        
-        # 5. สร้าง Directory หากยังไม่มี (ใช้ export_dir ที่ได้จาก path utility หรือ fallback)
+            self.logger.warning(f"⚠️ Using fallback path: {full_path}")
+
+
+        # 3. สร้าง Directory หากยังไม่มี
         if not os.path.exists(export_dir):
             try:
                 os.makedirs(export_dir)
@@ -1838,7 +1836,7 @@ class SEAMPDCAEngine:
                 self.logger.error(f"❌ Failed to create export directory {export_dir}: {e}")
                 return ""
 
-        # 6. เตรียม/อัพเดต Summary Field
+        # 4. เตรียม/อัพเดต Summary Field
         if 'summary' not in results:
             results['summary'] = {}
             
@@ -1846,14 +1844,14 @@ class SEAMPDCAEngine:
         results['summary']['sub_criteria_id'] = sub_criteria_id
         results['summary']['target_level'] = target_level
         
-        if 'sub_criteria_results' in results:
+        # ปรับ Logic การนับ Sub-Criteria ให้นับตาม 'sub_criteria_results' ถ้ามี
+        if 'sub_criteria_results' in results and isinstance(results['sub_criteria_results'], dict):
             results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
         else:
              results['summary']['Number of Sub-Criteria Assessed'] = 1 
 
-        # 7. Export ข้อมูลไปที่ JSON File
+        # 5. Export ข้อมูลไปที่ JSON File
         try:
-            # 📌 ASSUMPTION: json ถูก import ไว้ที่ส่วนบนของไฟล์
             with open(full_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=4)
             
@@ -2436,7 +2434,7 @@ class SEAMPDCAEngine:
             )
             final_results["export_path_used"] = export_path
             final_results["evidence_map"] = deepcopy(self.evidence_map)
-            self.logger.info(f"Exported full results → {export_path}")
+            # self.logger.info(f"Exported full results → {export_path}")
 
         return final_results
 

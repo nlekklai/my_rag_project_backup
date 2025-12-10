@@ -186,16 +186,23 @@ def get_document_file_path(
         return None
 
 # ==================== 8. OTHER PATHS ====================
+def get_config_tenant_root_path(tenant: str) -> str:
+    """Path สำหรับ Configuration Files ที่คงที่ เช่น Rubrics, Contextual Rules"""
+    return os.path.join(DATA_STORE_ROOT, _n(tenant), "config")
+
 def get_rubric_file_path(tenant: str, enabler: str) -> str:
-    return os.path.join(get_mapping_tenant_root_path(tenant),
+    # *** เปลี่ยนจาก get_mapping_tenant_root_path() เป็น get_config_tenant_root_path() ***
+    return os.path.join(get_config_tenant_root_path(tenant),
                         RUBRIC_FILENAME_PATTERN.format(tenant=_n(tenant), enabler=_n(enabler)))
 
 def get_contextual_rules_file_path(tenant: str, enabler: str) -> str:
-    return os.path.join(get_mapping_tenant_root_path(tenant),
+    # *** เปลี่ยนจาก get_mapping_tenant_root_path() เป็น get_config_tenant_root_path() ***
+    return os.path.join(get_config_tenant_root_path(tenant),
                         f"{_n(tenant)}_{_n(enabler)}_contextual_rules.json")
 
 def get_export_dir(tenant: str, year: Union[int, str], enabler: str) -> str:
-    return os.path.join(EXPORTS_DIR, _n(tenant), str(year), _n(enabler))
+    # *** แก้ไข: ใช้ DATA_STORE_ROOT/tenant/exports แทน EXPORTS_DIR เก่า ***
+    return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year), _n(enabler))
 
 def get_assessment_export_file_path(tenant: str, year: Union[int, str], enabler: str, suffix: str, ext: str = "json") -> str:
     return os.path.join(get_export_dir(tenant, year, enabler),
