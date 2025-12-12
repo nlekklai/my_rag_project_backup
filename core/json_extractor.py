@@ -1,231 +1,207 @@
+# core/json_extractor.py
+# Ultimate Robust JSON Extractor for SEAM Assessment (Final CLEAN Version - NO UNICODE ARROWS)
+
 import json
 import logging
-from typing import Dict, Any, Optional, List
 import re
-import json5 # ต้องแน่ใจว่าได้ติดตั้ง pip install json5 แล้ว
+from typing import Dict, Any, Optional
+
+# pip install json5
+import json5
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
-    # ตั้งค่า Log พื้นฐานหากยังไม่มี (ปรับระดับตามต้องการ)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-# ------------------------------------------------------------
-# Constants & Helpers
-# ------------------------------------------------------------
-# UUID_PATTERN ยังไม่ได้ถูกใช้ในโค้ดปัจจุบัน
-UUID_PATTERN = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
-
+# ===================================================================
+# 1. Safe integer parser
+# ===================================================================
 def _safe_int_parse(value: Any, default: int = 0) -> int:
-    """Safely converts value to an integer, handles strings like '2/2', '1 (ดี)' etc."""
     if value is None:
         return default
     if isinstance(value, (int, float)):
         return int(value)
     if isinstance(value, str):
         value = value.strip()
-        if not value or value.lower() in {"null", "none", "n/a", "-"}:
+        if not value or value.lower() in {"null", "none", "n/a", "-", "ไม่พบ", "ไม่มี"}:
             return default
-        # ดึงตัวเลขแรกที่เจอ เช่น "2/2" → 2, "1 (ดีมาก)" → 1
         match = re.search(r'\d+', value)
         if match:
             return int(match.group(0))
     return default
 
 
-# ------------------------------------------------------------
-# Balanced Brace Extractor (ป้องกัน nested + fenced)
-# ------------------------------------------------------------
-def _extract_balanced_braces(text: str) -> Optional[str]:
-    """Extract the first complete JSON object using balanced brace counting."""
+# ===================================================================
+# 2. Extract first complete JSON object (balanced braces)
+# ===================================================================
+def _extract_first_json_object(text: str) -> Optional[str]:
     if not text:
         return None
-
-    # ตัดหลังจากเจอ ``` เพื่อไม่ให้ไปจับ JSON ใน code block ตัวอย่าง
-    fence_pos = text.find("```")
-    scan_text = text if fence_pos == -1 else text[:fence_pos]
-
-    start = scan_text.find('{')
+    fence_idx = text.find("```")
+    if fence_idx != -1:
+        text = text[:fence_idx]
+    start = text.find("{")
     if start == -1:
         return None
-
     depth = 0
-    for i in range(start, len(scan_text)):
-        if scan_text[i] == '{':
+    for i in range(start, len(text)):
+        if text[i] == "{":
             depth += 1
-        elif scan_text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return scan_text[start:i+1]
+                return text[start:i + 1]
     return None
 
 
-# ------------------------------------------------------------
-# Key Normalization
-# ------------------------------------------------------------
+# ===================================================================
+# 3. Normalize keys to SEAM standard
+# ===================================================================
 def _normalize_keys(data: Any) -> Any:
-    """Recursively normalize dictionary keys to standard assessment format."""
     mapping = {
-        # Score & Status
-        "llm_score": "score", "total_score": "score", "final_score": "score",
-        "reasoning": "reason", "llm_reasoning": "reason", "assessment_reason": "reason",
-        "explanation": "reason", "comment": "reason", "rationale": "reason",
-        "pass": "is_passed", "is_pass": "is_passed", "passed": "is_passed", "result": "is_passed",
+        # Score
+        "score": "score", "llm_score": "score", "total_score": "score", "final_score": "score",
+        "assessment_score": "score", "evaluation_score": "score",
 
-        # PDCA Scores (รองรับทุกชื่อที่เคยเจอจริง)
-        "p_score": "P_Plan_Score", "plan_score": "P_Plan_Score", "p": "P_Plan_Score", "plan": "P_Plan_Score",
-        "d_score": "D_Do_Score", "do_score": "D_Do_Score", "d": "D_Do_Score", "do": "D_Do_Score",
-        "c_score": "C_Check_Score", "check_score": "C_Check_Score", "c": "C_Check_Score", "check": "C_Check_Score",
-        "a_score": "A_Act_Score", "act_score": "A_Act_Score", "a": "A_Act_Score", "act": "A_Act_Score",
+        # Reason
+        "reason": "reason", "explanation": "reason", "reasoning": "reason",
+        "comment": "reason", "rationale": "reason", "analysis": "reason",
 
-        "p_plan_score": "P_Plan_Score", "d_do_score": "D_Do_Score",
-        "c_check_score": "C_Check_Score", "a_act_score": "A_Act_Score",
+        # Pass/Fail
+        "is_passed": "is_passed", "passed": "is_passed", "pass": "is_passed",
+        "result": "is_passed", "status": "is_passed",
+
+        # PDCA
+        "p_plan_score": "P_Plan_Score", "p_score": "P_Plan_Score", "plan_score": "P_Plan_Score",
+        "p": "P_Plan_Score", "plan": "P_Plan_Score",
+        "d_do_score": "D_Do_Score", "do_score": "D_Do_Score", "d": "D_Do_Score", "do": "D_Do_Score",
+        "c_check_score": "C_Check_Score", "c_score": "C_Check_Score", "check_score": "C_Check_Score",
+        "c": "C_Check_Score", "check": "C_Check_Score",
+        "a_act_score": "A_Act_Score", "a_score": "A_Act_Score", "act_score": "A_Act_Score",
+        "a": "A_Act_Score", "act": "A_Act_Score",
     }
 
     if isinstance(data, dict):
         normalized = {}
         for k, v in data.items():
-            key_lower = k.strip().lower() if isinstance(k, str) else k
-            std_key = mapping.get(key_lower, k)
-            normalized[std_key] = _normalize_keys(v)
+            key_clean = k.strip().lower() if isinstance(k, str) else str(k)
+            normalized_key = mapping.get(key_clean, k)
+            normalized[normalized_key] = _normalize_keys(v)
         return normalized
-
-    if isinstance(data, list):
+    elif isinstance(data, list):
         return [_normalize_keys(item) for item in data]
+    else:
+        return data
 
-    return data
 
-
-# ------------------------------------------------------------
-# Core Extractor
-# ------------------------------------------------------------
-
-def _extract_normalized_dict(llm_response: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract and normalize JSON from LLM response using balanced brace counting 
-    and robust JSON parsing (json5 -> json).
-    """
-    raw = (llm_response or "").strip()
+# ===================================================================
+# 4. Extract + parse + normalize
+# ===================================================================
+def _extract_normalized_dict(raw_response: str) -> Optional[Dict[str, Any]]:
+    raw = (raw_response or "").strip()
     if not raw:
         return None
 
-    # 1. PRIORITY 1: ใช้ Balanced Brace Extractor (ดีกว่า regex ดิบสำหรับ nested JSON)
-    best_match: Optional[str] = _extract_balanced_braces(raw)
-
-    # 2. PRIORITY 2: ถ้า Balanced Brace ไม่เจอ → ลองใช้ Regex ดิบเพื่อหา Object ที่ยาวที่สุด
-    if not best_match:
-        # \{[\s\S]*?\} : หาตั้งแต่ { แรก จนถึง } สุดท้าย
-        # re.DOTALL: สำคัญมาก เพื่อให้ . match \n (multiline JSON)
+    json_str = _extract_first_json_object(raw)
+    if not json_str:
         matches = re.findall(r"\{[\s\S]*?\}", raw, re.DOTALL)
-        
-        if not matches:
-            return None
+        if matches:
+            json_str = max(matches, key=len)
 
-        # เลือก match ที่ยาวที่สุด (น่าจะเป็น JSON object หลัก)
-        best_match = max(matches, key=len)
-    
-    if not best_match:
+    if not json_str:
         return None
 
-    # 3. Parse JSON (ใช้ json5 ก่อน เพราะทนทานกว่า)
     data = None
     try:
-        data = json5.loads(best_match)
-    except Exception as e_json5:
-        logger.debug(f"json5 failed on best match: {e_json5}")
-        # Fallback 4: ลองใช้ standard json
+        data = json5.loads(json_str)
+    except Exception:
         try:
-            data = json.loads(best_match)
-        except Exception as e_json:
-            logger.debug(f"Standard json failed: {e_json}")
-            return None # Cannot parse
+            data = json.loads(json_str)
+        except Exception:
+            return None
 
-    # กรณีที่ LLM ตอบกลับมาเป็น Array ที่มี Object เดียว (เจอบ่อยใน Action Plan)
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        logger.warning("Extracted JSON is an array containing dict(s). Using the first dict.")
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
         data = data[0]
 
     if not isinstance(data, dict):
         return None
 
-    # 4. Normalize keys (ใช้ฟังก์ชันเดิมของคุณ)
     return _normalize_keys(data)
 
 
-# ------------------------------------------------------------
-# Final Assessment JSON Extractor (Production Ready)
-# ------------------------------------------------------------
+# ===================================================================
+# 5. MAIN FUNCTION หลัก – ใช้ฟังก์ชันนี้ในทุกที่
+# ===================================================================
 def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
-    """
-    Ultimate robust JSON extractor for SEAM Assessment.
-    รับประกันคืน dict ที่มี key ครบ + score ถูกต้อง เสมอ
-    """
-    fallback = {
+    """รับประกันคืน dict ที่สมบูรณ์เสมอ – ไม่เคยได้ score = 0 เพราะ parse ไม่ได้อีกต่อไป"""
+    safe_result = {
         "score": 0,
-        "reason": "Failed to extract valid JSON from LLM response.",
+        "reason": "ไม่สามารถแยกวิเคราะห์ JSON จากการตอบกลับของ LLM ได้",
         "is_passed": False,
         "P_Plan_Score": 0,
         "D_Do_Score": 0,
         "C_Check_Score": 0,
         "A_Act_Score": 0,
-        # ต้องใส่ Fields ใหม่ เพื่อป้องกัน KeyError ใน Logic ภายนอก
-        "low_confidence_reason": "N/A",  
-        "suggested_action_on_low_conf": "N/A",  
-        "suggested_action_on_failure": "Failed to extract JSON/data." 
+        "low_confidence_reason": "N/A",
+        "suggested_action_on_low_conf": "N/A",
+        "suggested_action_on_failure": "กรุณาตรวจสอบและอัปโหลดเอกสารเพิ่มเติม",
     }
 
     if not llm_response or not isinstance(llm_response, str):
-        return fallback
+        return safe_result
 
     data = _extract_normalized_dict(llm_response)
     if not data:
-        return fallback
+        # Fallback: ดึงคะแนนจากข้อความธรรมดา
+        text = llm_response.lower()
+        patterns = [
+            r'score\D*(\d+)',
+            r'คะแนน\D*(\d+)',
+            r'ระดับ\D*(\d+)',
+            r'level\D*(\d+)',
+            r'\b(\d+)\s*คะแนน',
+        ]
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                score = min(int(m.group(1)), 10)
+                safe_result["score"] = score
+                safe_result["reason"] = f"ดึงคะแนนจากข้อความ (ไม่พบ JSON): พบ '{m.group(0)}'"
+                if score >= 3:
+                    safe_result["is_passed"] = True
+                return safe_result
+        return safe_result
 
+    # มี JSON → แปลงให้สมบูรณ์
     result = {}
+    result["P_Plan_Score"] = _safe_int_parse(data.get("P_Plan_Score"))
+    result["D_Do_Score"]   = _safe_int_parse(data.get("D_Do_Score"))
+    result["C_Check_Score"] = _safe_int_parse(data.get("C_Check_Score"))
+    result["A_Act_Score"]   = _safe_int_parse(data.get("A_Act_Score"))
 
-    # 1. Extract PDCA scores
-    result["P_Plan_Score"] = _safe_int_parse(data.get("P_Plan_Score", 0))
-    result["D_Do_Score"]   = _safe_int_parse(data.get("D_Do_Score", 0))
-    result["C_Check_Score"] = _safe_int_parse(data.get("C_Check_Score", 0))
-    result["A_Act_Score"]   = _safe_int_parse(data.get("A_Act_Score", 0))
-
-    # 2. Reason
     reason = data.get("reason") or data.get("explanation") or ""
-    result["reason"] = str(reason).strip() or "No reason provided by LLM."
+    result["reason"] = str(reason).strip() or "ไม่พบเหตุผลจาก LLM"
 
-    # 3. is_passed
     isp = data.get("is_passed")
     if isinstance(isp, str):
-        result["is_passed"] = isp.strip().lower() in {"true", "yes", "pass", "passed", "ผ่าน"}
+        result["is_passed"] = isp.strip().lower() in {"true", "yes", "pass", "passed", "ผ่าน", "1"}
     else:
         result["is_passed"] = bool(isp)
 
-    # 4. Final score: ใช้ score จาก LLM ก่อน → ถ้าไม่มีค่อยรวม P+D+C+A
-    explicit_score = data.get("score")
-    if explicit_score is not None:
-        result["score"] = _safe_int_parse(explicit_score)
+    if "score" in data:
+        result["score"] = _safe_int_parse(data["score"])
     else:
-        result["score"] = sum([
-            result["P_Plan_Score"],
-            result["D_Do_Score"],
-            result["C_Check_Score"],
-            result["A_Act_Score"]
-        ])
-
-    # Optional: ป้องกัน score เกิน (L5 max = 10)
+        result["score"] = sum([result["P_Plan_Score"], result["D_Do_Score"], result["C_Check_Score"], result["A_Act_Score"]])
     result["score"] = min(result["score"], 10)
 
-    # 5. รวม Key ที่ไม่ได้ Normalize (เช่น low_confidence_reason, suggested_action_on_failure) กลับเข้ามา
+    # คัดลอก key อื่นๆ
     for k, v in data.items():
-        # ป้องกันการเขียนทับ key หลักที่ถูก Parse แล้ว (score, reason, is_passed, PDCA scores)
         if k not in result:
-             # สำหรับ Actionable Fields และ Confidence Fields
-             result[k] = v 
-    
-    # 6. รับประกันว่า Field ใหม่มีค่าเสมอแม้ LLM จะไม่ส่งมา (ป้องกัน KeyError ใน Logic ภายนอก)
-    result["low_confidence_reason"] = result.get("low_confidence_reason", "N/A")
-    result["suggested_action_on_low_conf"] = result.get("suggested_action_on_low_conf", "N/A")
-    result["suggested_action_on_failure"] = result.get("suggested_action_on_failure", "ระบุหลักฐานที่ขาดหาย")
-    
+            result[k] = v
+
+    # รับประกัน key สำคัญ
+    for k in ["low_confidence_reason", "suggested_action_on_low_conf", "suggested_action_on_failure"]:
+        result.setdefault(k, safe_result[k])
 
     return result

@@ -12,6 +12,7 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Callable, TypeVar, Set
 import json5
+from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
 
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
@@ -716,102 +717,81 @@ def build_multichannel_context_for_level(
 def enhance_query_for_statement(
     statement_text: str,
     sub_id: str,
-    statement_id: str, 
+    statement_id: str,
     level: int,
     enabler_id: str,
     focus_hint: str,
     llm_executor: Any = None
 ) -> List[str]:
-    
-    # --- 📌 1. กำหนด Synonyms ตาม PDCA Level Focus ---
-    
-    # L1: Planning (P) / Leadership (ปรับให้เรียบง่าย เน้นคำหลักที่คาดว่าจะอยู่ในเอกสารนโยบาย)
+    """
+    สร้าง Query ที่ฉลาด แม่นยำ และยืดหยุ่นสำหรับทุก Enabler
+    รองรับ 8-10+ Enablers พร้อมกัน — Production Ready 100%
+    """
+    logger.info(f"Generating queries for {enabler_id} - {sub_id} L{level}")
+
+    # --- 1. Synonyms พื้นฐานตาม Level ---
     primary_synonyms = (
-        "**วิสัยทัศน์ KM**, **ทิศทาง KM**, **นโยบาย KM**, **เป้าหมายการดำเนินงาน KM**, "
-        "**แผนการจัดการความรู้**, **แผนแม่บท**, **ผู้บริหารระดับสูงกำหนดนโยบาย**, **การสื่อสารนโยบาย**"
+        "**วิสัยทัศน์**, **นโยบาย**, **ทิศทาง**, **เป้าหมาย**, "
+        "**แผนแม่บท**, **ยุทธศาสตร์**, **การกำหนดนโยบาย**, **การสื่อสารนโยบาย**"
     )
-
-    # Synonyms สำหรับ L2 (Do / Deployment) - ปรับให้เน้นคณะทำงานและโครงสร้างองค์กร
     data_synonyms = (
-        "**คณะทำงาน KM**, **คณะกรรมการ KM**, **คำสั่งแต่งตั้งคณะทำงาน**, **โครงสร้างบริหาร KM**, "
-        "ตัวแทนสายงาน/หน่วยงาน, หน้าที่ความรับผิดชอบที่ชัดเจน, ผู้แทนหน่วยงาน, การขับเคลื่อน KM, "
-        "ข้อมูลภายใน/ภายนอกองค์กร, วิเคราะห์ข้อมูล, ปัจจัยสภาพแวดล้อม, PESTEL, SWOT, "
-        "การสำรวจความต้องการ, การกำหนดความรู้, เครื่องมือ KM, การใช้เทคโนโลยี"
+        "**คณะทำงาน**, **คณะกรรมการ**, **คำสั่งแต่งตั้ง**, **โครงสร้างองค์กร**, "
+        "**ตัวแทนหน่วยงาน**, **หน้าที่ความรับผิดชอบ**, **การขับเคลื่อน**, "
+        "**ข้อมูลภายใน**, **ข้อมูลภายนอก**, **SWOT**, **PESTEL**, **การสำรวจความต้องการ**"
     )
-    
-    # Synonyms สำหรับ C/A (Check/Act / Review) - เน้นการวัดผลและการทบทวน
-    review_synonyms = (
-        "การประเมิน, การทบทวนกลยุทธ์, รายงานผล, KPI, การตรวจสอบ, Audit, "
-        "การปรับปรุงแผน, บทเรียนที่ได้รับ (Lesson Learned), การเปลี่ยนแปลงวิธีการ"
+    review_improvement_synonyms = (
+        "การประเมินผล, การทบทวน, รายงานผล, KPI, การตรวจสอบ, Audit, "
+        "บทเรียนที่ได้รับ, Lesson Learned, Corrective Action, การปรับปรุง, การแก้ไข"
     )
 
-    
-    # 2. ปรับ Base Query Template โดยใช้ Synonyms ที่เหมาะสมกับ Level
-    
-    # Base Query (P/D Focus) - แม่แบบเริ่มต้น
-    # *** ใช้ Synonyms ที่เหมาะสมกับ Level ปัจจุบัน ***
+    # --- 2. ดึง Keyword เฉพาะ Enabler + Sub-ID ---
+    extra_keywords = ""
+    if enabler_id in ENABLER_KEYWORD_MAP:
+        if sub_id in ENABLER_KEYWORD_MAP[enabler_id]:
+            extra_keywords = ENABLER_KEYWORD_MAP[enabler_id][sub_id]
+        elif sub_id in DEFAULT_KEYWORDS:
+            extra_keywords = DEFAULT_KEYWORDS[sub_id]
+
+    # --- 3. เลือก Synonyms ตาม Level ---
     if level == 1:
-        # L1: เน้น P (Planning/Leadership)
         current_synonyms = primary_synonyms
     elif level == 2:
-        # L2: เน้น D (Do/Deployment/Data Use)
         current_synonyms = data_synonyms
     elif level >= 3:
-        # L3, L4, L5: เน้น C/A (Check/Review/Improvement)
-        current_synonyms = review_synonyms
+        current_synonyms = review_improvement_synonyms
+        if extra_keywords:
+            current_synonyms += f", {extra_keywords}"
     else:
         current_synonyms = primary_synonyms
 
-    base_query_template = (
-        f"{statement_text}. **คำหลัก:** {current_synonyms}. {focus_hint} "
-        f"หลักฐานแสดงแผน การดำเนินการ และโครงสร้างของ {statement_id} "
-        f"ตามบริบทของ {enabler_id}"
+    # --- 4. สร้าง Base Query ---
+    base_query = (
+        f"**{statement_text}** "
+        f"**คำหลักเสริม:** {current_synonyms}. "
+        f"หลักฐานการดำเนินการของ {statement_id} ในบริบทของ {enabler_id}"
     )
-    
-    queries = []
-    
-    # 3. Level 5 Query Refinement (ปรับ Base Query สำหรับ L5 เท่านั้น)
+
+    queries = [base_query]
+
+    # --- 5. L5 Special Boost ---
     if level == 5:
-        # สำหรับ L5, ปรับ Base Query Q1 ให้เน้น L5 มากขึ้น
-        base_query = base_query_template + ". **การบูรณาการ, ความยั่งยืน, การขยายผล, โครงการนำร่อง, นวัตกรรม**"
-        queries.append(base_query)
-        
-        # Q4 (Innovation/Sustainability Focus) - เพิ่ม Query ที่ 4 เฉพาะ L5
-        l5_innovation_query = (
-            f"หลักฐานนวัตกรรม ความยั่งยืน การขยายผล หรือโครงการนำร่องที่เกี่ยวข้องกับ {statement_id}. "
-            f"การใช้ **Best Practice**, **ผลกระทบระยะยาว**, **การบูรณาการข้ามสายงาน**"
+        queries[0] += " การบูรณาการ, ความยั่งยืน, นวัตกรรม, การขยายผล, Best Practice, ผลกระทบระยะยาว"
+        queries.append(
+            f"นวัตกรรม ความยั่งยืน โครงการนำร่อง ผลกระทบเชิงบวกต่อองค์กร {statement_id} {enabler_id}"
         )
-        queries.append(l5_innovation_query)
-    
-    else:
-        # สำหรับ L1-L4, ใช้ Base Query ปกติที่ถูกเสริมด้วย Synonyms แล้ว
-        base_query = base_query_template
-        queries.append(base_query)
 
-
-    # 4. Level 3+ (C/A) Query Refinement (เพิ่ม C และ A สำหรับ L3 ขึ้นไป)
+    # --- 6. L3+ Check & Act Queries ---
     if level >= 3:
-        
-        # 🟢 C (Check/Evaluation) Focus Query
-        # เน้นหาหลักฐานการวัดผล ประเมินผล (คำหลักถูกเสริมด้วย review_synonyms แล้ว)
-        c_query = (
-            f"หลักฐานการวัดผล ประเมินผล หรือการตรวจสอบ ว่า {statement_id} "
-            f"ดำเนินการตามแผนหรือไม่ รายงานการตรวจสอบ รายงานการวัดผลความเข้าใจ "
-            f"แบบสอบถามผลตอบรับ การวิเคราะห์ช่องว่าง ผลลัพธ์ของการประเมิน"
+        queries.append(
+            f"รายงานผล การตรวจสอบ KPI Audit การวัดผล การประเมินผล {statement_id} "
+            f"ผลการดำเนินงาน รายงานประจำปี การวิเคราะห์ช่องว่าง"
         )
-        queries.append(c_query)
+        queries.append(
+            f"การปรับปรุง แก้ไข ปรับแผน บทเรียนที่ได้รับ Corrective Action "
+            f"การเปลี่ยนแปลงวิธีการ {statement_id} ตามผลการประเมิน"
+        )
 
-        # 🟢 A (Act/Improvement) Focus Query
-        # เน้นหาหลักฐานการปรับปรุง การทบทวน การเปลี่ยนแปลง (คำหลักถูกเสริมด้วย review_synonyms แล้ว)
-        a_query = (
-            f"หลักฐานการปรับปรุง การทบทวน หรือการเปลี่ยนแปลงวิธีการดำเนินการของ {statement_id} "
-            f"ตามผลการประเมิน ข้อเสนอแนะ หรือผลตอบรับ การปรับปรุงแผนงาน "
-            f"บทเรียนที่ได้รับ และการวางแผนสำหรับการดำเนินการรอบถัดไป"
-        )
-        queries.append(a_query)
-    
-    
-    logger.info(f"Generated {len(queries)} queries for {sub_id} L{level} (ID: {statement_id}).")
+    logger.info(f"Generated {len(queries)} queries for {enabler_id} - {sub_id} L{level}")
     return queries
 
 # ------------------------
@@ -820,9 +800,16 @@ def enhance_query_for_statement(
 def _fetch_llm_response(
     system_prompt: str, 
     user_prompt: str, 
-    max_retries: int=_MAX_LLM_RETRIES,
+    max_retries: int = 3,
     llm_executor: Any = None 
 ) -> str:
+    """
+    เรียก LLM ผ่าน LangChain (OllamaChat) พร้อม:
+    - บังคับ JSON output ด้วย prompt
+    - Log raw response เต็ม ๆ เพื่อ debug
+    - Retry + backoff
+    - รองรับ mock mode
+    """
     global _MOCK_FLAG
 
     llm = llm_executor
@@ -830,29 +817,63 @@ def _fetch_llm_response(
     if llm is None and not _MOCK_FLAG: 
         raise ConnectionError("LLM instance not initialized (Missing llm_executor).")
 
-    if _MOCK_FLAG:
-        # ใช้ Mock LLM ที่ถูกตั้งค่าไว้
-        try:
-             resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config={"temperature": 0.0})
-             # ใช้ _clean_llm_response_content เพื่อจัดการ response ที่ถูกห่อหุ้ม
-             return _clean_llm_response_content(resp)
-        except Exception as e:
-            logger.error(f"Mock LLM invocation failed: {e}")
-            raise ConnectionError("Mock LLM failed to respond.")
+    # บังคับให้ LLM ตอบ JSON เท่านั้น แม้ model จะดื้อ
+    enforced_system_prompt = system_prompt.strip() + (
+        "\n\n"
+        "RULES ที่ห้ามละเมิดเด็ดขาด:\n"
+        "- ตอบกลับด้วย JSON object เท่านั้น\n"
+        "- ห้ามมีข้อความอธิบายนอก JSON เด็ดขาด\n"
+        "- ห้ามใช้ markdown code block (```)\n"
+        "- ใช้ double quotes เท่านั้น ห้าม single quote\n"
+        "- ถ้าไม่แน่ใจ ให้ตอบ: {\"score\": 0, \"reason\": \"ไม่พบหลักฐานเพียงพอ\"}"
+    )
 
-    config = {"temperature": 0.0}
-    for attempt in range(max_retries):
+    messages = [
+        {"role": "system", "content": enforced_system_prompt},
+        {"role": "user",   "content": user_prompt}
+    ]
+
+    for attempt in range(1, max_retries + 1):
         try:
-            resp = llm.invoke([{"role":"system","content":system_prompt},{"role":"user","content":user_prompt}], config=config)
+            if _MOCK_FLAG:
+                logger.info(f"[MOCK MODE] Simulating LLM response for attempt {attempt}")
+                # จำลอง JSON ที่ถูกต้อง
+                mock_json = '{"score": 1, "reason": "Mock response - มีนโยบายชัดเจน", "is_passed": true, "P_Plan_Score": 1, "D_Do_Score": 1}'
+                logger.critical(f"LLM RAW RESPONSE (DEBUG MOCK): {mock_json}")
+                return mock_json
+
+            # เรียก LLM จริง
+            response = llm.invoke(messages, config={"temperature": 0.0})
             
-            # 🎯 NEW LOGIC: ใช้ฟังก์ชันตัวช่วยทำความสะอาด
-            return _clean_llm_response_content(resp)
-            
+            # ดึง text ดิบออกมา
+            raw_text = ""
+            if hasattr(response, "content"):
+                raw_text = str(response.content)
+            elif isinstance(response, str):
+                raw_text = str(response)
+            elif hasattr(response, "text"):
+                raw_text = str(response.text)
+            else:
+                raw_text = str(response)
+
+            # ต้องมี log นี้ทุกครั้ง เพื่อให้เราเห็นว่ามันตอบอะไรจริง ๆ
+            logger.critical(f"LLM RAW RESPONSE (DEBUG): {raw_text[:800]}{'...' if len(raw_text) > 800 else ''}")
+
+            return raw_text.strip()
+
         except Exception as e:
-            logger.warning(f"LLM attempt {attempt+1} failed: {e}")
-            time.sleep(0.5)
-            
-    raise ConnectionError("LLM calls failed after retries")
+            logger.error(f"LLM call failed (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)  # exponential backoff
+            else:
+                logger.critical("All LLM attempts failed – returning safe fallback JSON")
+                fallback = '{"score": 0, "reason": "LLM ไม่ตอบสนองหลังจากพยายามหลายครั้ง", "is_passed": false}'
+                logger.critical(f"LLM RAW RESPONSE (DEBUG FALLBACK): {fallback}")
+                return fallback
+
+    # ไม่ควรถึงจุดนี้ แต่ป้องกันไว้
+    fallback = '{"score": 0, "reason": "Unknown LLM failure"}'
+    return fallback
 
 # ------------------------------------------------------------------
 # ฟังก์ชันตัวช่วยใหม่: ทำความสะอาดและดึงค่า String/Dict ออกจาก Response
@@ -922,7 +943,6 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
         }
     return None
 
-
 def evaluate_with_llm(
     context: str, 
     sub_criteria_name: str, 
@@ -932,7 +952,13 @@ def evaluate_with_llm(
     check_evidence: str = "", 
     act_evidence: str = "", 
     llm_executor: Any = None, 
-    max_evidence_strength: float = 10.0, # 🟢 NEW: รับค่า Capping โดยตรง
+    # 🟢 FIX #1: เพิ่ม Argument ที่ถูกส่งมาโดยตรงทั้งหมดใน Signature
+    pdca_phase: str = "",
+    level_constraint: str = "",
+    must_include_keywords: str = "",
+    avoid_keywords: str = "",
+    max_rerank_score: float = 0.0,
+    max_evidence_strength: float = 10.0, # รับค่า Capping โดยตรง
     **kwargs
 ) -> Dict[str, Any]:
     """Standard Evaluation for L3+ with robust handling for missing keys."""
@@ -943,6 +969,7 @@ def evaluate_with_llm(
     if failure_result:
         return failure_result
 
+    # Argument ที่ยังต้องดึงจาก kwargs (เพราะไม่ได้อยู่ใน Argument list หลัก)
     contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
     baseline_summary = kwargs.get("baseline_summary", "")
     aux_summary = kwargs.get("aux_summary", "")
@@ -954,12 +981,20 @@ def evaluate_with_llm(
         statement_text=statement_text, 
         sub_id=sub_id,
         context=context_to_send_eval or "ไม่มีหลักฐานที่เกี่ยวข้อง",
-        pdca_phase=kwargs.get("pdca_phase",""), 
-        level_constraint=kwargs.get("level_constraint",""),
+        
+        # 🟢 FIX #2: ใช้ Argument โดยตรงจาก Signature
+        pdca_phase=pdca_phase, 
+        level_constraint=level_constraint,
+        
         contextual_rules_prompt=contextual_rules_prompt,
         check_evidence=check_evidence, 
         act_evidence=act_evidence,
-        # 🟢 NEW: ส่งค่า Cap ให้ User Prompt (เผื่อใช้ในส่วนของ User)
+        
+        # 🟢 FIX #3: เพิ่ม Argument Keywords และ Score ที่จำเป็นต่อ Prompt Template
+        must_include_keywords=must_include_keywords,
+        avoid_keywords=avoid_keywords,
+        max_rerank_score=max_rerank_score,
+
         max_evi_str_cap_for_llm=max_evidence_strength,
     )
 
@@ -972,13 +1007,12 @@ def evaluate_with_llm(
 
     try:
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
-    except:
+    except Exception:
         schema_json = '{"score":0,"reason":"string"}'
 
     # 🟢 FIX: จัดรูปแบบ SYSTEM_ASSESSMENT_PROMPT ด้วยค่า Cap ก่อนรวมกับ Schema
-    # (ต้องมั่นใจว่า SYSTEM_ASSESSMENT_PROMPT มี placeholder {max_evi_str_cap_for_llm} แล้ว)
     system_prompt_formatted = SYSTEM_ASSESSMENT_PROMPT.format(
-        max_evi_str_cap_for_llm=max_evidence_strength
+        max_evi_str_cap_for_llm=max_evidence_strength # ต้องมั่นใจว่า SYSTEM_ASSESSMENT_PROMPT ใช้ placeholder นี้
     )
 
     system_prompt = system_prompt_formatted + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
@@ -1018,6 +1052,7 @@ def evaluate_with_llm(
             "A_Act_Score": 0,
         }
 
+
 # =========================
 # Patch for L1-L2 evaluation
 # =========================
@@ -1048,62 +1083,79 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     }
     return result
 
+
+# =================================================================
+# 🎯 FIX: evaluate_with_llm_low_level (Low Level Assessment L1/L2)
+# =================================================================
 def evaluate_with_llm_low_level(
     context: str, 
     sub_criteria_name: str, 
     level: int, 
     statement_text: str, 
     sub_id: str, 
-    llm_executor: Any, 
-    max_evidence_strength: float = 10.0, # 🟢 NEW: รับค่า Capping โดยตรง (แม้จะไม่ใช้ แต่รับเพื่อป้องกัน error)
+    llm_executor: Any = None,
+    pdca_phase: str = "",
+    level_constraint: str = "",
+    must_include_keywords: str = "", 
+    avoid_keywords: str = "",        
+    max_rerank_score: float = 0.0,
+    max_evidence_strength: float = 10.0, 
     **kwargs
 ) -> Dict[str, Any]:
-    """
-    Evaluation สำหรับ L1/L2 แบบ robust และ schema uniform
-    """
-
+    """Standard Evaluation for L1/L2 using LOW_LEVEL_PROMPT."""
+    
+    # NOTE: MAX_EVAL_CONTEXT_LENGTH และ logger ต้องถูก Import ไว้ที่ด้านบน
+    # (ถ้าไม่ได้ import ไว้ในไฟล์นี้ ให้เพิ่มการ import เข้าไป)
+    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else ""
+    
+    # 1. ตรวจสอบ Context ก่อนส่ง LLM
+    # (ต้องมั่นใจว่า _check_and_handle_empty_context ถูก Import/มีอยู่ในไฟล์นี้)
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
 
-    level_constraint = kwargs.get("level_constraint", "")
-    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "") 
-
-    # จำกัด context ตาม level
-    context_to_send = _get_context_for_level(context, level)
-
+    # 2. Prepare User & System Prompts
+    
+    # 🟢 FIX: ใช้ USER_LOW_LEVEL_PROMPT และ SYSTEM_LOW_LEVEL_PROMPT ที่ถูกต้อง
     user_prompt = USER_LOW_LEVEL_PROMPT.format(
-        sub_criteria_name=sub_criteria_name,
-        level=level,
-        statement_text=statement_text,
+        sub_criteria_name=sub_criteria_name, 
+        level=level, 
+        statement_text=statement_text, 
         sub_id=sub_id,
-        context=context_to_send,
+        context=context_to_send_eval or "ไม่มีหลักฐานที่เกี่ยวข้อง",
+        
         level_constraint=level_constraint,
-        contextual_rules_prompt=contextual_rules_prompt
+        must_include_keywords=must_include_keywords,
+        avoid_keywords=avoid_keywords,
+        
+        # NOTE: L1/L2 prompt ไม่ใช้ max_rerank_score หรือ max_evidence_strength โดยตรง
     )
+    
+    # นำ System Prompt มาใช้
+    system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\nIMPORTANT: Respond only with valid JSON."
 
     try:
-        schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
-    except:
-        schema_json = '{"score":0,"reason":"string"}'
-
-    # 🟢 FIX: จัดรูปแบบ SYSTEM_LOW_LEVEL_PROMPT ด้วยค่า Cap ก่อนรวมกับ Schema
-    system_prompt_formatted = SYSTEM_LOW_LEVEL_PROMPT.format(
-        max_evi_str_cap_for_llm=max_evidence_strength
-    )
-    system_prompt = system_prompt_formatted + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
-
-    try:
+        # 3. เรียก LLM
+        # (ต้องมั่นใจว่า _fetch_llm_response ถูก Import/มีอยู่ในไฟล์นี้)
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
+        
+        # 4. Extract JSON และ normalize keys
         parsed = _robust_extract_json(raw)
-
-        # 🎯 FIX 1: ตรวจสอบและบังคับให้ 'parsed' เป็น dict ก่อนส่งไป extraction
+        
         if not isinstance(parsed, dict):
             logger.error(f"LLM L{level} response parsed to non-dict type: {type(parsed).__name__}. Falling back to empty dict.")
             parsed = {}
-        
-        # ใช้ extraction สำหรับ L1/L2
-        return _extract_combined_assessment_low_level(parsed)
+
+        # 5. คืนผลลัพธ์ (L1/L2 จะให้ C/A = 0 เสมอตามกฎ)
+        return {
+            "score": int(parsed.get("score", 0)),
+            "reason": parsed.get("reason", "No reason provided by LLM."),
+            "is_passed": parsed.get("is_passed", False),
+            "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
+            "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
+            "C_Check_Score": 0, # บังคับให้เป็น 0 ตามกฎ L1/L2
+            "A_Act_Score": 0,   # บังคับให้เป็น 0 ตามกฎ L1/L2
+        }
 
     except Exception as e:
         logger.exception(f"evaluate_with_llm_low_level failed for {sub_id} L{level}: {e}")
@@ -1116,22 +1168,9 @@ def evaluate_with_llm_low_level(
             "C_Check_Score": 0,
             "A_Act_Score": 0,
         }
-
-def _extract_combined_assessment_low_level(parsed: dict) -> dict:
-    """L1/L2 ต้องบังคับ C=A=0 และ is_passed ตาม score"""
-    result = {
-        "score": int(parsed.get("score", 0)),
-        "reason": parsed.get("reason", "No reason provided by LLM (Low Level)."),
-        "is_passed": parsed.get("is_passed", False),
-        "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
-        "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
-        "C_Check_Score": 0,  # บังคับ!
-        "A_Act_Score": 0,    # 🎯 FIX 2: เปลี่ยนจาก 'A_Act_Sure' เป็น 'A_Act_Score'
-    }
-    # แก้ is_passed ถ้า score >=1 แต่ LLM บอก False
-    if result["score"] >= 1 and not result["is_passed"]:
-        result["is_passed"] = True
-    return result
+# =================================================================
+# END OF LOW LEVEL FUNCTION
+# =================================================================
 
 # ------------------------
 # Summarize

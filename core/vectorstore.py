@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 from pathlib import Path
 import hashlib
+from threading import Lock
 
 # system utils
 try:
@@ -378,10 +379,6 @@ def list_vectorstore_folders(
 
 
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
-# core/vectorstore.py
-# ... (ส่วน Imports เหมือนเดิม)
-
-# -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
     _instance = None
     _is_initialized = False
@@ -408,7 +405,7 @@ class VectorStoreManager:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT,  year: Optional[int] = None, enabler: Optional[str] = None): # ⬅️ FIX: รับ enabler เข้ามาด้วย
+    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT,  year: Optional[int] = None, enabler: Optional[str] = None, doc_type: str = EVIDENCE_DOC_TYPES,): # ⬅️ FIX: รับ enabler เข้ามาด้วย
         # 📌 FIX: ทำให้ init รับแค่ base_path และ tenant เพื่อให้คงความเป็น Singleton
         if not self._is_initialized:
             self._base_path = base_path
@@ -417,7 +414,7 @@ class VectorStoreManager:
             # 💡 FIX: ต้องกำหนดค่าเริ่มต้นให้ Attributes ที่จำเป็นต้องใช้ในเมธอดอื่น ๆ ของ Class
             #        โดยใช้ค่า Default จาก config
             self.year = year if year is not None else DEFAULT_YEAR    
-            self.doc_type = "all"         # กำหนดค่า default
+            self.doc_type = doc_type
             self.enabler = enabler.upper() if enabler else DEFAULT_ENABLER # ⬅️ FIX: กำหนด enabler ให้ชัดเจน
             
             self._chroma_cache = {}
@@ -459,65 +456,113 @@ class VectorStoreManager:
         except Exception:
             pass
 
-
     def _load_doc_id_mapping(self):
+        """
+        โหลดและรวม Document ID Mapping จาก 2 Path (Global + Year/Enabler Specific) แบบ thread-safe
+        เน้นความทนทานต่อ Worker Context (Handle ValueError และ Attribute Missing)
+        """
+
+        # Lock สำหรับ thread-safe update
+        if not hasattr(self, "_mapping_lock") or self._mapping_lock is None:
+            self._mapping_lock = Lock()
+
         self._doc_id_mapping = {}
         self._uuid_to_doc_id = {}
-        
-        # 1. PATH A: Year-Specific/Enabler Mapping (เช่น Evidence)
-        # 🎯 FIX: ใช้ get_mapping_file_path (มีปี/enabler)
-        path_A = get_mapping_file_path(
-            doc_type=self.doc_type,
-            tenant=self.tenant, 
-            year=self.year, 
-            enabler=self.enabler
-        )
-        
-        # 2. PATH B: Global/Tenant Root Mapping (สำหรับเอกสารทั่วไป)
-        # 🎯 FIX: ใช้ get_mapping_file_path (ไม่มีปี/enabler)
-        path_B = get_mapping_file_path(
-            doc_type=self.doc_type,
-            tenant=self.tenant,
-            year=None, # For global/legacy mapping
-            enabler=None # For global/legacy mapping
-        )
 
-        # จัดลำดับการโหลด: โหลด Global (Path B) ก่อน เพื่อให้ Evidence (Path A) ทับได้
-        paths_to_load = [path_B, path_A]
+        # 🎯 CRITICAL: ดึงค่า attributes ปลอดภัยใน Worker Context
+        current_tenant = getattr(self, 'tenant', 'default_tenant')
+        current_year = getattr(self, 'year', None)
+        current_enabler = getattr(self, 'enabler', None)
+        # 🎯 FIX: ใช้ self.doc_type ที่ถูกกำหนดใน __init__ 
+        # (ซึ่งถูกส่งมาจาก load_all_vectorstores อย่างถูกต้องแล้ว)
+        current_doc_type = getattr(self, 'doc_type', EVIDENCE_DOC_TYPES) 
+
+        logger.info(f"🔍 VSM MAP LOAD PARAMS: Tenant={current_tenant}, Year={current_year}, "
+                    f"Enabler={current_enabler}, DocType={current_doc_type}")
+        
+        path_A = None # Specific Map
+        path_B = None # Global Map
+
+        # 1. PATH A: Year-Specific/Enabler Mapping
+        try:
+            path_A = get_mapping_file_path(
+                doc_type=current_doc_type,
+                tenant=current_tenant, 
+                year=current_year, 
+                enabler=current_enabler
+            )
+        except ValueError as e:
+            logger.warning(f"⚠️ VSM MAP PATH A (Specific) failed generation: {e}. Skipping specific map.")
+            path_A = None
+        
+        # 2. PATH B: Global/Tenant Root Mapping
+        try:
+             path_B = get_mapping_file_path(
+                doc_type=current_doc_type,
+                tenant=current_tenant,
+                year=None, # บังคับเป็น None เพื่อให้ Path Logic ไปใช้แบบ Global
+                enabler=None 
+            )
+        except ValueError as e:
+            logger.warning(f"⚠️ VSM MAP PATH B (Global) failed generation: {e}. Skipping global map.")
+            path_B = None
+            
+        # 🎯 FIX: ตรวจสอบความมีอยู่ของไฟล์และจัดลำดับการโหลด (Specific ก่อน Global, ถ้า Path ต่างกัน)
+        paths_to_load = []
+        # A ก่อน B เพื่อให้ Specific ทับ Global
+        if path_A and os.path.exists(path_A):
+            paths_to_load.append(path_A)
+        # B ต้องไม่ซ้ำกับ A
+        if path_B and path_B != path_A and os.path.exists(path_B):
+            paths_to_load.append(path_B)
+
+
+        # Log Path details
+        logger.info(f"🔍 VSM MAP PATH A (Specific): {path_A} (Exists: {os.path.exists(path_A) if path_A else 'N/A'})")
+        logger.info(f"🔍 VSM MAP PATH B (Global): {path_B} (Exists: {os.path.exists(path_B) if path_B else 'N/A'})")
+        logger.info(f"🔍 VSM MAP Loading from {len(paths_to_load)} path(s): {paths_to_load}")
         
         total_loaded_docs = 0
         total_loaded_uuids = 0
 
+        # เริ่มต้นการโหลด
         for path in paths_to_load:
-            if not os.path.exists(path):
-                logger.debug(f"🔍 DEBUG: Doc ID Mapping file not found at expected path: {path}")
-                continue
-                
+            
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
                     
-                    # Merge data
+                # Thread-safe update
+                with self._mapping_lock:
                     for doc_id, doc_entry in mapping_data.items():
                         doc_id_clean = doc_id.strip()
                         
-                        # เพิ่มหรืออัปเดต doc_id_mapping (ใช้การอัปเดตเพื่อ Merge)
                         self._doc_id_mapping[doc_id_clean] = doc_entry
                         
                         # สร้าง uuid to doc_id mapping
-                        if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry and isinstance(doc_entry.get("chunk_uuids"), list):
+                        if isinstance(doc_entry, dict) and isinstance(doc_entry.get("chunk_uuids"), list):
                             for uid in doc_entry["chunk_uuids"]:
-                                self._uuid_to_doc_id[uid] = doc_id_clean
+                                uid_clean = uid.replace("-", "")
                                 
-                    logger.info(f"✅ Loaded {len(mapping_data)} documents from MAPPING: {path}")
-                    total_loaded_docs = len(self._doc_id_mapping)
-                    total_loaded_uuids = len(self._uuid_to_doc_id)
+                                # 🎯 FIX: จัดการ UUID ซ้ำ (ตามคำแนะนำ)
+                                if uid in self._uuid_to_doc_id and self._uuid_to_doc_id[uid] != doc_id_clean:
+                                    logger.warning(f"⚠️ Duplicate UUID {uid} detected. Existing: {self._uuid_to_doc_id[uid]}, New: {doc_id_clean}")
+                                    
+                                self._uuid_to_doc_id[uid] = doc_id_clean
+                                self._uuid_to_doc_id[uid_clean] = doc_id_clean
+                                
+                    current_total_docs = len(self._doc_id_mapping)
+                    current_total_uuids = len(self._uuid_to_doc_id)
+                
+                logger.info(f"✅ Loaded {len(mapping_data)} documents from MAPPING: {path} (Current Total Docs: {current_total_docs}, Chunks: {current_total_uuids})")
+                total_loaded_docs = current_total_docs
+                total_loaded_uuids = current_total_uuids
                     
             except Exception as e:
                 logger.error(f"❌ Failed to load Doc ID Mapping from {path}: {e}", exc_info=True)
 
 
-        logger.info(f"Initialized Doc ID Mapping. Total original documents loaded: {total_loaded_docs}, Total chunks mapped: {total_loaded_uuids}.")
+        logger.info(f"Initialized Doc ID Mapping. Total documents loaded: {total_loaded_docs}, Total chunks mapped: {total_loaded_uuids}.")
 
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         collection_name_lower = collection_name.strip().lower()
@@ -623,15 +668,17 @@ class VectorStoreManager:
                 )
                 return None
 
+
     def get_documents_by_id(self, stable_doc_ids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
         """
-        Retrieve documents from Chroma collection by stable_doc_ids (64-char hash) 
-        or by full chunk UUID (64-char hash + _index).
+        Retrieve documents from Chroma collection by stable_doc_ids (64-char hash).
 
-        Automatically uses the Doc ID Map to find all related chunk UUIDs.
-        
-        *** FIX: ลบ 'ids' ออกจาก include เพื่อแก้ปัญหา ChromaDB ValueError ***
+        🎯 FIX 21.0: ลบ 'ids' ออกจาก 'include' parameter ใน collection.get() เพื่อแก้ไข ValueError
         """
+        import chromadb 
+        from langchain_core.documents import Document as LcDocument
+        from typing import Set, Dict, Any 
+
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
             
@@ -639,7 +686,6 @@ class VectorStoreManager:
             return []
 
         # 1. กำหนดชื่อ Collection และโหลด Instance
-        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
         collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
         chroma_instance = self._load_chroma_instance(collection_name)
         
@@ -647,70 +693,105 @@ class VectorStoreManager:
             logger.warning(f"VSM: Cannot load collection '{collection_name}' for document retrieval.")
             return []
 
-        # 2. แปลง Stable Doc IDs เป็น Chunk UUIDs
-        search_ids: List[str] = []
-        search_key: str = "ids" # กำหนดเป็น 'ids' ก่อน
+        # 2. แปลง Stable Doc IDs เป็น Chunk UUIDs (เพื่อใช้ในการค้นหา Primary Key)
+        chunk_uuids_for_search: List[str] = []
         
         for stable_id in stable_doc_ids:
-            # ใช้ Doc ID Map เพื่อหา Chunk UUIDs ทั้งหมดที่เกี่ยวข้อง
-            map_entry = self.doc_id_map.get(stable_id)
+            stable_id_clean = stable_id.strip() 
+            map_entry = self.doc_id_map.get(stable_id_clean)
             if map_entry and map_entry.get("chunk_uuids"):
-                search_ids.extend(map_entry["chunk_uuids"])
+                chunk_uuids_for_search.extend(map_entry["chunk_uuids"])
             else:
-                # ถ้าหาไม่เจอใน map ให้ถือว่าเป็น Chunk UUID หรือเป็น Stable ID ที่เป็นไปได้
-                search_ids.append(stable_id) 
+                chunk_uuids_for_search.append(stable_id_clean) 
                 
-        # 3. จัดการ ID ซ้ำซ้อนและเตรียม Query
-        search_ids = list(set([str(i).strip() for i in search_ids if str(i).strip()]))
+        # 3. จัดการ ID ซ้ำซ้อนและเตรียม Query สำหรับ Primary Key Search (Chunk UUIDs)
+        search_ids_raw = list(set([
+            str(i).strip()
+            for i in chunk_uuids_for_search if str(i).strip()
+        ]))
+        
+        # เพิ่ม Flexible UUID Search: ค้นหาทั้ง ID ที่มีขีดกลางและไม่มีขีดกลาง
+        final_chunk_uuids_to_try: Set[str] = set()
+        for chunk_id in search_ids_raw:
+            final_chunk_uuids_to_try.add(chunk_id) 
+            if "-" in chunk_id:
+                final_chunk_uuids_to_try.add(chunk_id.replace("-", "")) 
+                
+        final_chunk_uuids_list = list(final_chunk_uuids_to_try)
+
+        if not final_chunk_uuids_list:
+             logger.warning(f"Hydration failed: No valid Chunk UUIDs derived from {len(stable_doc_ids)} Stable IDs.")
+             return []
 
 
         try:
             collection = chroma_instance._collection
             documents: List[LcDocument] = []
+            result: Dict[str, Any] = {}
             
-            # --- ดึงข้อมูลจาก ChromaDB ---
-            if search_key == "ids": # ใช้ Primary Key Search (Chunk UUIDs)
-                 # FIX: ลบ "ids" ออกจาก include
-                 result = collection.get(
-                    ids=search_ids,
-                    include=["documents", "metadatas"] 
-                )
-            else: # Fallback: ค้นหาตาม metadata (ไม่ควรเกิดขึ้นใน Logic นี้)
-                 # FIX: ลบ "ids" ออกจาก include
-                 result = collection.get(
-                    where={search_key: {"$in": search_ids}},
-                    include=["documents", "metadatas"]
-                )
+            # --- Attempt 1: Primary Key Search (Chunk UUIDs) ---
+            logger.info(f"Attempt 1/2: Primary Key Search ({len(final_chunk_uuids_list)} Chunk UUIDs)")
+            result = collection.get(
+                ids=final_chunk_uuids_list,
+                include=["documents", "metadatas"] # <-- 🎯 FIX 21.0: ลบ "ids"
+            )
 
+            docs_result = result.get("documents", [])
+            
+            # 🎯 FINAL FIX 19.0: ถ้าได้ 0 chunks ให้ลอง Fallback Search ด้วย $or
+            if not docs_result:
+                
+                # --- Attempt 2: Fallback Search (Metadata: stable_doc_uuid OR doc_id) ---
+                logger.warning("Attempt 1 returned 0 chunks. Falling back to Robust Metadata Search (stable_doc_uuid / doc_id).")
+                
+                # ใช้ Stable Doc IDs ที่ Cleaned แล้ว เป็น Query สำหรับ Metadata Search
+                stable_doc_ids_cleaned = list(set([uid.strip() for uid in stable_doc_ids if uid.strip()]))
+
+                if stable_doc_ids_cleaned:
+                    # ค้นหาด้วย $or: stable_doc_uuid หรือ doc_id
+                    result = collection.get(
+                        where={"$or": [
+                            {"stable_doc_uuid": {"$in": stable_doc_ids_cleaned}},
+                            {"doc_id": {"$in": stable_doc_ids_cleaned}}
+                        ]},
+                        include=["documents", "metadatas"] # <-- 🎯 FIX 21.0: ลบ "ids"
+                    )
+                    docs_result = result.get("documents", [])
+                else:
+                    logger.warning("Fallback Search failed: No valid Stable Doc IDs for metadata query.")
+            
             # --- ประมวลผลผลลัพธ์ ---
-            docs = result.get("documents", [])
+            docs = docs_result
             metadatas = result.get("metadatas", [{}] * len(docs))
-            # NOTE: คาดหวังว่า "ids" จะถูกส่งคืนมาเสมอ
+            # ids ยังคงถูกคืนมาเสมอ
             ids = result.get("ids", [""] * len(docs)) 
 
             for i, text in enumerate(docs):
                 meta = metadatas[i].copy() if metadatas and metadatas[i] else {}
                 chunk_uuid = ids[i] if ids else (meta.get("chunk_uuid") or "")
                 
-                # เพิ่ม/อัปเดต chunk_uuid
                 if chunk_uuid:
                     meta["chunk_uuid"] = chunk_uuid
 
-                # เพิ่ม stable_doc_uuid โดยใช้ map (ถ้ามี)
+                # ใช้ map (uuid_to_doc_id_map) ในการหา Stable ID ที่แน่นอน
                 stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid) or meta.get("stable_doc_uuid") or meta.get("doc_id")
+                
+                # Fallback: หากหาไม่เจอ ให้ลองหาแบบไม่มีขีดด้วย
+                if not stable_doc_id and "-" in chunk_uuid:
+                    stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid.replace("-", ""))
+                
                 if stable_doc_id:
                      meta["stable_doc_uuid"] = stable_doc_id
 
                 doc = LcDocument(page_content=text, metadata=meta)
                 documents.append(doc)
                 
-            logger.info(f"✅ Retrieved {len(documents)} documents for {len(stable_doc_ids)} Stable IDs from '{collection_name}' (Search Mode: {search_key}).")
+            logger.info(f"✅ Retrieved {len(documents)} documents for {len(stable_doc_ids)} Stable IDs from '{collection_name}' (Search Mode: {'Primary/Fallback'}).")
             return documents
 
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by Stable/Chunk IDs from collection '{collection_name}': {e}")
+            logger.error(f"❌ Error retrieving documents by Stable/Chunk IDs from collection '{collection_name}': {e}", exc_info=True)
             return []
-        
 
     def _ensure_chroma_client_is_valid(self):
         """
@@ -725,8 +806,6 @@ class VectorStoreManager:
             
             # Re-initialize the Persistent Client
             try:
-                import chromadb
-                from chromadb.config import Settings
                 self._client = chromadb.PersistentClient(path=tenant_root_path, settings=Settings(anonymized_telemetry=True))
                 
                 # เมื่อ Client ถูกสร้างใหม่, Collection Handles เก่าทั้งหมดต้องถือว่าใช้ไม่ได้
@@ -739,125 +818,90 @@ class VectorStoreManager:
             
     def retrieve_by_chunk_uuids(self, chunk_uuids: List[str], collection_name: Optional[str] = None) -> List[LcDocument]:
         """
-        Retrieves documents from Chroma collection based on a list of unique chunk_uuids (IDs).
-        Includes de-duplication logic to prevent ChromaDB DuplicateIDError.
-        
-        🎯 FIX 9: เพิ่ม Retry Loop สำหรับการดึงข้อมูลด้วย ID (แก้ปัญหา 0/X chunks กลับมา)
+        Hydrate documents by chunk UUIDs.
+        - รองรับ UUID ทั้งแบบมี dash และไม่มี dash
+        - Retry mechanism + cache clear เฉพาะเมื่อ retrieval fail
         """
-        
-        # 🎯 FIX 4B: บังคับตรวจสอบและสร้าง Chroma Client ใหม่ หากอยู่ใน Worker Process
+        from core.vectorstore import get_doc_type_collection_key, EVIDENCE_DOC_TYPES
+        import logging
+        logger = logging.getLogger(__name__)
+
         self._ensure_chroma_client_is_valid()
-        
+
         if not chunk_uuids:
             logger.info("VSM: No chunk_uuids provided for hydration.")
             return []
-        
-        # กำหนดชื่อ collection เริ่มต้นหากไม่ได้ระบุ
+
         if collection_name is None:
-            collection_name = get_doc_type_collection_key(doc_type=EVIDENCE_DOC_TYPES, 
-            enabler=getattr(self, 'enabler', 'km'))
+            collection_name = get_doc_type_collection_key(
+                doc_type=EVIDENCE_DOC_TYPES, 
+                enabler=getattr(self, 'enabler', 'km')
+            )
 
-        # 🟢 FIX 8: บังคับล้าง Cache ก่อนโหลด Collection สำหรับ Hydration
-        if collection_name in self._chroma_cache:
-            logger.warning(f"VSM: Clearing Chroma cache for '{collection_name}' to force re-initialization before hydration.")
-            del self._chroma_cache[collection_name]
-            
-        # ----------------------------------------------------------------------
-        # 🎯 FIX 9: Retry Loop เพื่อแก้ปัญหา Chroma PersistentClient ใน Worker Process
-        max_retries = 2 # ลอง 2 ครั้ง
+        # Prepare UUIDs: no-dash + attempt 64-char dash formatting
+        no_dash = [u.replace("-", "") for u in chunk_uuids if u]
+        with_dash = []
+        for u in no_dash:
+            if len(u) == 64:
+                part1, part2, part3, part4, part5 = u[:8], u[8:12], u[12:16], u[16:20], u[20:]
+                with_dash.append(f"{part1}-{part2}-{part3}-{part4}-{part5}")
+
+        all_formats = list(set(chunk_uuids + no_dash + with_dash))  # Remove duplicates
+
         result = {"documents": [], "metadatas": [], "ids": []}
-        
-        for attempt in range(max_retries):
-            # โหลด Chroma instance (ซึ่งควรจะใช้ self._client ที่ถูก re-initialize แล้ว)
-            chroma_instance = self._load_chroma_instance(collection_name)
-            
-            # 🎯 FIX 4C: ตรวจสอบ collection instance ที่โหลดมา
-            if not chroma_instance:
-                logger.warning(f"VSM: Cannot load collection '{collection_name}' for hydration after client check (Attempt {attempt + 1}).")
-                if attempt < max_retries - 1:
-                    continue # พยายามโหลดใหม่ในรอบถัดไป
-                break # หมดรอบแล้ว
-                
-            logger.info(f"VSM: Attempting hydration with {len(chunk_uuids)} UUIDs from '{collection_name}' (Attempt {attempt + 1}/{max_retries})")
-            logger.info(f"VSM: First 5 UUIDs → {chunk_uuids[:5]}")
-            
+        max_retries = 3
+
+        for attempt in range(1, max_retries + 1):
+            chroma = self._load_chroma_instance(collection_name)
+            if not chroma:
+                logger.warning(f"Cannot load '{collection_name}' (attempt {attempt})")
+                if attempt < max_retries and collection_name in self._chroma_cache:
+                    logger.warning(f"VSM: Clearing Chroma cache for '{collection_name}' due to load failure.")
+                    del self._chroma_cache[collection_name]
+                    self._ensure_chroma_client_is_valid()
+                continue
+
             try:
-                # 📌 การเรียก Chroma .get()
-                result = chroma_instance.get(ids=chunk_uuids, include=['documents', 'metadatas'])
+                logger.info(f"Hydration attempt {attempt}/{max_retries} → {len(all_formats)} UUIDs from '{collection_name}'")
+                result = chroma.get(ids=all_formats, include=["documents", "metadatas", "ids"])
 
-                num_retrieved = len(result.get("documents", []))
-                
-                # ถ้าดึงข้อมูลได้สำเร็จ ให้หยุด loop
-                if num_retrieved > 0:
-                    logger.info(f"✅ VSM: Successfully retrieved {num_retrieved}/{len(chunk_uuids)} chunks by UUID from '{collection_name}' (Final Attempt: {attempt + 1})")
-                    break # Success! Exit the retry loop
-
-                # ถ้าดึงได้ 0 และยังไม่หมดรอบ ให้เตือนแล้วเข้า loop ใหม่ (จะมีการ Force Reload ที่จุดเริ่มต้นของ loop)
-                if num_retrieved == 0 and attempt < max_retries - 1:
-                    logger.warning(f"🚨 VSM: Retrieval returned 0 chunks (0/{len(chunk_uuids)}) on attempt {attempt + 1}. Retrying with fresh collection instance.")
-                    
-                    # Force reload logic สำหรับรอบถัดไป
-                    if collection_name in self._chroma_cache:
-                        del self._chroma_cache[collection_name]
-                    self._ensure_chroma_client_is_valid()
-                    
-                    continue
-                
-                # ถ้าดึงได้ 0 และหมดรอบแล้ว
-                if num_retrieved == 0 and attempt == max_retries - 1:
-                    logger.error(f"❌ VSM: Failed to retrieve any documents by UUID after {max_retries} attempts from '{collection_name}'.")
+                if result.get("documents"):
+                    logger.info(f"Success: Retrieved {len(result['documents'])} chunks on attempt {attempt}")
                     break
-                    
+
+                logger.warning(f"Got 0 chunks on attempt {attempt}, retrying...")
+
             except Exception as e:
-                logger.error(f"❌ Chroma .get() failed during hydration (Attempt {attempt + 1}): {e}")
-                # ถ้ามี exception ให้พยายามโหลดใหม่และลองใหม่
-                if attempt < max_retries - 1:
-                    if collection_name in self._chroma_cache:
-                        del self._chroma_cache[collection_name]
-                    self._ensure_chroma_client_is_valid()
-                    continue
-                
-                # ถ้ามี exception ในรอบสุดท้าย ให้ break
-                break
-                
-        # ----------------------------------------------------------------------
-        
-        documents: List[LcDocument] = []
-        
-        # ตรวจสอบว่ามีข้อมูลหรือไม่ก่อนดำเนินการต่อ
-        if not result.get("documents"):
-            logger.error(f"❌ VSM: Final result documents are empty after all attempts for '{collection_name}'.")
-            return []
+                logger.error(f"Hydration failed (attempt {attempt}): {e}")
 
-        try:
-            # ใช้ result ที่ได้จาก Retry Loop ด้านบน
-            docs = result.get("documents", [])
-            metadatas = result.get("metadatas", [{}] * len(docs))
-            # NOTE: คาดหวังว่า "ids" จะถูกส่งคืนมาเสมอ
-            ids = result.get("ids", [""] * len(docs)) 
+            # Clear cache only on failure
+            if attempt < max_retries and collection_name in self._chroma_cache:
+                logger.warning(f"VSM: Clearing Chroma cache for '{collection_name}' for retry.")
+                del self._chroma_cache[collection_name]
+                self._ensure_chroma_client_is_valid()
 
-            for i, text in enumerate(docs):
-                meta = metadatas[i].copy() if metadatas and metadatas[i] else {}
-                chunk_uuid = ids[i] if ids else (meta.get("chunk_uuid") or "")
-                
-                # เพิ่ม/อัปเดต chunk_uuid
-                if chunk_uuid:
-                    meta["chunk_uuid"] = chunk_uuid
+        # Build LcDocument objects
+        docs = []
+        documents_raw = result.get("documents", [])
+        metas = result.get("metadatas", [{}] * len(documents_raw))
+        ids = result.get("ids", [])
 
-                # เพิ่ม stable_doc_uuid โดยใช้ map (ถ้ามี)
-                stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid) or meta.get("stable_doc_uuid") or meta.get("doc_id")
-                if stable_doc_id:
-                     meta["stable_doc_uuid"] = stable_doc_id
+        for i, text in enumerate(documents_raw):
+            if not text or not text.strip():
+                continue
+            meta = metas[i].copy()
+            id_clean = ids[i].replace("-", "") if ids[i] else ""
+            meta["chunk_uuid"] = id_clean
 
-                doc = LcDocument(page_content=text, metadata=meta)
-                documents.append(doc)
-                
-            logger.info(f"✅ Retrieved {len(documents)} documents for {len(chunk_uuids)} Stable IDs from '{collection_name}'.")
-            return documents
+            # Map to stable_doc_uuid
+            stable = self._uuid_to_doc_id.get(id_clean) or meta.get("stable_doc_uuid")
+            if stable:
+                meta["stable_doc_uuid"] = stable
 
-        except Exception as e:
-            logger.error(f"❌ Error processing retrieved documents by Stable/Chunk IDs from collection '{collection_name}': {e}")
-            return []
+            docs.append(LcDocument(page_content=text.strip(), metadata=meta))
+
+        logger.info(f"Hydration complete → Retrieved {len(docs)} full-text chunks (requested {len(chunk_uuids)})")
+        return docs
 
             
     def get_limited_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], query: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None, limit_per_doc: int = 5) -> List[LcDocument]:
@@ -1003,17 +1047,23 @@ class VectorStoreManager:
         # 🎯 FIX: ลบ base_path ออกจากการเรียก list_vectorstore_folders
         return list_vectorstore_folders(tenant=self.tenant, year=self.year)
 
+
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
+        import chromadb # Import locally if not already imported
+        from langchain_core.documents import Document as LcDocument
+
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
         stable_doc_ids = [uid for uid in stable_doc_ids if uid]
         if not stable_doc_ids:
             return []
+        
         # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
         collection_name = get_doc_type_collection_key(doc_type, enabler)
         all_chunk_uuids = []
         skipped_docs = []
         found_stable_ids = []
+        
         for stable_id in stable_doc_ids:
             stable_id_clean = stable_id.strip()
             if stable_id_clean in self._doc_id_mapping:
@@ -1026,34 +1076,47 @@ class VectorStoreManager:
                     else:
                         logger.warning(f"Mapping found for Stable ID '{stable_id_clean}' but 'chunk_uuids' list is empty.")
                 else:
-                    logger.warning(f"Mapping entry for Stable ID '{stable_id_clean}' is malformed or missing 'chunk_uuids'.")
+                    # [Minor Fix] แก้ไขตัวแปรจาก stable_doc_clean เป็น stable_id_clean
+                    logger.warning(f"Mapping entry for Stable ID '{stable_id_clean}' is malformed or missing 'chunk_uuids'.") 
             else:
                 skipped_docs.append(stable_id_clean)
+                
         if skipped_docs:
             logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
         if not all_chunk_uuids:
             logger.warning(f"No valid chunk UUIDs found for provided Stable Document IDs: {skipped_docs}. Check doc_id_mapping.json.")
             return []
+            
         chroma_instance = self._load_chroma_instance(collection_name)
         if not chroma_instance:
             logger.error(f"Collection '{collection_name}' is not loaded.")
             return []
+            
         try:
             collection = chroma_instance._collection
-            result = collection.get(ids=all_chunk_uuids, include=["documents", "metadatas", "ids"])
+            
+            # 🎯 FINAL FIX 16.0: ลบ "ids" ออกจาก include เพื่อแก้ ChromaDB API Error
+            result = collection.get(ids=all_chunk_uuids, include=["documents", "metadatas"]) 
+            
             documents: List[LcDocument] = []
             if not result.get("documents"):
                 logger.warning(f"Chroma DB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
                 return []
+                
             for i, text in enumerate(result.get("documents", [])):
                 if text:
                     metadata = result.get("metadatas", [{}])[i]
-                    chunk_uuid_from_result = result.get("ids", [""])[i]
-                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN")
+                    # IDs ถูกคืนมาโดยอัตโนมัติ ไม่ต้อง include
+                    chunk_uuid_from_result = result.get("ids", [""])[i] 
+                    
+                    # NOTE: ใช้ self._uuid_to_doc_id
+                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN") 
+                    
                     metadata["chunk_uuid"] = chunk_uuid_from_result
                     metadata["doc_id"] = doc_id
                     metadata["doc_type"] = doc_type
                     documents.append(LcDocument(page_content=text, metadata=metadata))
+                    
             logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{collection_name}'.")
             return documents
         except Exception as e:
@@ -1439,40 +1502,7 @@ class MultiDocRetriever(BaseRetriever):
         return self._get_relevant_documents(query, **kwargs)
 
 # -------------------- load_all_vectorstores --------------------
-def load_vectorstore_retriever(
-    doc_id: str, 
-    top_k: int = INITIAL_TOP_K, 
-    final_k: int = FINAL_K_RERANKED, 
-    doc_types: Union[list, str] = "default_collection", 
-    base_path: str = "", # 🎯 FIX: ลบ base_path ออก
-    enabler: Optional[str] = None, 
-    tenant: str = DEFAULT_TENANT,
-    year: int = DEFAULT_YEAR      
-):
-    if isinstance(doc_types, str):
-        target_doc_type = doc_types
-    elif isinstance(doc_types, list) and doc_types:
-        target_doc_type = doc_types[0]
-    else:
-        raise ValueError("doc_types must be a single string or a non-empty list containing the target doc_type.")
-        
-    # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
-    collection_name = get_doc_type_collection_key(target_doc_type, enabler)
-    
-    # 🎯 FIX 3: ส่ง tenant และ year เข้าไปใน VectorStoreManager
-    manager = VectorStoreManager(tenant=tenant, year=year) 
-    retriever = None
-    
-    # NOTE: load_vectorstore_retriever ใช้ปีเสมอ เนื่องจากเป็น context ที่เรียกมา
-    if vectorstore_exists(doc_id="N/A", doc_type=target_doc_type, enabler=enabler, tenant=tenant, year=year):
-        retriever = manager.get_retriever(collection_name, top_k, final_k)
-        
-    if retriever is None:
-        raise ValueError(f"❌ Vectorstore for collection '{collection_name}' not found.")
-    return retriever
-
-# core/vectorstore.py (ส่วนของฟังก์ชัน load_all_vectorstores)
-def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลับเข้าไปเป็น 'def'
+def load_all_vectorstores( 
     tenant: str, 
     year: int,    
     doc_types: Optional[Union[str, List[str]]] = None, 
@@ -1481,7 +1511,7 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
     base_path: Path = "", # 🎯 FIX: base_path ถูกละเลย
     evidence_enabler: Optional[str] = None, 
     doc_ids: Optional[List[str]] = None
-) -> VectorStoreManager:
+) -> 'VectorStoreManager':
     """
     Loads all relevant vectorstore collections based on tenant, year, and document types.
     Handles segregation logic for year-specific (evidence) and general (standard) documents.
@@ -1490,13 +1520,24 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
     doc_types = [doc_types] if isinstance(doc_types, str) else doc_types or []
     doc_type_filter = {dt.strip().lower() for dt in doc_types}
     
-    # 🎯 FIX 1: VSM ต้องสร้างด้วย tenant/year ของ RUN (ปีที่ใช้สำหรับ Doc ID Mapping)
-    manager = VectorStoreManager(tenant=tenant, year=year) 
+    # 📌 1. กำหนด doc_type หลักสำหรับ VSM
+    # เราคาดหวังว่าสำหรับ Engine จะส่ง EVIDENCE_DOC_TYPES เข้ามาเป็นตัวแรกใน List
+    # ใช้ "all" เป็น fallback (ซึ่งเป็นค่า default ภายในของ VSM ถ้าไม่กำหนด)
+    primary_doc_type = doc_types[0] if doc_types else "all" 
+
+    # 🎯 FIX 1 & 1.1: สร้าง VSM โดยใส่ doc_type ที่ถูกต้อง
+    manager = VectorStoreManager(
+        tenant=tenant, 
+        year=year,
+        enabler=evidence_enabler, # ใส่ enabler เข้าไปเพื่อความสมบูรณ์
+        # 🟢 CRITICAL FIX: ส่ง doc_type ที่ถูกต้องเข้าไปในการสร้าง VSM
+        doc_type=primary_doc_type 
+    ) 
     
-    all_retrievers: List[NamedRetriever] = []
+    all_retrievers: List['NamedRetriever'] = []
     target_collection_names: Set[str] = set()
 
-    # --- 1. Collection Discovery (ส่วนที่ได้รับการแก้ไขปัญหาแล้ว) ---
+    # --- 1. Collection Discovery ---
     if not doc_type_filter:
         logger.error("Must specify doc_types for multi-year compatibility.")
         raise ValueError("Must specify doc_types when using multi-tenant setup.")
@@ -1507,13 +1548,11 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
         if dt_norm == EVIDENCE_DOC_TYPES.lower(): 
             if evidence_enabler:
                 # ✅ FIX: Specific evidence collection: ใช้ year และ enabler
-                # **โค้ดนี้ทำให้ไม่เกิดการโหลด 'evidence_default'**
                 collection_name = get_doc_type_collection_key(EVIDENCE_DOC_TYPES, evidence_enabler)
                 target_collection_names.add(collection_name)
                 logger.info(f"🔍 Added specific evidence collection: {collection_name} (Year-Specific)")
             else:
                 # All evidence collections: ต้อง list จาก folder ภายใต้ tenant/year
-                # (ใช้ในกรณีที่ไม่ได้ระบุ evidence_enabler เช่น ในโหมด Admin)
                 evidence_collections = list_vectorstore_folders(tenant=tenant, year=year, doc_type=EVIDENCE_DOC_TYPES)
                 target_collection_names.update(evidence_collections)
                 logger.info(f"🔍 Added all evidence collections found: {evidence_collections} (Year-Specific)")
@@ -1547,7 +1586,6 @@ def load_all_vectorstores( # <-- แก้ไข: เพิ่ม 'd' กลั�
             enabler=enabler_for_check, 
             top_k=top_k, 
             final_k=final_k, 
-            # 🎯 FIX: ลบ base_path ออก
             tenant=tenant, 
             year=target_year # <--- ส่ง None สำหรับ General Docs
         )
