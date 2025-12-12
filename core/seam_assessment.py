@@ -529,6 +529,15 @@ class SEAMPDCAEngine:
             if self.llm is None: self._initialize_llm_if_none()
             if self.vectorstore_manager is None: self._initialize_vsm_if_none()
             
+            # 🟢 FINAL FIX: บังคับโหลด Doc ID Map ซ้ำเพื่อป้องกัน Map หายใน Worker (จุดที่ 3)
+            # แก้ปัญหา: FATAL HYDRATION ISSUE: 5 chunks were requested but NOT FOUND
+            if self.vectorstore_manager:
+                # ตรวจสอบว่า Map ว่างเปล่าหรือไม่ก่อนบังคับโหลด
+                if not getattr(self.vectorstore_manager, '_doc_id_mapping', None):
+                    self.vectorstore_manager._load_doc_id_mapping()
+                    self.logger.info(f"Forced reload of Doc ID Mapping: {len(self.vectorstore_manager._doc_id_mapping)} documents, "
+                                     f"{len(self.vectorstore_manager._uuid_to_doc_id)} chunk UUIDs")
+                    
             # =======================================================
             # 🎯 FIX #4: โหลด Document Map หากไม่ได้ส่งเข้ามา หรือเป็น Dictionary ว่าง
             # (เพื่อแก้ปัญหา Filename Resolution Failed)
@@ -538,6 +547,7 @@ class SEAMPDCAEngine:
             if not map_to_use:
                 # คำนวณ Path ของไฟล์ Doc ID Mapping ที่ VSM ใช้สำเร็จ
                 mapping_path = get_mapping_file_path(
+                    self.doc_type,
                     tenant=self.config.tenant, 
                     year=self.config.year,
                     enabler=self.enabler_id # ใช้ enabler เพื่อเข้าถึงรูปแบบใหม่ (Priority 1)
@@ -606,6 +616,9 @@ class SEAMPDCAEngine:
                     year=self.config.year       # <--- NEW: เพิ่ม Argument นี้
                 )
                 
+                if self.vectorstore_manager:
+                    self.vectorstore_manager._load_doc_id_mapping()
+
                 # 📌 FINAL FIX: เข้าถึง MultiDocRetriever (Private Attribute) 
                 # และตามด้วย _all_retrievers (Private Attribute)
                 # ตรวจสอบว่า VSM ถูกสร้างสำเร็จก่อน
@@ -718,20 +731,20 @@ class SEAMPDCAEngine:
             self.logger.error(f"❌ Failed to load Contextual Rules from {filepath}: {e}")
             return {}
 
+    
+    # ----------------------------------------------------------------------
+    # 🎯 FINAL FIX 2.3: Manual Map Reload Function (inside SEAMPDCAEngine)
+    # ----------------------------------------------------------------------
     def _collect_previous_level_evidences(self, sub_id: str, current_level: int) -> Dict[str, List[Dict]]:
         """
-        ดึงหลักฐาน (Metadata + Text) ที่ผ่านจาก Level ก่อนหน้าทั้งหมด 
-        เพื่อใช้เป็น Baseline Context ใน Level ปัจจุบัน (Sequential Mode)
-        
-        ✅ FIX: เพิ่ม Logic การ Mapping Stable Doc ID (64-char) เป็น Chunk UUIDs (64-char_index) 
-               เพื่อแก้ปัญหา Hydration Fail จาก ChromaDB
+        ดึงหลักฐานจาก Level ก่อนหน้า (L1-L4) เพื่อใช้เป็น Baseline Context
+        Final Fix 2.3: แก้ปัญหา 'SEAMPDCAEngine' object has no attribute 'tenant' 
+        โดยเปลี่ยนไปใช้ VSM attributes แทน Engine attributes ใน Worker Process/Thread
         """
         collected = {}
-        
         source_map = self.evidence_map
-        source_name = "evidence_map (SEQ/PAR Main)"
 
-        # 1. รวบรวม Metadata ของหลักฐานที่ผ่านจาก Level ก่อนหน้า
+        # 1. รวบรวม evidence metadata จาก level ก่อนหน้า
         for key, evidence_list in source_map.items():
             if key.startswith(f"{sub_id}.L") and isinstance(evidence_list, list):
                 try:
@@ -741,160 +754,167 @@ class SEAMPDCAEngine:
                 except (ValueError, IndexError):
                     continue
 
-        # 2. HYDRATION: ตรวจสอบความพร้อมและรวบรวม ID
-        vectorstore_manager = self.vectorstore_manager
-        is_hydration_needed = vectorstore_manager is not None and collected
+        if not collected:
+            self.logger.info("No previous level evidences found in evidence_map.")
+            return collected
 
-        if is_hydration_needed:
-            # รวบรวม IDs ทั้งหมดที่ถูกเลือก (ทั้ง Stable Doc ID และ Chunk UUIDs)
-            all_uuids_raw = [
-                str(
-                    ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')
-                ).strip()
-                for ev_list in collected.values()
-                for ev in ev_list
-                # กรอง ID ที่ไม่น่าจะใช้ได้
-                if (ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')) 
-                and len(str(ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')).strip()) >= 10
-                and not str(ev.get('chunk_uuid') or ev.get('stable_doc_uuid') or ev.get('doc_id')).startswith(("TEMP-", "HASH-", "Unknown"))
-            ]
-            
-            # แบ่ง ID
-            all_uuids_stable_doc_only = list(set([uid for uid in all_uuids_raw if len(uid) == 64]))
-            all_uuids_non_stable_doc = list(set([uid for uid in all_uuids_raw if len(uid) > 64])) # Chunk ID ที่ถูกต้อง
+        # 2. สะสม ID ทั้งหมดที่ต้องใช้: Stable Doc ID สำหรับ Mapping + Chunk UUIDs ที่มีอยู่แล้ว
+        stable_ids_for_mapping = set()
+        chunk_uuids_ready = set() 
+        
+        for ev_list in collected.values():
+            for ev in ev_list:
+                doc_id_raw = ev.get("doc_id") or ev.get("stable_doc_uuid")
+                chunk_id_raw = ev.get("chunk_uuid")
 
-            # 3. แปลง Stable Doc ID (64-char) เป็น Chunk UUIDs
-            chunk_uuids_for_chroma = []
-            
-            # ตรวจสอบว่า VSM มี Doc ID Map สำหรับแปลง ID หรือไม่
-            has_doc_id_map = (
-                hasattr(vectorstore_manager, 'doc_id_map') and 
-                isinstance(getattr(vectorstore_manager, 'doc_id_map'), dict) and 
-                getattr(vectorstore_manager, 'doc_id_map')
-            )
-
-            if not has_doc_id_map:
-                self.logger.warning("VSM Doc ID Map is missing! Using raw IDs for ChromaDB (may fail).")
-                chunk_uuids_for_chroma = all_uuids_raw # Fallback
-            else:
-                mapped_count = 0
-                # 3.1 แปลง Stable Doc IDs
-                doc_id_map = vectorstore_manager.doc_id_map
-                for input_id in all_uuids_stable_doc_only:
-                    mapped_info = doc_id_map.get(input_id, {})
-                    full_chunk_list = mapped_info.get('chunk_uuids', [])
-                    chunk_uuids_for_chroma.extend(full_chunk_list)
-                    if full_chunk_list:
-                         mapped_count += 1
+                if doc_id_raw and len(doc_id_raw) == 64 and re.match(r"^[0-9a-f]{64}$", doc_id_raw):
+                    stable_ids_for_mapping.add(doc_id_raw)
                 
-                # 3.2 เพิ่ม Chunk IDs ที่ถูกบันทึกมาอย่างถูกต้อง
-                chunk_uuids_for_chroma.extend(all_uuids_non_stable_doc)
+                # ชนิดของ UUID ที่ควรจะใช้ได้ทั้งของ LangChain และ Chroma (ID ยาว หรือ มีขีด)
+                if chunk_id_raw and (len(chunk_id_raw) > 64 or (chunk_id_raw.count('-') > 0 and chunk_id_raw.replace('-', '').isalnum())):
+                    chunk_uuids_ready.add(chunk_id_raw)
 
-                if mapped_count > 0:
-                    self.logger.info(f"VSM: Successfully mapped {mapped_count}/{len(all_uuids_stable_doc_only)} Stable Doc IDs to {len(chunk_uuids_for_chroma)} potential Chunk UUIDs.")
+
+        if not stable_ids_for_mapping and not chunk_uuids_ready:
+            self.logger.info("No valid Stable/Chunk UUIDs found for hydration.")
+            return collected
+
+        self.logger.info(f"HYDRATION → Found {len(stable_ids_for_mapping)} stable_doc_uuids to map and {len(chunk_uuids_ready)} direct chunk_uuids.")
+
+        # 3. แปลง stable_doc_uuid → chunk_uuids ด้วย doc_id_mapping
+        chunk_uuids_to_fetch = list(chunk_uuids_ready) 
+        vsm = self.vectorstore_manager
+        
+        # 🔴 FIX 2.2: Initialize map_path to handle Python Scope Error in the exception block
+        map_path = None 
+
+        # 🟢 FINAL FIX 2.3: Manual and robust reload attempt (using VSM attributes)
+        # ตรวจสอบว่า _doc_id_mapping หายไปจริงหรือไม่
+        if vsm and not getattr(vsm, '_doc_id_mapping', None):
+            self.logger.warning("VSM Doc ID Map missing in Hydration function (manual reload attempt).")
+            try:
+                # 🎯 FIX 3: ใช้ VSM attributes (vsm.tenant, vsm.year, vsm.enabler) แทน Engine's (self.*) 
+                # เพื่อหลีกเลี่ยงการสูญเสียสถานะของ Engine attributes ใน Worker
+                vsm_tenant = vsm.tenant
+                vsm_year = vsm.year
+                # VSM.enabler ควรจะเป็น UPPER CASE, ต้องแปลงเป็น lower สำหรับชื่อไฟล์
+                vsm_enabler_lower = vsm.enabler.lower() 
                 
-                # 3.3 ลบซ้ำและกรอง
-                chunk_uuids_for_chroma = list(set([uid for uid in chunk_uuids_for_chroma if len(uid) > 10]))
-            
-            # 4. ดึงข้อมูล (Retrieve)
-            total_metadata_chunks = sum(len(v) for v in collected.values())
-            self.logger.info(f"DEBUG HYDRATION: Total evidence entries found in metadata (evidence_map): {total_metadata_chunks} items. Unique Chroma IDs to retrieve: {len(chunk_uuids_for_chroma)}")
-            
-            full_chunks = []
-            if chunk_uuids_for_chroma:
-                # 🎯 ใช้ path_utils ในการกำหนดชื่อ Collection
-                collection_name = get_doc_type_collection_key(self.doc_type, self.enabler_id)
+                # สร้าง Path ไปยังไฟล์ Map JSON ด้วยตนเอง (ใช้ VSM attributes)
+                map_path = os.path.join(
+                    PROJECT_ROOT,
+                    "data_store", vsm_tenant,
+                    "mapping", str(vsm_year),
+                    f"{vsm_tenant}_{vsm_year}_{vsm_enabler_lower}_doc_id_mapping.json"
+                )
+                
+                with open(map_path, 'r', encoding='utf-8') as f:
+                    loaded_map = json.load(f)
+                
+                # Re-inject the loaded map directly into the VSM object
+                vsm._doc_id_mapping = loaded_map
+                self.logger.info(f"Successfully manually reloaded {len(loaded_map)} document mappings.")
+                
+            except Exception as e:
+                # หากการโหลดด้วยตนเองล้มเหลว (ใช้ map_path ที่ถูก initialized)
+                path_log = map_path if map_path else "Unknown Path (Initialization Error)"
+                self.logger.error(f"Manual Map Reload Failed (Path: {path_log} likely inaccessible OR VSM initialization failed): {e}", exc_info=False)
+                
 
-                try:
-                    self.logger.info(
-                        f"🚨 DEBUG: Attempting to HYDRATE {len(chunk_uuids_for_chroma)} unique chunks from Collection: '{collection_name}'. "
-                    )
-                    # 🚨 การเรียกใช้ ChromaDB ด้วย Chunk UUIDs ที่ถูกต้อง
-                    retrieved_lc_docs = vectorstore_manager.retrieve_by_chunk_uuids(chunk_uuids_for_chroma, collection_name)
-
-                    for doc in retrieved_lc_docs:
-                        chunk_dict = doc.metadata.copy()
-                        chunk_dict["text"] = doc.page_content
-                        # ยืนยัน ID หลัก
-                        chunk_dict["chunk_uuid"] = doc.metadata.get("chunk_uuid") or doc.metadata.get("id")
-                        chunk_dict["stable_doc_uuid"] = doc.metadata.get("stable_doc_uuid") or doc.metadata.get("doc_id")
-                        
-                        full_chunks.append(chunk_dict)
-
-                    self.logger.info(f"Successfully hydrated {len(full_chunks)} chunks from previous levels")
-                    
-                    # Debug: ตรวจสอบ ID ที่หายไป
-                    retrieved_uuids = {c.get('chunk_uuid') for c in full_chunks if c.get('chunk_uuid')}
-                    missing_uuids = set(chunk_uuids_for_chroma) - retrieved_uuids
-                    if missing_uuids:
-                        self.logger.error(
-                            f"❌ FATAL HYDRATION ISSUE: {len(missing_uuids)} chunks were requested but NOT FOUND in ChromaDB. "
-                        )
-                        
-                except Exception as e:
-                    self.logger.error(f"Failed to retrieve full chunks for baseline: {e}")
-                    full_chunks = []
-
-            # 5. สร้าง Map เพื่อรวม Text เต็มเข้ากับ Metadata เดิม
-            
-            # Map retrieved full chunks by their full chunk ID (Primary Key)
-            full_chunk_map_by_chunk_uuid = {c.get('chunk_uuid'): c for c in full_chunks if c.get('chunk_uuid') and len(c.get('chunk_uuid')) > 64}
-            # Map retrieved full chunks by their Stable Doc ID (Hash 64)
-            full_chunk_map_by_stable_doc_id = {}
-            for c in full_chunks:
-                s_doc_id = c.get('stable_doc_uuid') or c.get('doc_id')
-                if s_doc_id and len(s_doc_id) == 64 and s_doc_id not in full_chunk_map_by_stable_doc_id:
-                    full_chunk_map_by_stable_doc_id[s_doc_id] = c 
-
-            hydrated_collected = {}
-            for key, ev_list in collected.items():
-                hydrated_list = []
-                for ev_metadata in ev_list:
-                    uuid_key = ev_metadata.get('chunk_uuid') or ev_metadata.get('stable_doc_uuid') or ev_metadata.get('doc_id')
-                    
-                    full_chunk = None
-
-                    # 5.1 ลองค้นหาด้วย Full Chunk UUID (หาก L1 บันทึกมาถูกต้อง)
-                    if uuid_key and len(uuid_key) > 64:
-                        full_chunk = full_chunk_map_by_chunk_uuid.get(uuid_key)
-                    
-                    # 5.2 ถ้าหาไม่เจอ หรือ ID ที่บันทึกมาเป็น Stable Doc ID (64 ตัว) ให้ใช้ Stable Doc ID ค้นหา
-                    if full_chunk is None and uuid_key and len(uuid_key) == 64:
-                        full_chunk = full_chunk_map_by_stable_doc_id.get(uuid_key)
-
-                    if full_chunk and full_chunk.get('text'):
-                        combined = full_chunk.copy()
-                        # 🟢 FIX: ใช้ content/text ของ chunk ที่ดึงมา (Full Text)
-                        combined['text'] = full_chunk['text'] 
-                        
-                        # นำ metadata ส่วนอื่น ๆ จาก ev_metadata มาอัพเดต (เช่น score, reason, filename)
-                        metadata_to_update = {k:v for k,v in ev_metadata.items() if k not in ['text', 'page_content']}
-                        combined.update(metadata_to_update)
-                        
-                        hydrated_list.append(combined)
-                    else:
-                        # ถ้าดึงไม่ได้ ยังคงใช้ metadata เดิม
-                        hydrated_list.append(ev_metadata)
-
-                if hydrated_list:
-                    hydrated_collected[key] = hydrated_list
-
-            collected = hydrated_collected
-
+        # 🎯 Defensive check: ต้องมี Map ก่อน (ตรวจสอบอีกครั้งหลังพยายามโหลด)
+        if not vsm or not hasattr(vsm, '_doc_id_mapping') or not vsm._doc_id_mapping:
+            self.logger.warning("VSM Doc ID Map is still missing after reload attempt! Cannot perform full ID mapping.")
         else:
-            if collected:
-                self.logger.info("Hydration skipped: vectorstore_manager not ready")
+            mapping = vsm._doc_id_mapping
+            mapped_count = 0
+            for stable_id in stable_ids_for_mapping:
+                doc_entry = mapping.get(stable_id, {})
+                chunk_list = doc_entry.get("chunk_uuids", [])
+                if chunk_list:
+                    chunk_uuids_to_fetch.extend(chunk_list)
+                    mapped_count += 1
+                else:
+                    self.logger.debug(f"No chunk_uuids found for stable_id: {stable_id[:16]}...")
+            
+            chunk_uuids_to_fetch = list(set(chunk_uuids_to_fetch))
+            self.logger.info(f"HYDRATION → Mapped {mapped_count}/{len(stable_ids_for_mapping)} Stable IDs. Total unique chunk_uuids resolved: {len(chunk_uuids_to_fetch)}")
 
-        # 6. Debug Log
-        total_files = sum(len(v) for v in collected.values())
-        self.logger.info(
-            f"BASELINE LOADED → Mode: {'SEQ' if self.is_sequential else 'PAR'} | "
-            f"Source: {source_name} | "
-            f"Found {len(collected)} levels | "
-            f"Total files: {total_files}"
-        )
 
-        return collected
+        if not chunk_uuids_to_fetch:
+            self.logger.warning("No chunk_uuids resolved from Stable/Chunk IDs.")
+            return collected
+
+        # 4. ดึง full chunk จาก ChromaDB ด้วย chunk_uuids
+        collection_name = get_doc_type_collection_key(self.doc_type, self.enabler_id)
+        try:
+            full_chunks = vsm.retrieve_by_chunk_uuids(chunk_uuids_to_fetch, collection_name)
+            self.logger.info(f"HYDRATION success: Retrieved {len(full_chunks)} full chunks")
+        except Exception as e:
+            self.logger.error(f"Hydration failed: {e}")
+            full_chunks = []
+
+        # 5. สร้าง map เพื่อแทนที่ text ว่างด้วย full text
+        full_chunk_map_by_uuid = {}        
+        full_chunk_map_by_stable_id = {}   
+        
+        for chunk in full_chunks:
+            metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
+            chunk_uuid = metadata.get("chunk_uuid") or metadata.get("id")
+            stable_doc_id = metadata.get("doc_id") 
+            
+            chunk_data = {
+                "text": chunk.page_content,
+                "metadata": metadata
+            }
+            
+            if chunk_uuid:
+                full_chunk_map_by_uuid[chunk_uuid] = chunk_data
+            
+            if stable_doc_id and len(stable_doc_id) == 64:
+                full_chunk_map_by_stable_id[stable_doc_id] = chunk_data
+
+
+        # 6. แทนที่ text ใน evidence เดิมด้วย full text (ใช้ Key 2 แบบ)
+        hydrated_collected = {}
+        total_hydrated = 0
+        total_evidences = sum(len(v) for v in collected.values())
+        
+        for key, ev_list in collected.items():
+            hydrated_list = []
+            for ev in ev_list:
+                full_data = None
+                
+                # 6.1 ลองค้นหาด้วย Chunk UUID (Priority 1)
+                chunk_uuid_key = ev.get("chunk_uuid")
+                if full_data is None and chunk_uuid_key and chunk_uuid_key in full_chunk_map_by_uuid:
+                    full_data = full_chunk_map_by_uuid[chunk_uuid_key]
+                
+                # 6.2 ลองค้นหาด้วย Stable Doc ID (Priority 2: Fallback)
+                if full_data is None:
+                    stable_doc_id_key = ev.get("stable_doc_uuid") or ev.get("doc_id")
+                    if stable_doc_id_key and len(stable_doc_id_key) == 64 and stable_doc_id_key in full_chunk_map_by_stable_id:
+                        full_data = full_chunk_map_by_stable_id[stable_doc_id_key]
+
+                if full_data and full_data["text"]:
+                    hydrated_ev = ev.copy()
+                    hydrated_ev["text"] = full_data["text"] 
+                    
+                    metadata_to_update = {
+                        k: v for k, v in full_data["metadata"].items() 
+                        if k not in ['text', 'page_content']
+                    }
+                    hydrated_ev.update(metadata_to_update)
+                    
+                    hydrated_list.append(hydrated_ev)
+                    total_hydrated += 1
+                else:
+                    hydrated_list.append(ev) 
+            
+            if hydrated_list:
+                hydrated_collected[key] = hydrated_list
+
+        self.logger.info(f"BASELINE HYDRATED → {total_hydrated}/{total_evidences} chunks restored with full text")
+        return hydrated_collected
 
 
     def _get_contextual_rules_prompt(self, sub_id: str, level: int) -> str:
@@ -2835,14 +2855,25 @@ class SEAMPDCAEngine:
                     return default
 
             for ev in top_evidences:
-                doc_id = ev.get("doc_id") or ev.get("chunk_uuid")
                 
+                # 1. ดึง Metadata และ ID ทั้งหมด
+                metadata = ev.get("metadata", {}) or {}
+                
+                # 🟢 FIX: Prioritize getting the full 64-char Doc UUID from metadata
+                doc_id_full = metadata.get("source_doc_id") or metadata.get("Source Doc ID")
+                
+                # Fallback to the ID key provided by the RAG result (which might be the short chunk ID)
+                doc_id_retrieved = ev.get("doc_id") or ev.get("chunk_uuid") 
+
+                # ใช้ 64-char ID เป็น ID หลักในการบันทึก, ถ้าไม่มีให้ใช้ ID ที่ดึงมา (ซึ่งอาจเป็น ID สั้น)
+                doc_id = doc_id_full or doc_id_retrieved
+                
+                # Skip ถ้า ID เป็นชั่วคราว/เป็น Hash หรือถูกประมวลผลไปแล้ว
                 if not doc_id or str(doc_id).startswith(("TEMP-", "HASH-")) or doc_id in seen:
                     continue
-
-                # --- START: SCORE EXTRACTION REVISED (Unchanged Logic) ---
+                    
+                # 2. ดึง Score
                 score = 0.0
-                metadata = ev.get("metadata", {}) or {}
                 filename_to_use = ev.get("source_filename") or metadata.get("source_filename") or ""
 
                 score_sources = [
@@ -2887,18 +2918,19 @@ class SEAMPDCAEngine:
                 if page_number and page_number.isdigit():
                     page_number = f"P{page_number}" 
                     
-                # 🟢 NEW: กำหนด File Reference ID
+                # 🟢 NEW: กำหนด File Reference ID (ใช้ Doc ID เต็ม 64 ตัว)
                 file_ref_id = doc_id 
 
                 evidence_entries.append({
-                    "doc_id": doc_id,
+                    "doc_id": doc_id, # ⬅️ [FIXED]: ใช้งาน ID ที่เป็น 64 ตัวแล้ว (หรือ ID สั้นถ้า 64 ตัวหาไม่เจอ)
                     "filename": filename_to_use,
                     "mapper_type": "AI_GENERATED", 
                     "timestamp": datetime.now().isoformat(), 
                     "relevance_score": score, 
-                    "chunk_uuid": doc_id,
-                    "page": page_number, # ⬅️ [FIXED]: ใช้ค่า page_number ที่ถูกดึงจาก metadata key ต่างๆ
-                    "file_reference_id": file_ref_id, # ⬅️ [NEW]: ใช้ doc_id เป็น reference
+                    "chunk_uuid": doc_id_retrieved, # ⬅️ [NEW]: เก็บ Chunk ID เดิม (ID สั้น) ไว้
+                    "page": page_number, 
+                    "file_reference_id": file_ref_id, # ⬅️ [FIXED]: ใช้ doc_id 64 ตัว
+                    "stable_doc_uuid": doc_id_full, # ⬅️ [NEW]: เก็บ stable doc uuid (64 ตัว)
                 })
                 seen.add(doc_id)
             

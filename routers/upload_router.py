@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Background
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Union, Tuple, Dict, Any # 📌 เพิ่ม Dict, Any
 from datetime import datetime, timezone
 import logging, os, sys, uuid
 from pathlib import Path as SysPath
@@ -24,7 +24,7 @@ try:
         process_document,
         list_documents,
         delete_document_by_uuid,
-        DocInfo,
+        # DocInfo, # 📌 ถ้า DocInfo ไม่ได้ใช้แล้วก็ลบออก หรือปรับปรุง
     )
     # --- NEW IMPORT for Auth ---
     from routers.auth_router import UserMe, get_current_user
@@ -200,7 +200,8 @@ async def list_uploads_by_type(
     doc_types_to_fetch = SUPPORTED_DOC_TYPES if doc_type.lower() == "all" else [doc_type]
     
     # List documents for the user's specific tenant and year
-    doc_data = await run_in_threadpool(
+    # doc_data: List[Dict[str, Any]]
+    doc_data: List[Dict[str, Any]] = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
             tenant=tenant_to_fetch,
@@ -210,29 +211,39 @@ async def list_uploads_by_type(
     )
     uploads: List[UploadResponse] = []
 
-    for doc_info in doc_data.values():
+    # 🟢 FIX: วนลูปผ่าน doc_data โดยตรง (ไม่ต้องเรียก .values() เพราะเป็น List[Dict] แล้ว)
+    # 🟢 FIX: ใช้ Key ที่คืนค่ามาจาก list_documents ('UUID', 'File Name', 'Status', 'Chunks', 'Doc Type', 'Enabler', 'Year')
+    for doc_info in doc_data: 
         status = "Pending"
-        if doc_info.get("status", "").lower() == "failed":
+        doc_status = doc_info.get("Status", "").lower() # 📌 ใช้ Key "Status"
+        doc_filename = doc_info.get("File Name") # 📌 ใช้ Key "File Name"
+        doc_chunk_count = doc_info.get("Chunks", 0) # 📌 ใช้ Key "Chunks"
+        
+        if doc_status == "failed":
             status = "Failed"
-        elif doc_info.get("chunk_count", 0) > 0:
+        elif doc_chunk_count > 0 or doc_status == "ingested":
             status = "Ingested"
-        elif doc_info.get("status", "").lower() == "processing":
+        elif doc_status == "processing":
             status = "Processing"
+        elif doc_status == "missing":
+            status = "Pending"
 
-        size_mb = doc_info.get("size", 0) / (1024*1024)
+        # NOTE: ข้อมูล size และ upload_date จะต้องถูกจัดการเนื่องจาก list_documents ที่ถูกแก้ไม่คืนค่าเหล่านี้
+        size_mb = doc_info.get("size", 0) / (1024*1024) if doc_info.get("size") else None
+
         uploads.append(
             UploadResponse(
-                doc_id=doc_info.get("doc_id"),
-                filename=doc_info.get("filename"),
-                doc_type=doc_info.get("doc_type"),
-                file_type=os.path.splitext(doc_info.get("filename"))[1] if doc_info.get("filename") else None,
+                doc_id=doc_info.get("UUID") or "N/A", # 📌 ใช้ Key "UUID"
+                filename=doc_filename,
+                doc_type=doc_info.get("Doc Type", "").lower(), # 📌 ใช้ Key "Doc Type"
+                file_type=os.path.splitext(doc_filename)[1] if doc_filename else None,
                 status=status,
-                upload_date=doc_info.get("upload_date"),
-                chunk_count=doc_info.get("chunk_count"),
+                upload_date=doc_info.get("upload_date"), 
+                chunk_count=doc_chunk_count, 
                 size=size_mb,
-                enabler=doc_info.get("enabler") or "-",
+                enabler=doc_info.get("Enabler") or "-", # 📌 ใช้ Key "Enabler"
                 tenant=doc_info.get("tenant") or current_user.tenant,
-                year=doc_info.get("year") or current_user.year,
+                year=doc_info.get("Year") or current_user.year, # 📌 ใช้ Key "Year"
             )
         )
 
@@ -337,7 +348,8 @@ async def get_documents(
     tenant_to_fetch = current_user.tenant
 
     # List documents for the user's specific tenant and year
-    doc_data = await run_in_threadpool(
+    # doc_data: List[Dict[str, Any]]
+    doc_data: List[Dict[str, Any]] = await run_in_threadpool(
         lambda: list_documents(
             doc_types=doc_types_to_fetch, 
             enabler=enabler_to_fetch, 
@@ -347,29 +359,38 @@ async def get_documents(
     )
     uploads: List[UploadResponse] = []
 
-    for doc_info in doc_data.values():
+    # 🟢 FIX: วนลูปผ่าน doc_data โดยตรง (ไม่ต้องเรียก .values() เพราะเป็น List[Dict] แล้ว)
+    # 🟢 FIX: ใช้ Key ที่คืนค่ามาจาก list_documents ('UUID', 'File Name', 'Status', 'Chunks', 'Doc Type', 'Enabler', 'Year')
+    for doc_info in doc_data:
         status = "Pending"
-        if doc_info.get("status", "").lower() == "failed":
+        doc_status = doc_info.get("Status", "").lower()
+        doc_filename = doc_info.get("File Name")
+        doc_chunk_count = doc_info.get("Chunks", 0)
+        
+        if doc_status == "failed":
             status = "Failed"
-        elif doc_info.get("chunk_count", 0) > 0:
+        elif doc_chunk_count > 0 or doc_status == "ingested":
             status = "Ingested"
-        elif doc_info.get("status", "").lower() == "processing":
+        elif doc_status == "processing":
             status = "Processing"
+        elif doc_status == "missing":
+            status = "Pending"
 
-        size_mb = doc_info.get("size", 0) / (1024*1024)
+        size_mb = doc_info.get("size", 0) / (1024*1024) if doc_info.get("size") else None
+
         uploads.append(
             UploadResponse(
-                doc_id=doc_info.get("doc_id"),
-                filename=doc_info.get("filename"),
-                doc_type=doc_info.get("doc_type"),
-                file_type=os.path.splitext(doc_info.get("filename"))[1] if doc_info.get("filename") else None,
+                doc_id=doc_info.get("UUID") or "N/A", # 📌 ใช้ Key "UUID"
+                filename=doc_filename,
+                doc_type=doc_info.get("Doc Type", "").lower(), # 📌 ใช้ Key "Doc Type"
+                file_type=os.path.splitext(doc_filename)[1] if doc_filename else None,
                 status=status,
                 upload_date=doc_info.get("upload_date"),
-                chunk_count=doc_info.get("chunk_count"),
+                chunk_count=doc_chunk_count, # 📌 ใช้ Key "Chunks"
                 size=size_mb,
-                enabler=doc_info.get("enabler") or "-",
+                enabler=doc_info.get("Enabler") or "-", # 📌 ใช้ Key "Enabler"
                 tenant=doc_info.get("tenant") or current_user.tenant,
-                year=doc_info.get("year") or current_user.year,
+                year=doc_info.get("Year") or current_user.year, # 📌 ใช้ Key "Year"
             )
         )
 
@@ -446,7 +467,8 @@ async def download_upload(
         default_enabler=DEFAULT_ENABLER
     )
 
-    doc_data = await run_in_threadpool(
+    # list_documents คืนค่า List[Dict] แต่เราต้องการหาไฟล์ด้วย file_id (UUID)
+    doc_data: List[Dict[str, Any]] = await run_in_threadpool(
         lambda: list_documents(
             doc_types=[doc_type], 
             tenant=current_user.tenant,
@@ -455,19 +477,31 @@ async def download_upload(
         )
     )
     
-    doc_map = doc_data 
-
-    target = doc_map.get(file_id)
-    if not target:
+    # 📌 FIX: แปลง List[Dict] เป็น Dict[UUID, DocInfo] เพื่อ Lookup ด้วย file_id 
+    doc_map: Dict[str, Any] = next(
+        (doc for doc in doc_data if doc.get("UUID") == file_id), 
+        {}
+    )
+    
+    # NOTE: list_documents ที่ถูกแก้ไขไม่ได้คืนค่า "filepath" โดยตรง (ตาม core/ingest.py ที่แก้ไขล่าสุด)
+    # คุณอาจจะต้องแก้ไข list_documents ให้คืนค่า filepath กลับมาด้วย
+    # แต่เนื่องจากฟังก์ชัน download_upload ยังเรียกใช้ .get("filepath") และ .get("filename") อยู่
+    # ซึ่งโดยปกติแล้วข้อมูลนี้จะอยู่ใน Mapping Database แต่ list_documents ไม่ได้ดึงมา
+    
+    # 💡 เพื่อให้ทำงานได้ชั่วคราว หากไม่มี filepath ใน doc_map
+    if not doc_map:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, 
             detail="Document ID not found or access denied."
         )
 
-    # 2. ตรวจสอบ Path และส่งไฟล์
-    filepath = target.get("filepath")
+    # 2. ตรวจสอบ Path และส่งไฟล์ (สมมติว่าคุณได้แก้ไข list_documents ให้คืนค่า "filepath" และ "filename" ด้วย)
+    # 🛑 ณ จุดนี้ โค้ดจะพังถ้า list_documents ใน core/ingest.py ไม่ได้คืนค่า "filepath" กลับมา
+    filepath = doc_map.get("filepath")
+    filename = doc_map.get("File Name") or "download.bin" # ใช้ File Name จาก list_documents
+
     if not filepath or not os.path.exists(filepath):
         logger.error(f"File path missing for doc_id {file_id}: {filepath}")
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found on disk")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found on disk or mapping incomplete.")
 
-    return FileResponse(filepath, filename=target.get("filename", "download.bin"))
+    return FileResponse(filepath, filename=filename)

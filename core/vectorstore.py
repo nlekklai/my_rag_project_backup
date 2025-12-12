@@ -378,6 +378,10 @@ def list_vectorstore_folders(
 
 
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
+# core/vectorstore.py
+# ... (ส่วน Imports เหมือนเดิม)
+
+# -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
     _instance = None
     _is_initialized = False
@@ -404,29 +408,29 @@ class VectorStoreManager:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT, year: int = DEFAULT_YEAR):
+    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT,  year: Optional[int] = None, enabler: Optional[str] = None): # ⬅️ FIX: รับ enabler เข้ามาด้วย
+        # 📌 FIX: ทำให้ init รับแค่ base_path และ tenant เพื่อให้คงความเป็น Singleton
         if not self._is_initialized:
-            self._base_path = base_path # base_path จะถูกละเลย
-            self.tenant = tenant.lower()        # ต้อง .lower() ด้วยนะ!
-            self.year = year
-            self.enabler = DEFAULT_ENABLER   
+            self._base_path = base_path
+            self.tenant = tenant.lower()
+            
+            # 💡 FIX: ต้องกำหนดค่าเริ่มต้นให้ Attributes ที่จำเป็นต้องใช้ในเมธอดอื่น ๆ ของ Class
+            #        โดยใช้ค่า Default จาก config
+            self.year = year if year is not None else DEFAULT_YEAR    
+            self.doc_type = "all"         # กำหนดค่า default
+            self.enabler = enabler.upper() if enabler else DEFAULT_ENABLER # ⬅️ FIX: กำหนด enabler ให้ชัดเจน
+            
             self._chroma_cache = {}
             self._embeddings = get_hf_embeddings()
             
-            # 🎯 FIX: ใช้ get_vectorstore_tenant_root_path แทน get_vectorstore_tenant_root
-            chroma_client_root = get_vectorstore_tenant_root_path(
-                tenant=self.tenant
-            )
-            
+            chroma_client_root = get_vectorstore_tenant_root_path(tenant=self.tenant)
             self._client = chromadb.PersistentClient(path=chroma_client_root)
 
             logger.info(f"ChromaDB Client initialized at TENANT ROOT PATH: {chroma_client_root}")
             
-            # โหลด mapping หลังจากตั้งค่า tenant/year แล้ว
-            self._load_doc_id_mapping() 
+            self._load_doc_id_mapping()
             
-            logger.info(f"Initialized VectorStoreManager (Tenant: {self.tenant}, Year: {self.year}). "
-                        f"Loaded {len(self._doc_id_mapping)} stable doc IDs.")
+            logger.info(f"Initialized VectorStoreManager (Tenant: {self.tenant})") 
             
             VectorStoreManager._is_initialized = True
     
@@ -463,6 +467,7 @@ class VectorStoreManager:
         # 1. PATH A: Year-Specific/Enabler Mapping (เช่น Evidence)
         # 🎯 FIX: ใช้ get_mapping_file_path (มีปี/enabler)
         path_A = get_mapping_file_path(
+            doc_type=self.doc_type,
             tenant=self.tenant, 
             year=self.year, 
             enabler=self.enabler
@@ -471,6 +476,7 @@ class VectorStoreManager:
         # 2. PATH B: Global/Tenant Root Mapping (สำหรับเอกสารทั่วไป)
         # 🎯 FIX: ใช้ get_mapping_file_path (ไม่มีปี/enabler)
         path_B = get_mapping_file_path(
+            doc_type=self.doc_type,
             tenant=self.tenant,
             year=None, # For global/legacy mapping
             enabler=None # For global/legacy mapping
@@ -562,7 +568,7 @@ class VectorStoreManager:
                     f"Vectorstore directory NOT FOUND!\n"
                     f"   Collection   : {collection_name}\n"
                     f"   Expected path: {persist_directory}\n"
-                    f"   tenant={self.tenant} | year={self.year} | doc_type={doc_type} | enabler={enabler or 'None'}"
+                    f"   tenant={self.tenant} | year={self.year} | doc_type={str(doc_type)} | enabler={enabler or 'None'}" # 💡 FIX: ครอบ doc_type ด้วย str()
                 )
                 # ลบ alt_path ออกเนื่องจาก Logic การสร้าง Path ได้รวมศูนย์แล้ว
                 return None
@@ -594,6 +600,12 @@ class VectorStoreManager:
                     collection_name=collection_name,
                     persist_directory=persist_directory  # ⬅️ ใช้ Full Path ของ Collection
                 )
+
+                # 🎯 FIX 7: บังคับโหลด Collection Object ทันที (แก้ปัญหา Lazy Loading ใน Worker)
+                # การเรียก vectordb._collection จะเป็นการเรียก Collection.get_collection() ภายใน
+                collection_test = vectordb._collection 
+                # ทดสอบเรียก method หนึ่งครั้งเพื่อให้แน่ใจว่า collection ไม่ตาย
+                collection_test.count()
 
                 # Cache ไว้ใช้ครั้งต่อไป
                 self._chroma_cache[collection_name] = vectordb
@@ -699,83 +711,154 @@ class VectorStoreManager:
             logger.error(f"❌ Error retrieving documents by Stable/Chunk IDs from collection '{collection_name}': {e}")
             return []
         
+
+    def _ensure_chroma_client_is_valid(self):
+        """
+        🎯 FIX 4A: Re-initializes the Chroma client if it is None or lost during serialization (Worker Process).
+        """
+        # ตรวจสอบว่ามี _client attribute หรือไม่ และเป็น None หรือไม่
+        if not hasattr(self, '_client') or self._client is None:
+            self.logger.warning(f"Chroma client lost in worker process for tenant '{self.tenant}', re-initializing...")
+            
+            # ใช้ VSM attributes (tenant) ที่เราแก้ไขให้คงอยู่แล้วในการสร้าง Path
+            tenant_root_path = get_vectorstore_tenant_root_path(self.tenant)
+            
+            # Re-initialize the Persistent Client
+            try:
+                import chromadb
+                from chromadb.config import Settings
+                self._client = chromadb.PersistentClient(path=tenant_root_path, settings=Settings(anonymized_telemetry=True))
+                
+                # เมื่อ Client ถูกสร้างใหม่, Collection Handles เก่าทั้งหมดต้องถือว่าใช้ไม่ได้
+                self._collections = {} 
+                
+                self.logger.info(f"✅ ChromaDB Client re-initialized at TENANT ROOT PATH: {tenant_root_path}. Collections cleared.")
+            except Exception as e:
+                self.logger.error(f"FATAL: Failed to re-initialize Chroma Client in worker: {e}", exc_info=False)
+                # ไม่ raise เพื่อให้โค้ดส่วนต่อไปสามารถจัดการกับ error ได้
+            
     def retrieve_by_chunk_uuids(self, chunk_uuids: List[str], collection_name: Optional[str] = None) -> List[LcDocument]:
         """
         Retrieves documents from Chroma collection based on a list of unique chunk_uuids (IDs).
         Includes de-duplication logic to prevent ChromaDB DuplicateIDError.
         
-        *** FIX: ลบ 'ids' ออกจาก include เพื่อแก้ปัญหา ChromaDB ValueError ***
+        🎯 FIX 9: เพิ่ม Retry Loop สำหรับการดึงข้อมูลด้วย ID (แก้ปัญหา 0/X chunks กลับมา)
         """
+        
+        # 🎯 FIX 4B: บังคับตรวจสอบและสร้าง Chroma Client ใหม่ หากอยู่ใน Worker Process
+        self._ensure_chroma_client_is_valid()
+        
         if not chunk_uuids:
             logger.info("VSM: No chunk_uuids provided for hydration.")
             return []
         
         # กำหนดชื่อ collection เริ่มต้นหากไม่ได้ระบุ
         if collection_name is None:
-            # 🎯 FIX: ใช้ get_doc_type_collection_key แทนการสร้าง string เอง
             collection_name = get_doc_type_collection_key(doc_type=EVIDENCE_DOC_TYPES, 
             enabler=getattr(self, 'enabler', 'km'))
 
-        # โหลด Chroma instance
-        chroma_instance = self._load_chroma_instance(collection_name)
-        if not chroma_instance:
-            logger.warning(f"VSM: Cannot load collection '{collection_name}' for hydration.")
-            return []
+        # 🟢 FIX 8: บังคับล้าง Cache ก่อนโหลด Collection สำหรับ Hydration
+        if collection_name in self._chroma_cache:
+            logger.warning(f"VSM: Clearing Chroma cache for '{collection_name}' to force re-initialization before hydration.")
+            del self._chroma_cache[collection_name]
+            
+        # ----------------------------------------------------------------------
+        # 🎯 FIX 9: Retry Loop เพื่อแก้ปัญหา Chroma PersistentClient ใน Worker Process
+        max_retries = 2 # ลอง 2 ครั้ง
+        result = {"documents": [], "metadatas": [], "ids": []}
+        
+        for attempt in range(max_retries):
+            # โหลด Chroma instance (ซึ่งควรจะใช้ self._client ที่ถูก re-initialize แล้ว)
+            chroma_instance = self._load_chroma_instance(collection_name)
+            
+            # 🎯 FIX 4C: ตรวจสอบ collection instance ที่โหลดมา
+            if not chroma_instance:
+                logger.warning(f"VSM: Cannot load collection '{collection_name}' for hydration after client check (Attempt {attempt + 1}).")
+                if attempt < max_retries - 1:
+                    continue # พยายามโหลดใหม่ในรอบถัดไป
+                break # หมดรอบแล้ว
+                
+            logger.info(f"VSM: Attempting hydration with {len(chunk_uuids)} UUIDs from '{collection_name}' (Attempt {attempt + 1}/{max_retries})")
+            logger.info(f"VSM: First 5 UUIDs → {chunk_uuids[:5]}")
+            
+            try:
+                # 📌 การเรียก Chroma .get()
+                result = chroma_instance.get(ids=chunk_uuids, include=['documents', 'metadatas'])
 
-        # DEBUG (ตามที่คุณมีอยู่)
-        logger.info(f"VSM: Attempting hydration with {len(chunk_uuids)} UUIDs from '{collection_name}'")
-        logger.info(f"VSM: First 5 UUIDs → {chunk_uuids[:5]}")
+                num_retrieved = len(result.get("documents", []))
+                
+                # ถ้าดึงข้อมูลได้สำเร็จ ให้หยุด loop
+                if num_retrieved > 0:
+                    logger.info(f"✅ VSM: Successfully retrieved {num_retrieved}/{len(chunk_uuids)} chunks by UUID from '{collection_name}' (Final Attempt: {attempt + 1})")
+                    break # Success! Exit the retry loop
+
+                # ถ้าดึงได้ 0 และยังไม่หมดรอบ ให้เตือนแล้วเข้า loop ใหม่ (จะมีการ Force Reload ที่จุดเริ่มต้นของ loop)
+                if num_retrieved == 0 and attempt < max_retries - 1:
+                    logger.warning(f"🚨 VSM: Retrieval returned 0 chunks (0/{len(chunk_uuids)}) on attempt {attempt + 1}. Retrying with fresh collection instance.")
+                    
+                    # Force reload logic สำหรับรอบถัดไป
+                    if collection_name in self._chroma_cache:
+                        del self._chroma_cache[collection_name]
+                    self._ensure_chroma_client_is_valid()
+                    
+                    continue
+                
+                # ถ้าดึงได้ 0 และหมดรอบแล้ว
+                if num_retrieved == 0 and attempt == max_retries - 1:
+                    logger.error(f"❌ VSM: Failed to retrieve any documents by UUID after {max_retries} attempts from '{collection_name}'.")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"❌ Chroma .get() failed during hydration (Attempt {attempt + 1}): {e}")
+                # ถ้ามี exception ให้พยายามโหลดใหม่และลองใหม่
+                if attempt < max_retries - 1:
+                    if collection_name in self._chroma_cache:
+                        del self._chroma_cache[collection_name]
+                    self._ensure_chroma_client_is_valid()
+                    continue
+                
+                # ถ้ามี exception ในรอบสุดท้าย ให้ break
+                break
+                
+        # ----------------------------------------------------------------------
+        
+        documents: List[LcDocument] = []
+        
+        # ตรวจสอบว่ามีข้อมูลหรือไม่ก่อนดำเนินการต่อ
+        if not result.get("documents"):
+            logger.error(f"❌ VSM: Final result documents are empty after all attempts for '{collection_name}'.")
+            return []
 
         try:
-            collection = chroma_instance._collection
+            # ใช้ result ที่ได้จาก Retry Loop ด้านบน
+            docs = result.get("documents", [])
+            metadatas = result.get("metadatas", [{}] * len(docs))
+            # NOTE: คาดหวังว่า "ids" จะถูกส่งคืนมาเสมอ
+            ids = result.get("ids", [""] * len(docs)) 
 
-            # 1. Clean IDs (แปลงเป็น str และ strip)
-            clean_ids = [str(uuid).strip() for uuid in chunk_uuids if uuid and str(uuid).strip()]
-
-            # 2. 🎯 FIX: ทำการ De-duplicate IDs ก่อนส่งให้ ChromaDB
-            unique_chunk_uuids = list(set(clean_ids))
-            
-            if len(unique_chunk_uuids) < len(clean_ids):
-                duplicated_count = len(clean_ids) - len(unique_chunk_uuids)
-                logger.warning(f"VSM: De-duplicated {duplicated_count} repeated UUIDs before calling ChromaDB get.")
-            
-            if not unique_chunk_uuids:
-                logger.warning("VSM: All UUIDs became empty after cleaning or duplication removal!")
-                return []
-
-            # 3. เรียกใช้ ChromaDB ด้วย IDs ที่ไม่ซ้ำซ้อน
-            # 🎯 FIX: ลบ "ids" ออกจาก include เพื่อแก้ ValueError
-            results = collection.get(
-                ids=unique_chunk_uuids,
-                include=["documents", "metadatas"] 
-            )
-
-            # NOTE: คาดหวังว่า "ids" จะถูกส่งคืนมาเสมอ แม้ไม่ได้ระบุใน include
-            found_count = len(results["ids"]) if results.get("ids") else 0
-            logger.info(f"VSM: Successfully retrieved {found_count}/{len(unique_chunk_uuids)} chunks by UUID from '{collection_name}'")
-
-            # 4. แปลงผลลัพธ์เป็น LcDocument
-            docs = []
-            # วนลูปผ่าน IDs ที่ได้กลับมา
-            for i, doc_id in enumerate(results["ids"]): 
-                content = results["documents"][i]
-                meta = results["metadatas"][i] if results.get("metadatas") else {}
-                doc = LcDocument(page_content=content, metadata=meta.copy())
+            for i, text in enumerate(docs):
+                meta = metadatas[i].copy() if metadatas and metadatas[i] else {}
+                chunk_uuid = ids[i] if ids else (meta.get("chunk_uuid") or "")
                 
-                # สำคัญ: doc_id ที่ได้จาก Chroma คือ chunk_uuid
-                doc.metadata["chunk_uuid"] = doc_id 
-                # เพิ่ม stable_doc_uuid โดยใช้ map
-                stable_doc_id = self.uuid_to_doc_id_map.get(doc_id) or meta.get("stable_doc_uuid") or meta.get("doc_id")
+                # เพิ่ม/อัปเดต chunk_uuid
+                if chunk_uuid:
+                    meta["chunk_uuid"] = chunk_uuid
+
+                # เพิ่ม stable_doc_uuid โดยใช้ map (ถ้ามี)
+                stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid) or meta.get("stable_doc_uuid") or meta.get("doc_id")
                 if stable_doc_id:
-                     doc.metadata["stable_doc_uuid"] = stable_doc_id
-                     
-                docs.append(doc)
-            
-            return docs
+                     meta["stable_doc_uuid"] = stable_doc_id
+
+                doc = LcDocument(page_content=text, metadata=meta)
+                documents.append(doc)
+                
+            logger.info(f"✅ Retrieved {len(documents)} documents for {len(chunk_uuids)} Stable IDs from '{collection_name}'.")
+            return documents
 
         except Exception as e:
-            logger.error(f"VSM: FATAL Error in retrieve_by_chunk_uuids: {e}", exc_info=True)
+            logger.error(f"❌ Error processing retrieved documents by Stable/Chunk IDs from collection '{collection_name}': {e}")
             return []
+
             
     def get_limited_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], query: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None, limit_per_doc: int = 5) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
@@ -978,13 +1061,29 @@ class VectorStoreManager:
             return []
 
 # Helper function
-def get_vectorstore_manager() -> VectorStoreManager:
-    return VectorStoreManager()
+def get_vectorstore_manager(
+    doc_type: str = "all",           # เพิ่มค่า default
+    tenant: str = DEFAULT_TENANT,
+    year: Optional[int] = None,
+    enabler: Optional[str] = None,
+) -> VectorStoreManager:
+    """
+    สร้างหรือคืน VectorStoreManager (รองรับการค้นทุก doc_type)
+    """
+    return VectorStoreManager(
+        # doc_type=doc_type,
+        tenant=tenant,
+        # year=year or DEFAULT_YEAR,
+        # enabler=enabler
+    )
 
 def load_vectorstore(doc_type: str, enabler: Optional[str] = None) -> Optional[Chroma]:
-    # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
     collection_name = get_doc_type_collection_key(doc_type, enabler)
-    return get_vectorstore_manager()._load_chroma_instance(collection_name)
+    vsm = get_vectorstore_manager(
+        doc_type=doc_type,           # เพิ่มบรรทัดนี้!
+        enabler=enabler
+    )
+    return vsm._load_chroma_instance(collection_name)
 
 class VectorStoreExecutorSingleton:
     _instance = None

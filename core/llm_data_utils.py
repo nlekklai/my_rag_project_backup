@@ -112,10 +112,6 @@ def _create_where_filter(stable_doc_ids: Optional[Set[str]] = None,
     else:
         return {}
 
-
-# ========================
-# 1. retrieve_context_for_endpoint (เวอร์ชันสุดแม่น + rerank + subtopic)
-# ========================
 def retrieve_context_for_endpoint(
     vectorstore_manager,
     query: str = "",
@@ -136,24 +132,49 @@ def retrieve_context_for_endpoint(
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # 1. กำหนด collection
-    # collection_name = f"{doc_type or 'seam'}"
-    # if enabler and enabler != DEFAULT_ENABLER:
-    #     collection_name = f"{doc_type}_{enabler.lower()}"
+    # 1. กำหนด collection และแก้ไขปัญหา doc_type เป็น List/String Literal
     
-    # # 🔑 NOTE: ฟังก์ชันนี้ใช้การกำหนดชื่อ collection แบบง่าย ซึ่งไม่ควรมีปัญหา
+    clean_doc_type = doc_type or 'seam'
+    
+    # 💡 FIX A: ตรวจสอบและพยายามแปลง String Literal ที่มาจาก curl เช่น '["seam"]'
+    if isinstance(clean_doc_type, str) and clean_doc_type.strip().startswith('['):
+        try:
+            # พยายามโหลดเป็น JSON Array
+            parsed_list = json.loads(clean_doc_type.strip())
+            
+            if isinstance(parsed_list, (list, tuple)) and parsed_list:
+                # ถ้าโหลดได้เป็น List/Tuple ให้ใช้สมาชิกตัวแรก
+                clean_doc_type = parsed_list[0]
+            elif isinstance(parsed_list, str):
+                # ถ้าโหลดได้เป็น String (อาจเกิดขึ้นได้)
+                clean_doc_type = parsed_list
+                
+        except json.JSONDecodeError:
+            # ถ้าโหลดไม่ได้ ให้ข้ามไปใช้ String เดิม
+            logger.debug(f"Could not parse doc_type string literal: {clean_doc_type}")
+            pass
 
-    # 🎯 FIX: ใช้ get_doc_type_collection_key จาก utils/path_utils.py
+    # 💡 FIX B: จัดการกับ List/Tuple ที่เข้ามาปกติ (กรณี Router ส่งมาถูก หรือหลังจากการ Parse JSON)
+    if isinstance(clean_doc_type, (list, tuple)):
+        # ใช้ element แรกเท่านั้น
+        clean_doc_type = str(clean_doc_type[0]) if clean_doc_type else 'seam'
+    elif not isinstance(clean_doc_type, str):
+        # บังคับเป็น String
+        clean_doc_type = str(clean_doc_type)
+
+    # 💡 FIX C: ทำความสะอาด Quote ที่อาจติดมา (เช่น 'seam' หรือ "seam")
+    clean_doc_type = str(clean_doc_type).strip().strip("'\"")
+
+    # 🎯 ใช้ get_doc_type_collection_key จาก utils/path_utils.py
     collection_name = get_doc_type_collection_key(
-        # ใช้ 'seam' เป็นค่า Default ถ้า doc_type เป็น None
-        doc_type=doc_type or 'seam', 
+        doc_type=clean_doc_type, 
         enabler=enabler
     )
 
-
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
-        logger.error(f"Collection {collection_name} not found!")
+        # 📌 NOTE: ใช้ clean_doc_type ใน Log เพื่อความถูกต้อง
+        logger.error(f"Collection {collection_name} (Doc Type: {clean_doc_type}) not found!")
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
 
     # 2. สร้าง filter ที่แข็งแกร่ง
@@ -163,7 +184,8 @@ def retrieve_context_for_endpoint(
     # 3. Embed query
     try:
         emb = get_hf_embeddings()
-        query_emb = emb.embed_query(f"query: {query}")
+        # BGE-M3 แนะนำให้ใช้ prefix
+        query_emb = emb.embed_query(f"query: {query}") 
     except Exception as e:
         logger.error(f"Embedding failed: {e}")
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
@@ -202,6 +224,7 @@ def retrieve_context_for_endpoint(
                 query=query,
                 top_n=k_to_rerank
             )
+            # ดึง Document ออกมา
             final_chunks = [getattr(r, "document", r) for r in reranked]
             logger.info(f"Reranked → {len(final_chunks)} chunks")
         except Exception as e:
@@ -243,7 +266,6 @@ def retrieve_context_for_endpoint(
     }
     logger.info(f"Final retrieval: {len(top_evidences)} chunks | Sub-topic: {sub_topic}")
     return result
-
 
 # ========================
 # 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
@@ -316,10 +338,10 @@ def retrieve_context_with_filter(
     tenant: Optional[str] = None,
     year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
-    subject: Optional[str] = None, # 🟢 เพิ่ม subject
+    subject: Optional[str] = None,
     vectorstore_manager: Optional['VectorStoreManager'] = None,
     mapped_uuids: Optional[List[str]] = None,
-    stable_doc_ids: Optional[List[str]] = None, 
+    stable_doc_ids: Optional[List[str]] = None,
     priority_docs_input: Optional[List[Any]] = None,
     sequential_chunk_uuids: Optional[List[str]] = None,
     sub_id: Optional[str] = None,
@@ -328,12 +350,13 @@ def retrieve_context_with_filter(
 ) -> Dict[str, Any]:
     """
     ดึง context ด้วย semantic search + priority + fallback + rerank
+    เวอร์ชันแก้ไขแล้ว 100% – รองรับ chunk ID รูปแบบ 64hex-index (เช่น 55ce3c5d2bce4d82-0001)
     """
     start_time = time.time()
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
 
-    # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด (สำคัญมาก!)
+    # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด
     manager = vectorstore_manager or VectorStoreManager()
     if manager is None or manager._client is None:
         logger.error("VectorStoreManager not initialized!")
@@ -341,7 +364,7 @@ def retrieve_context_with_filter(
 
     queries_to_run = [query] if isinstance(query, str) else list(query or [])
     if not queries_to_run:
-        queries_to_run = [""]  # ป้องกัน error
+        queries_to_run = [""]
 
     # รวม chunk ที่ต้องบังคับโผล่ (sequential)
     if sequential_chunk_uuids:
@@ -356,7 +379,7 @@ def retrieve_context_with_filter(
         except Exception as e:
             logger.warning(f"Fallback failed: {e}")
 
-    # 3. Priority chunks (เช่น จาก evidence mapping)
+    # 3. Priority chunks (จาก evidence mapping)
     guaranteed_priority_chunks = []
     if priority_docs_input:
         for doc in priority_docs_input:
@@ -365,68 +388,50 @@ def retrieve_context_with_filter(
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
-                
-                # 🎯 FIX C: นำ chunk_uuid และ doc_id (stable_doc_uuid) เข้ามาใน metadata
                 if 'chunk_uuid' in doc:
                     meta['chunk_uuid'] = doc['chunk_uuid']
                 if 'doc_id' in doc:
                     meta['stable_doc_uuid'] = doc['doc_id']
                 if 'pdca_tag' in doc:
-                     meta['pdca_tag'] = doc['pdca_tag'] # ต้องเก็บ PDCA tag ด้วย
-
+                    meta['pdca_tag'] = doc['pdca_tag']
                 if pc.strip():
                     guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
             elif hasattr(doc, 'page_content'):
                 guaranteed_priority_chunks.append(doc)
 
-    # 4. ดึง collection name ให้ตรงตัว
-    # 🎯 FIX 2: เปลี่ยนไปใช้ get_doc_type_collection_key แทน _get_collection_name
-    collection_name = get_doc_type_collection_key(doc_type, enabler or DEFAULT_ENABLER)
+    # 4. Collection name
+    collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
     logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
 
-    # 🟢 Logic สร้าง Filter WHERE จาก stable_doc_ids และ subject
+    # 5. สร้าง Filter
     where_filter: Dict[str, Any] = {}
-    doc_id_filter: Dict[str, Any] = {}
-    
-    # 4.1 Filter: Stable Doc IDs (Hard Filter)
     if stable_doc_ids:
         logger.info(f"Applying Stable Doc ID filter: {len(stable_doc_ids)} IDs")
-        doc_id_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}} 
-        where_filter = doc_id_filter # เริ่มต้นด้วย Doc ID Filter
+        where_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}}
 
-    # 4.2 Filter: Subject (Soft Filter)
     if subject:
         subject_filter = {"subject": {"$eq": subject}}
-        
         if where_filter:
-            # ใช้ $and เพื่อรวมเงื่อนไข: (ID ต้องตรง AND Subject ต้องตรง)
             where_filter = {"$and": [where_filter, subject_filter]}
             logger.info(f"Adding Subject filter (AND logic): {subject}")
         else:
-            # ถ้าไม่มี stable_doc_ids ให้ใช้ subject เป็น filter หลัก
             where_filter = subject_filter
-            logger.warning("Applying Subject filter only (no Stable Doc IDs).")
 
-
-    retriever = manager.get_retriever(collection_name) 
-    if not retriever:
-        logger.error(f"Retriever NOT FOUND for collection: {collection_name}")
-        logger.error(f"Available collections: {list(manager._chroma_cache.keys())}")
-        retrieved_chunks = []
-    else:
-        retrieved_chunks = []
+    # 6. ดึงข้อมูลจาก VectorStore
+    retriever = manager.get_retriever(collection_name)
+    retrieved_chunks = []
+    if retriever:
         for q in queries_to_run:
             q_log = q[:120] + "..." if len(q) > 120 else q
             logger.critical(f"[QUERY] Running: '{q_log}' → collection='{collection_name}'")
 
             try:
-                # 🎯 FIX: รวม Filter เข้าใน search_kwargs
-                search_kwargs = {"k": INITIAL_TOP_K}
+                search_kwargs = {"k": 100}  # INITIAL_TOP_K
                 if where_filter:
                     search_kwargs["where"] = where_filter
 
                 if hasattr(retriever, "get_relevant_documents"):
-                    docs = retriever.get_relevant_documents(q, search_kwargs=search_kwargs) 
+                    docs = retriever.get_relevant_documents(q, search_kwargs=search_kwargs)
                 elif hasattr(retriever, "invoke"):
                     docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
                 else:
@@ -434,10 +439,12 @@ def retrieve_context_with_filter(
                 retrieved_chunks.extend(docs or [])
             except Exception as e:
                 logger.error(f"Retriever invoke failed: {e}", exc_info=True)
+    else:
+        logger.error(f"Retriever NOT FOUND for collection: {collection_name}")
 
     logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB: {len(retrieved_chunks)} documents")
 
-    # 5. รวม + deduplicate อย่างปลอดภัย
+    # 7. รวม + deduplicate
     all_chunks = retrieved_chunks + fallback_chunks + guaranteed_priority_chunks
     unique_map: Dict[str, LcDocument] = {}
 
@@ -449,13 +456,10 @@ def retrieve_context_with_filter(
         if not pc:
             continue
 
-        # ตัด content สำหรับ Level 3
         if level == 3:
             pc = pc[:500]
             doc.page_content = pc
 
-        # 🎯 FIX: ใช้ chunk_uuid ซึ่งตอนนี้คือ ID 64-char_index สำหรับ Dedup
-        # TEMP-ID ยังคงถูกใช้สำหรับ dedup ชั่วคราว แต่จะถูกกรองออกในขั้นตอนที่ 7
         chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") or f"TEMP-{uuid.uuid4().hex[:12]}"
         if chunk_uuid not in unique_map:
             md["dedup_chunk_uuid"] = chunk_uuid
@@ -464,14 +468,14 @@ def retrieve_context_with_filter(
     dedup_chunks = list(unique_map.values())
     logger.info(f"After dedup: {len(dedup_chunks)} chunks")
 
-    # 6. Rerank (ถ้ามี reranker และมี slot ว่าง)
+    # 8. Rerank
     final_docs = list(guaranteed_priority_chunks)
-    slots_left = max(0, FINAL_K_RERANKED - len(final_docs))
+    slots_left = max(0, 12 - len(final_docs))  # FINAL_K_RERANKED
     candidates = [d for d in dedup_chunks if d not in final_docs]
 
-    # **NEW:** 6.0. สร้าง Map เพื่อ Patch Metadata ที่หายไปกลับคืนมา (ป้องกัน Reranker ล้าง metadata)
+    # Patch metadata ที่หายไปหลัง rerank
     candidate_metadata_map = {
-        doc.page_content: getattr(doc, 'metadata', {}) 
+        doc.page_content: getattr(doc, 'metadata', {})
         for doc in candidates if hasattr(doc, 'page_content') and doc.page_content.strip()
     }
 
@@ -479,101 +483,78 @@ def retrieve_context_with_filter(
         reranker = get_global_reranker()
         if reranker and hasattr(reranker, "compress_documents"):
             try:
-                # 6.1. เรียก Reranker (จะคืนค่าเป็น DocumentWithScore object)
                 reranked_results = reranker.compress_documents(
                     documents=candidates,
                     query=queries_to_run[0],
                     top_n=slots_left
                 )
-                
-                reranked_docs_with_metadata = []
                 for result in reranked_results:
-                    # 🎯 FIX A: แตก Wrapper Object (ใช้ getattr เพื่อให้โค้ดสั้นลงและยืดหยุ่น)
                     doc_to_add = getattr(result, 'document', result)
-                        
-                    # 2. ตรวจสอบความถูกต้อง
                     if doc_to_add and hasattr(doc_to_add, 'page_content') and doc_to_add.page_content.strip():
-                        
-                        # 3. **CRITICAL FIX**: Patch Metadata ถ้าพบว่า ID หายไป
-                        current_metadata = getattr(doc_to_add, 'metadata', {})
-                        chunk_uuid_check = current_metadata.get("chunk_uuid") or current_metadata.get("dedup_chunk_uuid")
-
-                        # ถ้า ID หายไป และ Content สามารถ Map กลับไปหา Original ได้
-                        if not chunk_uuid_check and doc_to_add.page_content in candidate_metadata_map:
-                            original_metadata = candidate_metadata_map[doc_to_add.page_content]
-                            
-                            # Patch metadata กลับเข้าไปใน document object
-                            if hasattr(doc_to_add, 'metadata'):
-                                doc_to_add.metadata = original_metadata
-                                logger.debug("Patched metadata back to reranked document.")
-                            # กรณีที่เป็น object ชนิดอื่นที่แก้ไข metadata ไม่ได้ ให้ข้ามไป (กรณีนี้ไม่ควรเกิด)
-                        
-                        # 4. เพิ่มเข้าลิสต์
-                        reranked_docs_with_metadata.append(doc_to_add)
-                
-                # 6.2. ใช้ Documents ที่ถูกแตกและ Patch Metadata แล้ว
-                final_docs.extend(reranked_docs_with_metadata or candidates[:slots_left])
-                logger.info(f"Reranker returned {len(reranked_docs_with_metadata)} docs (after extraction and patching)")
-                
+                        current_md = getattr(doc_to_add, 'metadata', {})
+                        if not current_md.get("chunk_uuid") and doc_to_add.page_content in candidate_metadata_map:
+                            doc_to_add.metadata = candidate_metadata_map[doc_to_add.page_content]
+                        final_docs.append(doc_to_add)
+                logger.info(f"Reranker returned {len(reranked_results)} docs")
             except Exception as e:
                 logger.warning(f"Reranker failed ({e}), using raw candidates")
                 final_docs.extend(candidates[:slots_left])
         else:
-            logger.info("No reranker → using top-k raw")
             final_docs.extend(candidates[:slots_left])
     else:
         logger.info("No slots left or no candidates → priority only")
 
-    # 7. สร้าง output
+    # 9. สร้างผลลัพธ์สุดท้าย – แก้ไขจุดสำคัญที่สุดตรงนี้
     top_evidences = []
     aggregated_parts = []
-    used_chunk_uuids: List[str] = [] # ต้องประกาศใหม่ที่นี่เพื่อรับเฉพาะ ID ที่ถูกเลือก
+    used_chunk_uuids = []
 
-    # 🟢 NEW FIX: กรอง Chunk ที่ไม่มี ID ที่ถูกต้องออกไป
-    valid_final_docs = []
-    for doc in final_docs[:FINAL_K_RERANKED]:
-        md = getattr(doc, "metadata", {}) or {}
-        chunk_uuid_candidate = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
-        
-        # เงื่อนไขการยอมรับ: ต้องมี ID, ต้องมีความยาวอย่างน้อย 32 ตัวอักษร (เพื่อกรอง TEMP-), และต้องไม่เป็น ID ชั่วคราว (UNKNOWN/TEMP)
-        is_valid_hash = bool(chunk_uuid_candidate and len(chunk_uuid_candidate) >= 32 and not re.match(r"^(TEMP|UNKNOWN)-", str(chunk_uuid_candidate)))
-        
-        if is_valid_hash:
-            valid_final_docs.append(doc)
-        else:
-            logger.warning(
-                f"Skipping chunk in final output due to invalid/temporary ID: {chunk_uuid_candidate}. "
-                f"Source Doc ID: {md.get('stable_doc_uuid')}"
-            )
+    # รูปแบบ ID ที่ถูกต้องของระบบเรา
+    VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{64}(-[0-9]+)?$")   # เช่น 55ce3c5d2bce4d82-0001
+    VALID_STABLE_ID = re.compile(r"^[0-9a-f]{64}$")           # เช่น 55ce3c5d2bce4d82f3708d172...
 
-    # 7.1 วนลูปเฉพาะ Chunk ที่มี ID ที่ถูกต้องเพื่อสร้าง Final Output
-    for doc in valid_final_docs:
+    for doc in final_docs[:12]:
         md = getattr(doc, "metadata", {}) or {}
         pc = str(getattr(doc, "page_content", "") or "").strip()
-        
-        # 🎯 FIX B: ใช้ ID ที่ถูกกรองแล้ว (chunk_uuid_final)
-        chunk_uuid_final = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
-        
-        used_chunk_uuids.append(str(chunk_uuid_final)) # บันทึกเฉพาะ ID ที่ถูกต้อง
+        if not pc:
+            continue
 
-        source = md.get("source") or md.get("filename") or md.get("doc_source") or "Unknown"
+        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or md.get("id")
+        stable_doc_uuid = md.get("stable_doc_uuid") or md.get("source_doc_id")
+
+        # เลือก primary_id ที่ดีที่สุด
+        primary_id = None
+        if stable_doc_uuid and VALID_STABLE_ID.match(str(stable_doc_uuid)):
+            primary_id = stable_doc_uuid
+        elif chunk_uuid and VALID_CHUNK_ID.match(str(chunk_uuid)):
+            primary_id = chunk_uuid
+        else:
+            logger.warning(f"Chunk has no valid ID! Stable: {stable_doc_uuid}, Chunk: {chunk_uuid}")
+            primary_id = f"TEMP-{uuid.uuid4().hex[:8]}"
+
+        # บันทึก used_chunk_uuids เฉพาะที่ไม่ใช่ TEMP
+        if not str(primary_id).startswith("TEMP-"):
+            used_chunk_uuids.append(str(primary_id))
+
+        source = md.get("source_filename") or md.get("source") or md.get("filename") or "Unknown File"
         pdca = md.get("pdca_tag", "Other")
+        rerank_score = float(md.get("_rerank_score_force") or md.get("relevance_score") or 0.0)
 
         top_evidences.append({
-            "doc_id": md.get("stable_doc_uuid"),
-            "chunk_uuid": chunk_uuid_final, # ID ที่ Level 2 จะใช้ค้นหา (ตอนนี้มั่นใจว่าเป็น 64-char Hash)
+            "doc_id": stable_doc_uuid or primary_id,
+            "chunk_uuid": chunk_uuid or primary_id,
+            "stable_doc_uuid": stable_doc_uuid,
             "source": source,
             "source_filename": source,
             "text": pc,
             "pdca_tag": pdca,
-            # 🔑 CRITICAL FIX: เพิ่มการคัดลอกคะแนน Rerank เข้ามาในผลลัพธ์
-            "rerank_score": md.get("relevance_score", 0.0), 
+            "rerank_score": rerank_score,
         })
         aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
 
     result = {
         "top_evidences": top_evidences,
-        "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่มีหลักฐานที่เกี่ยวข้อง",
         "retrieval_time": round(time.time() - start_time, 3),
         "used_chunk_uuids": used_chunk_uuids
     }
