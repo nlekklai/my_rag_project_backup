@@ -511,8 +511,12 @@ def retrieve_context_with_filter(
     used_chunk_uuids = []
 
     # รูปแบบ ID ที่ถูกต้องของระบบเรา
-    VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{64}(-[0-9]+)?$")   # เช่น 55ce3c5d2bce4d82-0001
-    VALID_STABLE_ID = re.compile(r"^[0-9a-f]{64}$")           # เช่น 55ce3c5d2bce4d82f3708d172...
+    # VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{64}(-[0-9]+)?$")   # เช่น 55ce3c5d2bce4d82-0001
+    VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}(-[0-9]+)?$", re.IGNORECASE)
+
+    # 📌 B. ตรวจสอบ Stable ID: รองรับ UUID V5 หรือ 64-hex เดิม
+    VALID_STABLE_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}$", re.IGNORECASE)
+    # VALID_STABLE_ID = re.compile(r"^[0-9a-f]{64}$")           # เช่น 55ce3c5d2bce4d82f3708d172...
 
     for doc in final_docs[:12]:
         md = getattr(doc, "metadata", {}) or {}
@@ -617,22 +621,26 @@ def _summarize_evidence_list_short(evidences: list, max_sentences: int = 3) -> s
 
 
 # ----------------------------------------------------
-# ULTIMATE FINAL VERSION: build_multichannel_context_for_level
-# รับทั้ง evidence dicts เต็ม ๆ และรองรับของเก่าด้วย
+# ULTIMATE FINAL VERSION: build_multichannel_context_for_level (OPTIMIZED)
+# บทบาทใหม่: สร้างแค่ BASELINE และ AUXILIARY summaries เท่านั้น
 # ----------------------------------------------------
 def build_multichannel_context_for_level(
     level: int,
     top_evidences: list,
     previous_levels_map: dict | None = None,                    # เก่า: {key: list[dict]} หรือ {doc_id: filename}
     previous_levels_evidence: list | None = None,               # ใหม่: list[dict] ที่มี text เต็ม ๆ
-    max_main_context_tokens: int = 3000,
+    max_main_context_tokens: int = 3000,                        # ไม่ได้ใช้แล้ว
     max_summary_sentences: int = 4
 ) -> dict:
+    """
+    สร้าง Auxiliary และ Baseline Summaries เท่านั้น Logic การสร้าง Direct Context ถูกย้ายไปที่
+    _get_pdca_blocks_from_evidences ใน SeamAssessmentEngine แล้ว
+    """
 
-    # --- 1) Baseline: ใช้ previous_levels_evidence เป็นหลัก (มี text!) ---
+    # --- 1) Baseline Summary: ใช้ previous_levels_evidence เป็นหลัก ---
     baseline_evidence = previous_levels_evidence or []
 
-    # Fallback เก่า: ถ้ายังส่งแบบเดิมมา (เช่นจาก _run_single_assessment เก่า)
+    # Fallback เก่า: ถ้ายังส่งแบบเดิมมา
     if not baseline_evidence and previous_levels_map:
         for items in previous_levels_map.values():
             if isinstance(items, list):
@@ -655,60 +663,48 @@ def build_multichannel_context_for_level(
         max_sentences=max_summary_sentences
     )
 
-    # --- 2) Direct / Aux classification (เหมือนเดิม) ---
+    # --- 2) Auxiliary Summary: ใช้ top_evidences ที่เหลือจากการคัดสรร PDCA ---
+    # *Logic นี้ถูกคงไว้เพื่อแยก Aux Chunks ออกมาสรุป*
     direct, aux = [], []
-    K_MAIN = 5
+    K_MAIN = 5 # รักษาค่า K_MAIN สำหรับการแบ่งกลุ่ม
 
     for ev in top_evidences:
         if not isinstance(ev, dict):
             aux.append(ev)
             continue
-        tag = (ev.get("pdca_tag") or ev.get("PDCA") or "P").upper()
+        # 💡 ใช้ 'Other' เป็น default tag ตามแนวทาง Optimized
+        tag = (ev.get("pdca_tag") or ev.get("PDCA") or "Other").upper() 
         if tag in ("P", "D", "C", "A"):
             direct.append(ev)
         else:
             aux.append(ev)
 
+    # Logic เคลื่อนย้ายจาก Aux ไป Direct
     if len(direct) < K_MAIN:
         need = K_MAIN - len(direct)
         direct.extend(aux[:need])
         aux = aux[need:]
 
-    direct_for_context = direct[:K_MAIN]
-
-    # --- 3) Join text ---
-    def _join_chunks(chunks, max_chars):
-        out, used = [], 0
-        for c in chunks:
-            txt = (c.get("text") or c.get("content") or "").strip()
-            if not txt:
-                continue
-            if used + len(txt) > max_chars:
-                remain = max_chars - used
-                if remain > 0:
-                    out.append(txt[:remain] + "...")
-                break
-            out.append(txt)
-            used += len(txt)
-        return "\n\n".join(out)
-
-    direct_context = _join_chunks(direct_for_context, max_main_context_tokens)
+    # 📌 NEW: สร้าง Aux Summary จาก Aux Chunks
     aux_summary = _summarize_evidence_list_short(aux, max_sentences=3) if aux else "ไม่มีหลักฐานรอง"
+    
+    # --- 3) Debug & Return ---
+    # 📌 ยกเลิกการสร้าง direct_context โดยใช้ _join_chunks ที่ซ้ำซ้อน
+    direct_context = "" # ส่งค่าว่างกลับไป
 
-    # --- 4) Debug ---
     debug_meta = {
         "level": level,
-        "direct_count": len(direct_for_context),
+        "direct_count_for_aux_split": len(direct), # จำนวนที่ถูกจัดเป็นหลักฐานหลัก (เพื่อการ debug)
         "aux_count": len(aux),
         "baseline_count": len(summarizable_baseline),
         "baseline_source": "previous_levels_evidence" if previous_levels_evidence else "fallback_map",
     }
 
-    logger.info(f"Context L{level} → Direct:{len(direct_for_context)} | Aux:{len(aux)} | Baseline:{len(summarizable_baseline)}")
+    logger.info(f"Context L{level} → (Optimized) Aux Summary:{len(aux)} chunks | Baseline:{len(summarizable_baseline)} chunks")
 
     return {
         "baseline_summary": baseline_summary,
-        "direct_context": direct_context,
+        "direct_context": direct_context, # ส่งค่าว่าง (Empty String)
         "aux_summary": aux_summary,
         "debug_meta": debug_meta,
     }

@@ -21,6 +21,7 @@ from config.global_vars import (
     DEFAULT_TENANT,
     DEFAULT_YEAR,
     DEFAULT_ENABLER,
+    PROJECT_NAMESPACE_UUID
 )
 
 logger = logging.getLogger(__name__)
@@ -199,58 +200,6 @@ def save_doc_id_mapping(data: Dict, doc_type: str, tenant: str, year: Optional[U
     except Exception as e:
         logger.error(f"Save mapping failed {path}: {e}")
 
-# ==================== 5. STABLE UUID ====================
-def create_stable_uuid_from_path(
-    filepath: str,
-    tenant: Optional[str] = None,
-    year: Optional[Union[int, str]] = None,
-    enabler: Optional[str] = None,
-) -> str:
-    """
-    Creates a 64-character stable UUID.
-    Prioritizes (Filename + Stat) for maximum stability.
-    Falls back to (Cleaned Relative Path + Context) if Stat fails (e.g., NFD/NFKC bug on macOS).
-    """
-    # 1. Normalize และ Resolve Path (เพื่อให้ได้ NFKC-normalized Absolute Path)
-    resolved_filepath_nfkc = resolve_filepath_to_absolute(filepath)
-    
-    tenant_clean = _n(tenant or "")
-    enabler_clean = _n(enabler or "")
-    
-    # 🎯 STEP 1: Try Stat-based hash (Most stable, but fails on NFD/NFKC systems)
-    stat_path = filepath
-    st = None
-    
-    try:
-        # 📌 FIX 1: พยายาม Stat บน Path ที่สแกนเจอจริง (NFD/OS Path)
-        st = os.stat(stat_path)
-    except FileNotFoundError:
-        # 📌 FIX 2: ถ้า Stat ล้มเหลว (NFD/NFKC mismatch) ให้ลอง Stat บน Path ที่ถูก NFKC แล้ว
-        try:
-            st = os.stat(resolved_filepath_nfkc)
-            stat_path = resolved_filepath_nfkc # ใช้ Path ที่ Stat สำเร็จในการสร้าง Key
-        except Exception:
-            # ถ้า Stat ทั้งสอง Path ล้มเหลว ให้ไปที่ Fallback
-            logger.error(f"Error creating stable UUID (Failed to stat file) for {filepath}. Stat failed on both original and NFKC resolved path.")
-            pass # st ยังคงเป็น None
-
-    if st:
-        # Key 1 (Stat-based): Filename (Normalized) + Size + Mtime + Context
-        key = f"{_n(os.path.basename(stat_path))}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year or ''}:{enabler_clean}"
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()
-        
-    # 🎯 STEP 2: Fallback to Path-based 64-char hash (Stable enough, works even if stat fails)
-    relative_key = get_mapping_key_from_physical_path(filepath)
-    
-    if relative_key:
-        # Key 2 (Path-based): Cleaned Relative Key + Context
-        stable_key = f"{relative_key}:{tenant_clean}:{year or ''}:{enabler_clean}"
-        logger.warning(f"Forced Path-based 64-char Stable UUID for {filepath}")
-        return hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
-    else:
-         # Final Fallback: Random UUID (Should never happen)
-         logger.error(f"Cannot generate stable key for: {filepath}")
-         return str(uuid.uuid4())
 
 # ==================== 6. PARSE COLLECTION NAME ====================
 def parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:

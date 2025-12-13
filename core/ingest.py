@@ -20,7 +20,6 @@ from pydantic import ValidationError
 from collections import defaultdict # 🟢 FIX 1: เพิ่ม defaultdict
 import pandas as pd
 
-
 # LangChain loaders
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -64,7 +63,8 @@ from config.global_vars import (
     EMBEDDING_MODEL_NAME,
     DATA_STORE_ROOT,
     SUPPORTED_DOC_TYPES,
-    MAX_PARALLEL_WORKERS
+    MAX_PARALLEL_WORKERS,
+    PROJECT_NAMESPACE_UUID
 )
 
 # -------------------- [NEW] Import Path Utilities --------------------
@@ -81,12 +81,13 @@ from utils.path_utils import (
     load_evidence_mapping,
     save_evidence_mapping,
     get_normalized_metadata,
-    create_stable_uuid_from_path,
     parse_collection_name,
     get_mapping_tenant_root_path,
     _update_evidence_mapping,
     get_mapping_key_from_physical_path,
-    _update_doc_id_mapping
+    _update_doc_id_mapping,
+    resolve_filepath_to_absolute,
+    _n
 )
 # ---------------------------------------------------------------------
 
@@ -137,48 +138,6 @@ logging.getLogger('pdfminer').setLevel(logging.ERROR)
 logging.getLogger('pdfminer.pdfinterp').setLevel(logging.ERROR)
 logging.getLogger('unstructured').setLevel(logging.ERROR)
 logging.getLogger('pypdf').setLevel(logging.ERROR)
-
-# -------------------- [REMOVED/REPLACED] Path Builders --------------------
-# 📌 ถูกลบออกเนื่องจากถูกแทนที่ด้วยฟังก์ชันจาก utils/path_utils.py:
-# build_tenant_base_path
-# get_collection_parent_dir
-# get_target_dir (ถูกแทนที่ด้วย get_doc_type_collection_key)
-# _get_source_dir (ถูกแทนที่ด้วย get_document_source_dir)
-# --------------------------------------------------------------------------
-
-def _parse_collection_name(
-    collection_name: str, 
-) -> Tuple[str, Optional[str]]:
-    """
-    Parses a collection name back into doc_type and enabler, handling both 
-    Multi-Tenant/Year structure (Fallback) and the simple structure.
-    
-    Collection IDs ที่คาดหวัง: 'evidence_km', 'document'
-    """
-    collection_name_lower = collection_name.lower()
-    
-    # 📌 NEW: จัดการ Prefix 'rag_' ก่อน (เพื่อให้เข้ากันได้กับ VSM)
-    if collection_name_lower.startswith("rag_"):
-         collection_name_lower = collection_name_lower[4:]
-
-    # 1. ลองหาในรูปแบบ DocType_Enabler (เช่น evidence_km)
-    if collection_name_lower.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"):
-        # Split แค่ครั้งเดียว: evidence_km -> ['evidence', 'km']
-        parts_old = collection_name_lower.split("_", 1) 
-        if len(parts_old) == 2:
-            doc_type = parts_old[0]
-            enabler_candidate = parts_old[1].upper()
-            
-            if enabler_candidate in SUPPORTED_ENABLERS: # 🎯 FIX: เช็ค Enabler กับ Global List
-                 return doc_type, enabler_candidate
-        
-    # 2. ลองหาในรูปแบบ DocType (เช่น document)
-    if collection_name_lower in [dt.lower() for dt in SUPPORTED_DOC_TYPES]:
-        return collection_name_lower, None
-        
-    # 3. Fallback to the original name if no match is found (ถือว่าเป็น Doc Type ฐาน)
-    return collection_name_lower, None
-
 
 # -------------------- Helper: safe metadata filter --------------------
 def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
@@ -237,17 +196,6 @@ def _safe_filter_complex_metadata(meta: Any) -> Dict[str, Any]:
 
     return clean
 
-# -------------------- Normalization utility --------------------
-def _normalize_doc_id(raw_id: str, file_content: bytes = None) -> str:
-    """Generates the 34-character reference ID Key. (No Change)"""
-    normalized = re.sub(r'[^a-zA-Z0-9]', '', raw_id).lower()
-    if len(normalized) > 28:
-        normalized = normalized[:28]
-    hash_suffix = '000000'
-    if file_content:
-        hash_suffix = hashlib.sha1(file_content).hexdigest()[:6]
-    final_id = (normalized + hash_suffix).ljust(34, '0')
-    return final_id
 
 # -------------------- Text Cleaning --------------------
 def clean_text(text: str) -> str:
@@ -509,12 +457,97 @@ def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     return result
 
 
-# ------------------------------------------------------------------
-# load_and_chunk_document – เวอร์ชันสมบูรณ์สุดสำหรับ SE-AM (ใช้ Key เดียว: chunk_uuid)
-# ------------------------------------------------------------------
+# ==================== STABLE UUID [REVISED TO UUID V5] ====================
+# ==================== 5. STABLE UUID [UUID V5 FINAL FIX] ====================
+def create_stable_uuid_from_path(
+    filepath: str,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None,
+) -> str:
+    """
+    Creates a Stable Document UUID (UUID V5) that is fixed and predictable.
+    Keying: (Filename + Size + Mtime + Context) or (Cleaned Relative Path + Context).
+    
+    ต้องอาศัย: 
+    - PROJECT_NAMESPACE_UUID ใน config.global_vars (เป็น UUID string หรือ uuid.UUID object)
+    - _n, resolve_filepath_to_absolute, get_mapping_key_from_physical_path ถูกกำหนดไว้แล้ว
+    """
+    # 1. Normalize และ Resolve Path
+    resolved_filepath_nfkc = resolve_filepath_to_absolute(filepath)
+    
+    tenant_clean = _n(tenant or "")
+    enabler_clean = _n(enabler or "")
+    
+    key_seed = None # Seed ที่ใช้ในการสร้าง UUID V5
+
+    # 🎯 STEP 1: Try Stat-based key (Most stable, preferred seed)
+    st = None
+    stat_path = filepath
+    
+    try:
+        st = os.stat(stat_path)
+    except FileNotFoundError:
+        try:
+            st = os.stat(resolved_filepath_nfkc)
+            stat_path = resolved_filepath_nfkc 
+        except Exception:
+            logger.debug(f"Failed to stat file for {filepath}. Falling back to path-based key.")
+            pass # st ยังคงเป็น None
+
+    if st:
+        # Key 1 (Stat-based): Filename (Normalized) + Size + Mtime + Context
+        key_seed = f"{_n(os.path.basename(stat_path))}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year or ''}:{enabler_clean}"
+        logger.debug(f"Using Stat-based seed for UUID V5: {key_seed[:50]}...")
+        
+    else:
+        # 🎯 STEP 2: Fallback to Path-based key (When stat fails)
+        relative_key = get_mapping_key_from_physical_path(filepath)
+        
+        if relative_key:
+            # Key 2 (Path-based): Cleaned Relative Key + Context
+            key_seed = f"{relative_key}:{tenant_clean}:{year or ''}:{enabler_clean}"
+            logger.warning(f"Forced Path-based UUID V5 seed for {filepath}")
+        else:
+            # Final Fallback: Random UUID (ควรจะเกิดขึ้นน้อยมาก)
+            logger.error(f"Cannot generate stable key for: {filepath}")
+            return str(uuid.uuid4())
+
+    # 🟢 FINAL STEP: Generate UUID V5 using corrected Namespace handling
+    
+    namespace: uuid.UUID
+    try:
+         # ตรวจสอบว่า PROJECT_NAMESPACE_UUID ถูกกำหนดไว้ใน Global Scope หรือไม่
+         if 'PROJECT_NAMESPACE_UUID' not in globals():
+             raise NameError("PROJECT_NAMESPACE_UUID is not defined.")
+         
+         # ถ้าเป็น string ให้แปลงเป็น UUID object
+         if isinstance(PROJECT_NAMESPACE_UUID, str):
+             namespace = uuid.UUID(PROJECT_NAMESPACE_UUID) 
+         # ถ้าเป็น UUID object อยู่แล้ว ก็ใช้เลย
+         elif isinstance(PROJECT_NAMESPACE_UUID, uuid.UUID):
+             namespace = PROJECT_NAMESPACE_UUID
+         else:
+             raise TypeError("PROJECT_NAMESPACE_UUID has an unknown type.")
+             
+    except (ValueError, NameError, TypeError) as e:
+         # หากมีปัญหา (เช่น ไม่ได้กำหนด, หรือประเภทผิด) ให้ใช้ NAMESPACE_DNS เป็น fallback
+         logger.warning(
+             f"PROJECT_NAMESPACE_UUID invalid/missing ({type(e).__name__}). "
+             f"Using uuid.NAMESPACE_DNS as fallback."
+         )
+         namespace = uuid.NAMESPACE_DNS 
+
+    # สร้าง UUID V5 โดยใช้ namespace และ key_seed ที่เตรียมไว้
+    stable_doc_uuid = str(uuid.uuid5(namespace, key_seed))
+    
+    logger.debug(f"Generated UUID V5: {stable_doc_uuid}")
+    
+    return stable_doc_uuid
+
 def load_and_chunk_document(
-    file_path: str,
-    stable_doc_uuid: str,
+    file_path: str, 
+    stable_doc_uuid: str, 
     doc_type: str,
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
@@ -524,11 +557,13 @@ def load_and_chunk_document(
     ocr_pages: Optional[Iterable[int]] = None
 ) -> List[Document]:
     """
-    Load + Clean + Chunk + ใส่ sub_topic + page_number อัตโนมัติ
+    Load + Clean + Chunk + ใส่ metadata อัตโนมัติ
+    ใช้ Deterministic UUID V5 (Stable Doc ID + Chunk Index) เพื่อสร้าง chunk_uuid 
+    ที่ deterministic และสอดคล้องกับการ Hydration 100% (รวมถึงรองรับ Stable Doc ID ที่เป็น Hash 64 ตัว)
     """
     
     file_extension = os.path.splitext(file_path)[1].lower()
-    loader_func = FILE_LOADER_MAP.get(file_extension)
+    loader_func = FILE_LOADER_MAP.get(file_extension) # สมมติว่ามี
     
     if not loader_func:
         logger.error(f"No loader found for {file_extension}")
@@ -536,10 +571,8 @@ def load_and_chunk_document(
 
     # --- Load Document ---
     try:
-        # สมมติว่า loader_func มีการจัดการ OCR และ Error ได้ดี
-        raw_docs = loader_func(file_path)
+        raw_docs = loader_func(file_path) # สมมติว่ามี
     except Exception as e:
-        # Handle exceptions including ValidationError (ถ้ามี)
         logger.error(f"Load failed: {file_path} | {e}")
         raw_docs = []
         
@@ -548,91 +581,101 @@ def load_and_chunk_document(
         return []
 
     # --- Normalize to Document objects ---
-    docs = []
-    for doc in raw_docs:
-        if isinstance(doc, Document):
-            docs.append(doc)
-        else:
-            logger.warning(f"Non-Document object skipped: {type(doc)}")
-
+    docs = [doc for doc in raw_docs if isinstance(doc, Document)]
+    
     # --- Inject Base Metadata ---
-    # base_metadata ที่นี่คือ base_metadata ที่จะถูกส่งผ่านไปทุก chunk
     base_metadata = {
         "doc_type": doc_type,
-        "doc_id": stable_doc_uuid, # ใช้ doc_id เป็นชื่อหลักในการอ้างถึง Stable UUID
-        "stable_doc_uuid": stable_doc_uuid, # ยังคงเก็บไว้ในชื่อเดิม (เผื่อใช้)
+        "doc_id": stable_doc_uuid,
+        "stable_doc_uuid": stable_doc_uuid,
         "source_filename": os.path.basename(file_path),
-        "source": os.path.basename(file_path), # อาจจะเปลี่ยนเป็น Path ที่ clean กว่านี้
+        "source": os.path.basename(file_path),
         "version": version,
     }
     if enabler: base_metadata["enabler"] = enabler
     if subject: base_metadata["subject"] = subject.strip()
     if year: base_metadata["year"] = year
     
-    # รวม injected_metadata ที่ส่งมาจาก process_document
     if metadata: 
         base_metadata.update(metadata) 
 
     for d in docs:
         d.metadata.update(base_metadata)
-        d.metadata = _safe_filter_complex_metadata(d.metadata)
+        d.metadata = _safe_filter_complex_metadata(d.metadata) # สมมติว่ามี
 
     # --- Split into chunks ---
     try:
-        # TEXT_SPLITTER ควรเป็น LangChain RecursiveCharacterTextSplitter หรือ seggmenter ที่คล้ายกัน
-        chunks = TEXT_SPLITTER.split_documents(docs)
+        chunks = TEXT_SPLITTER.split_documents(docs) # สมมติว่ามี
     except Exception as e:
         logger.error(f"Split failed: {e}")
         chunks = docs
 
     # --- Clean text & Inject per-chunk metadata ---
     final_chunks = []
-    # 💡 FIX: ใช้ start=1 เหมือนเดิม และใช้ format string เพื่อให้ index มีความยาวคงที่ (เช่น 0001)
-    for idx, chunk in enumerate(chunks, start=1):
+
+    # 1. จัดการกับ Stable Doc ID ที่อาจเป็น Hash 64 ตัว ก่อนใช้เป็น Namespace
+    namespace_uuid: uuid.UUID
+    try:
+        # พยายามแปลง stable_doc_uuid ที่รับเข้ามา (หวังว่าจะเป็น UUID ที่ถูกต้อง)
+        namespace_uuid = uuid.UUID(stable_doc_uuid)
+    except ValueError:
+        # ถ้าเป็น Hash 64 ตัวอักษร (ไม่ใช่ UUID V4/V5)
+        logger.warning(f"Stable Doc ID '{stable_doc_uuid}' is not a valid UUID. Converting Hash to UUID V5 for Namespace.")
+        
+        # สร้าง UUID V5 Deterministic จาก Hash นั้น โดยใช้ NAMESPACE_DNS เป็น Root
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, stable_doc_uuid)
+    
+    
+    for idx, chunk in enumerate(chunks, start=1): 
         if not isinstance(chunk, Document):
             continue
 
-        # Clean text
-        chunk.page_content = clean_text(chunk.page_content)
+        chunk.page_content = clean_text(chunk.page_content) # สมมติว่ามี
 
-        # เพิ่ม: พยายามได้ page_number จาก metadata ของ loader ก่อน
+        # Logic การตรวจจับ page_number และ sub_topic (Logic เดิม)
         page_from_meta = chunk.metadata.get("page")
         if page_from_meta is not None:
             try:
-                page_val = int(page_from_meta) + 1  # สมมติว่า loader ใช้ 0-based
+                page_val = int(page_from_meta) + 1
                 chunk.metadata["page_number"] = page_val
                 chunk.metadata["page"] = f"P{page_val}"
             except ValueError:
                 pass
 
-        # Detect sub_topic & page_number จาก text (override ถ้ามี)
-        detected = _detect_sub_topic_and_page(chunk.page_content)
+        detected = _detect_sub_topic_and_page(chunk.page_content) # สมมติว่ามี
         if detected["sub_topic"]:
             chunk.metadata["sub_topic"] = detected["sub_topic"]
         if detected["page_number"]:
             page_val = detected["page_number"]
             chunk.metadata["page_number"] = page_val
-            chunk.metadata["page"] = f"P{page_val}"  # แสดงเป็น P45 ทันที!
+            chunk.metadata["page"] = f"P{page_val}"
 
-        # 🟢 CRITICAL FIX: ใช้ Key "chunk_uuid" เป็น Key หลักเพียง Key เดียว
-        chunk_id_prefix = stable_doc_uuid[:16] # ใช้แค่ 16 ตัวแรกของ UUID ก็เพียงพอ
+        # 🟢 ULTIMATE FINAL DETERMINISTIC CHUNK UUID (ใช้ Stable ID + Index)
+        # Seed สำหรับ Chunk ID: Doc ID + Chunk Index (รับประกันความคงที่)
+        combined_seed = f"{stable_doc_uuid}_chunk_{idx}" 
         
-        # 1. กำหนด ID หลักเป็น chunk_uuid
-        unique_chunk_id = f"{chunk_id_prefix}-{idx:04d}" 
-        chunk.metadata["chunk_uuid"] = unique_chunk_id
+        # ใช้ Namespace UUID ที่เราเตรียมไว้ (ไม่ว่าจะเป็น Doc ID แท้ หรือ UUID ที่แปลงมาจาก Hash)
+        chunk_uuid = str(uuid.uuid5(namespace_uuid, combined_seed)) 
+        # ----------------------------------------------------------------------
         
-        # 2. ✅ ลบ chunk_id ทิ้งเพื่อความสะอาดและใช้ Key เดียว
+        chunk.metadata["chunk_uuid"] = chunk_uuid
+        chunk.metadata["stable_doc_uuid"] = stable_doc_uuid 
+
+        chunk.metadata["doc_id"] = stable_doc_uuid
+        
+        # ลบ chunk_id ถ้ามี (เพื่อความสะอาด)
         if "chunk_id" in chunk.metadata:
             del chunk.metadata["chunk_id"]
-        
+            
         chunk.metadata["chunk_index"] = idx
         
-        chunk.metadata = _safe_filter_complex_metadata(chunk.metadata)
+        chunk.metadata = _safe_filter_complex_metadata(chunk.metadata) # สมมติว่ามี
 
         final_chunks.append(chunk)
 
     logger.info(f"Loaded {os.path.basename(file_path)} → {len(final_chunks)} chunks | "
-                f"sub_topic detected: {len([c for c in final_chunks if c.metadata.get('sub_topic')])}")
+                 f"sub_topic detected: {len([c for c in final_chunks if c.metadata.get('sub_topic')])}")
+    
     return final_chunks
 
 # -------------------- [REVISED] Process single document (Cleaned & Final) --------------------
@@ -650,10 +693,7 @@ def process_document(
     source_name_for_display: Optional[str] = None,
     ocr_pages: Optional[Iterable[int]] = None
 ) -> Tuple[List[Document], str, str]: 
-    
-    # 📌 ASSUME: _normalize_doc_id, DEFAULT_DOC_TYPES, EVIDENCE_DOC_TYPES, DEFAULT_ENABLER ถูก Import อย่างถูกต้อง
-    raw_doc_id_input = os.path.splitext(file_name)[0]
-    filename_doc_id_key = _normalize_doc_id(raw_doc_id_input) 
+
             
     doc_type = doc_type or DEFAULT_DOC_TYPES
     
@@ -666,7 +706,6 @@ def process_document(
     
     # 1. ข้อมูลที่ถูก Resolve
     injected_metadata["doc_type"] = doc_type
-    injected_metadata["original_stable_id"] = filename_doc_id_key[:32].lower()
     
     if resolved_enabler:
         injected_metadata["enabler"] = resolved_enabler
@@ -680,10 +719,8 @@ def process_document(
     if subject: 
         injected_metadata["subject"] = subject
         
-    filter_id_value = filename_doc_id_key 
     logger.info(f"================== START DEBUG INGESTION: {file_name} ==================")
-    logger.info(f"🔍 DEBUG ID (stable_doc_uuid, 64-char Hash): {len(stable_doc_uuid)}-char: {stable_doc_uuid[:34]}...")
-    logger.info(f"✅ FINAL ID TO STORE (34-char Ref ID): {len(filter_id_value)}-char: {filter_id_value[:34]}...")
+    logger.info(f"🔍 DEBUG ID (stable_doc_uuid, UUID V5): {len(stable_doc_uuid)}-char: {stable_doc_uuid[:36]}...")
 
     # 🎯 ส่ง Metadata ทั้งหมดผ่าน dict ไปให้ load_and_chunk_document
     chunks = load_and_chunk_document(
@@ -908,7 +945,7 @@ def ingest_all_files(
                 chunks, stable_doc_uuid, doc_type = process_document(
                     file_path=file_path,
                     file_name=file_name,
-                    stable_doc_uuid=s_uuid,
+                    stable_doc_uuid=s_uuid, # UUID V5 ที่เราสร้างจาก create_stable_uuid_from_path
                     doc_type=dt,
                     enabler=ena,
                     subject=subject,
@@ -921,6 +958,15 @@ def ingest_all_files(
                     logger.warning(f"Skipping {file_name}: No chunks generated.")
                     continue
 
+                # -------------------------------------------------------------
+                # 1. เตรียม Chunk UUIDs สำหรับ Vectorstore ID
+                # -------------------------------------------------------------
+                chunk_ids_to_add = [c.metadata["chunk_uuid"] for c in chunks if "chunk_uuid" in c.metadata]
+                
+                if not chunk_ids_to_add:
+                    logger.warning(f"Skipping {file_name}: No deterministic chunk_uuid found in metadata.")
+                    continue
+
                 batch_chunks += len(chunks)
                 batch_docs += 1
 
@@ -928,7 +974,7 @@ def ingest_all_files(
                 entry: Dict[str, Any] = {
                     "doc_id": stable_doc_uuid,
                     "file_name": file_name,
-                    "filepath": get_mapping_key_from_physical_path(file_path), # 🎯 FIX: ใช้ relative key
+                    "filepath": get_mapping_key_from_physical_path(file_path),
                     "doc_type": doc_type,
                     "enabler": ena,
                     "year": yr,
@@ -937,7 +983,7 @@ def ingest_all_files(
                     "chunk_count": len(chunks),
                     "status": "Ingested",
                     "size": os.path.getsize(file_path),
-                    "chunk_uuids": [c.metadata["chunk_uuid"] for c in chunks if "chunk_uuid" in c.metadata]
+                    "chunk_uuids": chunk_ids_to_add # ใช้ List ที่เราสร้างไว้
                 }
 
                 batch_entries[stable_doc_uuid] = entry
@@ -946,10 +992,17 @@ def ingest_all_files(
                     logger.info(f"[DRY RUN] Processed {file_name} → {len(chunks)} chunks (not added to vectorstore)")
                     continue
 
-                # Add to vectorstore
+                # -------------------------------------------------------------
+                # 2. Add to vectorstore (พร้อมระบุ IDs)
+                # -------------------------------------------------------------
                 col_name = get_doc_type_collection_key(doc_type, ena)
                 vectorstore = get_vectorstore(col_name, tenant_clean, yr)
-                vectorstore.add_documents(chunks)
+                
+                # 🟢 FINAL FIX: ส่ง documents และ ids เข้าไปด้วยกัน
+                vectorstore.add_documents(
+                    documents=chunks,
+                    ids=chunk_ids_to_add 
+                )
                 logger.info(f"Added {len(chunks)} chunks from {file_name} to collection '{col_name}'.")
 
             except Exception as e:
@@ -992,71 +1045,64 @@ def ingest_all_files(
 
     logger.info(f"--- INGESTION COMPLETE | Processed {total_docs} documents | Total chunks: {total_chunks} ---")
 
-# -------------------- Wipe Vectorstore --------------------
-# core/ingest.py → แทนที่ wipe_vectorstore ทั้งฟังก์ชันด้วยอันนี้เลย
+# -------------------- Wipe Vectorstore (FIXED VERSION) --------------------
 def wipe_vectorstore(
     doc_type_to_wipe: str,
     enabler: Optional[str] = None,
     tenant: str = DEFAULT_TENANT,
     year: Optional[Union[int, str]] = None
 ) -> None:
-    import shutil
-    from utils.path_utils import (
-        get_vectorstore_collection_path,
-        get_mapping_file_path,
-        get_vectorstore_tenant_root_path,
-        get_mapping_tenant_root_path,
-    )
+    # 📌 NOTE: ต้องแน่ใจว่า import เหล่านี้ (shutil, unicodedata, os) และ
+    # path_utils functions (get_vectorstore_collection_path, get_mapping_file_path, etc.)
+    # ถูก import ไว้ใน core/ingest.py เรียบร้อยแล้ว
+    
+
+    # ❌ ไม่ต้อง import get_vectorstore_tenant_root_path, get_mapping_tenant_root_path 
+    #    เพราะเราลบ Logic การทำความสะอาด Root Folder ออกไปแล้ว
 
     tenant_clean = unicodedata.normalize('NFKC', tenant.lower().replace(" ", "_"))
     dt = doc_type_to_wipe.lower()
 
     logger.warning(f"WIPE → {dt.upper()} | Year={year or 'Global'} | Enabler={enabler or 'None'}")
 
-    # 1. ลบ vectorstore folder
+    # -----------------------------------------------------------
+    # 1. ลบ vectorstore folder (ใช้ shutil.rmtree)
+    # -----------------------------------------------------------
     vec_path = get_vectorstore_collection_path(tenant_clean, year, dt, enabler)
     if os.path.exists(vec_path):
         shutil.rmtree(vec_path)
         logger.info(f"Deleted vectorstore folder: {vec_path}")
 
-    # 2. ลบ mapping file — สำคัญมาก!
+    # -----------------------------------------------------------
+    # 2. ลบ mapping file (ใช้ os.remove → ลบเฉพาะไฟล์ JSON)
+    # -----------------------------------------------------------
     mapping_path = get_mapping_file_path(dt, tenant_clean, year, enabler)
     if os.path.exists(mapping_path):
+        # 🟢 FIX: ใช้ os.remove เพื่อลบ 'ไฟล์' เท่านั้น 
+        # (ป้องกันการลบ Folder ที่มีไฟล์ KM, HCM, DT ปนอยู่)
         os.remove(mapping_path)
         logger.info(f"Deleted mapping file: {mapping_path}")
     else:
         logger.debug(f"Mapping file not found (OK): {mapping_path}")
 
-    # 3. ถ้าเป็น evidence → ลบ evidence mapping ด้วย
-    if dt == EVIDENCE_DOC_TYPES.lower() and year is not None and enabler:
+    # -----------------------------------------------------------
+    # 3. ถ้าเป็น evidence → ลบ evidence mapping ด้วย (ใช้ os.remove)
+    # -----------------------------------------------------------
+    # 📌 NOTE: สมมติว่า EVIDENCE_DOC_TYPES เป็น global constant ที่เข้าถึงได้
+    if dt == EVIDENCE_DOC_TYPES.lower() and year is not None and enabler: 
         ev_path = get_evidence_mapping_file_path(tenant_clean, year, enabler)
         if os.path.exists(ev_path):
             os.remove(ev_path)
             logger.info(f"Deleted evidence mapping: {ev_path}")
 
-    # 4. ทำความสะอาดโฟลเดอร์ว่าง
-    try:
-        vec_root = get_vectorstore_tenant_root_path(tenant_clean)
-        if os.path.isdir(vec_root) and not os.listdir(vec_root):
-            shutil.rmtree(vec_root)
-            logger.info(f"Cleaned empty vectorstore root")
-    except: pass
-
-    try:
-        map_root = get_mapping_tenant_root_path(tenant_clean)
-        if os.path.isdir(map_root):
-            # ลบโฟลเดอร์ปีที่ว่าง (เช่น 2568)
-            for item in os.listdir(map_root):
-                item_path = os.path.join(map_root, item)
-                if os.path.isdir(item_path) and not os.listdir(item_path):
-                    shutil.rmtree(item_path)
-            # ลบ root ถ้าว่างสนิท
-            if len(os.listdir(map_root)) <= 1:  # เหลือแค่ .DS_Store
-                shutil.rmtree(map_root)
-                logger.info(f"Cleaned empty mapping root")
-    except: pass
-
+    # -----------------------------------------------------------
+    # 4. ทำความสะอาดโฟลเดอร์ว่าง (❌ CRITICAL FIX: ลบ Logic ส่วนนี้ออกทั้งหมด)
+    # -----------------------------------------------------------
+    # Logic นี้ถูกลบเพื่อป้องกันการลบโฟลเดอร์ปี (เช่น 2568) ที่อาจมี Mapping File 
+    # ของ Enabler อื่น ๆ (HCM, DT) หลงเหลืออยู่
+    
     logger.info(f"WIPE SUCCESS: {dt.upper()} context completely removed!")
+
 
 # -------------------- [REVISED] Document Management Utilities --------------------
 def delete_document_by_uuid(

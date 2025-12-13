@@ -1,6 +1,11 @@
 # config/global_vars.py
 import os
 from typing import Final, List
+import uuid
+
+
+# NOTE: แนะนำให้ใช้ Project Namespace เฉพาะถ้ามี
+PROJECT_NAMESPACE_UUID = uuid.UUID('f77c38c0-f213-4318-ae38-e69c73e97022')
 
 # -------------------- Tenant / Context Configuration --------------------
 DEFAULT_TENANT: Final[str] = "pea" 

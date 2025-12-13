@@ -59,6 +59,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
 # -----------------------------
 # Middleware
 # -----------------------------
