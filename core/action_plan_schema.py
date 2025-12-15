@@ -1,4 +1,4 @@
-#core/action_plan_schema.py
+# action_plan_models.py
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Any
 import re
@@ -23,7 +23,6 @@ class StepDetail(BaseModel):
     def sanitize_text(cls, v: Any) -> str:
         if v is None:
             return ""
-        # ลบ newline/tab/zero-width char และ trim space
         v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
         return v.strip()
 
@@ -68,11 +67,12 @@ class ActionItem(BaseModel):
         return v
 
 # -----------------------------
-# 3️⃣ Action Plan Actions (Schema หลัก)
+# 3️⃣ Action Plan Actions (Schema หลัก - แก้ไข Phase และ Goal)
 # -----------------------------
 class ActionPlanActions(BaseModel):
-    Phase: str = Field(..., description="ชื่อ Phase ของแผนปฏิบัติการ เช่น 'Foundational Gap Closure'")
-    Goal: str = Field(..., description="เป้าหมายหลักของ Phase นี้")
+    # แก้ไข: กำหนดค่าเริ่มต้นเป็น String ว่าง ("") ทำให้ฟิลด์เป็น Optional
+    Phase: str = Field("", description="ชื่อ Phase ของแผนปฏิบัติการ เช่น 'Foundational Gap Closure'")
+    Goal: str = Field("", description="เป้าหมายหลักของ Phase นี้")
     Actions: List[ActionItem] = Field(default_factory=list, description="รายการ Actions ที่ต้องดำเนินการ")
 
     @field_validator("Actions", mode="before")

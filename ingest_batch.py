@@ -116,14 +116,14 @@ def main():
         # เพื่อป้องกัน ReadTimeout ใน Parallel (สำคัญมาก!)
         try:
              logger.info("Pre-loading BAAI/bge-m3 model in main thread to prevent parallel contention...")
-             # โหลด Vectorstore (แม้จะเป็น dummy) เพื่อให้ Embedding Model ถูกโหลดและ Cache
-             # ใช้ get_vectorstore ที่ Import มา
-             get_vectorstore(
-                 collection_name="temp_pre_loader", 
-                 tenant=args.tenant, 
-                 year=year_to_use 
-             )
-             logger.info("Pre-loading of Embedding Model complete.")
+            #  # โหลด Vectorstore (แม้จะเป็น dummy) เพื่อให้ Embedding Model ถูกโหลดและ Cache
+            #  # ใช้ get_vectorstore ที่ Import มา
+            #  get_vectorstore(
+            #      collection_name="temp_pre_loader", 
+            #      tenant=args.tenant, 
+            #      year=year_to_use 
+            #  )
+            #  logger.info("Pre-loading of Embedding Model complete.")
         except Exception as e:
              logger.error(f"❌ FATAL: Failed to pre-load embedding model. Check your network or model name: {e}")
              # sys.exit(1) # ปิดไว้ก่อน เผื่อลอง Fallback

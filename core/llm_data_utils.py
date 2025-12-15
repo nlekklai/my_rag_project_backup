@@ -13,6 +13,9 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Callable, TypeVar, Set
 import json5
 from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
+from langchain.retrievers import EnsembleRetriever
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
 
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
@@ -33,6 +36,9 @@ from config.global_vars import (
     INITIAL_TOP_K,
     FINAL_K_RERANKED,
     MAX_EVAL_CONTEXT_LENGTH,
+    USE_HYBRID_SEARCH, 
+    HYBRID_VECTOR_WEIGHT, 
+    HYBRID_BM25_WEIGHT
 )
 
 # ===================================================================
@@ -60,6 +66,7 @@ from core.seam_prompts import (
     EVIDENCE_DESCRIPTION_PROMPT,
     SYSTEM_LOW_LEVEL_PROMPT,
     USER_LOW_LEVEL_PROMPT,
+    USER_LOW_LEVEL_PROMPT_TEMPLATE
 )
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
@@ -331,7 +338,10 @@ def retrieve_context_by_doc_ids(
     return {"top_evidences": evidences}
 
 # ------------------------
-# Retrieval: retrieve_context_with_filter (แก้จุดเสี่ยง 2 จุด)
+# Retrieval: retrieve_context_with_filter (แก้ไขประสิทธิภาพ)
+# ------------------------
+# ------------------------
+# Retrieval: retrieve_context_with_filter (แก้ไขประสิทธิภาพ + Logger Fix)
 # ------------------------
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
@@ -340,7 +350,8 @@ def retrieve_context_with_filter(
     year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
-    vectorstore_manager: Optional['VectorStoreManager'] = None,
+    # ต้องเป็น Instance ของ Manager ที่มี create_hybrid_retriever
+    vectorstore_manager: Optional['VectorStoreManager'] = None, 
     mapped_uuids: Optional[List[str]] = None,
     stable_doc_ids: Optional[List[str]] = None,
     priority_docs_input: Optional[List[Any]] = None,
@@ -351,17 +362,28 @@ def retrieve_context_with_filter(
 ) -> Dict[str, Any]:
     """
     ดึง context ด้วย semantic search + priority + fallback + rerank
-    เวอร์ชันแก้ไขแล้ว 100% – รองรับ chunk ID รูปแบบ 64hex-index (เช่น 55ce3c5d2bce4d82-0001)
+    เวอร์ชันแก้ไขแล้ว: ใช้ Hybrid Search (BM25 + Vector) ที่สร้างและ Cache ไว้ใน Manager
     """
     start_time = time.time()
     all_retrieved_chunks: List[Any] = []
     used_chunk_uuids: List[str] = []
 
     # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด
-    manager = vectorstore_manager or VectorStoreManager()
-    if manager is None or manager._client is None:
-        logger.error("VectorStoreManager not initialized!")
+    # สมมติว่า VectorStoreManager() มี Logic ในการ Initialise Chroma Client (self._client)
+    manager = vectorstore_manager or VectorStoreManager() 
+    if manager is None or not hasattr(manager, '_client') or manager._client is None:
+        logger.error("VectorStoreManager not initialized or _client is missing!")
         return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
+
+    # 🟢 NEW FIX: ตรวจสอบและกำหนด Logger ให้กับ VSM Instance
+    # เพื่อให้เมธอดภายใน (เช่น create_hybrid_retriever) สามารถใช้ self.logger ได้
+    if not hasattr(manager, 'logger') or manager.logger is None:
+        try:
+            manager.logger = logger # กำหนด logger ของ module นี้ให้ VSM
+            logger.info("Assigned module logger to VectorStoreManager instance (Worker/Fallback Fix).")
+        except NameError:
+            # กรณีที่ logger ไม่ถูก import ใน module นี้ (ซึ่งไม่ควรเกิดขึ้น)
+            pass
 
     queries_to_run = [query] if isinstance(query, str) else list(query or [])
     if not queries_to_run:
@@ -418,8 +440,32 @@ def retrieve_context_with_filter(
         else:
             where_filter = subject_filter
 
-    # 6. ดึงข้อมูลจาก VectorStore
-    retriever = manager.get_retriever(collection_name)
+    # === HYBRID SEARCH MODE (BM25 + Vector) ===
+    use_hybrid = True  # เปิด/ปิด hybrid ได้ที่นี่ หรือย้ายไป global_vars.py
+    hybrid_retriever = None
+
+    if USE_HYBRID_SEARCH:
+        try:
+            # 🎯 FIX: เรียกใช้ Manager ที่ Cache Hybrid Retriever ไว้แล้ว
+            logger.info(f"Requesting Hybrid Retriever from Manager for {collection_name} (Cached)...")
+            hybrid_retriever = manager.create_hybrid_retriever(collection_name=collection_name)
+            logger.info(f"HYBRID mode activated: Vector 70% + BM25 30% for {collection_name} (Cached)")
+
+        except Exception as e:
+            # Fallback หาก Manager ไม่สามารถสร้าง Hybrid Retriever ได้ (เช่น ไม่มี BM25 Index)
+            # 🚨 BUG: บันทึก Error จาก VSM ที่ไม่มี Logger (แต่ตอนนี้แก้ไขแล้ว)
+            logger.warning(f"Hybrid mode failed (Error calling manager.create_hybrid_retriever: {e}), falling back to vector only")
+            use_hybrid = False
+
+    # 6. เลือก Retriever ที่จะใช้
+    if use_hybrid and hybrid_retriever:
+        retriever = hybrid_retriever
+    else:
+        # ใช้ Vector Retriever อย่างเดียว
+        retriever = manager.get_retriever(collection_name)
+        logger.info("Using VECTOR ONLY mode.")
+
+    # 7. ดึงข้อมูลจาก VectorStore
     retrieved_chunks = []
     if retriever:
         for q in queries_to_run:
@@ -430,13 +476,17 @@ def retrieve_context_with_filter(
                 search_kwargs = {"k": 100}  # INITIAL_TOP_K
                 if where_filter:
                     search_kwargs["where"] = where_filter
-
+                
+                # 🎯 FIX: ใช้ get_relevant_documents ที่รับ **search_kwargs โดยตรงจะเสถียรกว่า
                 if hasattr(retriever, "get_relevant_documents"):
-                    docs = retriever.get_relevant_documents(q, search_kwargs=search_kwargs)
+                    # EnsembleRetriever และ ChromaRetriever มักจะรับ kwargs โดยตรง
+                    docs = retriever.get_relevant_documents(q, **search_kwargs)
                 elif hasattr(retriever, "invoke"):
+                    # Fallback สำหรับ LangChain Runnable API 
                     docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
                 else:
                     docs = []
+                    
                 retrieved_chunks.extend(docs or [])
             except Exception as e:
                 logger.error(f"Retriever invoke failed: {e}", exc_info=True)
@@ -445,7 +495,7 @@ def retrieve_context_with_filter(
 
     logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB: {len(retrieved_chunks)} documents")
 
-    # 7. รวม + deduplicate
+    # 8. รวม + deduplicate
     all_chunks = retrieved_chunks + fallback_chunks + guaranteed_priority_chunks
     unique_map: Dict[str, LcDocument] = {}
 
@@ -469,7 +519,7 @@ def retrieve_context_with_filter(
     dedup_chunks = list(unique_map.values())
     logger.info(f"After dedup: {len(dedup_chunks)} chunks")
 
-    # 8. Rerank
+    # 9. Rerank
     final_docs = list(guaranteed_priority_chunks)
     slots_left = max(0, 12 - len(final_docs))  # FINAL_K_RERANKED
     candidates = [d for d in dedup_chunks if d not in final_docs]
@@ -505,18 +555,13 @@ def retrieve_context_with_filter(
     else:
         logger.info("No slots left or no candidates → priority only")
 
-    # 9. สร้างผลลัพธ์สุดท้าย – แก้ไขจุดสำคัญที่สุดตรงนี้
+    # 10. สร้างผลลัพธ์สุดท้าย
     top_evidences = []
     aggregated_parts = []
     used_chunk_uuids = []
 
-    # รูปแบบ ID ที่ถูกต้องของระบบเรา
-    # VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{64}(-[0-9]+)?$")   # เช่น 55ce3c5d2bce4d82-0001
     VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}(-[0-9]+)?$", re.IGNORECASE)
-
-    # 📌 B. ตรวจสอบ Stable ID: รองรับ UUID V5 หรือ 64-hex เดิม
     VALID_STABLE_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}$", re.IGNORECASE)
-    # VALID_STABLE_ID = re.compile(r"^[0-9a-f]{64}$")           # เช่น 55ce3c5d2bce4d82f3708d172...
 
     for doc in final_docs[:12]:
         md = getattr(doc, "metadata", {}) or {}
@@ -527,7 +572,6 @@ def retrieve_context_with_filter(
         chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or md.get("id")
         stable_doc_uuid = md.get("stable_doc_uuid") or md.get("source_doc_id")
 
-        # เลือก primary_id ที่ดีที่สุด
         primary_id = None
         if stable_doc_uuid and VALID_STABLE_ID.match(str(stable_doc_uuid)):
             primary_id = stable_doc_uuid
@@ -537,7 +581,6 @@ def retrieve_context_with_filter(
             logger.warning(f"Chunk has no valid ID! Stable: {stable_doc_uuid}, Chunk: {chunk_uuid}")
             primary_id = f"TEMP-{uuid.uuid4().hex[:8]}"
 
-        # บันทึก used_chunk_uuids เฉพาะที่ไม่ใช่ TEMP
         if not str(primary_id).startswith("TEMP-"):
             used_chunk_uuids.append(str(primary_id))
 
@@ -566,8 +609,7 @@ def retrieve_context_with_filter(
 
     logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
     return result
-
-
+    
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
                                  top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K,
@@ -619,28 +661,33 @@ def _summarize_evidence_list_short(evidences: list, max_sentences: int = 3) -> s
             parts.append(f"จากไฟล์ `{fn}`")
     return " | ".join(parts)
 
-
 # ----------------------------------------------------
 # ULTIMATE FINAL VERSION: build_multichannel_context_for_level (OPTIMIZED)
 # บทบาทใหม่: สร้างแค่ BASELINE และ AUXILIARY summaries เท่านั้น
 # ----------------------------------------------------
 def build_multichannel_context_for_level(
     level: int,
-    top_evidences: list,
-    previous_levels_map: dict | None = None,                    # เก่า: {key: list[dict]} หรือ {doc_id: filename}
-    previous_levels_evidence: list | None = None,               # ใหม่: list[dict] ที่มี text เต็ม ๆ
-    max_main_context_tokens: int = 3000,                        # ไม่ได้ใช้แล้ว
-    max_summary_sentences: int = 4
-) -> dict:
+    top_evidences: List[Dict[str, Any]],
+    previous_levels_map: Optional[Dict[str, Any]] = None,
+    previous_levels_evidence: Optional[List[Dict[str, Any]]] = None,
+    max_main_context_tokens: int = 3000, # Argument ที่ถูกส่งมาแต่ไม่ได้ใช้
+    max_summary_sentences: int = 4,
+    # 🟢 FIX: เพิ่ม Argument ที่ถูกส่งมาเพื่อแก้ TypeError
+    max_context_length: Optional[int] = None, 
+    # 🟢 FIX: เพิ่ม kwargs เพื่อรองรับ Argument อื่นๆ ที่อาจถูกส่งมาในอนาคต (เช่น vsm, contextual_rules_map)
+    **kwargs
+) -> Dict[str, Any]:
     """
-    สร้าง Auxiliary และ Baseline Summaries เท่านั้น Logic การสร้าง Direct Context ถูกย้ายไปที่
-    _get_pdca_blocks_from_evidences ใน SeamAssessmentEngine แล้ว
+    ฟังก์ชันที่ทำหน้าที่หลักในการสร้าง Context Summary จากหลักฐานที่ดึงมา
+    โดยเน้นสร้างเฉพาะ Baseline Summary และ Auxiliary Summary
+    ส่วน Direct Context (PDCA blocks) ถูกสร้างและจัดการ Context Cap ใน Engine แล้ว
     """
+    logger = logging.getLogger(__name__)
+    K_MAIN = 5
+    MIN_RELEVANCE_FOR_AUX = 0.4  # กรอง aux ที่ต่ำเกินไป
 
-    # --- 1) Baseline Summary: ใช้ previous_levels_evidence เป็นหลัก ---
+    # --- 1) Baseline Summary ---
     baseline_evidence = previous_levels_evidence or []
-
-    # Fallback เก่า: ถ้ายังส่งแบบเดิมมา
     if not baseline_evidence and previous_levels_map:
         for items in previous_levels_map.values():
             if isinstance(items, list):
@@ -648,13 +695,10 @@ def build_multichannel_context_for_level(
             elif isinstance(items, dict) and (items.get("text") or items.get("content")):
                 baseline_evidence.append(items)
 
-    # กรองเฉพาะที่มี text
     summarizable_baseline = [
         item for item in baseline_evidence
         if isinstance(item, dict) and (item.get("text") or item.get("content"))
     ]
-
-    # ถ้าไม่มีจริง ๆ ให้ใส่ข้อความแทน
     if not summarizable_baseline:
         summarizable_baseline = [{"text": "ไม่มีหลักฐานจาก Level ก่อนหน้า"}]
 
@@ -663,48 +707,49 @@ def build_multichannel_context_for_level(
         max_sentences=max_summary_sentences
     )
 
-    # --- 2) Auxiliary Summary: ใช้ top_evidences ที่เหลือจากการคัดสรร PDCA ---
-    # *Logic นี้ถูกคงไว้เพื่อแยก Aux Chunks ออกมาสรุป*
-    direct, aux = [], []
-    K_MAIN = 5 # รักษาค่า K_MAIN สำหรับการแบ่งกลุ่ม
+    # --- 2) Auxiliary Summary ---
+    direct, aux_candidates = [], []
 
     for ev in top_evidences:
         if not isinstance(ev, dict):
-            aux.append(ev)
+            # อาจเป็นกรณีที่ข้อมูลไม่สมบูรณ์
+            aux_candidates.append(ev)
             continue
-        # 💡 ใช้ 'Other' เป็น default tag ตามแนวทาง Optimized
-        tag = (ev.get("pdca_tag") or ev.get("PDCA") or "Other").upper() 
-        if tag in ("P", "D", "C", "A"):
-            direct.append(ev)
-        else:
-            aux.append(ev)
 
-    # Logic เคลื่อนย้ายจาก Aux ไป Direct
+        # NEW: รองรับ tag ทั้งแบบเต็มและย่อ
+        tag = (ev.get("pdca_tag") or ev.get("PDCA") or "Other").upper()
+        relevance = ev.get("rerank_score") or ev.get("score", 0.0)
+
+        # PDCA Chunks ถูกส่งไปเป็น Direct Context (สร้างใน Engine)
+        if tag in {"P", "PLAN", "D", "DO", "C", "CHECK", "A", "ACT"}:
+            direct.append(ev)
+        elif relevance >= MIN_RELEVANCE_FOR_AUX:  # กรอง aux ที่ต่ำเกิน
+            aux_candidates.append(ev)
+
+    # Logic การย้ายจาก aux ไป direct (K_MAIN) ยังคงอยู่เพื่อ Debug/Logging
     if len(direct) < K_MAIN:
         need = K_MAIN - len(direct)
-        direct.extend(aux[:need])
-        aux = aux[need:]
+        direct.extend(aux_candidates[:need])
+        aux_candidates = aux_candidates[need:]
 
-    # 📌 NEW: สร้าง Aux Summary จาก Aux Chunks
-    aux_summary = _summarize_evidence_list_short(aux, max_sentences=3) if aux else "ไม่มีหลักฐานรอง"
-    
-    # --- 3) Debug & Return ---
-    # 📌 ยกเลิกการสร้าง direct_context โดยใช้ _join_chunks ที่ซ้ำซ้อน
-    direct_context = "" # ส่งค่าว่างกลับไป
+    aux_summary = _summarize_evidence_list_short(aux_candidates, max_sentences=3) if aux_candidates else "ไม่มีหลักฐานรอง"
 
+    if len(direct) < K_MAIN:
+        logger.warning(f"L{level}: Direct PDCA chunks ยังน้อย ({len(direct)}) หลังย้ายจาก aux")
+
+    # --- 3) Return ---
     debug_meta = {
         "level": level,
-        "direct_count_for_aux_split": len(direct), # จำนวนที่ถูกจัดเป็นหลักฐานหลัก (เพื่อการ debug)
-        "aux_count": len(aux),
+        "direct_count": len(direct),
+        "aux_count": len(aux_candidates),
         "baseline_count": len(summarizable_baseline),
-        "baseline_source": "previous_levels_evidence" if previous_levels_evidence else "fallback_map",
+        "max_context_length_received": max_context_length # สำหรับ Debug
     }
-
-    logger.info(f"Context L{level} → (Optimized) Aux Summary:{len(aux)} chunks | Baseline:{len(summarizable_baseline)} chunks")
+    logger.info(f"Context L{level} → Direct:{len(direct)} | Aux:{len(aux_candidates)} | Baseline:{len(summarizable_baseline)}")
 
     return {
         "baseline_summary": baseline_summary,
-        "direct_context": direct_context, # ส่งค่าว่าง (Empty String)
+        "direct_context": "",  # ถูกสร้างใน _run_single_assessment แล้ว
         "aux_summary": aux_summary,
         "debug_meta": debug_meta,
     }
@@ -720,73 +765,61 @@ def enhance_query_for_statement(
     llm_executor: Any = None
 ) -> List[str]:
     """
-    สร้าง Query ที่ฉลาด แม่นยำ และยืดหยุ่นสำหรับทุก Enabler
-    รองรับ 8-10+ Enablers พร้อมกัน — Production Ready 100%
+    สร้าง Query ที่ฉลาด แม่นยำ และครอบคลุม PDCA ทุกด้าน
     """
+    logger = logging.getLogger(__name__)
     logger.info(f"Generating queries for {enabler_id} - {sub_id} L{level}")
 
-    # --- 1. Synonyms พื้นฐานตาม Level ---
-    primary_synonyms = (
-        "**วิสัยทัศน์**, **นโยบาย**, **ทิศทาง**, **เป้าหมาย**, "
-        "**แผนแม่บท**, **ยุทธศาสตร์**, **การกำหนดนโยบาย**, **การสื่อสารนโยบาย**"
-    )
-    data_synonyms = (
-        "**คณะทำงาน**, **คณะกรรมการ**, **คำสั่งแต่งตั้ง**, **โครงสร้างองค์กร**, "
-        "**ตัวแทนหน่วยงาน**, **หน้าที่ความรับผิดชอบ**, **การขับเคลื่อน**, "
-        "**ข้อมูลภายใน**, **ข้อมูลภายนอก**, **SWOT**, **PESTEL**, **การสำรวจความต้องการ**"
-    )
-    review_improvement_synonyms = (
-        "การประเมินผล, การทบทวน, รายงานผล, KPI, การตรวจสอบ, Audit, "
-        "บทเรียนที่ได้รับ, Lesson Learned, Corrective Action, การปรับปรุง, การแก้ไข"
-    )
-
-    # --- 2. ดึง Keyword เฉพาะ Enabler + Sub-ID ---
+    # --- 1. ดึง Keyword เฉพาะ Enabler/Sub-ID ---
     extra_keywords = ""
-    if enabler_id in ENABLER_KEYWORD_MAP:
-        if sub_id in ENABLER_KEYWORD_MAP[enabler_id]:
-            extra_keywords = ENABLER_KEYWORD_MAP[enabler_id][sub_id]
-        elif sub_id in DEFAULT_KEYWORDS:
-            extra_keywords = DEFAULT_KEYWORDS[sub_id]
+    if 'ENABLER_KEYWORD_MAP' in globals():
+        extra_keywords = ENABLER_KEYWORD_MAP.get(enabler_id, {}).get(sub_id, "")
+    
+    default_keywords = DEFAULT_KEYWORDS.get(enabler_id, "")
 
-    # --- 3. เลือก Synonyms ตาม Level ---
-    if level == 1:
-        current_synonyms = primary_synonyms
-    elif level == 2:
-        current_synonyms = data_synonyms
-    elif level >= 3:
-        current_synonyms = review_improvement_synonyms
-        if extra_keywords:
-            current_synonyms += f", {extra_keywords}"
-    else:
-        current_synonyms = primary_synonyms
+    # --- 2. Synonyms ตาม Level ---
+    level_synonyms = {
+        1: "นโยบาย, แผนแม่บท, ยุทธศาสตร์, วิสัยทัศน์, การกำหนดเป้าหมาย, ผู้บริหารระดับสูง",
+        2: "คณะทำงาน, โครงสร้างองค์กร, การขับเคลื่อน, การดำเนินการ, ความรับผิดชอบ, แผนปฏิบัติการ",
+        3: "การวัดผล, การประเมินผล, KPI, รายงานผล, Audit, การตรวจสอบ, การทบทวน",
+        4: "การปรับปรุง, Corrective Action, Preventive Action, บทเรียนที่ได้รับ, การแก้ไข, ปรับแผน",
+        5: "นวัตกรรม, ความยั่งยืน, Best Practice, การขยายผล, ผลกระทบระยะยาว, รางวัล, External Recognition"
+    }
 
-    # --- 4. สร้าง Base Query ---
-    base_query = (
-        f"**{statement_text}** "
-        f"**คำหลักเสริม:** {current_synonyms}. "
-        f"หลักฐานการดำเนินการของ {statement_id} ในบริบทของ {enabler_id}"
-    )
+    current_synonyms = level_synonyms.get(level, level_synonyms[1])
+    if extra_keywords:
+        current_synonyms += f", {extra_keywords}"
+    if default_keywords:
+        current_synonyms += f", {default_keywords}"
 
+    # --- 3. Base Query (หลัก) ---
+    base_query = f"**{statement_text}** คำสำคัญ: {current_synonyms} {sub_id} {enabler_id}"
     queries = [base_query]
 
-    # --- 5. L5 Special Boost ---
-    if level == 5:
-        queries[0] += " การบูรณาการ, ความยั่งยืน, นวัตกรรม, การขยายผล, Best Practice, ผลกระทบระยะยาว"
-        queries.append(
-            f"นวัตกรรม ความยั่งยืน โครงการนำร่อง ผลกระทบเชิงบวกต่อองค์กร {statement_id} {enabler_id}"
-        )
-
-    # --- 6. L3+ Check & Act Queries ---
+    # --- 4. Dedicated Queries สำหรับ L3+ ---
     if level >= 3:
         queries.append(
-            f"รายงานผล การตรวจสอบ KPI Audit การวัดผล การประเมินผล {statement_id} "
-            f"ผลการดำเนินงาน รายงานประจำปี การวิเคราะห์ช่องว่าง"
+            f"รายงานผล การวัดผล KPI Audit การประเมิน {statement_text} {sub_id} รายงานประจำปี การวิเคราะห์ช่องว่าง"
         )
         queries.append(
-            f"การปรับปรุง แก้ไข ปรับแผน บทเรียนที่ได้รับ Corrective Action "
-            f"การเปลี่ยนแปลงวิธีการ {statement_id} ตามผลการประเมิน"
+            f"การปรับปรุง แก้ไข Corrective Action บทเรียนที่ได้รับ {statement_text} {sub_id} ตามผลการประเมิน"
+        )
+        # English version
+        queries.append(
+            f"Assessment KPI Audit Report Review {statement_text} {sub_id} {enabler_id}"
+        )
+        queries.append(
+            f"Improvement Corrective Action Lesson Learned {statement_text} {sub_id} {enabler_id}"
         )
 
+    # --- 5. L5 Special ---
+    if level == 5:
+        queries.append(
+            f"นวัตกรรม ความยั่งยืน Best Practice รางวัล {statement_text} {sub_id} {enabler_id}"
+        )
+
+    # --- 6. จำกัดจำนวน + Log ---
+    queries = queries[:6]  # ป้องกันเยอะเกิน
     logger.info(f"Generated {len(queries)} queries for {enabler_id} - {sub_id} L{level}")
     return queries
 
@@ -939,96 +972,103 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
         }
     return None
 
+def _get_context_for_level(context: str, level: int) -> str:
+    """Return context string with appropriate length limit for each level."""
+    if not context:
+        return ""
+    # L1-L2 ใช้ context ยาวขึ้น
+    if level <= 2:
+        return context[:6000]  
+    # L3-L5 ใช้ค่าที่กำหนดใน global_vars เพื่อลด Latency
+    return context[:MAX_EVAL_CONTEXT_LENGTH]  
+
+# =========================
+# Main Evaluation Function
+# =========================
+
 def evaluate_with_llm(
     context: str, 
     sub_criteria_name: str, 
     level: int, 
     statement_text: str, 
     sub_id: str, 
-    check_evidence: str = "", 
-    act_evidence: str = "", 
     llm_executor: Any = None, 
-    # 🟢 FIX #1: เพิ่ม Argument ที่ถูกส่งมาโดยตรงทั้งหมดใน Signature
     pdca_phase: str = "",
     level_constraint: str = "",
     must_include_keywords: str = "",
     avoid_keywords: str = "",
     max_rerank_score: float = 0.0,
-    max_evidence_strength: float = 10.0, # รับค่า Capping โดยตรง
+    max_evidence_strength: float = 10.0,
     **kwargs
 ) -> Dict[str, Any]:
-    """Standard Evaluation for L3+ with robust handling for missing keys."""
+    """Standard Evaluation for L3+ with robust handling."""
     
-    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else ""
-    # 1. ตรวจสอบ Context ก่อนส่ง LLM
+    # 🎯 แก้ไข: ใช้ logic การตัด Context ตาม Level
+    context_to_send_eval = _get_context_for_level(context, level)
+    
+    # ตรวจสอบ context ว่าง
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
 
-    # Argument ที่ยังต้องดึงจาก kwargs (เพราะไม่ได้อยู่ใน Argument list หลัก)
-    contextual_rules_prompt = kwargs.get("contextual_rules_prompt", "")
+    # ดึงค่าจาก kwargs (ถ้ายังใช้)
     baseline_summary = kwargs.get("baseline_summary", "")
     aux_summary = kwargs.get("aux_summary", "")
-    
-    # 2. Prepare User & System Prompts
-    user_prompt = USER_ASSESSMENT_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, 
-        level=level, 
-        statement_text=statement_text, 
-        sub_id=sub_id,
-        context=context_to_send_eval or "ไม่มีหลักฐานที่เกี่ยวข้อง",
-        
-        # 🟢 FIX #2: ใช้ Argument โดยตรงจาก Signature
-        pdca_phase=pdca_phase, 
-        level_constraint=level_constraint,
-        
-        contextual_rules_prompt=contextual_rules_prompt,
-        check_evidence=check_evidence, 
-        act_evidence=act_evidence,
-        
-        # 🟢 FIX #3: เพิ่ม Argument Keywords และ Score ที่จำเป็นต่อ Prompt Template
-        must_include_keywords=must_include_keywords,
-        avoid_keywords=avoid_keywords,
-        max_rerank_score=max_rerank_score,
 
-        max_evi_str_cap_for_llm=max_evidence_strength,
-    )
+    # สร้าง User Prompt
+    try:
+        user_prompt = USER_ASSESSMENT_PROMPT.format(
+            sub_criteria_name=sub_criteria_name,
+            sub_id=sub_id,
+            level=level,
+            pdca_phase=pdca_phase,
+            statement_text=statement_text,
+            context=context_to_send_eval, # ใช้ Context ที่ถูกตัดแล้ว
+            level_constraint=level_constraint,
+            must_include_keywords=must_include_keywords or "ไม่มี",
+            avoid_keywords=avoid_keywords or "ไม่มี",
+            max_rerank_score=max_rerank_score,
+            max_evidence_strength=max_evidence_strength
+        )
+    except KeyError as e:
+        logger.error(f"Missing placeholder in prompt template: {e}")
+        user_prompt = f"เกณฑ์: {sub_criteria_name} L{level}\nคำถาม: {statement_text}\nหลักฐาน: {context_to_send_eval}"
 
-    # Insert baseline_summary into the prompt explicitly:
+    # เพิ่ม summary ถ้ามี
     if baseline_summary:
-        user_prompt = user_prompt + "\n\n--- Baseline summary (จาก L1-L2): ---\n" + baseline_summary
-
+        user_prompt += f"\n\n--- Baseline summary (จาก Level ก่อนหน้า): ---\n{baseline_summary}"
     if aux_summary:
-        user_prompt = user_prompt + "\n\n--- Auxiliary evidence summary (low-priority): ---\n" + aux_summary
+        user_prompt += f"\n\n--- Auxiliary evidence summary: ---\n{aux_summary}"
 
+    # System Prompt (ต้องมี placeholder)
+    try:
+        # 🎯 แก้ไข: ใช้ชื่อ key ตรงกับ SYSTEM_ASSESSMENT_PROMPT (คือ max_evidence_strength)
+        system_prompt = SYSTEM_ASSESSMENT_PROMPT.format(
+            max_evidence_strength=max_evidence_strength 
+        )
+    except KeyError:
+        system_prompt = SYSTEM_ASSESSMENT_PROMPT  # fallback ถ้าไม่มี
+
+    # เพิ่ม schema
     try:
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
     except Exception:
         schema_json = '{"score":0,"reason":"string"}'
 
-    # 🟢 FIX: จัดรูปแบบ SYSTEM_ASSESSMENT_PROMPT ด้วยค่า Cap ก่อนรวมกับ Schema
-    system_prompt_formatted = SYSTEM_ASSESSMENT_PROMPT.format(
-        max_evi_str_cap_for_llm=max_evidence_strength # ต้องมั่นใจว่า SYSTEM_ASSESSMENT_PROMPT ใช้ placeholder นี้
-    )
+    system_prompt += "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
 
-    system_prompt = system_prompt_formatted + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
-
+    # เรียก LLM
     try:
-        # 3. เรียก LLM
         raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        
-        # 4. Extract JSON และ normalize keys
         parsed = _robust_extract_json(raw)
         
-        # 🎯 FIX 1: ตรวจสอบและบังคับให้ 'parsed' เป็น dict ก่อนใช้งาน
         if not isinstance(parsed, dict):
-            logger.error(f"LLM L{level} response parsed to non-dict type: {type(parsed).__name__}. Falling back to empty dict.")
+            logger.error(f"Parsed result is not dict: {type(parsed)}")
             parsed = {}
 
-        # 5. คืนผลลัพธ์, เติม default หาก key ขาด
         return {
             "score": int(parsed.get("score", 0)),
-            "reason": parsed.get("reason", "No reason provided by LLM."),
+            "reason": parsed.get("reason", "No reason provided."),
             "is_passed": parsed.get("is_passed", False),
             "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
             "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
@@ -1039,16 +1079,15 @@ def evaluate_with_llm(
     except Exception as e:
         logger.exception(f"evaluate_with_llm failed for {sub_id} L{level}: {e}")
         return {
-            "score":0,
-            "reason":f"LLM error: {e}",
-            "is_passed":False,
+            "score": 0,
+            "reason": f"LLM error: {str(e)}",
+            "is_passed": False,
             "P_Plan_Score": 0,
             "D_Do_Score": 0,
             "C_Check_Score": 0,
             "A_Act_Score": 0,
         }
-
-
+    
 # =========================
 # Patch for L1-L2 evaluation
 # =========================
@@ -1081,93 +1120,116 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
 
 
 # =================================================================
-# 🎯 FIX: evaluate_with_llm_low_level (Low Level Assessment L1/L2)
+# ULTIMATE PRODUCTION: evaluate_with_llm_low_level (L1/L2 Multi-Enabler)
 # =================================================================
 def evaluate_with_llm_low_level(
-    context: str, 
-    sub_criteria_name: str, 
-    level: int, 
-    statement_text: str, 
-    sub_id: str, 
+    context: str,
+    sub_criteria_name: str,
+    level: int,
+    statement_text: str,
+    sub_id: str,
     llm_executor: Any = None,
     pdca_phase: str = "",
     level_constraint: str = "",
-    must_include_keywords: str = "", 
-    avoid_keywords: str = "",        
+    must_include_keywords: str = "",
+    avoid_keywords: str = "",
     max_rerank_score: float = 0.0,
-    max_evidence_strength: float = 10.0, 
+    max_evidence_strength: float = 10.0,
+    contextual_rules_map: Optional[Dict[str, Any]] = None,
+    enabler_id: str = "KM",
     **kwargs
 ) -> Dict[str, Any]:
-    """Standard Evaluation for L1/L2 using LOW_LEVEL_PROMPT."""
+    """
+    Standard Evaluation for L1/L2 using LOW_LEVEL_PROMPT (Dynamic Multi-Enabler)
+    - ดึง planning_keywords จาก contextual_rules_map (จาก pea_km_contextual_rules.json)
+    - ไม่ hardcode อีกต่อไป
+    - ส่งค่า P/D/C/A ดิบจาก LLM → ให้ _run_single_assessment บังคับกฎ L1/L2 ขั้นสุดท้าย
+    """
     
-    # NOTE: MAX_EVAL_CONTEXT_LENGTH และ logger ต้องถูก Import ไว้ที่ด้านบน
-    # (ถ้าไม่ได้ import ไว้ในไฟล์นี้ ให้เพิ่มการ import เข้าไป)
-    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else ""
+    # -------------------- 1. Setup & Context Check --------------------
+    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else "ไม่มีหลักฐานที่เกี่ยวข้อง"
     
-    # 1. ตรวจสอบ Context ก่อนส่ง LLM
-    # (ต้องมั่นใจว่า _check_and_handle_empty_context ถูก Import/มีอยู่ในไฟล์นี้)
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
 
-    # 2. Prepare User & System Prompts
-    
-    # 🟢 FIX: ใช้ USER_LOW_LEVEL_PROMPT และ SYSTEM_LOW_LEVEL_PROMPT ที่ถูกต้อง
-    user_prompt = USER_LOW_LEVEL_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, 
-        level=level, 
-        statement_text=statement_text, 
-        sub_id=sub_id,
-        context=context_to_send_eval or "ไม่มีหลักฐานที่เกี่ยวข้อง",
-        
-        level_constraint=level_constraint,
-        must_include_keywords=must_include_keywords,
-        avoid_keywords=avoid_keywords,
-        
-        # NOTE: L1/L2 prompt ไม่ใช้ max_rerank_score หรือ max_evidence_strength โดยตรง
-    )
-    
-    # นำ System Prompt มาใช้
-    system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\nIMPORTANT: Respond only with valid JSON."
+    # -------------------- 2. ดึง planning_keywords จาก pea_km_contextual_rules.json --------------------
+    planning_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย"  # fallback พื้นฐาน
 
+    if contextual_rules_map:
+        # 2.1 ดึงจาก sub-criteria เฉพาะก่อน (เช่น 1.1 → L1)
+        sub_rules = contextual_rules_map.get(sub_id, {})
+        l1_rules = sub_rules.get("L1", {})
+        if l1_rules and "planning_keywords" in l1_rules:
+            planning_keywords = l1_rules["planning_keywords"]
+        else:
+            # 2.2 Fallback ไปใช้ _enabler_defaults (เช่น KM, DX)
+            default_rules = contextual_rules_map.get("_enabler_defaults", {})
+            if "planning_keywords" in default_rules:
+                planning_keywords = default_rules["planning_keywords"]
+
+    logger.debug(f"[L{level}] Using planning_keywords: {planning_keywords}")
+
+    # -------------------- 3. Prompt Building --------------------
     try:
-        # 3. เรียก LLM
-        # (ต้องมั่นใจว่า _fetch_llm_response ถูก Import/มีอยู่ในไฟล์นี้)
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
+        # System Prompt: ใส่ planning_keywords ด้วย .format()
+        system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(planning_keywords=planning_keywords)
+        system_prompt += "\n\nIMPORTANT: Respond only with valid JSON."
+
+        # User Prompt: ไม่ต้องส่ง planning_keywords (เพราะอยู่ใน system แล้ว)
+        user_prompt = USER_LOW_LEVEL_PROMPT_TEMPLATE.format(
+            sub_id=sub_id,
+            sub_criteria_name=sub_criteria_name,
+            level=level,
+            statement_text=statement_text,
+            level_constraint=level_constraint or "ไม่มี",
+            must_include_keywords=must_include_keywords or "ไม่มี",
+            avoid_keywords=avoid_keywords or "ไม่มี",
+            context=context_to_send_eval
+        )
+    except Exception as e:
+        logger.error(f"Error formatting LOW_LEVEL_PROMPT: {e}. Using fallback prompt.")
+        system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\nIMPORTANT: Respond only with valid JSON."
+        user_prompt = f"เกณฑ์: {sub_id} L{level}\nหลักฐาน: {context_to_send_eval}\nตอบ JSON เท่านั้น"
+
+    # -------------------- 4. LLM Call --------------------
+    try:
+        raw = _fetch_llm_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_retries=_MAX_LLM_RETRIES,
+            llm_executor=llm_executor
+        )
         
-        # 4. Extract JSON และ normalize keys
         parsed = _robust_extract_json(raw)
         
         if not isinstance(parsed, dict):
-            logger.error(f"LLM L{level} response parsed to non-dict type: {type(parsed).__name__}. Falling back to empty dict.")
+            logger.error(f"LLM L{level} response parsed to non-dict: {type(parsed)}. Using empty dict.")
             parsed = {}
 
-        # 5. คืนผลลัพธ์ (L1/L2 จะให้ C/A = 0 เสมอตามกฎ)
+        # -------------------- 5. ส่งค่าดิบจาก LLM ทั้งหมด (ไม่บังคับ C/A=0 ที่นี่) --------------------
         return {
             "score": int(parsed.get("score", 0)),
-            "reason": parsed.get("reason", "No reason provided by LLM."),
+            "reason": parsed.get("reason", "ไม่พบเหตุผลจาก LLM"),
             "is_passed": parsed.get("is_passed", False),
             "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
             "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
-            "C_Check_Score": 0, # บังคับให้เป็น 0 ตามกฎ L1/L2
-            "A_Act_Score": 0,   # บังคับให้เป็น 0 ตามกฎ L1/L2
+            "C_Check_Score": int(parsed.get("C_Check_Score", 0)),
+            "A_Act_Score": int(parsed.get("A_Act_Score", 0)),
         }
 
     except Exception as e:
         logger.exception(f"evaluate_with_llm_low_level failed for {sub_id} L{level}: {e}")
         return {
-            "score":0,
-            "reason":f"LLM error: {e}",
-            "is_passed":False,
+            "score": 0,
+            "reason": f"เกิดข้อผิดพลาดใน LLM: {str(e)}",
+            "is_passed": False,
             "P_Plan_Score": 0,
             "D_Do_Score": 0,
             "C_Check_Score": 0,
             "A_Act_Score": 0,
         }
-# =================================================================
-# END OF LOW LEVEL FUNCTION
-# =================================================================
-
+    
 # ------------------------
 # Summarize
 # ------------------------
@@ -1240,29 +1302,34 @@ def create_context_summary_llm(
         # Fallback กรณีเกิดข้อผิดพลาด
         return {"summary":f"LLM Error during summarization: {e.__class__.__name__}","suggestion_for_next_level": "Manual review required due to LLM failure."}
 
-# ------------------------
-# FINAL: create_structured_action_plan (Production-Ready 100%)
-# ------------------------
+#=================================================================
+# 5. FINAL FUNCTION (Production-Ready 100%)
+# =================================================================
+
 def _extract_json_array_for_action_plan(llm_response: str) -> List[Dict[str, Any]]:
-    """Extract JSON array อย่างแข็งแกร่งสุด ๆ — ใช้สำหรับ Action Plan เท่านั้น"""
+    """Extract JSON object/array อย่างแข็งแกร่งสุด ๆ"""
     if not llm_response or not isinstance(llm_response, str):
         return []
 
     text = llm_response.strip()
 
     # 1. ลองหาใน code block ก่อน (```json หรือ ```)
-    fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
-    if fenced:
-        json_str = fenced.group(1)
+    fenced_search = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if not fenced_search:
+        fenced_search = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
+        
+    if fenced_search:
+        json_str = fenced_search.group(1)
     else:
-        # 2. หา balanced [] array
-        start = text.find("[")
+        # 2. หา balanced {} object
+        start = text.find("{")
         if start == -1:
             return []
         depth = 0
+        json_str = ""
         for i in range(start, len(text)):
-            if text[i] == "[": depth += 1
-            elif text[i] == "]":
+            if text[i] == "{": depth += 1
+            elif text[i] == "}":
                 depth -= 1
                 if depth == 0:
                     json_str = text[start:i+1]
@@ -1276,26 +1343,32 @@ def _extract_json_array_for_action_plan(llm_response: str) -> List[Dict[str, Any
     except:
         try:
             data = json5.loads(json_str)
-        except:
-            logger.error(f"ActionPlan JSON parse failed: {json_str[:200]}")
+        except Exception as e:
+            logger.error(f"ActionPlan JSON parse failed (Fallback): {str(e)} | Snippet: {json_str[:200]}")
             return []
 
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, dict)]
+    # 4. ตรวจสอบและคืนค่าเป็น List of Dict (ใช้โครงสร้าง List[Dict[...]] เสมอ)
+    if isinstance(data, dict):
+        return [data] if "Phase" in data and "Actions" in data else []
+    
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+        
+    return []
+
 
 def create_structured_action_plan(
     failed_statements: List[Dict[str, Any]],
     sub_id: str,
+    sub_criteria_name: str,
     target_level: int,
     llm_executor: Any,
     max_retries: int = 3
 ) -> List[Dict[str, Any]]:
     """
-    สร้าง Action Plan ที่สมบูรณ์แบบที่สุดเท่าที่จะเป็นไปได้
-    รองรับทุกสถานการณ์จริงใน Production
+    สร้าง Action Plan ที่สมบูรณ์แบบที่สุดเท่าที่จะเป็นไปได้ โดยใช้ Pydantic Schema ใหม่
     """
-
+    
     # ------------------------------------------------------------------
     # 1. ทุกอย่างผ่าน → แผนรักษาระดับ (Sustain / Optimize)
     # ------------------------------------------------------------------
@@ -1303,21 +1376,16 @@ def create_structured_action_plan(
         if target_level >= 5:
             return [{
                 "Phase": "Level 5 - Optimizing",
-                "Goal": f"รักษาและยกระดับความเป็นเลิศอย่างต่อเนื่องสำหรับ {sub_id}",
-                "Actions": [{
-                    "Statement_ID": "OPT-L5",
-                    "Recommendation": "เน้นนวัตกรรม การวิเคราะห์เชิงสาเหตุ และการปรับปรุงกระบวนการด้วยข้อมูลเชิงปริมาณอย่างต่อเนื่อง"
-                }]
+                "Goal": f"รักษาและยกระดับความเป็นเลิศอย่างต่อเนื่องสำหรับ {sub_criteria_name} ({sub_id})",
+                "Actions": [{"Statement_ID": "OPT-L5", "Failed_Level": 5, "Recommendation": "เน้นนวัตกรรม", "Target_Evidence_Type": "รายงานวิเคราะห์", "Key_Metric": "อัตราส่วน", "Steps": []}]
             }]
         else:
-            return [{
+             return [{
                 "Phase": f"Level {target_level} - Sustaining",
-                "Goal": f"รักษามาตรฐาน Level {target_level} และเตรียมความพร้อมสู่ Level {target_level + 1}",
-                "Actions": [{
-                    "Statement_ID": f"SUSTAIN-L{target_level}",
-                    "Recommendation": f"ติดตามและรักษาการปฏิบัติตามแนวทาง Level {target_level} อย่างสม่ำเสมอ พร้อมเก็บข้อมูลเพื่อเตรียมความพร้อมสู่ระดับถัดไป"
-                }]
+                "Goal": f"รักษามาตรฐาน Level {target_level} และเตรียมความพร้อมสู่ Level {target_level + 1} สำหรับ {sub_criteria_name}",
+                "Actions": [{"Statement_ID": f"SUSTAIN-L{target_level}", "Failed_Level": target_level, "Recommendation": f"ติดตามและรักษาการปฏิบัติตามแนวทาง Level {target_level}", "Target_Evidence_Type": "KPI", "Key_Metric": "ความคงที่", "Steps": []}]
             }]
+
 
     # ------------------------------------------------------------------
     # 2. LLM ไม่มี → Fallback สวยงาม
@@ -1327,119 +1395,132 @@ def create_structured_action_plan(
         actions = []
         for s in failed_statements[:10]:
             sid = s.get("sub_id") or s.get("statement_id") or "UNKNOWN"
+            level = s.get("level", 0)
             stmt = (s.get("statement") or "").strip()[:200]
             reason = (s.get("reason") or "").strip()[:300]
             actions.append({
                 "Statement_ID": sid,
-                "Recommendation": f"[{sid}] {stmt} | สาเหตุ: {reason}"
+                "Failed_Level": level,
+                "Recommendation": f"[{sid}] {stmt} | สาเหตุ: {reason}",
+                "Target_Evidence_Type": "เอกสารที่ขาดหาย",
+                "Key_Metric": "ความครบถ้วนของเอกสาร",
+                "Steps": []
             })
         return [{
             "Phase": f"Level {target_level}",
-            "Goal": f"ยกระดับให้ได้ Level {target_level} สำหรับ {sub_id}",
-            "Actions": actions or [{"Statement_ID": "NO-LLM", "Recommendation": "กรุณาตรวจสอบเอกสารและดำเนินการตามข้อกำหนดที่ขาดหาย"}]
+            "Goal": f"ยกระดับให้ได้ Level {target_level} สำหรับ {sub_criteria_name} ({sub_id})",
+            "Actions": actions or [{"Statement_ID": "NO-LLM", "Failed_Level": 0, "Recommendation": "กรุณาตรวจสอบเอกสาร", "Target_Evidence_Type": "N/A", "Key_Metric": "N/A", "Steps": []}]
         }]
 
     # ------------------------------------------------------------------
-    # 3. เตรียม Prompt + Schema
+    # 3. เตรียม Prompt + Schema และ Logic การดึงค่าสำหรับ Prompt
     # ------------------------------------------------------------------
+    
     try:
-        schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
-    except:
-        schema_json = '{"Phase":"string","Goal":"string","Actions":[{"Statement_ID":"string","Recommendation":"string"}]}'
+        schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2) 
+    except Exception as e:
+        logger.error(f"Failed to generate JSON schema: {e}")
+        schema_json = '{"Phase":"string", "Goal":"string", "Actions":[]}' # Fallback Schema
 
     system_prompt = (
         SYSTEM_ACTION_PLAN_PROMPT
-        + "\n\n--- JSON SCHEMA (ตอบเป็น ARRAY เท่านั้น) ---\n"
+        + "\n\n--- JSON SCHEMA (ตอบเป็น OBJECT เท่านั้น) ---\n"
         + schema_json
         + "\n\nIMPORTANT:\n"
-          "- ตอบกลับด้วย JSON ARRAY เท่านั้น เช่น: [ { ... }, { ... } ]\n"
+          "- ตอบกลับด้วย JSON OBJECT ตาม SCHEMA เท่านั้น เช่น: { \"Phase\": ..., \"Actions\": [...] }\n"
           "- ห้ามมีข้อความนอก JSON เด็ดขาด\n"
           "- ทุก field ต้องเป็นภาษาไทย\n"
-          "- Actions ต้องมีอย่างน้อย 1 รายการต่อ Phase"
+          "- Actions ต้องมีอย่างน้อย 1 รายการต่อ Phase และทุก Action ควรมีรายการ Steps ย่อยที่ชัดเจนเพื่อแสดงวิธีดำเนินการ" 
     )
 
-    # จัดกลุ่ม Statement ให้อ่านง่าย
     stmt_blocks = []
     for i, s in enumerate(failed_statements, 1):
         sid = s.get("sub_id") or s.get("statement_id") or f"STMT-{i}"
         level = s.get("level", "?")
         text = str(s.get("statement") or "").strip()
         reason = str(s.get("reason") or "").strip()
-        
-        # 🟢 NEW: ดึงข้อมูลประเภทคำแนะนำและความแข็งแกร่งของหลักฐาน
-        rec_type = s.get("recommendation_type", "FAILED") # ค่า default คือ FAILED
+        rec_type = s.get("recommendation_type", "FAILED") 
         evidence_strength = s.get("evidence_strength", 0.0)
+
+        # Mock/Dummy status_line และ instruction (ต้องใช้ Logic จริงของคุณที่นี่)
+        status_line = f"Score: {s.get('score', 0.0)} (P={s.get('P_Plan_Score', 0.0)}, C={s.get('C_Check_Score', 0.0)})"
+        instruction = f"แก้ไขปัญหา: {reason}"
         
-        # 🟢 NEW: สร้าง Context ให้ LLM เข้าใจสถานการณ์ที่แตกต่างกัน
-        status_line = ""
-        instruction = ""
-        if rec_type == 'FAILED':
-            status_line = f"❌ สถานะ: ไม่ผ่านเกณฑ์ (FAIL) | เหตุผลหลัก: {reason}"
-            instruction = "โปรดสร้างแผนปฏิบัติการเพื่อ **แก้ไขข้อบกพร่อง** นี้โดยตรง"
-        elif rec_type == 'WEAK_EVIDENCE':
-            status_line = f"⚠️ สถานะ: ผ่านเกณฑ์ (PASS) แต่หลักฐานอ่อนแอ (Strength: {evidence_strength:.1f})"
-            instruction = "โปรดสร้างแผนปฏิบัติการเพื่อ **เสริมความแข็งแกร่งและคุณภาพของหลักฐาน** (เช่น การจัดเก็บ, ความเป็นปัจจุบัน)"
-        else:
-             status_line = f"❔ สถานะ: {rec_type} | เหตุผลหลัก: {reason}"
-             instruction = "โปรดสร้างแผนปฏิบัติการตามข้อบกพร่องที่ระบุ"
-
         stmt_blocks.append(
-            f"ลำดับที่ {i}\n"
-            f"Statement ID: {sid} (Level {level})\n"
-            f"ข้อความ: {text}\n"
-            f"{status_line}\n"
-            f"คำแนะนำสำหรับ LLM: {instruction}\n" # LLM จะใช้บรรทัดนี้ในการตัดสินใจ
+            f"ลำดับที่ {i}\nStatement ID: {sid} (Level {level})\nข้อความ: {text}\n{status_line}\nคำแนะนำสำหรับ LLM: {instruction}\n"
         )
+    
+    # 3.3 🔥🔥🔥 Logic การดึงค่าและกำหนด Advice_Focus (ฉบับแก้ไขและจัดลำดับ) 🔥🔥🔥
+    try:
+        highest_failed_level = max(s.get('level', 0) for s in failed_statements)
+        highest_failed_stmt = next(s for s in failed_statements if s.get('level', 0) == highest_failed_level)
+        
+        # 4.1 วิเคราะห์เพื่อกำหนด Advice_Focus ตามลำดับความสำคัญ
+        advice_focus = "Process" # 1. กำหนดค่าเริ่มต้น
+        a_score = highest_failed_stmt.get('A_Act_Score', 0.0)
+        c_score = highest_failed_stmt.get('C_Check_Score', 0.0)
+        
+        # 2. ตรวจสอบเงื่อนไข Evidence (ลำดับแรก: หากขาด C หรือ A อย่างรุนแรง)
+        if a_score < 0.5 or c_score < 0.5:
+            advice_focus = "Evidence" 
+        
+        # 3. ตรวจสอบเงื่อนไข People (ลำดับสอง: หากเป็นเกณฑ์ด้านบุคลากร/KM)
+        elif sub_id in ["1.2", "3.1", "3.2", "3.3"]:
+            advice_focus = "People"
+        # กรณีอื่นๆ ทั้งหมดจะคงค่าเริ่มต้นที่ "Process"
 
-    human_prompt = ACTION_PLAN_PROMPT.format(
-        sub_id=sub_id,
-        target_level=target_level,
-        failed_statements_list="\n\n".join(stmt_blocks)
-    )
+        # 4.2 เตรียม Argument Dictionary
+        prompt_args = {
+            "sub_id": sub_id,
+            "sub_criteria_name": sub_criteria_name, 
+            "level": highest_failed_level,
+            "threshold": highest_failed_stmt.get('threshold', 0),
+            "score": highest_failed_stmt.get('score', 0.0),
+            "p_score": highest_failed_stmt.get('P_Plan_Score', 0.0),
+            "d_score": highest_failed_stmt.get('D_Do_Score', 0.0),
+            "c_score": c_score,
+            "a_score": a_score,
+            "reason": highest_failed_stmt.get('reason', 'N/A'),
+            "statement_text": highest_failed_stmt.get('statement_text', highest_failed_stmt.get('statement', 'N/A')),
+            "max_rerank_score": highest_failed_stmt.get('max_rerank_score', 0.0),
+            "context": "\n\n".join(stmt_blocks), 
+            "Advice_Focus": advice_focus, # <<<-- Key ที่ถูกกำหนดค่าแล้ว
+        }
+        
+    except (StopIteration, ValueError):
+        logger.warning("ไม่พบ Highest Failed Statement Data → ใช้ Fallback Args")
+        prompt_args = {
+            "sub_id": sub_id, "sub_criteria_name": sub_criteria_name, "level": target_level,
+            "threshold": 0, "score": 0.0, "p_score": 0.0, "d_score": 0.0, 
+            "c_score": 0.0, "a_score": 0.0, "reason": "ข้อมูลการประเมินขาดหาย",
+            "statement_text": "N/A", "context": "\n\n".join(stmt_blocks), "max_rerank_score": 0.0,
+            "Advice_Focus": "Process", # Fallback สำหรับ Advice_Focus
+        }
+
+    # Format the prompt using the compiled arguments
+    human_prompt = ACTION_PLAN_PROMPT.format(**prompt_args)
+    # ------------------------------------------------------------------
+
 
     # ------------------------------------------------------------------
     # 4. เรียก LLM + Extract (แข็งแกร่งสุด)
     # ------------------------------------------------------------------
     for attempt in range(max_retries):
         try:
-            raw = _fetch_llm_response(
-                system_prompt=system_prompt,
-                user_prompt=human_prompt,
-                max_retries=1,
-                llm_executor=llm_executor
-            )
-
+            raw = _fetch_llm_response(system_prompt=system_prompt, user_prompt=human_prompt, max_retries=1, llm_executor=llm_executor)
             items = _extract_json_array_for_action_plan(raw)
-            if not items:
-                logger.warning(f"ActionPlan attempt {attempt+1}: ไม่ได้ JSON array → ลองใหม่")
-                time.sleep(1)
-                continue
+            
+            if not items: continue
 
-            # เติม default + ทำความสะอาด
             result = []
             for item in items:
-                phase = str(item.get("Phase") or f"Level {target_level}").strip()
-                goal = str(item.get("Goal") or f"ยกระดับให้ได้ Level {target_level}").strip()
-                actions = item.get("Actions") or []
-
-                if not isinstance(actions, list):
-                    actions = [actions] if isinstance(actions, dict) else []
-
-                clean_actions = []
-                for act in actions:
-                    if not isinstance(act, dict): continue
-                    rec = str(act.get("Recommendation") or "").strip()
-                    sid = str(act.get("Statement_ID") or "UNKNOWN").strip()
-                    if rec:
-                        clean_actions.append({"Statement_ID": sid, "Recommendation": rec})
-
-                if not clean_actions:
-                    clean_actions.append({
-                        "Statement_ID": "FALLBACK",
-                        "Recommendation": "ดำเนินการปรับปรุงตามข้อบกพร่องที่ระบุในรายงานการประเมิน"
-                    })
-
-                result.append({"Phase": phase, "Goal": goal, "Actions": clean_actions})
+                try:
+                    # Validate ด้วย Pydantic Model
+                    validated_item = ActionPlanActions.model_validate(item) 
+                    result.append(validated_item.model_dump(by_alias=True)) 
+                except Exception as ve:
+                    logger.warning(f"ActionPlan attempt {attempt+1}: Pydantic Validation Failed: {ve}")
+                    continue
 
             if result:
                 logger.info(f"Action Plan สร้างสำเร็จ → {len(result)} phase(s)")
@@ -1447,19 +1528,21 @@ def create_structured_action_plan(
 
         except Exception as e:
             logger.warning(f"ActionPlan attempt {attempt+1} เกิด error: {e}")
+            time.sleep(1)
 
     # ------------------------------------------------------------------
-    # 5. Final Fallback (ไม่เคยเกิดขึ้นใน Production ได้)
+    # 5. Final Fallback
     # ------------------------------------------------------------------
     logger.error("ActionPlan: ทุกอย่างล้มเหลว → ใช้ Hardcoded Template")
     actions = []
     for i, s in enumerate(failed_statements[:8], 1):
         sid = s.get("sub_id") or f"STMT-{i}"
+        level = s.get("level", 0)
         text = str(s.get("statement") or "").strip()[:150]
-        actions.append({"Statement_ID": sid, "Recommendation": f"ดำเนินการตามข้อกำหนด: {text}"})
+        actions.append({"Statement_ID": sid, "Failed_Level": level, "Recommendation": f"ดำเนินการตามข้อกำหนด: {text}", "Target_Evidence_Type": "เอกสารที่ขาดหาย", "Key_Metric": "ความครบถ้วนของเอกสาร", "Steps": []})
 
     return [{
         "Phase": f"Level {target_level} - ปรับปรุงด่วน",
-        "Goal": f"แก้ไขข้อบกพร่องทั้งหมดเพื่อให้ได้ Level {target_level}",
-        "Actions": actions or [{"Statement_ID": "URGENT", "Recommendation": "กรุณาตรวจสอบเอกสารและดำเนินการตามรายงานการประเมินโดยด่วน"}]
+        "Goal": f"แก้ไขข้อบกพร่องทั้งหมดของ {sub_criteria_name} เพื่อให้ได้ Level {target_level}",
+        "Actions": actions or [{"Statement_ID": "URGENT", "Failed_Level": 0, "Recommendation": "กรุณาตรวจสอบเอกสาร", "Target_Evidence_Type": "N/A", "Key_Metric": "N/A", "Steps": []}]
     }]

@@ -36,13 +36,20 @@ RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base"
 #previous version "intfloat/multilingual-e5-base" and cross-encoder/ms-marco-MiniLM-L-6-v2
 
 
+# === HYBRID SEARCH CONFIG ===
+USE_HYBRID_SEARCH: Final[bool] = True  # เปิด/ปิด Hybrid (BM25 + Vector) Search
+HYBRID_VECTOR_WEIGHT: Final[float] = 0.7   # น้ำหนัก Vector Search (0.0 - 1.0)
+HYBRID_BM25_WEIGHT: Final[float] = 0.3     # น้ำหนัก BM25 Search (0.0 - 1.0)
+
+
 # -------------------- Retrieval / Evaluation --------------------
 # L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
-INITIAL_TOP_K: Final[int] = 100             # ใช้สำหรับ retrieval ก่อน rerank
-FINAL_K_RERANKED: Final[int] = 12          # สำหรับ L1–L2; L3–L5 ใช้ 5
+INITIAL_TOP_K: Final[int] = 30             # from 100
+FINAL_K_RERANKED: Final[int] = 15          # ✅ เปลี่ยนเป็น 15 → Fidelity สูงขึ้น
 FINAL_K_NON_RERANKED: Final[int] = 7       # สำหรับ non-reranked
-RERANK_THRESHOLD: Final[float] = 0.5  # เกณฑ์คุณภาพหลักฐาน (Threshold)
-MAX_EVI_STR_CAP: Final[float] = 3.0   # Evidence Strength สูงสุดเมื่อหลักฐานคุณภาพต่ำ
+RERANK_THRESHOLD: Final[float] = 0.5      # ✅ เปลี่ยนเป็น 0.50 → หยุด Loop เร็วขึ้น
+MAX_EVI_STR_CAP: Final[float] = 7.0   # from 3
+MIN_RETRY_SCORE = 0.50 # from 0.65
 MIN_RERANK_SCORE_TO_KEEP = 0.10
 
 CHUNK_SIZE: Final[int] = 1500
@@ -57,7 +64,7 @@ IS_LOG_L3_CONTEXT = True
 # LLM Model (ใช้ตัวเดียว)
 DEFAULT_LLM_MODEL_NAME = "llama3.1:8b"
 # LLM_MODEL_NAME = "llama3:8b-instruct-q4_0"
-LLM_TEMPERATURE: Final[float] = 0.0
+LLM_TEMPERATURE: Final[float] = 0
 LLM_CONTEXT_WINDOW: Final[int] = 4096
 
 
