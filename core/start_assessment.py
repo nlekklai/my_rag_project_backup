@@ -164,6 +164,7 @@ def main():
         doc_type=EVIDENCE_DOC_TYPES, 
         vectorstore_manager=vsm, 
         document_map=document_map, # 🟢 FIX: ส่ง Document Map ไปให้ Engine
+        sub_id=args.sub
     )
 
     # 3. Run Assessment

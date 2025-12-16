@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # core/seam_prompts.py
 # SE-AM Prompt Framework v33 — ENFORCED C/A EXTRACTION & FEW-SHOT GUIDING
-# วันที่: 15 ธันวาคม 2568 (เวอร์ชันที่แนะนำให้ใช้จริง)
+# วันที่: 16 ธันวาคม 2568 (FIXED: Enforced P/D Score for L3+)
 
 import logging
 from langchain_core.prompts import PromptTemplate
@@ -71,14 +71,17 @@ Evidence Strength: {{max_evidence_strength}}/10.0
 - **Scenario B (PASS L4):** ถ้า Context มี: "จากการตรวจสอบ พบว่ามีการปรับปรุงขั้นตอนการทำงานตามข้อเสนอแนะในรายงาน Audit" → **Extraction_A** = "มีการปรับปรุงขั้นตอนตามผล Audit และนำไปปฏิบัติแล้ว" → **A_Act_Score** = 2
 - **Scenario C (FAIL):** ถ้า Context มี: "ไม่มีการประเมินผลอย่างเป็นทางการ" → **Extraction_C** = "-" → **C_Check_Score** = 0
 
---- กฎพิเศษตาม Level ---
+--- กฎพิเศษตาม Level (FIXED: Enforced P/D Score) ---
+* **[NEW CRITICAL FIX] ENFORCED P/D SCORE:**
+  - **ถ้า Context มีหลักฐาน Plan (P) และ Do (D) จาก Level ก่อนหน้าชัดเจน → P_Plan_Score และ D_Do_Score ต้องเป็น 2 (เริ่มต้น 4 คะแนน) เว้นแต่หลักฐานโดยรวมอ่อนแอมาก (Evi Str < 5.0)**
+  - **เป้าหมาย:** บังคับให้ LLM ต้องรับรู้การผ่าน L1, L2 และเน้นการประเมิน C/A เป็นหลัก
 * **[MAJOR FIX] PDCA Focus:** LLM ต้องพิจารณาหลักฐาน PDCA หลักของ Level นั้นอย่างเข้มงวดที่สุด:
   - **Level 3 (Check/C):** ต้องอธิบายเหตุผลหลัก (reason) โดยอ้างอิงถึง **การวัดผล/Audit/Review/KPI** เท่านั้น (แกน C)
   - **Level 4 (Act/A):** ต้องอธิบายเหตุผลหลัก (reason) โดยอ้างอิงถึง **การปรับปรุง/บูรณาการเชิงยุทธศาสตร์** เท่านั้น (แกน A)
   - **Level 5 (Act/Leadership A):** ต้องอธิบายเหตุผลหลัก (reason) โดยอ้างอิงถึง **การติดตาม/กำกับดูแลของผู้บริหารระดับสูง (Steering Committee/Executive)** และ **การนำไปขยายผล (Scaling/Innovation)** เท่านั้น
 * **[NEW] L3 Guardrail:** เกณฑ์ L3: "ผู้บริหารระดับสูงสื่อวิสัยทัศน์... ให้บุคลากรเกิดความเข้าใจ" **มุ่งเน้นเฉพาะ 'การสื่อสาร (Communication)' เพื่อสร้างความเข้าใจเท่านั้น ห้ามสับสนกับเกณฑ์ Motivation (การยกย่อง/การกระตุ้น/แรงจูงใจ)**
 * L3: ห้ามให้ A_Act_Score > 0 เด็ดขาด
-* **[L4/L5 Full C/A Score]**: ถ้า **Extraction_C** มีเนื้อหาชัดเจน (มากกว่า 10 คำ) **C_Check_Score ต้องเป็น 2 เท่านั้น (ห้ามเป็น 1)**
+* **[L3/L4/L5 Full C/A Score]**: ถ้า **Extraction_C** มีเนื้อหาชัดเจน (มากกว่า 10 คำ) **C_Check_Score ต้องเป็น 2 เท่านั้น (ห้ามเป็น 1)**
 * **[L4/L5 Full C/A Score]**: ถ้า **Extraction_A** มีเนื้อหาชัดเจน (มากกว่า 10 คำ) **A_Act_Score ต้องเป็น 2 เท่านั้น (ห้ามเป็น 1)**
 * การตัดสินผ่าน/ไม่ผ่านจะถูกกำหนดโดยระบบ:
   - Level 3: score ≥ 4
@@ -187,24 +190,26 @@ LOW_LEVEL_PROMPT = PromptTemplate(
 USER_LOW_LEVEL_PROMPT = LOW_LEVEL_PROMPT
 
 # =================================================================
-# 4. ACTION PLAN PROMPT
+# 4. ACTION PLAN PROMPT (REVISED)
 # =================================================================
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 คุณคือที่ปรึกษา Strategic Planning ระดับสูงสุด
 หน้าที่: สร้าง Action Plan ที่ปฏิบัติได้จริงจาก Statements ที่ Fail หรือมีหลักฐานอ่อน
+คำแนะนำ: เน้นการแก้ไขปัญหาหลักฐาน PDCA ที่ขาดหาย และเสริมความแข็งแกร่งของหลักฐาน
 """
 
 ACTION_PLAN_TEMPLATE: Final[str] = """
 Sub-Criteria: {sub_id}
-เป้าหมาย: Level {target_level}
+เป้าหมายที่ต้องการบรรลุ: Level {target_level}
+คำแนะนำหลัก: Action Plan ควรเน้นการปรับปรุงด้าน {advice_focus} (Process/Evidence/People)
 
-Statements ที่ต้องแก้:
-{failed_statements_list}
+Statements ที่ต้องแก้ (รวมถึงหลักฐานอ่อนแอ):
+{recommendation_statements_list}
 
 ตอบกลับด้วย JSON Array เท่านั้น:
 
 [
-  {
+  {{
     "Statement_ID": "ตัวอย่าง: 1.1.L3",
     "Recommendation_Type": "FAILED หรือ WEAK_EVIDENCE",
     "Goal": "เป้าหมายที่ชัดเจน",
@@ -212,18 +217,18 @@ Statements ที่ต้องแก้:
     "Responsible": "หน่วยงานที่รับผิดชอบ",
     "Key_Metric": "ตัวชี้วัดความสำเร็จ",
     "Tools_Templates": "เครื่องมือ/แบบฟอร์มที่แนะนำ",
-    "Verification_Outcome": "หลักฐานที่จะใช้พิสูจน์"
-  }
+    "Verification_Outcome": "หลักฐานที่จะใช้พิสูจน์ (เน้น Evidence P/D/C/A)"
+  }}
 ]
 """
 
 ACTION_PLAN_PROMPT = PromptTemplate(
-    input_variables=["sub_id", "target_level", "failed_statements_list"],
+    input_variables=["sub_id", "target_level", "recommendation_statements_list", "advice_focus"],
     template=SYSTEM_ACTION_PLAN_PROMPT + ACTION_PLAN_TEMPLATE
 )
 
 # =================================================================
-# 5. EVIDENCE DESCRIPTION PROMPT
+# 5. EVIDENCE DESCRIPTION PROMPT (REVISED)
 # =================================================================
 SYSTEM_EVIDENCE_DESCRIPTION_PROMPT: Final[str] = """
 คุณคือผู้เชี่ยวชาญ Evidence Analysis
@@ -231,25 +236,32 @@ SYSTEM_EVIDENCE_DESCRIPTION_PROMPT: Final[str] = """
 """
 
 USER_EVIDENCE_DESCRIPTION_TEMPLATE: Final[str] = """
-เกณฑ์: {sub_id} Level {level}
-หลักฐาน:
+เกณฑ์: {sub_id}
+ระดับที่ประเมิน: Level {level}
+ระดับเป้าหมายถัดไป: Level {next_level}
+
+หลักฐานที่พบ:
 {context}
 
 ตอบ JSON เท่านั้น:
 {{
-  "summary": "สรุปหลักฐานเป็นภาษาไทย",
-  "suggestion_for_next_level": "ข้อแนะนำที่ทำได้จริงเพื่อไป Level ถัดไป"
+  "summary": "สรุปหลักฐานที่พบใน Level {level} โดยอ้างอิงถึงความครบถ้วนของหลักฐาน PDCA ที่ใช้ในการประเมิน",
+  "suggestion_for_next_level": "ข้อแนะนำที่ทำได้จริงเพื่อไป Level {next_level} โดยระบุประเภทหลักฐาน PDCA ที่ต้องเพิ่มเติมและปรับปรุง"
 }}
 """
 
 EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
-    input_variables=["sub_id", "level", "context"],
+    input_variables=["sub_id", "level", "context", "next_level"],
     template=SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
 
 # =================================================================
-# 6. Helper selector
+# 6. Helper selector (REVISED)
 # =================================================================
-def get_assessment_prompt(level: int) -> PromptTemplate:
-    """Return correct prompt based on level"""
-    return LOW_LEVEL_PROMPT if level <= 2 else ASSESSMENT_PROMPT
+def select_assessment_prompt(level: int) -> PromptTemplate:
+    """Select the correct prompt template based on the target level"""
+    
+    if level <= 2:
+        return LOW_LEVEL_PROMPT
+    else:
+        return ASSESSMENT_PROMPT

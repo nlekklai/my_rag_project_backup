@@ -1207,7 +1207,7 @@ class VectorStoreManager:
                 # 5. Ensemble (Hybrid) Retriever
                 ensemble_retriever = EnsembleRetriever(
                     retrievers=[vector_retriever, bm25_retriever],
-                    weights=[0.7, 0.3]  # ปรับได้: Vector 70%, BM25 30%
+                    weights=[HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT]  # ปรับได้: Vector 70%, BM25 30%
                 )
 
                 # 6. Ultimate Hybrid Retriever with Rerank

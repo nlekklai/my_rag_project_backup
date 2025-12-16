@@ -1,93 +1,109 @@
 # config/global_vars.py
 import os
-from typing import Final, List
 import uuid
+from typing import List, Dict, Set, Final
 
+# ==================== Project & Namespace ====================
+PROJECT_NAMESPACE_UUID: Final[uuid.UUID] = uuid.UUID('f77c38c0-f213-4318-ae38-e69c73e97022')
 
-# NOTE: แนะนำให้ใช้ Project Namespace เฉพาะถ้ามี
-PROJECT_NAMESPACE_UUID = uuid.UUID('f77c38c0-f213-4318-ae38-e69c73e97022')
+PROJECT_ROOT: Final[str] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# -------------------- Tenant / Context Configuration --------------------
-DEFAULT_TENANT: Final[str] = "pea" 
-DEFAULT_YEAR: Final[int] = 2568    
-
-# ==================== Project Paths (Tenant-Centric Structure) ====================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# 💡 NEW ROOT: ทุกอย่างที่เกี่ยวกับ Tenant Data จะเริ่มต้นที่นี่
-# โครงสร้างใหม่: DATA_STORE_ROOT / tenant / {data, vectorstore, mapping}
 DATA_STORE_ROOT: Final[str] = os.path.join(PROJECT_ROOT, "data_store")
 
-# RAG_RUN_MODE = "ollama"  # หรือ "local" หรือ "cloud"
+
+# ==================== Tenant & Default Configuration ====================
+DEFAULT_TENANT: Final[str] = "pea"
+DEFAULT_YEAR: Final[int] = 2568
+DEFAULT_ENABLER: Final[str] = "KM"
+
+
+# ==================== Run Mode & LLM Configuration ====================
 RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
-# =================================================================
-# 🟢 New: EMBEDDING & RERANKER MODEL CONFIGURATION
-# =================================================================
+DEFAULT_LLM_MODEL_NAME: Final[str] = "llama3:8b"
+LLM_TEMPERATURE: Final[float] = 0.0
+LLM_CONTEXT_WINDOW: Final[int] = 4096
 
-# Embedding Model (ใช้สำหรับสร้าง Vector ในการ Ingest และ Retrieval ครั้งแรก)
-# BAAI/bge-m3 เป็น SOTA Multilingual Model ขนาด 2.27 GB
+
+# ==================== Embedding & Reranker Models ====================
 EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-m3"
-#previous version intfloat/multilingual-e5-base
-
-# Reranker Model (ใช้สำหรับคัดกรองความเกี่ยวข้องของ Chunk ที่ดึงมา)
-# BAAI/bge-reranker-base เป็น Reranker ที่เหมาะสมกับ BGE-M3 และ Multilingual
-RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base" 
-#previous version "intfloat/multilingual-e5-base" and cross-encoder/ms-marco-MiniLM-L-6-v2
+RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base"
 
 
-# === HYBRID SEARCH CONFIG ===
-USE_HYBRID_SEARCH: Final[bool] = True  # เปิด/ปิด Hybrid (BM25 + Vector) Search
-HYBRID_VECTOR_WEIGHT: Final[float] = 0.7   # น้ำหนัก Vector Search (0.0 - 1.0)
-HYBRID_BM25_WEIGHT: Final[float] = 0.3     # น้ำหนัก BM25 Search (0.0 - 1.0)
+# ==================== Hybrid Search Configuration ====================
+USE_HYBRID_SEARCH: Final[bool] = True
+HYBRID_VECTOR_WEIGHT: Final[float] = 0.7
+HYBRID_BM25_WEIGHT: Final[float] = 0.3
 
 
-# -------------------- Retrieval / Evaluation --------------------
-# L1–L2 ต้องการ context กว้าง → ให้ top_k สูงขึ้น
-INITIAL_TOP_K: Final[int] = 30             # from 100
-FINAL_K_RERANKED: Final[int] = 15          # ✅ เปลี่ยนเป็น 15 → Fidelity สูงขึ้น
-FINAL_K_NON_RERANKED: Final[int] = 7       # สำหรับ non-reranked
-RERANK_THRESHOLD: Final[float] = 0.5      # ✅ เปลี่ยนเป็น 0.50 → หยุด Loop เร็วขึ้น
-MAX_EVI_STR_CAP: Final[float] = 7.0   # from 3
-MIN_RETRY_SCORE = 0.50 # from 0.65
-MIN_RERANK_SCORE_TO_KEEP = 0.10
+# ==================== Retrieval & Ranking Parameters ====================
+INITIAL_TOP_K: Final[int] = 75
+FINAL_K_RERANKED: Final[int] = 15
+FINAL_K_NON_RERANKED: Final[int] = 7
 
+RERANK_THRESHOLD: Final[float] = 0.5
+MIN_RETRY_SCORE: Final[float] = 0.50
+MAX_RETRIEVAL_ATTEMPTS: Final[int] = 3
+
+MIN_RERANK_SCORE_TO_KEEP: Final[float] = 0.10
+MIN_RELEVANCE_THRESHOLD: Final[float] = 0.3
+
+CRITICAL_CA_THRESHOLD: Final[float] = 0.65
+
+# 📌 NEW HARD FAIL CONTROL FLAGS
+ENABLE_HARD_FAIL_LOGIC: Final[bool] = True
+ENABLE_CONTEXTUAL_RULE_OVERRIDE: Final[bool] = True
+
+MAX_EVI_STR_CAP: Final[float] = 10.0
+CONTEXT_CAP_L3_PLUS: Final[int] = 60000
+
+
+# ==================== Chunking Configuration ====================
 CHUNK_SIZE: Final[int] = 1500
 CHUNK_OVERLAP: Final[int] = 250
 STANDARD_K: Final[int] = 5
 
-QUERY_INITIAL_K = 20
-QUERY_FINAL_K = 5
+QUERY_INITIAL_K: Final[int] = 20
+QUERY_FINAL_K: Final[int] = 5
 
-IS_LOG_L3_CONTEXT = True
 
-# LLM Model (ใช้ตัวเดียว)
-DEFAULT_LLM_MODEL_NAME = "llama3.1:8b"
-# LLM_MODEL_NAME = "llama3:8b-instruct-q4_0"
-LLM_TEMPERATURE: Final[float] = 0
-LLM_CONTEXT_WINDOW: Final[int] = 4096
+# ==================== Priority & Parallel Processing ====================
+LIMIT_CHUNKS_PER_PRIORITY_DOC: Final[int] = 5
+PRIORITY_CHUNK_LIMIT: Final[int] = 30
+MAX_PARALLEL_WORKERS: Final[int] = 4
+
+
+# ==================== Logging & Context Control ====================
+IS_LOG_L3_CONTEXT: Final[bool] = True
+MAX_EVAL_CONTEXT_LENGTH: Final[int] = 4500
 
 
 # ==================== Supported File & Document Types ====================
 SUPPORTED_TYPES: Final[List[str]] = [
-    ".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv", ".jpg", ".jpeg", ".png"
+    ".pdf", ".docx", ".txt", ".xlsx", ".pptx", ".md", ".csv",
+    ".jpg", ".jpeg", ".png"
 ]
 
 SUPPORTED_DOC_TYPES: Final[List[str]] = [
-    "document", "policy", "report", "statement", "evidence", "feedback", "faq", "seam"
+    "document", "policy", "report", "statement", "evidence",
+    "feedback", "faq", "seam"
 ]
 
 EVIDENCE_DOC_TYPES: Final[str] = "evidence"
 DEFAULT_DOC_TYPES: Final[str] = "document"
 
-# ==================== Enabler Configuration ====================
-DEFAULT_ENABLER: Final[str] = "KM"
-SUPPORTED_ENABLERS: Final[List[str]] = ["CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"]
 
-# ------------------------------------------------------------------
-# SE-AM Reference Document Mapping (Updated from latest ingestion)
-# ------------------------------------------------------------------
-SEAM_ENABLER_MAP: Final[dict] = {
+# ==================== Enabler & Assessment Constants ====================
+SUPPORTED_ENABLERS: Final[List[str]] = [
+    "CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA"
+]
+
+MAX_LEVEL: Final[int] = 5
+INITIAL_LEVEL: Final[int] = 1
+
+
+# ==================== SE-AM Enabler Mapping ====================
+SEAM_ENABLER_MAP: Final[Dict[str, str]] = {
     "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร",
     "SP": "2 การวางแผนเชิงยุทธศาสตร์",
     "RM&IC": "3 การบริหารความเสี่ยงและการควบคุมภายใน",
@@ -95,23 +111,81 @@ SEAM_ENABLER_MAP: Final[dict] = {
     "DT": "5 การพัฒนาเทคโนโลยีดิจิทัล",
     "HCM": "6 การบริหารทุนมนุษย์",
     "KM": "7 การจัดการความรู้และนวัตกรรม",
-    "IM": "7 การจัดการความรู้และนวัตกรรม",  # ชี้ไปที่เดียวกับ KM
+    "IM": "7 การจัดการความรู้และนวัตกรรม",
     "IA": "8 การตรวจสอบภายใน",
 }
 
-# --- Assessment Constants ---
-MAX_LEVEL: Final[int] = 5 
-INITIAL_LEVEL: Final[int] = 1
-MAX_PARALLEL_WORKERS: Final[int] = 4   # แนะนำ 4 สำหรับ Mac
-LIMIT_CHUNKS_PER_PRIORITY_DOC = 5
-MAX_EVAL_CONTEXT_LENGTH = 4500
-PRIORITY_CHUNK_LIMIT: Final[int] = 30
 
-# 💡 Rubric / Export Paths
+# ==================== Paths & Export Configuration ====================
 RUBRIC_FILENAME_PATTERN: Final[str] = "{tenant}_{enabler}_rubric.json"
-# 📌 FIX: กำหนด Path สำหรับ Rubric Config ที่ไม่ได้อยู่ใน DATA_STORE_ROOT
-RUBRIC_CONFIG_DIR: Final[str] = os.path.join(PROJECT_ROOT, "config", "mapping") 
+RUBRIC_CONFIG_DIR: Final[str] = os.path.join(PROJECT_ROOT, "config", "mapping")
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
-# KM_EVIDENCE_STATEMENTS_FILE: Final[str] = os.path.join(RUBRIC_CONFIG_DIR, "km_evidence_statements.json")
+
 DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"
-EVIDENCE_MAPPING_FILENAME_SUFFIX = "_evidence_mapping.json"
+EVIDENCE_MAPPING_FILENAME_SUFFIX: Final[str] = "_evidence_mapping.json"
+
+# =================================================================
+# 🟢 Helper Function for PDCA Calculation (Priority 1 Part 2 & Priority 2)
+# =================================================================
+LEVEL_PHASE_MAP = {
+    1: ['P'],
+    2: ['P', 'D'],
+    3: ['P', 'D', 'C'],
+    4: ['P', 'D', 'C', 'A'],
+    5: ['P', 'D', 'C', 'A'] 
+}
+
+
+# 📌 NEW: REQUIRED_PDCA Global Constant (Patch 1 Dependency)
+REQUIRED_PDCA: Final[Dict[int, Set[str]]] = {
+    1: {"P"},
+    2: {"P", "D"},
+    3: {"P", "D", "C"},
+    4: {"P", "D", "C", "A"},
+    5: {"P", "D", "C", "A"},
+}
+
+# ----------------------------------------------------------------------
+CORRECT_PDCA_SCORES_MAP: Final[Dict[int, Dict[str, int]]] = {
+    1: {'P': 1, 'D': 0, 'C': 0, 'A': 0},
+    2: {'P': 1, 'D': 1, 'C': 0, 'A': 0},
+    3: {'P': 1, 'D': 1, 'C': 1, 'A': 1},
+    4: {'P': 2, 'D': 2, 'C': 1, 'A': 1},
+    5: {'P': 2, 'D': 2, 'C': 2, 'A': 2},
+}
+
+
+# =================================================================
+# Heuristic Classification Helpers - ULTIMATE VERSION (ใช้ contextual_rules.json)
+# =================================================================
+PDCA_PRIORITY_ORDER = ['Act', 'Check', 'Do', 'Plan']
+
+# Keyword พื้นฐาน (fallback)
+BASE_PDCA_KEYWORDS: Final[Dict[str, List[str]]] = {
+    'Plan': [
+        r'นโยบาย', r'แผน', r'กลยุทธ์', r'กรอบแนวทาง', r'วิสัยทัศน์', r'เป้าหมาย', r'กำหนด',
+        r'ยุทธศาสตร์', r'แผนแม่บท', r'master plan', r'roadmap', r'กำหนดทิศทาง'
+    ],
+    'Do': [
+        r'การดำเนินงาน', r'การจัดทำ', r'การฝึกอบรม', r'การปฏิบัติ', r'ระบบ', r'ดำเนินการ', r'จัดกิจกรรม',
+        r'แต่งตั้ง', r'คณะทำงาน', r'ถ่ายทอด', r'action plan', r'ขับเคลื่อน', r'จัดตั้ง'
+    ],
+    'Check': [
+        r'การวัดผล', r'kpi', r'การประเมิน', r'รายงานผล', r'การวิเคราะห์ช่องว่าง', r'ตรวจสอบ', r'ผลลัพธ์', r'ติดตาม',
+        r'ตัวชี้วัด', r'audit', r'review', r'ประเมินผล',
+        r'ความคืบหน้า', r'ปัญหาและอุปสรรค'  # <-- เพิ่ม
+    ],
+    'Act': [
+        r'การปรับปรุง', r'การแก้ไข', r'บทเรียนที่ได้รับ', r'corrective action', r'เปลี่ยนแปลงวิธีการ', r'มาตรการ',
+        r'ปรับปรุงอย่างต่อเนื่อง', r'lesson learned', r'นำมาปรับปรุง',
+        r'ข้อเสนอแนะ', r'แนวทางแก้ไข' # <-- เพิ่ม
+    ]
+}
+
+PDCA_LEVEL_SYNONYMS: Final[Dict[int, str]] = {
+    1: "นโยบาย, แผนแม่บท, ยุทธศาสตร์, วิสัยทัศน์, การกำหนดเป้าหมาย, ผู้บริหารระดับสูง",
+    2: "คณะทำงาน, โครงสร้างองค์กร, การขับเคลื่อน, การดำเนินการ, ความรับผิดชอบ, แผนปฏิบัติการ, การสื่อสารนโยบาย",
+    3: "การวัดผล, การประเมินผล, KPI, รายงานผล, Audit, การตรวจสอบ, การทบทวน, การติดตามผล, การนำข้อมูลป้อนกลับไปใช้",
+    4: "การปรับปรุง, Corrective Action, Preventive Action, บทเรียนที่ได้รับ, การแก้ไข, ปรับแผน, การสร้างนวัตกรรม",
+    5: "นวัตกรรม, ความยั่งยืน, Best Practice, การขยายผล, ผลกระทบระยะยาว, รางวัล, External Recognition, การทบทวนวิสัยทัศน์",
+}
