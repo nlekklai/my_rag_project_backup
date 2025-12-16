@@ -127,14 +127,6 @@ EVIDENCE_MAPPING_FILENAME_SUFFIX: Final[str] = "_evidence_mapping.json"
 # =================================================================
 # 🟢 Helper Function for PDCA Calculation (Priority 1 Part 2 & Priority 2)
 # =================================================================
-LEVEL_PHASE_MAP = {
-    1: ['P'],
-    2: ['P', 'D'],
-    3: ['P', 'D', 'C'],
-    4: ['P', 'D', 'C', 'A'],
-    5: ['P', 'D', 'C', 'A'] 
-}
-
 
 # 📌 NEW: REQUIRED_PDCA Global Constant (Patch 1 Dependency)
 REQUIRED_PDCA: Final[Dict[int, Set[str]]] = {

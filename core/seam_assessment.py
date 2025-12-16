@@ -58,7 +58,6 @@ try:
         HYBRID_BM25_WEIGHT,                  # เช่นเดียวกัน
         CHUNK_SIZE,                          # ถ้าใช้ใน hydration หรือ chunking
         CHUNK_OVERLAP,                       # เช่นเดียวกัน
-        LEVEL_PHASE_MAP,               # <--- เพิ่ม
         REQUIRED_PDCA,                 # <--- เพิ่ม
         CORRECT_PDCA_SCORES_MAP,       # <--- เพิ่ม
         PDCA_PRIORITY_ORDER,           # <--- เพิ่ม
@@ -2200,7 +2199,8 @@ class SEAMPDCAEngine:
                 sub_id=sub_id,
                 sub_criteria_name=sub_criteria_name, 
                 target_level=target_next_level, 
-                llm_executor=self.llm
+                llm_executor=self.llm,
+                ActionPlanActions=self.ActionPlanActions
             )
             
         except Exception as e:
@@ -2761,26 +2761,17 @@ class SEAMPDCAEngine:
                     return ""
 
                 block_content = []
-                
-                # Sort chunks by rerank_score (descending) for better presentation order
-                # Note: Score 0.0000 คือ Priority/Baseline ที่ไม่มี Rerank Score
                 sorted_chunks = sorted(chunks, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
                 
                 for i, chunk in enumerate(sorted_chunks):
-                    # 🎯 บรรทัดนี้ปลอดภัยแล้ว เพราะเราใช้ self._guarantee_text_key ข้างต้น
-                    content = f"{chunk['text']}\n"
+                    # 🎯 รวม Header และ Content ใน Block เดียวกัน
+                    header = f"### [{tag} {i+1}/{len(sorted_chunks)}]"
+                    content = chunk['text'].strip() # ใช้ strip() เพื่อความสะอาด
                     
-                    # === การแก้ไข: ทำให้ Header สั้นลงและเอา Metadata ออก ===
-                    header_lines = [
-                        # คงเหลือแค่ Tag และลำดับ
-                        f"### [{tag} {i+1}/{len(sorted_chunks)}]", 
-                    ]
-                    
-                    block_content.append("\n".join(header_lines))
-                    block_content.append(content)
+                    block_content.append(f"{header}\n{content}")
                 
-                # การแบ่ง Block ระหว่าง Chunk จะเป็น ---
-                return "\n---\n".join(block_content) 
+                # ใช้ \n---\n เป็นตัวแบ่ง Block
+                return "\n---\n".join(block_content)
             # --------------------------------------------------------------------------
 
             # 1. Group evidences by PDCA tag (using the consolidated list)

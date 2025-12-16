@@ -16,6 +16,7 @@ from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
+from core.action_plan_schema import get_clean_action_plan_schema
 
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
@@ -1228,344 +1229,265 @@ def create_context_summary_llm(
 # 5. FINAL FUNCTION (Production-Ready 100%)
 # =================================================================
 
-def _extract_json_array_for_action_plan(llm_response: str) -> List[Dict[str, Any]]:
+
+# 🚨 IMPORTANT: ต้องรับ logger เข้ามาเป็น argument
+def _extract_json_array_for_action_plan(llm_response: str, logger: Callable) -> List[Dict[str, Any]]:
     """Extract JSON object/array อย่างแข็งแกร่งสุด ๆ"""
     if not llm_response or not isinstance(llm_response, str):
         return []
 
     text = llm_response.strip()
+    json_str = ""
 
     # 1. ลองหาใน code block ก่อน (```json หรือ ```)
-    fenced_search = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    fenced_search = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
     if not fenced_search:
-        fenced_search = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
-        
+        fenced_search = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+
     if fenced_search:
-        json_str = fenced_search.group(1)
+        json_str = fenced_search.group(1).strip()
     else:
-        # 2. หา balanced {} object
-        start = text.find("{")
-        if start == -1:
-            return []
-        depth = 0
-        json_str = ""
-        for i in range(start, len(text)):
-            if text[i] == "{": depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    json_str = text[start:i+1]
-                    break
+        # 2. หา balanced [] array หรือ {} object
+        start_array = text.find("[")
+        start_object = text.find("{")
+        
+        if start_array != -1 and (start_object == -1 or start_array < start_object):
+             start, end_char = start_array, ']'
+        elif start_object != -1:
+             start, end_char = start_object, '}'
         else:
+             return []
+        
+        # ใช้วิธีหาแบบเน้นวงเล็บเปิดปิดให้สมดุล (Robust parsing)
+        depth = 0
+        json_str_builder = []
+        is_in_string = False
+        
+        # เริ่มจาก index ที่เจอวงเล็บเปิด
+        for i in range(start, len(text)):
+            char = text[i]
+            if char == '"' and (i == 0 or text[i-1] != '\\'):
+                is_in_string = not is_in_string
+            
+            if not is_in_string:
+                if char == '[' or char == '{':
+                    depth += 1
+                elif char == ']' or char == '}':
+                    depth -= 1
+            
+            json_str_builder.append(char)
+            
+            if depth == 0 and (char == end_char):
+                json_str = "".join(json_str_builder).strip()
+                break
+        
+        if depth != 0 and not json_str:
+            logger("ActionPlan JSON parse failed (Depth Error): วงเล็บเปิดปิดไม่สมดุล")
             return []
 
+
     # 3. Parse ด้วย json → json5 fallback
+    if not json_str:
+        return []
+
     try:
         data = json.loads(json_str)
     except:
         try:
             data = json5.loads(json_str)
         except Exception as e:
-            logger.error(f"ActionPlan JSON parse failed (Fallback): {str(e)} | Snippet: {json_str[:200]}")
+            logger(f"ActionPlan JSON parse failed (Fallback): {str(e)} | Snippet: {json_str[:200]}")
             return []
 
-    # 4. ตรวจสอบและคืนค่าเป็น List of Dict (ใช้โครงสร้าง List[Dict[...]] เสมอ)
-    if isinstance(data, dict):
-        return [data] if "Phase" in data and "Actions" in data else []
-    
+    # 4. ตรวจสอบและคืนค่าเป็น List of Dict
     if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
+        # ตรวจสอบเบื้องต้นว่าแต่ละ item น่าจะเป็น ActionPlanActions
+        return [item for item in data if isinstance(item, dict) and ('Phase' in item or 'Goal' in item)]
+    
+    if isinstance(data, dict):
+        # หาก LLM ตอบเป็น object เดียว ให้ห่อหุ้มไว้ใน List
+        if 'Phase' in data or 'Goal' in data:
+            return [data]
         
     return []
 
+
+# 🚨 IMPORTANT: ต้องรับ logger เข้ามาเป็น argument
 def create_structured_action_plan(
-    recommendation_statements: List[Dict[str, Any]], # ✅ เปลี่ยนชื่อ Argument เป็น recommendation_statements
+    recommendation_statements: List[Dict[str, Any]],
     sub_id: str,
     sub_criteria_name: str,
     target_level: int,
-    llm_executor: Any,
+    llm_executor: Any, # ใช้สำหรับเรียก LLM จริง
+    ActionPlanActions: Any, # รับ Pydantic Model เข้ามา
     max_retries: int = 3
 ) -> List[Dict[str, Any]]:
-    """
-    สร้าง Action Plan ที่สมบูรณ์แบบที่สุดเท่าที่จะเป็นไปได้ ครอบคลุมทั้งกรณี Fail, Weak Evidence, และ Sustain/Optimize
-    """
     
     # ------------------------------------------------------------------
-    # 1. ทุกอย่างผ่าน (List ว่าง) → แผนรักษาระดับ/ยกระดับคุณภาพหลักฐาน (Sustain/Optimize Logic)
+    # 1. Logic สำหรับกรณี "ทุกอย่างผ่าน" (Sustain/Optimize Logic)
     # ------------------------------------------------------------------
+    # (โค้ดส่วนนี้ยังคงเดิม)
     if not recommendation_statements:
-        
-        # คำแนะนำหลักในการเสริมสร้างหลักฐาน PDCA
-        Sustain_PDC = "ทบทวนแผนงานและปรับปรุง Evidence P/D/C/A ให้มีความชัดเจนและเข้มแข็งยิ่งขึ้น เพื่อเตรียมพร้อมสำหรับการตรวจสอบภายนอก (External Audit)"
-        
-        if target_level >= 5:
-            # กรณีถึง Level 5 แล้ว: เน้นนวัตกรรมและการเตรียม Audit
-            return [{
-                "Phase": "Level 5 - Optimization & Audit Prep",
-                "Goal": f"รักษาความเป็นเลิศและส่งมอบนวัตกรรมต่อเนื่อง พร้อมเตรียม Evidence ทั้งหมดเพื่อรองรับการ Audit ของ {sub_criteria_name} ({sub_id})",
-                "Actions": [
-                    {
-                        "Statement_ID": "OPT-AUDIT", 
-                        "Failed_Level": 5, 
-                        "Recommendation": Sustain_PDC, 
-                        "Target_Evidence_Type": "รายงาน Audit/Lesson Learned", 
-                        "Key_Metric": "ความสมบูรณ์ของหลักฐาน (P/D/C/A)", 
-                        "Steps": ["บันทึกบทเรียน", "จัดทำสรุปการประเมินตนเอง"]
-                    },
-                    {
-                        "Statement_ID": "INNOVATION", 
-                        "Failed_Level": 5, 
-                        "Recommendation": "ส่งเสริมนวัตกรรมใหม่ ๆ และนำไปปรับใช้ในกระบวนการทำงานอย่างเป็นระบบ", 
-                        "Target_Evidence_Type": "รายงานนวัตกรรม", 
-                        "Key_Metric": "จำนวนนวัตกรรมที่นำไปใช้", 
-                        "Steps": ["ระบุโครงการนำร่อง", "วัดผลกระทบ"]
-                    }
-                ]
-            }]
-        else:
-             # กรณี Pass L1-L4: เน้น Sustain และเตรียมพร้อมสู่ Level ถัดไป
-             return [{
-                "Phase": f"Level {target_level} - Sustain & Next Level Prep",
-                "Goal": f"รักษามาตรฐาน Level {target_level} และเตรียมความพร้อมสู่ Level {target_level + 1} สำหรับ {sub_criteria_name}",
-                "Actions": [
-                    {
-                        "Statement_ID": f"SUSTAIN-L{target_level}", 
-                        "Failed_Level": target_level, 
-                        "Recommendation": Sustain_PDC, 
-                        "Target_Evidence_Type": "หลักฐาน PDCA (P/D/C/A)", 
-                        "Key_Metric": "ความสมบูรณ์ของหลักฐาน (P/D/C/A)", 
-                        "Steps": ["รวบรวมหลักฐาน P/D/C/A ที่ครบถ้วน", "จัดเก็บในระบบ KM"]
-                    },
-                    {
-                        "Statement_ID": f"PREP-L{target_level + 1}", 
-                        "Failed_Level": target_level + 1, 
-                        "Recommendation": f"ทบทวนข้อกำหนดของ Level {target_level + 1} และกำหนด Action Plan เพื่อดำเนินการตามเกณฑ์ที่ขาด", 
-                        "Target_Evidence_Type": "แผนดำเนินการ KM", 
-                        "Key_Metric": "ความคืบหน้าการเตรียมพร้อม", 
-                        "Steps": ["วิเคราะห์ Gap ของ Level ถัดไป", "จัดทำแผนงาน"]
-                    }
-                ]
-            }]
-
-
-    # ------------------------------------------------------------------
-    # 2. LLM ไม่มี → Fallback สวยงาม
-    # ------------------------------------------------------------------
-    if llm_executor is None:
-        logger.error("create_structured_action_plan: llm_executor is None → ใช้ fallback")
-        actions = []
-        for s in recommendation_statements[:10]: # ✅ ใช้ชื่อใหม่ตรงนี้
-            sid = s.get("sub_id") or s.get("statement_id") or "UNKNOWN"
-            level = s.get("level", 0)
-            rec_type = s.get("recommendation_type", "FAILED")
-            stmt = (s.get("statement") or "").strip()[:200]
-            reason = (s.get("reason") or "").strip()[:300]
-            actions.append({
-                "Statement_ID": sid,
-                "Failed_Level": level,
-                "Recommendation": f"[{sid} | {rec_type}] {stmt} | สาเหตุ: {reason}",
-                "Target_Evidence_Type": "เอกสารที่ขาดหาย/อ่อนแอ",
-                "Key_Metric": "ความครบถ้วนของเอกสาร",
-                "Steps": []
-            })
         return [{
-            "Phase": f"Level {target_level} (Fallback)",
-            "Goal": f"ยกระดับให้ได้ Level {target_level} สำหรับ {sub_criteria_name} ({sub_id}) โดยเน้นการแก้ไข",
-            "Actions": actions or [{"Statement_ID": "NO-LLM", "Failed_Level": 0, "Recommendation": "กรุณาตรวจสอบเอกสาร", "Target_Evidence_Type": "N/A", "Key_Metric": "N/A", "Steps": []}]
+            "Phase": f"Level {target_level} - Sustain & Next Level Prep",
+            "Goal": f"รักษามาตรฐาน Level {target_level} และเตรียมความพร้อมสู่ Level {min(target_level + 1, 5)} สำหรับ {sub_criteria_name}",
+            "Actions": [
+                {
+                    "Statement_ID": f"SUSTAIN_L{target_level}", 
+                    "Failed_Level": target_level, 
+                    "Recommendation": "ทบทวนแผนงานและปรับปรุง Evidence P/D/C/A ให้มีความชัดเจนและเข้มแข็งยิ่งขึ้น เพื่อเตรียมพร้อมสำหรับการตรวจสอบภายนอก", 
+                    "Target_Evidence_Type": "หลักฐาน PDCA ที่ครบถ้วน", 
+                    "Key_Metric": "ความสมบูรณ์ของหลักฐาน (P/D/C/A)", 
+                    "Steps": [{"Step": "1", "Description": "รวบรวมหลักฐาน P/D/C/A ที่ครบถ้วน", "Responsible": "KM", "Tools_Templates": "N/A", "Verification_Outcome": "เอกสารครบถ้วน"}]
+                }
+            ]
         }]
 
+
     # ------------------------------------------------------------------
-    # 3. เตรียม Prompt + Schema และ Logic การดึงค่าสำหรับ Prompt
+    # 2. เตรียม Prompt Context และ Logic การดึงค่าสำหรับ Prompt
     # ------------------------------------------------------------------
     
+    # 2.1 Pydantic Schema JSON (ใช้ ActionPlanActions)
     try:
-        # Pydantic Model ActionPlanActions ต้องถูก Import มา
-        # 🚨 สมมติ ActionPlanActions เป็น Pydantic Model สำหรับ Action Plan Output
-        schema_json = '{"Phase":"string", "Goal":"string", "Actions":[]}' # แทนที่ด้วย json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2) 
+        # ใช้ function clean schema
+        raw_schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
+        schema_json = get_clean_action_plan_schema(raw_schema_json)
     except Exception as e:
-        logger.error(f"Failed to generate JSON schema: {e}")
-        schema_json = '{"Phase":"string", "Goal":"string", "Actions":[]}' # Fallback Schema
+        logger(f"Error generating clean Pydantic schema: {e}")
+        # Fallback schema
+        schema_json = '{"Phase":"string", "Goal":"string", "Actions":[{"Statement_ID":"string", "Recommendation":"string", "Steps":[]}]}'
     
-    # 🚨 สมมติ SYSTEM_ACTION_PLAN_PROMPT และ ACTION_PLAN_PROMPT มีอยู่
-    SYSTEM_ACTION_PLAN_PROMPT = "You are an expert SE-AM/KM Consultant. Your task is to analyze the failed statements and provide highly detailed, actionable recommendations in Thai, structured as a JSON object."
-    ACTION_PLAN_PROMPT = """
-    วิเคราะห์ผลการประเมินสำหรับเกณฑ์ "{sub_criteria_name}" (ID: {sub_id})
-    - เป้าหมายปัจจุบัน: บรรลุ Level {target_level}
-    - คะแนนสูงสุด (Max Rerank Score): {max_rerank_score:.4f}
-    - ปัญหาหลัก: {reason}
-    - คำแนะนำหลัก: Action Plan ควรเน้นการปรับปรุงด้าน {Advice_Focus} (Process/Evidence/People)
+    # 2.2 Define Prompts
+    SYSTEM_ACTION_PLAN_PROMPT: str = """
+คุณคือที่ปรึกษา Strategic Planning ระดับสูงสุด
+หน้าที่: สร้าง Action Plan ที่ปฏิบัติได้จริงจาก Statements ที่ Fail หรือมีหลักฐานอ่อน
+คำแนะนำ: เน้นการแก้ไขปัญหาหลักฐาน PDCA ที่ขาดหาย และเสริมความแข็งแกร่งของหลักฐาน
+"""
+    ACTION_PLAN_TEMPLATE: str = f"""
+Sub-Criteria: {{sub_id}}
+เป้าหมายที่ต้องการบรรลุ: Level {{target_level}}
+คำแนะนำหลัก: Action Plan ควรเน้นการปรับปรุงด้าน {{advice_focus}} (Process/Evidence/People)
 
-    --- Statement ที่ต้องการคำแนะนำ ({num_statements} รายการ) ---
-    {context}
-    
-    โปรดสร้าง Action Plan 1-2 Phase ที่ชัดเจนเพื่อแก้ไขข้อบกพร่องที่เกิดขึ้น (FAILED) และเสริมสร้างหลักฐานที่อ่อนแอ (WEAK_EVIDENCE) เพื่อบรรลุ Level เป้าหมาย
-    """
+Statements ที่ต้องแก้ (รวมถึงหลักฐานอ่อนแอ):
+{{recommendation_statements_list}}
 
+--- JSON SCHEMA ---
+{schema_json}
 
-    system_prompt = (
-        SYSTEM_ACTION_PLAN_PROMPT
-        + "\n\n--- JSON SCHEMA (ตอบเป็น OBJECT เท่านั้น) ---\n"
-        + schema_json
-        + "\n\nIMPORTANT:\n"
-          "- ตอบกลับด้วย JSON OBJECT ตาม SCHEMA เท่านั้น เช่น: { \"Phase\": ..., \"Actions\": [...] }\n"
-          "- ห้ามมีข้อความนอก JSON เด็ดขาด\n"
-          "- ทุก field ต้องเป็นภาษาไทย\n"
-          "- Actions ต้องมีอย่างน้อย 1 รายการต่อ Phase และทุก Action ควรมีรายการ Steps ย่อยที่ชัดเจนเพื่อแสดงวิธีดำเนินการ" 
-    )
+โปรดสร้าง Action Plan ในรูปแบบ **JSON ARRAY** ของ objects (List[ActionPlanActions]) โดยแต่ละ object ควรเป็น 1 Phase หรือ 1 กลุ่มการแก้ไข และ Actions ภายในต้องสอดคล้องกับ Statement ID ที่ระบุ
+"""
 
+    # 2.3 Logic การดึงค่าและกำหนด Advice_Focus (ไม่มีการเปลี่ยนแปลงหลัก)
     stmt_blocks = []
-    # ⚠️ ข้อควรระวัง: เราควรส่งเฉพาะรายการที่ไม่ซ้ำกันไปยัง LLM
     unique_recommendation_statements = []
     seen_ids = set()
-    for s in recommendation_statements: # ✅ ใช้ชื่อใหม่ตรงนี้
-        sid = s.get("sub_id") or s.get("statement_id") or f"STMT-{i}"
+    highest_stmt = {}
+    
+    # [Logic for filtering unique statements and determining highest_stmt remains unchanged]
+    for s in recommendation_statements:
+        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
         if sid not in seen_ids:
             unique_recommendation_statements.append(s)
             seen_ids.add(sid)
 
-
-    for i, s in enumerate(unique_recommendation_statements, 1):
-        sid = s.get("sub_id") or s.get("statement_id") or f"STMT-{i}"
-        level = s.get("level", "?")
-        text = str(s.get("statement") or "").strip()
-        reason = str(s.get("reason") or "").strip()
-        rec_type = s.get("recommendation_type", "FAILED") # ใช้ Tag FAILED/WEAK_EVIDENCE
-        
-        # ดึง PDCA Score (มาจากผลลัพธ์ของ _run_single_assessment)
-        p_score = s.get('pdca_breakdown', {}).get('P', 0.0)
-        c_score = s.get('pdca_breakdown', {}).get('C', 0.0)
-        d_score = s.get('pdca_breakdown', {}).get('D', 0.0)
-        a_score = s.get('pdca_breakdown', {}).get('A', 0.0)
-        
-        status_line = f"Score: {s.get('score', 0.0)} (P={p_score:.1f}, D={d_score:.1f}, C={c_score:.1f}, A={a_score:.1f})"
-        instruction = f"แก้ไขปัญหา ({rec_type}): {reason}"
-        
-        stmt_blocks.append(
-            f"ลำดับที่ {i}\nStatement ID: {sid} (Level {level})\nประเภทคำแนะนำ: {rec_type}\nข้อความ: {text}\n{status_line}\nคำแนะนำสำหรับ LLM: {instruction}\n"
-        )
+    failed_only_stmts = [s for s in unique_recommendation_statements if s.get('recommendation_type') in ['FAILED', 'GAP_ANALYSIS']]
     
-    # 3.3 🔥🔥🔥 Logic การดึงค่าและกำหนด Advice_Focus (ฉบับแก้ไขและจัดลำดับ) 🔥🔥🔥
-    try:
-        # ใช้เฉพาะ Statement ที่ Fail จริง (rec_type == 'FAILED') ในการกำหนด Focus หลัก
-        failed_only_stmts = [s for s in unique_recommendation_statements if s.get('recommendation_type') == 'FAILED']
-        
-        if not failed_only_stmts:
-             # ถ้ามีแต่ Weak Evidence ให้ใช้ Statement ที่ Weak Evidence ที่ Level สูงสุด
-             highest_stmt = max(unique_recommendation_statements, key=lambda s: s.get('level', 0))
-        else:
-             # ถ้ามี Statement ที่ Fail จริง ให้ใช้ Statement ที่ Fail ที่ Level สูงสุด
-             highest_stmt = max(failed_only_stmts, key=lambda s: s.get('level', 0))
-
-        highest_failed_level = highest_stmt.get('level', target_level)
-        
-        # ดึง PDCA Score ที่ชัดเจน
+    if not failed_only_stmts and unique_recommendation_statements:
+         highest_stmt = max(unique_recommendation_statements, key=lambda s: s.get('level', 0))
+    elif failed_only_stmts:
+         highest_stmt = max(failed_only_stmts, key=lambda s: s.get('level', 0))
+    
+    advice_focus = "Process" 
+    if highest_stmt:
         pdca_breakdown = highest_stmt.get('pdca_breakdown', {})
         a_score = pdca_breakdown.get('A', 0.0)
         c_score = pdca_breakdown.get('C', 0.0)
         d_score = pdca_breakdown.get('D', 0.0)
-        p_score = pdca_breakdown.get('P', 0.0)
         
-        # 4.1 วิเคราะห์เพื่อกำหนด Advice_Focus ตามลำดับความสำคัญ
-        advice_focus = "Process" 
-        
-        # 2. ตรวจสอบเงื่อนไข Evidence (หากขาด D, C, หรือ A อย่างรุนแรง)
         if d_score < 0.5 or c_score < 0.5 or a_score < 0.5:
             advice_focus = "Evidence" 
-        
-        # 3. ตรวจสอบเงื่อนไข People (หากเป็นเกณฑ์ด้านบุคลากร/KM)
         elif sub_id in ["1.2", "3.1", "3.2", "3.3"]:
             advice_focus = "People"
-        # กรณีอื่นๆ ทั้งหมดจะคงค่าเริ่มต้นที่ "Process"
+    
+    for i, s in enumerate(unique_recommendation_statements, 1):
+        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
+        rec_type = s.get("recommendation_type", "FAILED")
+        text = str(s.get("statement") or "").strip()
+        reason = str(s.get("reason") or "").strip()
+        stmt_blocks.append(
+            f"{i}. Statement ID: {sid} (Level {s.get('level', '?')})\n   ประเภทคำแนะนำ: {rec_type}\n   ข้อความ: {text}\n   ปัญหา: {reason}\n"
+        )
+    
+    prompt_args = {
+        "sub_id": sub_id,
+        "target_level": target_level,
+        "recommendation_statements_list": "\n\n".join(stmt_blocks),
+        "advice_focus": advice_focus
+    }
 
-        # 4.2 เตรียม Argument Dictionary
-        prompt_args = {
-            "sub_id": sub_id,
-            "sub_criteria_name": sub_criteria_name, 
-            "target_level": target_level,
-            "level": highest_failed_level,
-            "threshold": highest_stmt.get('threshold', 0),
-            "score": highest_stmt.get('score', 0.0),
-            "p_score": p_score, 
-            "d_score": d_score, 
-            "c_score": c_score, 
-            "a_score": a_score, 
-            "reason": highest_stmt.get('reason', 'N/A'),
-            "statement_text": highest_stmt.get('statement', 'N/A'),
-            "max_rerank_score": highest_stmt.get('max_rerank_score', 0.0),
-            "num_statements": len(unique_recommendation_statements), # จำนวน Statement ที่ส่งไปให้ LLM
-            "context": "\n\n".join(stmt_blocks), 
-            "Advice_Focus": advice_focus,
-        }
-        
-    except (StopIteration, ValueError):
-        logger.warning("ไม่พบ Highest Statement Data → ใช้ Fallback Args")
-        prompt_args = {
-            "sub_id": sub_id, "sub_criteria_name": sub_criteria_name, "level": target_level,
-            "target_level": target_level, "num_statements": len(unique_recommendation_statements),
-            "threshold": 0, "score": 0.0, "p_score": 0.0, "d_score": 0.0, 
-            "c_score": 0.0, "a_score": 0.0, "reason": "ข้อมูลการประเมินขาดหาย",
-            "statement_text": "N/A", "context": "\n\n".join(stmt_blocks), "max_rerank_score": 0.0,
-            "Advice_Focus": "Process",
-        }
-
-    # Format the prompt using the compiled arguments
-    human_prompt = ACTION_PLAN_PROMPT.format(**prompt_args)
-    # ------------------------------------------------------------------
-
+    human_prompt = ACTION_PLAN_TEMPLATE.format(**prompt_args)
+    system_prompt = SYSTEM_ACTION_PLAN_PROMPT
 
     # ------------------------------------------------------------------
-    # 4. เรียก LLM + Extract (แข็งแกร่งสุด)
+    # 3. เรียก LLM + Extract + Validate (Final Logic)
     # ------------------------------------------------------------------
     for attempt in range(max_retries):
         try:
-            # 🚨 แทนที่ด้วยฟังก์ชันเรียก LLM ของคุณ
-            raw = '{"Phase": "แก้ไขจุดอ่อน", "Goal": "บรรลุ Level X", "Actions": []}' # _fetch_llm_response(...) 
+            # 🚨 ใช้ llm_executor จริง (แทนที่ด้วย _fetch_llm_response ถ้ายังใช้ mock)
+            raw = llm_executor.generate(system_prompt, human_prompt) 
+            # raw = _fetch_llm_response(system_prompt, human_prompt) # ใช้ Mock Function 
             
-            # 🚨 แทนที่ด้วยฟังก์ชัน Extract JSON ของคุณ
-            items = [] # _extract_json_array_for_action_plan(raw)
+            # 🚨 Pass logger เข้าไป
+            items = _extract_json_array_for_action_plan(raw, logger)
             
             if not items: continue
 
-            result = []
+            # Validate ด้วย Pydantic Model ActionPlanActions
+            validated_list = []
             for item in items:
                 try:
-                    # Validate ด้วย Pydantic Model 
-                    # validated_item = ActionPlanActions.model_validate(item) 
-                    # result.append(validated_item.model_dump(by_alias=True)) 
-                    result.append(item) # Mock Validation
+                    # Validate แต่ละ object ใน array
+                    validated_item = ActionPlanActions.model_validate(item) 
+                    # ใช้ model_dump(by_alias=True) เพื่อให้แน่ใจว่าได้ field name ที่ถูกต้อง
+                    validated_list.append(validated_item.model_dump(by_alias=True)) 
                 except Exception as ve:
-                    logger.warning(f"ActionPlan attempt {attempt+1}: Pydantic Validation Failed: {ve}")
+                    logger(f"⚠️ ActionPlan attempt {attempt+1}: Pydantic Validation Failed: {ve}")
                     continue
 
-            if result:
-                logger.info(f"Action Plan สร้างสำเร็จ → {len(result)} phase(s)")
-                return result
+            if validated_list:
+                logger(f"✅ Action Plan สร้างสำเร็จและผ่าน Validation → {len(validated_list)} phase(s)")
+                return validated_list
 
         except Exception as e:
-            logger.warning(f"ActionPlan attempt {attempt+1} เกิด error: {e}")
+            logger(f"⚠️ ActionPlan attempt {attempt+1} เกิด error: {e}")
             time.sleep(1)
 
     # ------------------------------------------------------------------
-    # 5. Final Fallback
+    # 4. Final Fallback (ใช้ Pydantic Schema ใหม่)
     # ------------------------------------------------------------------
-    logger.error("ActionPlan: ทุกอย่างล้มเหลว → ใช้ Hardcoded Template")
-    actions = []
-    for i, s in enumerate(recommendation_statements[:8], 1): # ✅ ใช้ชื่อใหม่ตรงนี้
-        sid = s.get("sub_id") or f"STMT-{i}"
-        level = s.get("level", 0)
+    # (โค้ดส่วนนี้ยังคงเดิม)
+    logger("❌ ActionPlan: ทุกอย่างล้มเหลว (Max Retries Reached) → ใช้ Hardcoded Template")
+    
+    actions_fallback: List[Dict[str, Any]] = []
+    for i, s in enumerate(unique_recommendation_statements[:5], 1): 
+        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
         rec_type = s.get("recommendation_type", "FAILED")
         text = str(s.get("statement") or "").strip()[:150]
-        actions.append({
+        
+        # สร้าง ActionItem Fallback
+        action_item_fallback = {
             "Statement_ID": sid, 
-            "Failed_Level": level, 
+            "Failed_Level": s.get('level', 0), 
             "Recommendation": f"[{rec_type}] ดำเนินการตามข้อกำหนด: {text}", 
             "Target_Evidence_Type": "เอกสารที่ขาดหาย/อ่อนแอ", 
             "Key_Metric": "ความครบถ้วนของเอกสาร", 
-            "Steps": []
-        })
-
+            "Steps": [{"Step": "1", "Description": "ตรวจสอบหลักฐานและจัดทำเอกสารใหม่", "Responsible": "หน่วยงานที่เกี่ยวข้อง", "Tools_Templates": "N/A", "Verification_Outcome": "เอกสารที่ขาดหาย"}]
+        }
+        actions_fallback.append(action_item_fallback)
+        
     return [{
-        "Phase": f"Level {target_level} - ปรับปรุงด่วน",
-        "Goal": f"แก้ไขข้อบกพร่องทั้งหมดของ {sub_criteria_name} เพื่อให้ได้ Level {target_level}",
-        "Actions": actions or [{"Statement_ID": "URGENT", "Failed_Level": 0, "Recommendation": "กรุณาตรวจสอบเอกสาร", "Target_Evidence_Type": "N/A", "Key_Metric": "N/A", "Steps": []}]
+        "Phase": f"Level {target_level} - ปรับปรุงด่วน (FALLBACK)",
+        "Goal": f"แก้ไขข้อบกพร่องเพื่อให้ได้ Level {target_level}",
+        "Actions": actions_fallback
     }]

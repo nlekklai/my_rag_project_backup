@@ -1,7 +1,7 @@
-# action_plan_models.py
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Any
+from pydantic import BaseModel, Field, field_validator, RootModel
+from typing import List, Any, Dict
 import re
+import json
 
 # -----------------------------
 # 1️⃣ Step Detail (ขั้นตอนย่อย)
@@ -23,6 +23,7 @@ class StepDetail(BaseModel):
     def sanitize_text(cls, v: Any) -> str:
         if v is None:
             return ""
+        # ลบอักขระที่ไม่ใช่ข้อความที่มองเห็นได้
         v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
         return v.strip()
 
@@ -42,8 +43,9 @@ class ActionItem(BaseModel):
     def normalize_statement_id(cls, v: Any) -> str:
         if isinstance(v, str):
             v = v.strip().replace(' ', '_').replace('-', '_').upper()
-            if not v.startswith('L'):
-                v = 'L' + v
+            # ถ้า ID ไม่ได้ขึ้นต้นด้วยตัวอักษรตามด้วยตัวเลข ให้ใส่ L (Level) นำหน้า
+            if not re.match(r'[A-Z]+\d+', v): 
+                 v = 'L' + v 
             return v
         return str(v)
 
@@ -61,16 +63,17 @@ class ActionItem(BaseModel):
         if v is None:
             return []
         if isinstance(v, dict):
+            # หาก LLM ตอบเป็น object เดี่ยว แทนที่จะเป็น list
             return [v]
         if not isinstance(v, list):
+            # หากไม่ใช่ list หรือ dict ให้ return list ว่าง
             return []
         return v
 
 # -----------------------------
-# 3️⃣ Action Plan Actions (Schema หลัก - แก้ไข Phase และ Goal)
+# 3️⃣ Action Plan Actions (Schema หลัก - กลุ่ม Phase)
 # -----------------------------
 class ActionPlanActions(BaseModel):
-    # แก้ไข: กำหนดค่าเริ่มต้นเป็น String ว่าง ("") ทำให้ฟิลด์เป็น Optional
     Phase: str = Field("", description="ชื่อ Phase ของแผนปฏิบัติการ เช่น 'Foundational Gap Closure'")
     Goal: str = Field("", description="เป้าหมายหลักของ Phase นี้")
     Actions: List[ActionItem] = Field(default_factory=list, description="รายการ Actions ที่ต้องดำเนินการ")
@@ -78,6 +81,7 @@ class ActionPlanActions(BaseModel):
     @field_validator("Actions", mode="before")
     @classmethod
     def handle_case_insensitive_actions(cls, v: Any) -> Any:
+        # จัดการกรณีที่ LLM ใช้ 'actions' ตัวเล็ก
         if isinstance(v, dict):
             if "actions" in v:
                 return v["actions"]
@@ -92,3 +96,45 @@ class ActionPlanActions(BaseModel):
             return ""
         v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
         return v.strip()
+
+# สำหรับการ Validate ผลลัพธ์รวมที่เป็น JSON Array
+class ActionPlanResult(RootModel): 
+    # ใช้ root: List[ActionPlanActions] เพื่อ validate ว่า output เป็น JSON Array ของ ActionPlanActions objects
+    root: List[ActionPlanActions] = Field(..., description="The complete list of action plan phases and their items.")
+
+# =================================================================
+# 4️⃣ HELPER FUNCTION: Clean JSON Schema Generator (FIX for $defs leakage)
+# =================================================================
+def get_clean_action_plan_schema() -> Dict[str, Any]:
+    """
+    Generates a clean Pydantic JSON Schema for ActionPlanResult 
+    by removing $defs and $schema keys which cause LLM errors.
+    """
+    try:
+        # Get the full schema for the RootModel (which is a list)
+        schema_dict = ActionPlanResult.model_json_schema(by_alias=True)
+        
+        # We need to remove $defs and $schema keys from the root dictionary
+        # The schema of the array contents is defined in 'items' key
+        schema_dict.pop('$defs', None) 
+        schema_dict.pop('$schema', None) 
+        schema_dict.pop('title', None) 
+        
+        # Return the cleaned dictionary
+        return schema_dict
+        
+    except Exception as e:
+        # Should not happen if pydantic is correctly installed
+        # In case of failure, return a simplified structure
+        return {
+            "type": "array",
+            "description": "The complete list of action plan phases and their items.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "Phase": {"type": "string"},
+                    "Goal": {"type": "string"},
+                    "Actions": {"type": "array"}
+                }
+            }
+        }
