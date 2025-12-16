@@ -80,6 +80,7 @@ try:
     )
     from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
     from core.seam_prompts import PDCA_PHASE_MAP 
+    from core.action_plan_schema import ActionPlanActions  # เพิ่มด้านบน
 
     # 🎯 FIX: Import ฟังก์ชัน Path Utility ทั้งหมดที่จำเป็น
     from utils.path_utils import (
@@ -282,7 +283,8 @@ def _static_worker_process(worker_input_tuple: Tuple[
             temperature,
             min_retry_score,            # ⬅️ NEW CONFIG (8th element)
             max_retrieval_attempts,     # ⬅️ NEW CONFIG (9th element)
-            document_map                # (10th element)
+            document_map,                # (10th element)
+            action_plan_model
         ) = worker_input_tuple
     except ValueError as e:
         # ใช้ len(worker_input_tuple) เพื่อให้ข้อมูลการ Debug ครบถ้วน
@@ -320,7 +322,8 @@ def _static_worker_process(worker_input_tuple: Tuple[
             vectorstore_manager=None,       # VSM จะถูก Initialized ใน Engine หากไม่มี
             # doc_type ต้องถูก set ใน SEAMPDCAEngine constructor (สมมติว่ามีค่า Default)
             logger_instance=worker_logger,
-            document_map=document_map # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
+            document_map=document_map, # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
+            ActionPlanActions=action_plan_model
         )
     except Exception as e:
         worker_logger.critical(f"FATAL: SEAMPDCAEngine instantiation failed in worker: {e}")
@@ -631,6 +634,10 @@ class SEAMPDCAEngine:
         if not self.doc_id_to_filename_map:
             self.logger.warning("Document ID → Filename map is empty. Filename resolution limited.")
 
+        self.ActionPlanActions = ActionPlanActions  # เพิ่มบรรทัดนี้
+        if self.ActionPlanActions is None:
+            self.ActionPlanActions = ActionPlanActions
+            
         self.logger.info(f"Engine initialized: Enabler={self.enabler_id}, Mock={config.mock_mode}")
     
     def _initialize_llm_if_none(self):
@@ -2872,6 +2879,7 @@ class SEAMPDCAEngine:
                 getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
                 getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
+                ActionPlanActions  # <--- เพิ่มตัวนี้เป็น element สุดท้าย
             ) for sub_data in sub_criteria_list]
 
             try:
@@ -3175,7 +3183,7 @@ class SEAMPDCAEngine:
         total_evidences = top_evidences + previous_levels_evidence_list 
 
         # 🟢 FIX 10.2: รับประกันคีย์ 'text' สำหรับหลักฐานทั้งหมดที่ถูกรวม (รวมทั้งหลักฐานเก่า L1)
-        # total_evidences = self._guarantee_text_key(total_evidences) 
+        total_evidences = self._guarantee_text_key(total_evidences) 
         
         plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
             total_evidences,
