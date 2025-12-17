@@ -181,28 +181,49 @@ def main():
         raise
 
     # 4. Print Summary
+    # 4. 📊 DETAILED PRINT SUMMARY (ปรับปรุงใหม่เพื่อการ Test)
     summary = final.get("summary", {})
     duration_s = time.time() - start_ts
     
-    print("\n" + "="*60)
-    print(f"ASSESSMENT COMPLETE - ENABLER: {args.enabler}")
-    print(f"RUN MODE: {run_mode}")
-    print("="*60)
-    print(f"Tenant/Year: {args.tenant}/{args.year}")
-    print(f"Target Level: {summary.get('target_level', config.target_level)}")
-    print(f"RAG Config (Score/Attempts): {config.min_retry_score}/{config.max_retrieval_attempts}") # ⬅️ Show new config
-    print(f"Total sub-criteria run: {summary.get('total_subcriteria', 0)}")
-    print(f"Percentage Achieved: {summary.get('percentage_achieved_run', 0.0):.3f}%")
-    print(f"Duration (s): {duration_s:.2f}")
-    print("="*60)
+    # ดึงค่าคะแนนและระดับที่ทำได้จริง
+    # (รองรับทั้งการรันแบบ 'all' และรายข้อ 'sub_id')
+    highest_passed = summary.get('highest_pass_level') or summary.get('highest_pass_level_overall', 0)
+    achieved_weight = summary.get('achieved_weight') or summary.get('total_achieved_weight', 0.0)
+    total_weight = summary.get('total_weight') or summary.get('total_possible_weight', 0.0)
+    
+    print("\n" + "═"*65)
+    print(f" 🏁  ASSESSMENT COMPLETE: {args.enabler} ({args.tenant.upper()} / {args.year})")
+    print("═"*65)
+    
+    # ส่วนที่ 1: ข้อมูลการรัน (Execution Info)
+    print(f" [MODE]        : {run_mode}")
+    print(f" [SUB-ID]      : {args.sub}")
+    print(f" [DURATION]    : {duration_s:.2f} seconds")
+    print(f" [RAG CONFIG]  : Min Score {args.min_retry_score} | Max Attempts {args.max_retrieval_attempts}")
+    print("-" * 65)
 
-    # 5. Detailed print if single sub requested
-    if args.sub and args.sub.lower() != "all":
-        # engine.print_detailed_results(target_sub_id=args.sub)
-        pass 
+    # ส่วนที่ 2: ผลลัพธ์เชิงคะแนน (Scoring Metrics)
+    print(f" [RESULT]      : Level Achieved -> L{highest_passed} (Target: L{args.target_level})")
+    print(f" [SCORE]       : {achieved_weight:.2f} / {total_weight:.2f} (Weighted)")
+    print(f" [PROGRESS]    : {summary.get('percentage_achieved_run', 0.0):.2f}%")
+    print(f" [COUNT]       : {summary.get('total_subcriteria', 0)} sub-criteria processed")
+    
+    # ส่วนที่ 3: กรณีรันรายข้อ (Detail per Sub-ID)
+    if args.sub.lower() != "all":
+        results_list = final.get("sub_criteria_results", [])
+        if results_list:
+            res = results_list[0]
+            print("-" * 65)
+            print(f" 📝 DETAIL FOR {args.sub}:")
+            print(f"   - Name      : {res.get('sub_criteria_name', 'N/A')}")
+            print(f"   - Max Lvl   : L{res.get('highest_full_level', 0)}")
+            print(f"   - Weight    : {res.get('weight', 0)}")
+    
+    print("═"*65)
 
     if args.export:
-        print("\nReport export status logged (see INFO logs for path).")
+        export_path = final.get("export_path_used", "N/A")
+        print(f" 💾 Exported to: {export_path}")
 
     logger.info(f"Full runner execution completed in {duration_s:.2f}s")
 

@@ -49,6 +49,7 @@ try:
         MIN_RERANK_SCORE_TO_KEEP,
         MIN_RETRY_SCORE,
         MIN_RELEVANCE_THRESHOLD,
+        OLLAMA_MAX_RETRIES,
 
         # === เพิ่มเหล่านี้ ===
         CONTEXT_CAP_L3_PLUS,                 # ใช้ใน _run_single_assessment สำหรับ cap context L3+
@@ -1750,23 +1751,33 @@ class SEAMPDCAEngine:
     def _calculate_weighted_score(self, highest_full_level: int, weight: int) -> float:
         """
         Calculates the weighted score based on the highest full level achieved.
-        Score is calculated by: (Level / 5) * Weight
+        Score is calculated by: (Level / MAX_LEVEL) * Weight
         """
-        MAX_LEVEL_CALC = 5  
+        # 🎯 เปลี่ยนจาก MAX_LEVEL_CALC เป็น MAX_LEVEL ที่ดึงมาจาก global_vars
+        from config.global_vars import MAX_LEVEL  
         
         if highest_full_level <= 0:
             return 0.0
         
-        level_for_calc = min(highest_full_level, MAX_LEVEL_CALC)
-        score = (level_for_calc / MAX_LEVEL_CALC) * weight
+        # ป้องกันกรณีคะแนนเกิน (เช่น ถ้ามี data ผิดพลาด)
+        level_for_calc = min(highest_full_level, MAX_LEVEL)
+        
+        # คำนวณคะแนนถ่วงน้ำหนักตามเพดานเลเวลสูงสุด
+        score = (level_for_calc / MAX_LEVEL) * weight
         return score
 
     def _calculate_overall_stats(self, target_sub_id: str):
         """
-        Calculates overall statistics from sub-criteria results (self.final_subcriteria_results)
+        Calculates overall statistics from sub-criteria results 
         and stores them in self.total_stats.
         """
+        from config.global_vars import MAX_LEVEL
+        
         results = self.final_subcriteria_results
+        
+        # ---------------------------------------------------------
+        # 1. กรณีไม่มีผลลัพธ์ (Safety Guard)
+        # ---------------------------------------------------------
         if not results:
             self.total_stats = {
                 "Overall Maturity Score (Avg.)": 0.0,
@@ -1780,85 +1791,106 @@ class SEAMPDCAEngine:
                 "target_level": self.config.target_level,
                 "enabler": self.config.enabler,
                 "sub_criteria_id": target_sub_id,
+                "status": "No Data"
             }
             return
 
-        # 1. Calculate Sums
-        total_weighted_score_achieved = sum(r.get('weighted_score', 0) for r in results)
-        total_possible_weight = sum(r.get('weight', 0) for r in results)
+        # ---------------------------------------------------------
+        # 2. คำนวณผลรวมคะแนน (Summation)
+        # ---------------------------------------------------------
+        # weighted_score คือ (Level / 5) * Weight ของข้อนั้นๆ
+        total_weighted_score_achieved = sum(r.get('weighted_score', 0.0) for r in results)
+        
+        # total_possible_weight คือ ผลรวมน้ำหนักของ Sub-criteria ที่ถูกประเมินในรอบนี้
+        # เช่น ถ้าประเมินแค่ 1.2 จะได้ 4.0 แต่ถ้าประเมินทั้ง Enabler จะได้ 40.0
+        total_possible_weight = sum(r.get('weight', 0.0) for r in results)
 
-        # 2. Overall Maturity Score (Avg.)
+        # ---------------------------------------------------------
+        # 3. คำนวณ Maturity Score เฉลี่ย (0.0 - 5.0)
+        # ---------------------------------------------------------
         overall_avg_score = 0.0
         if total_possible_weight > 0:
-            overall_avg_score = total_weighted_score_achieved / total_possible_weight
-            # 🟢 FIX: ROUNDING for clean output (e.g., 1.999... -> 2.0)
+            # สูตร: คะแนนรวมที่ได้ / น้ำหนักรวม = ค่าเฉลี่ยเลเวล (1-5)
+            overall_avg_score = (total_weighted_score_achieved / total_possible_weight) * MAX_LEVEL
             overall_avg_score = round(overall_avg_score, 2) 
         
-        # 3. Overall Progress Percentage (0.0 - 1.0)
+        # ---------------------------------------------------------
+        # 4. คำนวณ Progress (%) เทียบกับคะแนนเต็ม (Max Possible)
+        # ---------------------------------------------------------
         overall_progress_percentage = 0.0
-        # Assume MAX_LEVEL is 5 (หรือดึงจาก self.config หรือ global_vars)
-        MAX_LEVEL = getattr(globals(), 'MAX_LEVEL', 5) 
-        if total_possible_weight > 0 and MAX_LEVEL > 0:
-            max_possible_score = total_possible_weight * MAX_LEVEL
-            overall_progress_percentage = total_weighted_score_achieved / max_possible_score
-            # 🟢 FIX: ROUNDING for clean output (4 ตำแหน่งสำหรับเปอร์เซ็นต์)
+        # เพดานคะแนนสูงสุดที่ควรจะได้ (Weight รวม * 5)
+        max_possible_points = total_possible_weight * MAX_LEVEL
+        
+        if max_possible_points > 0:
+            overall_progress_percentage = total_weighted_score_achieved / max_possible_points
             overall_progress_percentage = round(overall_progress_percentage, 4)
 
-        # 4. Overall Maturity Level (Weighted)
-        # ปัดเศษค่าเฉลี่ยที่คำนวณได้ เพื่อกำหนด Level (เช่น 1.2 -> L1, 1.5 -> L2)
+        # ---------------------------------------------------------
+        # 5. กำหนด Label ของ Maturity Level (L1 - L5)
+        # ---------------------------------------------------------
+        # ใช้เกณฑ์การปัดเศษ (Round) เพื่อหาค่า Level ที่ใกล้เคียงที่สุด
         highest_level_achieved = round(overall_avg_score)
         final_level = min(max(int(highest_level_achieved), 0), MAX_LEVEL)
         overall_level_label = f"L{final_level}"
         
-        # 5. Final Percentage Achieved (0-100%)
-        percentage_achieved_run = overall_progress_percentage * 100
-        # 🟢 FIX: ROUNDING for clean output (1 ตำแหน่งสำหรับ 0-100%)
-        percentage_achieved_run = round(percentage_achieved_run, 1)
+        # ---------------------------------------------------------
+        # 6. สรุปเปอร์เซ็นต์ความสำเร็จ (0-100%)
+        # ---------------------------------------------------------
+        percentage_achieved_run = round(overall_progress_percentage * 100, 1)
 
-
+        # ---------------------------------------------------------
+        # 7. บันทึกค่าลงใน stats object
+        # ---------------------------------------------------------
         self.total_stats = {
-            "Overall Maturity Score (Avg.)": overall_avg_score, # <--- FIXED
+            "Overall Maturity Score (Avg.)": overall_avg_score,
             "Overall Maturity Level (Weighted)": overall_level_label,
             "Number of Sub-Criteria Assessed": len(results),
-            "Total Weighted Score Achieved": round(total_weighted_score_achieved, 2), # <--- FIXED
+            "Total Weighted Score Achieved": round(total_weighted_score_achieved, 2),
             "Total Possible Weight": total_possible_weight,
-            "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percentage, # <--- FIXED
-            "percentage_achieved_run": percentage_achieved_run, # <--- FIXED
+            "Overall Progress Percentage (0.0 - 1.0)": overall_progress_percentage,
+            "percentage_achieved_run": percentage_achieved_run,
             "total_subcriteria": len(self._flatten_rubric_to_statements()),
             "target_level": self.config.target_level,
             "enabler": self.config.enabler,
             "sub_criteria_id": target_sub_id,
+            "gap_to_full_score": round(total_possible_weight - total_weighted_score_achieved, 2)
         }
         
-        self.logger.info(f"OVERALL STATS: Avg Score={overall_avg_score}, Level={overall_level_label}")
+        self.logger.info(f"--- ASSESSMENT SUMMARY ---")
+        self.logger.info(f"Enabler: {self.config.enabler} | Sub: {target_sub_id}")
+        self.logger.info(f"Maturity: {overall_level_label} (Avg Score: {overall_avg_score})")
+        self.logger.info(f"Score: {total_weighted_score_achieved}/{total_possible_weight} ({percentage_achieved_run}%)")
+        self.logger.info(f"---------------------------")
 
     def _export_results(self, results: dict, sub_criteria_id: str, **kwargs) -> str:
         """
-        Exports the assessment results (for a specific sub-criteria or the final run) 
-        to a JSON file, using utils/path_utils.py for full path determination.
+        Exports the assessment results to a JSON file.
+        Includes enhanced summary stats: Highest Level, Weights, and Progress.
         """
-        
+        import os
+        import json
+        from datetime import datetime
+        from utils.path_utils import get_assessment_export_file_path
+
         enabler = self.enabler_id
         target_level = self.config.target_level
-        
-        # 1. กำหนดค่าสำหรับ Path Utility (ย้ายการกำหนดค่าที่ใช้ร่วมกันออกมาก่อน try/except)
         tenant = self.config.tenant
         year = self.config.year
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # กำหนด Suffix สำหรับชื่อไฟล์
         suffix = f"assessment_results_{sub_criteria_id}_{timestamp}"
 
+        # 1. การจัดการ Path และ Directory
         full_path = ""
         export_dir = ""
 
         try:
-            # 2. ใช้ Path Utility สร้าง Full Path
             if self.config.export_path:
-                # ถ้ามีการกำหนด export_path (Override)
                 export_dir = self.config.export_path
                 file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
                 full_path = os.path.join(export_dir, file_name)
             else:
-                # 🎯 ใช้ get_assessment_export_file_path เพื่อสร้าง Full Path ตามมาตรฐาน
                 full_path = get_assessment_export_file_path(
                     tenant=tenant,
                     year=year,
@@ -1866,59 +1898,83 @@ class SEAMPDCAEngine:
                     suffix=suffix,
                     ext="json"
                 )
-                # ดึง export_dir จาก full_path แทนการเรียก get_export_dir ซ้ำ
                 export_dir = os.path.dirname(full_path)
 
-        except ImportError as e:
-            self.logger.error(f"❌ FATAL: Cannot import path_utils: {e}. Falling back to manual path.")
-            
-            # Fallback Logic: ใช้ DATA_STORE_ROOT เพื่อให้ Path อยู่ในโครงสร้างเดิม
-            data_store_root_path = os.environ.get('DATA_STORE_ROOT', 'data_store') 
-            
-            if self.config.export_path:
-                export_dir = self.config.export_path
-            else:
-                # Fallback สู่ Path มาตรฐาน: data_store/tenant/exports/year/enabler
-                export_dir = os.path.join(data_store_root_path, tenant, "exports", str(year), enabler)
-            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Path utility failed, using fallback: {e}")
+            export_dir = os.path.join("data_store", tenant, "exports", str(year), enabler)
             file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
             full_path = os.path.join(export_dir, file_name)
-            self.logger.warning(f"⚠️ Using fallback path: {full_path}")
 
-
-        # 3. สร้าง Directory หากยังไม่มี
         if not os.path.exists(export_dir):
-            try:
-                os.makedirs(export_dir)
-                self.logger.info(f"Created export directory: {export_dir}")
-            except OSError as e:
-                self.logger.error(f"❌ Failed to create export directory {export_dir}: {e}")
-                return ""
+            os.makedirs(export_dir, exist_ok=True)
 
-        # 4. เตรียม/อัพเดต Summary Field
+        # 2. จัดการ/คำนวณ Summary Field (จุดสำคัญที่ต้องการเพิ่ม)
         if 'summary' not in results:
             results['summary'] = {}
-            
-        results['summary']['enabler'] = enabler
-        results['summary']['sub_criteria_id'] = sub_criteria_id
-        results['summary']['target_level'] = target_level
         
-        # ปรับ Logic การนับ Sub-Criteria ให้นับตาม 'sub_criteria_results' ถ้ามี
-        if 'sub_criteria_results' in results and isinstance(results['sub_criteria_results'], dict):
-            results['summary']['Number of Sub-Criteria Assessed'] = len(results['sub_criteria_results'])
-        else:
-             results['summary']['Number of Sub-Criteria Assessed'] = 1 
+        summary = results['summary']
+        summary['enabler'] = enabler
+        summary['sub_criteria_id'] = sub_criteria_id
+        summary['target_level'] = target_level
+        summary['tenant'] = tenant
+        summary['year'] = year
+        summary['export_timestamp'] = timestamp
 
-        # 5. Export ข้อมูลไปที่ JSON File
+        # ดึงข้อมูลจาก sub_criteria_results เพื่อมาทำ summary
+        sub_res_list = results.get('sub_criteria_results', [])
+        
+        if sub_criteria_id.lower() != "all" and len(sub_res_list) > 0:
+            # --- กรณีรัน Single Sub-Criteria ---
+            # ใช้ข้อมูลจากผลลัพธ์ข้อแรกที่เจอ
+            main_res = sub_res_list[0]
+            summary['highest_pass_level'] = main_res.get('highest_full_level', 0)
+            summary['achieved_weight'] = main_res.get('weighted_score', 0.0)
+            summary['total_weight'] = main_res.get('weight', 0.0)
+            summary['is_target_achieved'] = main_res.get('target_level_achieved', False)
+            summary['total_subcriteria_assessed'] = 1
+        else:
+            # --- กรณีรัน All Sub-Criteria ---
+            all_pass_levels = [r.get('highest_full_level', 0) for r in sub_res_list]
+            total_achieved = sum(r.get('weighted_score', 0.0) for r in sub_res_list)
+            total_possible = sum(r.get('weight', 0.0) for r in sub_res_list)
+            
+            summary['highest_pass_level_overall'] = max(all_pass_levels) if all_pass_levels else 0
+            summary['total_achieved_weight'] = round(total_achieved, 2)
+            summary['total_possible_weight'] = round(total_possible, 2)
+            summary['total_subcriteria_assessed'] = len(sub_res_list)
+            
+            # คำนวณ % ภาพรวม
+            if total_possible > 0:
+                summary['overall_percentage'] = round((total_achieved / total_possible) * 100, 2)
+            else:
+                summary['overall_percentage'] = 0.0
+
+        # 3. ตรวจสอบ Action Plan Status
+        total_action_plans = 0
+        for res in sub_res_list:
+            ap = res.get('action_plan', [])
+            if isinstance(ap, list):
+                total_action_plans += len(ap)
+        summary['total_action_plan_phases'] = total_action_plans
+
+        # 4. เขียนไฟล์ JSON
         try:
             with open(full_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=4)
             
-            self.logger.info(f"💾 Successfully exported results for {sub_criteria_id} to: {full_path}")
+            self.logger.info(f"💾 Exported Results to: {full_path}")
+            # แสดง Summary สั้นๆ ใน Log
+            self.logger.info(
+                f"📊 [SUMMARY] Sub: {sub_criteria_id} | "
+                f"Level: L{summary.get('highest_pass_level', summary.get('highest_pass_level_overall', 0))} | "
+                f"Score: {summary.get('achieved_weight', summary.get('total_achieved_weight', 0.0))}/"
+                f"{summary.get('total_weight', summary.get('total_possible_weight', 0.0))}"
+            )
             return full_path
         
         except Exception as e:
-            self.logger.error(f"❌ Failed to export results for {sub_criteria_id} to {full_path}: {e}")
+            self.logger.error(f"❌ Export failed: {e}")
             return ""
         
     def rephrase_query_for_retry(self, original_query: str, level: int, sub_id: str) -> str:
@@ -2170,54 +2226,86 @@ class SEAMPDCAEngine:
         
         # -----------------------------------------------------------
         # 3. GENERATE ACTION PLAN (POST-PROCESSING) 🚀
-        # -----------------------------------------------------------
+        # ------------------------------------------------------------
 
-        target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
+        # 🎯 ใช้ตัวแปรที่ Import มาจาก Header ได้เลยโดยตรง
+        weak_threshold = MIN_RERANK_SCORE_TO_KEEP 
         
+        target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
         statements_for_action_plan = []
         
         for r in raw_results_for_sub_seq:
-            is_passed = r.get('is_passed', False)
-            evidence_strength = r.get('evidence_strength', 10.0)
+            # สร้าง copy เพื่อไม่ให้กระทบ data ต้นฉบับ
+            res_item = r.copy() 
+            is_passed = res_item.get('is_passed', False)
+            evidence_strength = res_item.get('evidence_strength', 10.0)
+            eval_mode = res_item.get('evaluation_mode', "")
 
-            # 1. Fail ที่ไม่ได้ถูก Cap (คือ Fail แรก)
-            if not is_passed and r.get('evaluation_mode') != "GAP_ONLY":
-                r['recommendation_type'] = 'FAILED'
-                statements_for_action_plan.append(r)
+            # 1. กรณีไม่ผ่าน (FAILED)
+            if not is_passed and eval_mode != "GAP_ONLY":
+                res_item['recommendation_type'] = 'FAILED'
+                statements_for_action_plan.append(res_item)
                 continue
             
-            # 1.1 Fail ที่เป็น GAP_ONLY (Level ที่ตามมา)
-            if r.get('evaluation_mode') == "GAP_ONLY":
-                r['recommendation_type'] = 'GAP_ANALYSIS' # ใช้ Recommendation type ใหม่สำหรับ Gap
-                statements_for_action_plan.append(r)
+            # 2. กรณีประเมินเพื่อหา Gap โดยเฉพาะ (GAP_ONLY)
+            if eval_mode == "GAP_ONLY":
+                res_item['recommendation_type'] = 'GAP_ANALYSIS'
+                statements_for_action_plan.append(res_item)
                 continue
 
-            # 2. ผ่านแต่หลักฐานอ่อน
-            if is_passed and evidence_strength < WEAK_EVIDENCE_THRESHOLD: # สมมติ WEAK_EVIDENCE_THRESHOLD = 5.0
-                r['recommendation_type'] = 'WEAK_EVIDENCE' 
-                statements_for_action_plan.append(r) # ✅ Statement ที่ Pass แต่หลักฐานอ่อน ถูกรวบรวมแล้ว!
-        
+            # 3. กรณีผ่านแต่หลักฐานอ่อน (WEAK_EVIDENCE)
+            if is_passed and evidence_strength < weak_threshold:
+                res_item['recommendation_type'] = 'WEAK_EVIDENCE'
+                statements_for_action_plan.append(res_item)
+
         action_plan_result = []
 
         try:
-            # 🔥 การเรียกใช้ที่ถูกต้อง:
-            action_plan_result = self.create_structured_action_plan( # ใช้ self.create_structured_action_plan
-                recommendation_statements=statements_for_action_plan, 
+            if not statements_for_action_plan:
+                self.logger.info(f"✨ Sub-id {sub_id} is perfect. Generating Sustain Plan...")
+
+            # 🎯 ส่ง OLLAMA_MAX_RETRIES ที่ Import มาจาก Header
+            action_plan_result = create_structured_action_plan(
+                recommendation_statements=statements_for_action_plan,
                 sub_id=sub_id,
-                sub_criteria_name=sub_criteria_name, 
-                target_level=target_next_level, 
+                sub_criteria_name=sub_criteria_name,
+                target_level=target_next_level,
                 llm_executor=self.llm,
-                ActionPlanActions=self.ActionPlanActions
+                logger=self.logger,
+                max_retries=OLLAMA_MAX_RETRIES 
             )
             
+            self.logger.info(f"✅ Action Plan generated: {len(action_plan_result)} phase(s) for {sub_id}")
+
         except Exception as e:
-            self.logger.error(f"Failed to generate Action Plan for {sub_id}: {e}")
+            self.logger.error(f"❌ Action Plan generation failed for {sub_id}: {e}", exc_info=True)
+            # ✅ Fallback ที่ตรงตาม schema (lowercase keys + Capitalized Step fields)
             action_plan_result = [{
-                "Phase": "Error", 
-                "Goal": "ไม่สามารถสร้าง Action Plan ได้", 
-                "Actions": [{
-                    "Statement_ID": "ERROR", 
-                    "Recommendation": f"เกิดข้อผิดพลาดในการเรียกใช้ LLM สำหรับ Action Plan: {str(e)}"
+                "phase": "Phase 1: Critical Recovery Required",
+                "goal": f"แก้ไขปัญหาเร่งด่วนในเกณฑ์ {sub_criteria_name} และฟื้นฟูระบบการสร้าง Action Plan",
+                "actions": [{
+                    "statement_id": "SYSTEM_ERROR",
+                    "failed_level": target_next_level,
+                    "recommendation": f"ระบบไม่สามารถสร้าง Action Plan อัตโนมัติได้เนื่องจาก: {str(e)[:150]}... "
+                                     "แนะนำให้ตรวจสอบการเชื่อมต่อ LLM, Prompt, และ Schema ทันที",
+                    "target_evidence_type": "Error Log / System Diagnostic Report",
+                    "key_metric": "กู้คืนระบบและสร้าง Action Plan สำเร็จภายใน 7 วัน",
+                    "steps": [
+                        {
+                            "Step": "1",
+                            "Description": "ตรวจสอบ log error และสถานะ Ollama/API endpoint",
+                            "Responsible": "System Administrator / RAG Developer",
+                            "Tools_Templates": "Server Log / Health Check Dashboard",
+                            "Verification_Outcome": "รายงานผลการวิเคราะห์ข้อผิดพลาด"
+                        },
+                        {
+                            "Step": "2",
+                            "Description": "ดำเนินการ rerun การประเมินเกณฑ์นี้หลังแก้ไขระบบ",
+                            "Responsible": "KM Assessment Team",
+                            "Tools_Templates": "SE-AM Assessment Tool",
+                            "Verification_Outcome": "Action Plan ที่สร้างสำเร็จและผ่าน validation"
+                        }
+                    ]
                 }]
             }]
 
@@ -2339,78 +2427,71 @@ class SEAMPDCAEngine:
         highest_rerank_score: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Relevant Score Gate เวอร์ชัน FINAL: ดึงคะแนนจาก metadata, top-level key/attribute, และ Regex fallback ที่ครอบคลุม
-        ฟังก์ชันนี้มีหน้าที่หลักในการกำหนด 'max_evi_str_for_prompt' โดยอิงจาก Rerank Score สูงสุด
+        Relevant Score Gate เวอร์ชัน FINAL
+        
+        คำนวณ Evidence Strength โดยอิงจาก Rerank Score สูงสุดที่พบ
+        - ดึงคะแนนจาก metadata, top-level key, และ regex fallback
+        - ยึดตาม global_vars:
+            • RERANK_THRESHOLD = 0.5
+            • MAX_EVI_STR_CAP = 10.0
+        
+        Returns:
+            dict ประกอบด้วย is_capped, max_evi_str_for_prompt, highest_rerank_score, max_score_source
         """
 
         score_keys = [
-            "rerank_score", "score", "relevance_score", # จัด rerank_score มาก่อน
-            "_rerank_score_force", "_rerank_score", 
+            "rerank_score", "score", "relevance_score",
+            "_rerank_score_force", "_rerank_score",
             "Score", "RelevanceScore"
         ]
-        
-        # ─── 1. ดึงค่า Threshold และ Cap จาก Attribute/Fallback (ปรับปรุงการเริ่มต้น) ───
-        # 💡 ใช้ Attribute ของ Class เป็นหลัก (ซึ่งถูกตั้งค่าจาก global_vars ใน __init__)
-        threshold = getattr(self, "RERANK_THRESHOLD", 0.5) 
-        cap_value = getattr(self, "MAX_EVI_STR_CAP", 3.0)
-        
-        # 💡 Fallback จาก globals() (ในกรณีที่ __init__ ไม่ได้ตั้งค่า)
-        if threshold == 0.5:
-            threshold = globals().get('RERANK_THRESHOLD', 0.5)
-        if cap_value == 3.0:
-            cap_value = globals().get('MAX_EVI_STR_CAP', 3.0)
 
-        # 🟢 FIX 1: ใช้ highest_rerank_score เป็นค่าตั้งต้นที่น่าเชื่อถือที่สุด
+        # ─── 1. ดึงค่า config จาก class attribute ก่อน → fallback ไป global_vars ───
+        threshold = getattr(self, "RERANK_THRESHOLD", 0.5)
+        cap_value = getattr(self, "MAX_EVI_STR_CAP", 10.0)
+
+        # Fallback จาก global_vars โดยตรง (หลังจาก import global_vars แล้ว)
+        threshold = threshold if threshold != 0.5 else RERANK_THRESHOLD
+        cap_value = cap_value if cap_value != 10.0 else MAX_EVI_STR_CAP
+
+        # ─── 2. เริ่มต้นด้วย highest_rerank_score จาก Adaptive Loop (ค่าที่น่าเชื่อถือที่สุด) ───
         max_score_found = highest_rerank_score if highest_rerank_score is not None else 0.0
         max_score_source = "Adaptive_RAG_Loop" if highest_rerank_score is not None else "N/A"
 
-
         for doc in top_evidences:
-            
             page_content = ""
             metadata = {}
-            current_score = 0.0 # รีเซ็ตคะแนนสำหรับแต่ละเอกสาร
+            current_score = 0.0
 
-            # ─── 2. แปลงเป็น metadata + content เดียวกัน (รองรับทุกโครงสร้าง) ───
+            # ─── แปลง document ให้รองรับทั้ง dict และ Langchain Document ───
             if isinstance(doc, dict):
-                # ใช้ doc.get() เพื่อป้องกัน KeyError/AttributeError
-                metadata = doc.get("metadata", {}) 
+                metadata = doc.get("metadata", {})
                 page_content = doc.get("page_content", "") or doc.get("text", "") or doc.get("content", "")
             else:
-                # รองรับ Langchain Document หรือ Object อื่นๆ
                 metadata = getattr(doc, "metadata", {})
                 page_content = getattr(doc, "page_content", "") or getattr(doc, "text", "")
 
-            # ─── 3. ค้นหาคะแนน (ตรวจสอบ top-level key/attribute และ metadata) ───
+            # ─── ค้นหาคะแนนจาก metadata และ top-level keys ───
             for key in score_keys:
-                score_val = None
-                
-                # ตรวจสอบใน metadata
                 score_val = metadata.get(key)
-                
-                # ตรวจสอบใน doc object/dict
                 if score_val is None:
                     if isinstance(doc, dict):
                         score_val = doc.get(key)
                     else:
                         score_val = getattr(doc, key, None)
-                
-                # แปลงเป็น float
+
                 if score_val is not None:
                     try:
                         temp_score = float(score_val)
-                        # ตรวจสอบว่าค่าที่ดึงมาสมเหตุสมผลหรือไม่ (ควรอยู่ระหว่าง 0 ถึง 1.0)
-                        if 0.0 < temp_score <= 1.0: 
+                        if 0.0 < temp_score <= 1.0:
                             if temp_score > current_score:
                                 current_score = temp_score
-                                break # หยุดเมื่อพบคะแนนที่ใช้ได้
+                                break
                     except (ValueError, TypeError):
                         continue
-            
-            # ─── 4. Fallback: ดึงจากท้าย content (Aggressive Regex) ───
+
+            # ─── Fallback: ดึงคะแนนจากท้าย content ด้วย regex (aggressive) ───
             if current_score == 0.0 and page_content and isinstance(page_content, str):
                 try:
-                    # 📌 ใช้ re.search ที่ถูก import ใน header
                     tail = page_content[-1000:]
                     patterns = [
                         r"Relevance[ :]+([0-9]*\.?[0-9]+)",
@@ -2422,68 +2503,69 @@ class SEAMPDCAEngine:
                         r"\|\s*([0-9]*\.?[0-9]+)\s*\|",
                         r"\s+([0-9]\.[0-9]+)$",
                     ]
-                    import re # Ensure re is imported if it's not a class method
                     for pat in patterns:
                         m = re.search(pat, tail, re.IGNORECASE)
                         if m:
                             try:
                                 temp_score = float(m.group(1))
-                                if 0.0 < temp_score <= 1.0: # ตรวจสอบขอบเขต
+                                if 0.0 < temp_score <= 1.0:
                                     if temp_score > current_score:
                                         current_score = temp_score
                                         break
                             except:
                                 continue
-                except Exception:
-                    # กรณี re ไม่ถูก import หรือ error อื่นๆ
-                    pass 
+                except Exception as e:
+                    self.logger.debug(f"Regex fallback failed at L{level}: {e}")
 
-            # 🔴 FIX: เพิ่มการตรวจสอบขอบเขตคะแนน (Score Clamp) 
-            # (กรณีดึงมาเป็น > 1.0 จาก metadata/top-level key ซึ่งอาจเป็นคะแนนที่ไม่ใช่ 0-1)
+            # ─── Score Clamp: ถ้าคะแนน > 1.0 ถือว่าไม่ใช่ relevance scale 0-1 → ignore ───
             if current_score > 1.0:
-                self.logger.warning(f"🚨 Score Clamp L{level}: Detected score {current_score:.4f} > 1.0. Assuming score not in 0-1 range and ignoring.")
-                current_score = 0.0 # รีเซ็ต ถ้าเกิน 1.0 ถือว่าน่าจะเป็นคะแนนที่ไม่ใช่ Rerank/Relevance 0-1
+                source = (
+                    metadata.get("source_filename") or metadata.get("filename") or
+                    doc.get("source_filename") or doc.get("filename") or
+                    doc.get("source") or doc.get("doc_id") or "N/A"
+                )
+                self.logger.warning(
+                    f"🚨 Score Clamp L{level}: Score {current_score:.4f} > 1.0 from '{source}'. Ignoring."
+                )
+                current_score = 0.0
 
-            # ─── 5. ดึง source ───
+            # ─── ดึง source สำหรับ log ───
             source = (
                 metadata.get("source_filename") or metadata.get("filename") or
-                doc.get("source_filename") or doc.get("filename") or 
-                doc.get("source") or doc.get("doc_id") or
-                "N/A"
+                doc.get("source_filename") or doc.get("filename") or
+                doc.get("source") or doc.get("doc_id") or "N/A"
             )
 
-            # ─── 6. อัปเดตคะแนนสูงสุด (พร้อม Log เมื่อมีการ Override) ───
+            # ─── อัปเดตคะแนนสูงสุด พร้อม log override ───
             if current_score > max_score_found:
-                # 🟢 FIX 2: เพิ่ม Log เมื่อมีการ Override คะแนนจาก Loop
                 if highest_rerank_score is not None and current_score > highest_rerank_score:
-                    self.logger.critical(f"⚠️ Score Override: Found hidden score {current_score:.4f} > Loop score {highest_rerank_score:.4f} from source: {source}")
-
+                    self.logger.critical(
+                        f"⚠️ Score Override L{level}: Hidden score {current_score:.4f} > Loop score {highest_rerank_score:.4f} "
+                        f"from source: {source}"
+                    )
                 max_score_found = current_score
                 max_score_source = source
 
-        # ─── 7. Relevant Score Gate + Log ───
-        
-        if max_score_found < threshold: 
-            max_evi_str_for_prompt = cap_value
+        # ─── Relevant Score Gate: ตัดสินใจ cap หรือ full ───
+        if max_score_found < threshold:
+            max_evi_str_for_prompt = cap_value  # ใช้ค่า cap จาก config (10.0)
             is_capped = True
             self.logger.warning(
-                f"🚨 Evi Str CAPPED L{level}: "
-                f"Rerank {max_score_found:.4f} (จาก '{max_score_source}') "
+                f"🚨 Evi Str CAPPED L{level}: Rerank {max_score_found:.4f} (from '{max_score_source}') "
                 f"< {threshold} → จำกัดที่ {cap_value}"
             )
         else:
             max_evi_str_for_prompt = 10.0
             is_capped = False
             self.logger.info(
-                f"✅ Evi Str FULL L{level}: "
-                f"Rerank {max_score_found:.4f} (จาก '{max_score_source}') "
+                f"✅ Evi Str FULL L{level}: Rerank {max_score_found:.4f} (from '{max_score_source}') "
                 f">= {threshold} → ปล่อยเต็ม 10.0"
             )
 
         return {
             "is_capped": is_capped,
             "max_evi_str_for_prompt": max_evi_str_for_prompt,
-            "highest_rerank_score": round(float(max_score_found), 4), 
+            "highest_rerank_score": round(float(max_score_found), 4),
             "max_score_source": max_score_source,
         }
         
@@ -3310,13 +3392,20 @@ class SEAMPDCAEngine:
             # Hard rule for L3+ (strict SE-AM)
             if level >= 3 and (("C" in missing_tags) or ("A" in missing_tags)):
                 if not is_contextual_override_active:
-                    # 🔴 ทำ Hard Fail ถ้า Rule ไม่ Override
-                    self.logger.critical(f"  > HARD FAIL L{level}: Missing critical closed-loop PDCA phase(s): {missing_tags} - Skipping LLM call.")
-                    is_hard_fail_pdca = True
+                    
+                    # 📌 NEW LOGIC: CHECK ENABLE_HARD_FAIL_LOGIC FLAG 
+                    # (สมมติว่า ENABLE_HARD_FAIL_LOGIC ถูก import มาจาก global_vars)
+                    if ENABLE_HARD_FAIL_LOGIC: 
+                        # 🔴 HARD FAIL ทำงานตามปกติ
+                        self.logger.critical(f"  > HARD FAIL L{level}: Missing critical closed-loop PDCA phase(s): {missing_tags} - Skipping LLM call.")
+                        is_hard_fail_pdca = True
+                    else:
+                        # 🟢 HARD FAIL BYPASS (Flag = False)
+                        self.logger.warning(f"  > HARD FAIL BYPASS: ENABLE_HARD_FAIL_LOGIC is False. Allowing LLM to proceed despite PDCA Gap.")
+                        # is_hard_fail_pdca ถูกตั้งค่าเป็น False โดยค่าเริ่มต้น
                 else:
-                    # 🟢 Bypass Hard Fail แต่ใช้ Logic การให้คะแนนจาก Rule แทน
+                    # 🟢 Bypass Hard Fail ด้วย Contextual Rule (Logic เดิม)
                     self.logger.warning(f"  > HARD FAIL AVOIDED: Contextual Rule Bypassed PDCA Hard Fail Logic.")
-                    # ไม่ตั้ง is_hard_fail_pdca = True เพื่อให้โค้ดรันต่อได้ แต่เราจะใช้ Rule Score แทน
                 
         else:
             # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
@@ -3510,7 +3599,16 @@ class SEAMPDCAEngine:
                 new_tag = classify_by_keyword(chunk["text"], sub_id=sub_id, contextual_rules_map=self.contextual_rules_map)
                 if new_tag != 'Other':
                     chunk["pdca_tag"] = new_tag
-        # ==================================================================================
+
+        # ==================== 12. NEW: Generate Context Summary (Thai) ====================
+        # เรียกใช้ฟังก์ชันสรุปภาษาไทยเพื่อใช้ในเล่มรายงาน
+        thai_summary_data = create_context_summary_llm(
+            context=final_llm_context, # ส่ง Context ที่ผ่านการ Cap และจัดกลุ่มแล้ว
+            sub_criteria_name=sub_criteria_name,
+            level=level,
+            sub_id=sub_id,
+            llm_executor=self.llm # ส่ง Executor ของ Class เข้าไป
+        )
 
         return {
             "sub_criteria_id": sub_id,
@@ -3528,6 +3626,8 @@ class SEAMPDCAEngine:
             "max_relevant_score": highest_rerank_score,
             "temp_map_for_level": top_evidences,
             "duration": time.time() - start_time,
+            "summary_thai": thai_summary_data.get("summary"),
+            "suggestion_next_level": thai_summary_data.get("suggestion_for_next_level"),
             "retrieval_duration": retrieval_duration,
             "llm_duration": llm_duration,
         }

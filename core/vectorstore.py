@@ -525,28 +525,6 @@ class VectorStoreManager:
     def get_multi_doc_retriever(self) -> Optional['MultiDocRetriever']:
         """Gets the active MultiDocRetriever instance."""
         return self._multi_doc_retriever
-
-    @property
-    def client(self) -> Optional[chromadb.PersistentClient]:
-        """
-        Provides access to the underlying Chroma Persistent Client (Re-validate in worker).
-        (FIX: แก้ไข AttributeError ใน get_retriever)
-        """
-        # 🎯 FIX: เรียก ensure เพื่อให้มั่นใจว่า client ไม่ได้หายไปใน worker context
-        self._ensure_chroma_client_is_valid()
-        return self._client
-    
-    # -------------------- END FIXES --------------------
-
-    @property
-    def doc_id_map(self) -> Dict[str, Dict[str, Any]]:
-        """Provides access to the Stable Doc ID -> Chunk UUIDs mapping."""
-        return self._doc_id_mapping
-
-    @property
-    def uuid_to_doc_id_map(self) -> Dict[str, str]:
-        """Provides access to the Chunk UUID -> Stable Doc ID mapping."""
-        return self._uuid_to_doc_id
     
     def close(self):
         with self._lock:
@@ -1325,6 +1303,27 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
             return []
+    
+    @property
+    def client(self) -> Optional[chromadb.PersistentClient]:
+        """
+        Provides access to the underlying Chroma Persistent Client (Re-validate in worker).
+        (FIX: แก้ไข AttributeError ใน get_retriever)
+        """
+        # 🎯 FIX: เรียก ensure เพื่อให้มั่นใจว่า client ไม่ได้หายไปใน worker context
+        self._ensure_chroma_client_is_valid()
+        return self._client
+    
+    @property
+    def doc_id_map(self) -> Dict[str, Dict[str, Any]]:
+        """Provides access to the Stable Doc ID -> Chunk UUIDs mapping."""
+        return self._doc_id_mapping
+
+    @property
+    def uuid_to_doc_id_map(self) -> Dict[str, str]:
+        """Provides access to the Chunk UUID -> Stable Doc ID mapping."""
+        return self._uuid_to_doc_id
+    
 
 # Helper function
 def get_vectorstore_manager(

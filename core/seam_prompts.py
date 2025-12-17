@@ -38,13 +38,12 @@ GLOBAL_RULES: Final[str] = """
 1. ตอบกลับด้วย JSON Object เท่านั้น ห้ามมีข้อความใด ๆ นอก JSON
 2. ห้ามใช้ ```json หรือ markdown เด็ดขาด
 3. ต้องมี key ครบ: score, reason, is_passed, P_Plan_Score, D_Do_Score, C_Check_Score, A_Act_Score, Extraction_C, Extraction_A
-4. reason เป็นภาษาไทย ไม่เกิน 120 คำ
+4. reason เป็นภาษาไทย ไม่เกิน 120 คำ (ห้ามปล่อยว่าง หรือใช้ Template)
 5. ถ้าไม่มีหลักฐานชัดเจน → score = 0 และทุก PDCA = 0
-6. **อนุญาตให้ P, D เป็น 2 ถ้าหลักฐานชัดเจน แต่ C และ A ต้องมีหลักฐาน 'Review/Audit' และ 'Corrective Action' จริงเท่านั้น**
-7. คะแนน P, D, C, A ต้องอยู่ระหว่าง 0-2 เท่านั้น
-8. **คำสั่งสูงสุด: ค่า "score" ต้องเท่ากับ P_Plan_Score + D_Do_Score + C_Check_Score + A_Act_Score เท่านั้น!**
-9. ถ้า score ไม่ตรงกับผลรวม PDCA → ถือว่าผิดร้ายแรง → ระบบจะ override
-10. ห้ามใช้หลักฐาน Level ถัดไป (L+1) มาตัดสิน Level ปัจจุบัน (L)
+6. **อนุญาตให้ P, D เป็น 2 ถ้าหลักฐานชัดเจน แต่ C และ A ต้องมีหลักฐานจริงเท่านั้น**
+7. คะแนน P, D, C, A ต้องอยู่ระหว่าง 0 ถึง 2 เท่านั้น (ห้ามให้เกิน 2 เด็ดขาด!)
+8. **คำสั่งสูงสุด: ค่า "score" ต้องเท่ากับ P + D + C + A เสมอ!**
+9. ห้ามใช้หลักฐาน Level ถัดไป (L+1) มาตัดสิน Level ปัจจุบัน (L)
 """
 
 # =================================================================
@@ -132,7 +131,7 @@ Max Rerank Score: {max_rerank_score:.4f} | Evidence Strength: {max_evidence_stre
 }}
 """
 
-ASSESSMENT_PROMPT = PromptTemplate(
+USER_ASSESSMENT_PROMPT = PromptTemplate(
     input_variables=[
         "sub_criteria_name", "sub_id", "level", "pdca_phase",
         "statement_text", "context", "level_constraint",
@@ -142,7 +141,6 @@ ASSESSMENT_PROMPT = PromptTemplate(
     template=SYSTEM_ASSESSMENT_PROMPT + USER_ASSESSMENT_TEMPLATE
 )
 
-USER_ASSESSMENT_PROMPT = ASSESSMENT_PROMPT
 
 # =================================================================
 # 3. L1-L2 — LOW_LEVEL_PROMPT (No changes needed here based on logs)
@@ -157,7 +155,7 @@ SYSTEM_LOW_LEVEL_PROMPT: Final[str] = """
 * L1: D_Do_Score = 0, C_Check_Score = 0, A_Act_Score = 0
 * L2: C_Check_Score = 0, A_Act_Score = 0
 * L1: ถ้ามีหลักฐานที่ชัดเจนเกี่ยวกับการวางแผน ({planning_keywords}) → ให้ P_Plan_Score = 2 ทันที (ห้ามให้ 1 หรือ 0)
-* L2: ถ้ามีหลักฐานการดำเนินการตามแผน (Do) ชัดเจน → ให้ D_Do_Score = 2 ทันที (ห้ามให้ 1 หรือ 0)
+* L2: **[CRITICAL ENFORCEMENT]** เนื่องจาก L1 (Plan/P) ได้รับการประเมินว่าผ่านและหลักฐานการดำเนินการตามแผน (Do) ก็ชัดเจน **(โดยเฉพาะอย่างยิ่งเมื่อ RAG Score สูง)** → **ให้ D_Do_Score = 2 ทันที (ห้ามให้ 1 หรือ 0 เด็ดขาด)** เพื่อสะท้อนการผ่านระดับ 2 อย่างสมบูรณ์
 """
 
 USER_LOW_LEVEL_PROMPT_TEMPLATE: Final[str] = """
@@ -186,7 +184,7 @@ Constraints: {level_constraint}
 
 FULL_LOW_LEVEL_TEMPLATE = SYSTEM_LOW_LEVEL_PROMPT + USER_LOW_LEVEL_PROMPT_TEMPLATE
 
-LOW_LEVEL_PROMPT = PromptTemplate(
+USER_LOW_LEVEL_PROMPT = PromptTemplate(
     input_variables=[
         "sub_id", "sub_criteria_name", "level", "statement_text",
         "level_constraint", "context", "must_include_keywords", "avoid_keywords",
@@ -195,64 +193,75 @@ LOW_LEVEL_PROMPT = PromptTemplate(
     template=FULL_LOW_LEVEL_TEMPLATE
 )
 
-USER_LOW_LEVEL_PROMPT = LOW_LEVEL_PROMPT
 
 # =================================================================
-# 4. ACTION PLAN PROMPT (FIXED SCHEMA LEAKAGE LOGIC)
+# 4. ACTION PLAN PROMPT (FIXED SCHEMA LEAKAGE & CONFIG DRIVEN)
 # =================================================================
 
-# *** Helper function to create JSON Schema (Must be defined in your environment) ***
-# def get_action_plan_schema_string():
-#     # This function must return the JSON Schema string of the desired output (List[ActionPlanActions]).
-#     # We use ActionPlanActions.model_json_schema() and clean it up.
-#     try:
-#         schema_dict = ActionPlanActions.model_json_schema(by_alias=True)
-#         schema_dict.pop('$defs', None) 
-#         schema_dict.pop('$schema', None) 
-#         schema_dict.pop('title', None) 
-#         return json.dumps(schema_dict, ensure_ascii=False, indent=2)
-#     except Exception:
-#         # Use a very simple fallback schema string if model is not accessible
-#         return '{"type":"object", "properties":{"Statement_ID":{"type":"string"}, "Goal":{"type":"string"}, "Actions":{"type":"array"}}}'
-
-# NOTE: Since the Schema generation code is in 'create_structured_action_plan' (which I cannot edit directly), 
-# I will only provide the final template structure, which is clean.
-
+# SYSTEM PROMPT: กำหนดบทบาทและตรรกะการวิเคราะห์เชิงยุทธศาสตร์
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
-คุณคือที่ปรึกษา Strategic Planning ระดับสูงสุด
-หน้าที่: สร้าง Action Plan ที่ปฏิบัติได้จริงจาก Statements ที่ Fail หรือมีหลักฐานอ่อน
-คำแนะนำ: เน้นการแก้ไขปัญหาหลักฐาน PDCA ที่ขาดหาย และเสริมความแข็งแกร่งของหลักฐาน
+คุณคือผู้เชี่ยวชาญด้าน State Enterprise Assessment Model (SE-AM) 
+และที่ปรึกษาด้านการพัฒนาระบบการจัดการความรู้ (Knowledge Management) ตามมาตรฐาน ISO 30401
+
+หน้าที่ของคุณคือ:
+- วิเคราะห์ช่องว่าง (Gap) จากเกณฑ์ที่ไม่ผ่านหรือมีหลักฐานอ่อน
+- สร้าง "แผนปฏิบัติการที่จับต้องได้จริง" (Actionable Action Plan)
+- แบ่ง Phase อย่างสมเหตุสมผลตามระดับช่องว่างที่ตรวจพบ
+
+หลักการแบ่ง Phase ตามระดับที่ติด (Strategic Logic):
+• ถ้าติด Level 5 → เน้น Innovation, External Benchmarking, Continuous Improvement Loop
+• ถ้าติด Level 3-4 → เน้น Standardization, KPI Definition, Monitoring & Evaluation (PDCA)
+• ถ้าติด Level 1-2 → เน้น Policy Establishment, Resource Allocation, Communication & Training
+
+ทุก Action ต้องมี Steps ที่ชัดเจน: ใครทำ / ใช้เครื่องมืออะไร / หลักฐานที่ได้คืออะไร
 """
 
+# HUMAN PROMPT: บังคับ Output Format และควบคุมปริมาณ Token ด้วย Global Vars
 ACTION_PLAN_TEMPLATE: Final[str] = """
-Sub-Criteria: {sub_id}
-เป้าหมายที่ต้องการบรรลุ: Level {target_level}
-คำแนะนำหลัก: Action Plan ควรเน้นการปรับปรุงด้าน {advice_focus} (Process/Evidence/People)
+### [1. ข้อมูลสำหรับการวิเคราะห์]
+- รหัสเกณฑ์ย่อย: {sub_id}
+- ชื่อเกณฑ์: {sub_criteria_name}
+- ระดับเป้าหมายสูงสุด: Level {target_level}
+- จุดเน้นหลักตามช่องว่าง: {advice_focus}
 
-Statements ที่ต้องแก้ (รวมถึงหลักฐานอ่อนแอ):
+### [2. รายการเกณฑ์ที่ไม่ผ่าน (Gaps)]:
 {recommendation_statements_list}
 
-ตอบกลับด้วย JSON Array เท่านั้น (ไม่ต้องใส่ ```json):
+### [3. กฎเหล็กในการตอบ (STRICT RULES - ปฏิบัติตามอย่างเคร่งครัด)]
+1. ตอบเฉพาะ JSON Array เท่านั้น — ห้ามมีข้อความใดๆ นอก JSON (ห้ามมีคำนำหน้า "Here is..." หรือ Markdown ```json)
+2. ใช้ Double Quotes (") ล้อมรอบ Property และ String เท่านั้น **ห้ามใช้ Single Quote (') เด็ดขาด**
+3. ข้อจำกัดด้านโครงสร้าง (Constraints Driven by Global Config):
+   - จำนวน Phase: สร้าง 1 ถึง {max_phases} Phase(s) (ตามความเหมาะสม)
+   - จำนวน Steps ต่อ Action: ไม่เกิน {max_steps} ขั้นตอน
+   - ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ (เน้นกระชับ ขึ้นต้นด้วยคำกริยา)
+4. ภาษาที่ใช้ในการเขียนเนื้อหา: {language}
 
-[
-  {{
-    "Statement_ID": "ตัวอย่าง: 1.1.L3",
-    "Recommendation_Type": "FAILED หรือ WEAK_EVIDENCE",
-    "Goal": "เป้าหมายที่ชัดเจน",
-    "Actions": ["ขั้นตอนที่ 1", "ขั้นตอนที่ 2"],
-    "Responsible": "หน่วยงานที่รับผิดชอบ",
-    "Key_Metric": "ตัวชี้วัดความสำเร็จ",
-    "Tools_Templates": "เครื่องมือ/แบบฟอร์มที่แนะนำ",
-    "Verification_Outcome": "หลักฐานที่จะใช้พิสูจน์ (เน้น Evidence P/D/C/A)"
-  }}
-]
+### [4. KEY NAMES - ต้องสะกดให้ตรงตาม Schema เป๊ะ]
+- ระดับ Phase/Action (พิมพ์เล็ก): "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "target_evidence_type", "key_metric", "steps"
+- ระดับ Steps (PascalCase): "Step", "Description", "Responsible", "Tools_Templates", "Verification_Outcome"
+
+### [5. JSON SCHEMA REFERENCE]
+{json_schema}
+
+เริ่มตอบ JSON Array [ {{ ... }} ] ทันที:
 """
-# NOTE: The actual JSON Schema will be injected by the calling function 
-# in the production code based on the fix provided in the previous turn.
 
+# FINAL PROMPT DEFINITION
+# ผูกตัวแปรให้ตรงกับฟังก์ชัน create_structured_action_plan ใน core/action_plan.py
 ACTION_PLAN_PROMPT = PromptTemplate(
-    input_variables=["sub_id", "target_level", "recommendation_statements_list", "advice_focus"],
-    template=SYSTEM_ACTION_PLAN_PROMPT + ACTION_PLAN_TEMPLATE
+    input_variables=[
+        "sub_id",
+        "sub_criteria_name",
+        "target_level",
+        "recommendation_statements_list",
+        "advice_focus",
+        "json_schema",
+        "max_phases",          # ส่งมาจาก gv.MAX_ACTION_PLAN_PHASES
+        "max_steps",           # ส่งมาจาก gv.MAX_STEPS_PER_ACTION
+        "max_words_per_step",  # ส่งมาจาก gv.ACTION_PLAN_STEP_MAX_WORDS
+        "language"             # ส่งมาจาก gv.ACTION_PLAN_LANGUAGE
+    ],
+    template=SYSTEM_ACTION_PLAN_PROMPT + "\n" + ACTION_PLAN_TEMPLATE
 )
 
 # =================================================================
@@ -282,14 +291,3 @@ EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
     input_variables=["sub_id", "level", "context", "next_level"],
     template=SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
-
-# =================================================================
-# 6. Helper selector (REVISED)
-# =================================================================
-def select_assessment_prompt(level: int) -> PromptTemplate:
-    """Select the correct prompt template based on the target level"""
-    
-    if level <= 2:
-        return LOW_LEVEL_PROMPT
-    else:
-        return ASSESSMENT_PROMPT

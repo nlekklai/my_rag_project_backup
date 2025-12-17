@@ -16,13 +16,16 @@ DEFAULT_TENANT: Final[str] = "pea"
 DEFAULT_YEAR: Final[int] = 2568
 DEFAULT_ENABLER: Final[str] = "KM"
 
+# ==================== Ollama / LLM Request Control ====================
+OLLAMA_REQUEST_TIMEOUT: Final[int] = 300  # seconds
+OLLAMA_MAX_RETRIES: Final[int] = 3
 
 # ==================== Run Mode & LLM Configuration ====================
 RAG_RUN_MODE: Final[str] = "LOCAL_OLLAMA"
 
 DEFAULT_LLM_MODEL_NAME: Final[str] = "llama3:8b"
-LLM_TEMPERATURE: Final[float] = 0.0
-LLM_CONTEXT_WINDOW: Final[int] = 4096
+LLM_TEMPERATURE: Final[float] = 0
+LLM_CONTEXT_WINDOW: Final[int] = 8192
 
 
 # ==================== Embedding & Reranker Models ====================
@@ -51,7 +54,7 @@ MIN_RELEVANCE_THRESHOLD: Final[float] = 0.3
 CRITICAL_CA_THRESHOLD: Final[float] = 0.65
 
 # 📌 NEW HARD FAIL CONTROL FLAGS
-ENABLE_HARD_FAIL_LOGIC: Final[bool] = True
+ENABLE_HARD_FAIL_LOGIC: Final[bool] = False
 ENABLE_CONTEXTUAL_RULE_OVERRIDE: Final[bool] = True
 
 MAX_EVI_STR_CAP: Final[float] = 10.0
@@ -75,7 +78,7 @@ MAX_PARALLEL_WORKERS: Final[int] = 4
 
 # ==================== Logging & Context Control ====================
 IS_LOG_L3_CONTEXT: Final[bool] = True
-MAX_EVAL_CONTEXT_LENGTH: Final[int] = 4500
+MAX_EVAL_CONTEXT_LENGTH: Final[int] = 3000
 
 
 # ==================== Supported File & Document Types ====================
@@ -110,8 +113,8 @@ SEAM_ENABLER_MAP: Final[Dict[str, str]] = {
     "SCM": "4 การมุ่งเน้นผู้มีส่วนได้ส่วนเสีย และลูกค้า",
     "DT": "5 การพัฒนาเทคโนโลยีดิจิทัล",
     "HCM": "6 การบริหารทุนมนุษย์",
-    "KM": "7 การจัดการความรู้และนวัตกรรม",
-    "IM": "7 การจัดการความรู้และนวัตกรรม",
+    "KM": "7-1 การจัดการความรู้",
+    "IM": "7-2 การจัดการนวัตกรรม",
     "IA": "8 การตรวจสอบภายใน",
 }
 
@@ -123,6 +126,13 @@ EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 
 DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"
 EVIDENCE_MAPPING_FILENAME_SUFFIX: Final[str] = "_evidence_mapping.json"
+
+
+# ==================== Action Plan Generation Control ====================
+MAX_ACTION_PLAN_PHASES: Final[int] = 3
+MAX_STEPS_PER_ACTION: Final[int] = 2
+ACTION_PLAN_STEP_MAX_WORDS: Final[int] = 15
+ACTION_PLAN_LANGUAGE: Final[str] = "th"  # "th" หรือ "en"
 
 # =================================================================
 # 🟢 Helper Function for PDCA Calculation (Priority 1 Part 2 & Priority 2)
@@ -146,6 +156,13 @@ CORRECT_PDCA_SCORES_MAP: Final[Dict[int, Dict[str, int]]] = {
     5: {'P': 2, 'D': 2, 'C': 2, 'A': 2},
 }
 
+PDCA_PHASE_MAP: Final[Dict[int, str]] = {
+    1: "Plan (P)",
+    2: "Plan (P) + Do (D)",
+    3: "Plan (P) + Do (D) + Check (C)",
+    4: "Plan (P) + Do (D) + Check (C) + Act (A)",
+    5: "PDCA ครบวงจร (P + D + C + A) + Sustainability & Innovation"
+}
 
 # =================================================================
 # Heuristic Classification Helpers - ULTIMATE VERSION (ใช้ contextual_rules.json)

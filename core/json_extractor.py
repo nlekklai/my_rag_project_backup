@@ -80,6 +80,13 @@ def _normalize_keys(data: Any) -> Any:
         "c": "C_Check_Score", "check": "C_Check_Score",
         "a_act_score": "A_Act_Score", "a_score": "A_Act_Score", "act_score": "A_Act_Score",
         "a": "A_Act_Score", "act": "A_Act_Score",
+
+        # เพิ่มใน _normalize_keys mapping
+        "summary": "summary",
+        "summarization": "summary",
+        "suggestion_for_next_level": "suggestion_for_next_level",
+        "suggestion": "suggestion_for_next_level",
+        "next_step": "suggestion_for_next_level",
     }
 
     if isinstance(data, dict):
@@ -98,12 +105,36 @@ def _normalize_keys(data: Any) -> Any:
 # ===================================================================
 # 4. Extract + parse + normalize
 # ===================================================================
-def _extract_normalized_dict(raw_response: str) -> Optional[Dict[str, Any]]:
-    raw = (raw_response or "").strip()
+def _extract_normalized_dict(raw_response: Any) -> Optional[Dict[str, Any]]:
+    """
+    เวอร์ชันสมบูรณ์: รองรับทั้ง String, AIMessage และ LLMResult 
+    พร้อมระบบค้นหา JSON และ Normalize Keys
+    """
+    # 1. Input Guard: แปลง Object ทุกประเภทให้เป็น String ก่อน
+    raw = ""
+    if raw_response is None:
+        return None
+    
+    try:
+        if isinstance(raw_response, str):
+            raw = raw_response.strip()
+        elif hasattr(raw_response, 'content'): # กรณีเป็น AIMessage จาก LangChain
+            raw = str(raw_response.content).strip()
+        elif hasattr(raw_response, 'generations'): # กรณีเป็น LLMResult จาก LangChain
+            raw = str(raw_response.generations[0][0].text).strip()
+        else:
+            raw = str(raw_response).strip()
+    except Exception as e:
+        logger.error(f"Error converting LLM response to string: {e}")
+        return None
+
     if not raw:
         return None
 
+    # 2. พยายามดึง JSON ก้อนแรกด้วย Balanced Braces
     json_str = _extract_first_json_object(raw)
+    
+    # 3. Fallback: ถ้าวิธีแรกไม่ได้ผล ให้ใช้ Regex ค้นหาก้อนที่ยาวที่สุด
     if not json_str:
         matches = re.findall(r"\{[\s\S]*?\}", raw, re.DOTALL)
         if matches:
@@ -112,21 +143,26 @@ def _extract_normalized_dict(raw_response: str) -> Optional[Dict[str, Any]]:
     if not json_str:
         return None
 
+    # 4. Parsing ด้วย json5 (ยืดหยุ่นกว่า json ปกติ)
     data = None
     try:
         data = json5.loads(json_str)
     except Exception:
         try:
+            # ลองใช้ standard json อีกครั้งเผื่อ json5 มีปัญหา
             data = json.loads(json_str)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to parse JSON string: {json_str[:100]}... Error: {e}")
             return None
 
+    # 5. จัดการกรณีที่ LLM คืนค่าเป็น List ของ Dict (เช่น [{...}])
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
         data = data[0]
 
     if not isinstance(data, dict):
         return None
 
+    # 6. Normalize Keys ให้กลับมาเป็นมาตรฐาน SE-AM
     return _normalize_keys(data)
 
 

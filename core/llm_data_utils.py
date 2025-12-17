@@ -39,7 +39,11 @@ from config.global_vars import (
     MAX_EVAL_CONTEXT_LENGTH,
     USE_HYBRID_SEARCH, 
     HYBRID_VECTOR_WEIGHT, 
-    HYBRID_BM25_WEIGHT
+    HYBRID_BM25_WEIGHT,
+    MAX_ACTION_PLAN_PHASES,
+    MAX_STEPS_PER_ACTION,
+    ACTION_PLAN_STEP_MAX_WORDS,
+    ACTION_PLAN_LANGUAGE
 )
 
 # ===================================================================
@@ -756,28 +760,27 @@ def _fetch_llm_response(
     llm_executor: Any = None 
 ) -> str:
     """
-    เรียก LLM ผ่าน LangChain (OllamaChat) พร้อม:
-    - บังคับ JSON output ด้วย prompt
-    - Log raw response เต็ม ๆ เพื่อ debug
-    - Retry + backoff
-    - รองรับ mock mode
+    เรียก LLM ผ่าน LangChain/Ollama พร้อมระบบป้องกัน Format ผิดเพี้ยน:
+    - บังคับ JSON output ด้วย Strict English Prompt
+    - ใช้ Regex Extraction ดึงเฉพาะส่วน { ... } เพื่อตัดคำบรรยายภาษาอังกฤษออก
+    - Log raw response เต็มๆ เพื่อใช้ในการ Debug
+    - Retry พร้อม Exponential Backoff เมื่อเกิด Error
     """
     global _MOCK_FLAG
 
-    llm = llm_executor
-    
-    if llm is None and not _MOCK_FLAG: 
+    # ตรวจสอบว่ามี LLM Instance พร้อมใช้งานหรือไม่
+    if llm_executor is None and not _MOCK_FLAG: 
         raise ConnectionError("LLM instance not initialized (Missing llm_executor).")
 
-    # บังคับให้ LLM ตอบ JSON เท่านั้น แม้ model จะดื้อ
+    # 1. 🛠️ ENFORCED PROMPT (ภาษาอังกฤษมักคุม Format ได้ดีกว่าสำหรับโมเดลขนาดเล็ก)
     enforced_system_prompt = system_prompt.strip() + (
         "\n\n"
-        "RULES ที่ห้ามละเมิดเด็ดขาด:\n"
-        "- ตอบกลับด้วย JSON object เท่านั้น\n"
-        "- ห้ามมีข้อความอธิบายนอก JSON เด็ดขาด\n"
-        "- ห้ามใช้ markdown code block (```)\n"
-        "- ใช้ double quotes เท่านั้น ห้าม single quote\n"
-        "- ถ้าไม่แน่ใจ ให้ตอบ: {\"score\": 0, \"reason\": \"ไม่พบหลักฐานเพียงพอ\"}"
+        "### STRICT OUTPUT RULES ###\n"
+        "1. ANSWER IN VALID JSON OBJECT ONLY.\n"
+        "2. NO EXPLANATIONS, NO PREFACE, NO CONVERSATION.\n"
+        "3. START WITH '{' AND END WITH '}'.\n"
+        "4. DO NOT USE MARKDOWN CODE BLOCKS (```json).\n"
+        "5. IF NO EVIDENCE FOUND, RETURN: {\"score\": 0, \"reason\": \"No evidence\", \"is_passed\": false}"
     )
 
     messages = [
@@ -787,89 +790,102 @@ def _fetch_llm_response(
 
     for attempt in range(1, max_retries + 1):
         try:
+            # --- MOCK MODE CASE ---
             if _MOCK_FLAG:
-                logger.info(f"[MOCK MODE] Simulating LLM response for attempt {attempt}")
-                # จำลอง JSON ที่ถูกต้อง
-                mock_json = '{"score": 1, "reason": "Mock response - มีนโยบายชัดเจน", "is_passed": true, "P_Plan_Score": 1, "D_Do_Score": 1}'
+                mock_json = '{"score": 1, "reason": "Mock mode active", "is_passed": true}'
                 logger.critical(f"LLM RAW RESPONSE (DEBUG MOCK): {mock_json}")
                 return mock_json
 
-            # เรียก LLM จริง
-            response = llm.invoke(messages, config={"temperature": 0.0})
+            # --- ACTUAL LLM CALL (OLLAMA / LANGCHAIN) ---
+            # ใช้ temperature=0.0 เพื่อความแม่นยำสูงสุด
+            response = llm_executor.invoke(messages, config={"temperature": 0.0})
             
-            # ดึง text ดิบออกมา
+            # ดึง Text ออกมาจาก Response Object
             raw_text = ""
             if hasattr(response, "content"):
                 raw_text = str(response.content)
             elif isinstance(response, str):
-                raw_text = str(response)
-            elif hasattr(response, "text"):
-                raw_text = str(response.text)
+                raw_text = response
             else:
                 raw_text = str(response)
 
-            # ต้องมี log นี้ทุกครั้ง เพื่อให้เราเห็นว่ามันตอบอะไรจริง ๆ
-            logger.critical(f"LLM RAW RESPONSE (DEBUG): {raw_text[:800]}{'...' if len(raw_text) > 800 else ''}")
+            # 🔍 บรรทัดที่คุณเห็นใน Log คือบรรทัดนี้ (Log ก่อน Clean เพื่อดูพฤติกรรมโมเดล)
+            logger.critical(f"LLM RAW RESPONSE (DEBUG): {raw_text[:1000]}{'...' if len(raw_text) > 1000 else ''}")
 
-            return raw_text.strip()
+            # 2. 🧹 CLEANING LOGIC (Regex Extraction)
+            # แก้ปัญหา LLM ตอบ "Based on the text... { ... }"
+            raw_text_stripped = raw_text.strip()
+            
+            # ค้นหาข้อความที่อยู่ในปีกกาคู่แรก { ... }
+            json_match = re.search(r'(\{.*\})', raw_text_stripped, re.DOTALL)
+            
+            if json_match:
+                extracted_json = json_match.group(1)
+                try:
+                    # ทดสอบว่าสิ่งที่ดึงมาเป็น JSON ที่ถูกต้องหรือไม่
+                    json.loads(extracted_json) 
+                    return extracted_json
+                except json.JSONDecodeError:
+                    logger.warning(f"Extracted string is not valid JSON: {extracted_json[:100]}")
+            
+            # 3. 🛡️ FALLBACK: ถ้า Regex ไม่เจอ หรือ Parse ไม่ได้
+            # ตรวจดูว่า raw_text (ที่ตัดหัวท้าย) พอลุ้นเป็น JSON ได้ไหม
+            return raw_text_stripped
 
         except Exception as e:
             logger.error(f"LLM call failed (attempt {attempt}/{max_retries}): {e}")
             if attempt < max_retries:
-                time.sleep(2 ** attempt)  # exponential backoff
+                # Exponential backoff: 2s, 4s, 8s...
+                time.sleep(2 ** attempt)  
             else:
                 logger.critical("All LLM attempts failed – returning safe fallback JSON")
-                fallback = '{"score": 0, "reason": "LLM ไม่ตอบสนองหลังจากพยายามหลายครั้ง", "is_passed": false}'
-                logger.critical(f"LLM RAW RESPONSE (DEBUG FALLBACK): {fallback}")
-                return fallback
+                return '{"score": 0, "reason": "LLM_TIMEOUT_OR_FAILURE", "is_passed": false}'
 
-    # ไม่ควรถึงจุดนี้ แต่ป้องกันไว้
-    fallback = '{"score": 0, "reason": "Unknown LLM failure"}'
-    return fallback
+    return '{"score": 0, "reason": "Unknown execution error"}'
 
-# ------------------------------------------------------------------
-# ฟังก์ชันตัวช่วยใหม่: ทำความสะอาดและดึงค่า String/Dict ออกจาก Response
-# ------------------------------------------------------------------
-def _clean_llm_response_content(resp: Any) -> str:
-    """
-    พยายามดึง content ออกมาในรูปแบบ string ที่สะอาดที่สุด
-    รองรับการห่อหุ้มแบบ Tuple/List ที่มี Dict/String อยู่ภายใน และใช้ Regex Cleanup 
-    เพื่อดึงเฉพาะ JSON Object
-    """
+# # ------------------------------------------------------------------
+# # ฟังก์ชันตัวช่วยใหม่: ทำความสะอาดและดึงค่า String/Dict ออกจาก Response
+# # ------------------------------------------------------------------
+# def _clean_llm_response_content(resp: Any) -> str:
+#     """
+#     พยายามดึง content ออกมาในรูปแบบ string ที่สะอาดที่สุด
+#     รองรับการห่อหุ้มแบบ Tuple/List ที่มี Dict/String อยู่ภายใน และใช้ Regex Cleanup 
+#     เพื่อดึงเฉพาะ JSON Object
+#     """
     
-    # --- 1. การทำความสะอาดเบื้องต้น (Existing Logic) ---
-    cleaned_resp_str: str = ""
+#     # --- 1. การทำความสะอาดเบื้องต้น (Existing Logic) ---
+#     cleaned_resp_str: str = ""
 
-    # 1.1 จัดการการห่อหุ้ม (Handle Tuple/List wrapper)
-    if isinstance(resp, (list, tuple)) and resp:
-        resp = resp[0]
-        logger.debug(f"LLM Response was wrapped in {type(resp).__name__}, extracted first element.")
+#     # 1.1 จัดการการห่อหุ้ม (Handle Tuple/List wrapper)
+#     if isinstance(resp, (list, tuple)) and resp:
+#         resp = resp[0]
+#         logger.debug(f"LLM Response was wrapped in {type(resp).__name__}, extracted first element.")
 
-    # 1.2 จัดการ Response Object/Dict ที่มี 'content' field
-    if hasattr(resp, "content"): 
-        cleaned_resp_str = str(resp.content).strip()
-    elif isinstance(resp, dict) and "content" in resp: 
-        cleaned_resp_str = str(resp["content"]).strip()
-    elif isinstance(resp, str): 
-        cleaned_resp_str = resp.strip()
-    else: 
-        # 1.3 Fallback: แปลงเป็น String
-        cleaned_resp_str = str(resp).strip()
+#     # 1.2 จัดการ Response Object/Dict ที่มี 'content' field
+#     if hasattr(resp, "content"): 
+#         cleaned_resp_str = str(resp.content).strip()
+#     elif isinstance(resp, dict) and "content" in resp: 
+#         cleaned_resp_str = str(resp["content"]).strip()
+#     elif isinstance(resp, str): 
+#         cleaned_resp_str = resp.strip()
+#     else: 
+#         # 1.3 Fallback: แปลงเป็น String
+#         cleaned_resp_str = str(resp).strip()
     
-    # --- 2. การทำความสะอาด Regex (The CRITICAL Fix for Malform) ---
+#     # --- 2. การทำความสะอาด Regex (The CRITICAL Fix for Malform) ---
     
-    # 2.1 ค้นหาและดึงเฉพาะส่วนที่อยู่ในเครื่องหมายปีกกา { ... }
-    # re.DOTALL: เพื่อให้ . จับคู่ได้แม้กระทั่งอักขระขึ้นบรรทัดใหม่
-    match = re.search(r'\{.*\}', cleaned_resp_str, re.DOTALL)
+#     # 2.1 ค้นหาและดึงเฉพาะส่วนที่อยู่ในเครื่องหมายปีกกา { ... }
+#     # re.DOTALL: เพื่อให้ . จับคู่ได้แม้กระทั่งอักขระขึ้นบรรทัดใหม่
+#     match = re.search(r'\{.*\}', cleaned_resp_str, re.DOTALL)
     
-    if match:
-        json_string_only = match.group(0)
-        logger.debug("Regex Cleanup performed: Extracted pure JSON string.")
-        return json_string_only
+#     if match:
+#         json_string_only = match.group(0)
+#         logger.debug("Regex Cleanup performed: Extracted pure JSON string.")
+#         return json_string_only
     
-    # 2.2 หากไม่พบ JSON Object: คืนค่า String ที่ทำความสะอาดเบื้องต้นไป
-    logger.warning("Regex Cleanup failed: Could not find JSON object. Returning original cleaned string.")
-    return cleaned_resp_str
+#     # 2.2 หากไม่พบ JSON Object: คืนค่า String ที่ทำความสะอาดเบื้องต้นไป
+#     logger.warning("Regex Cleanup failed: Could not find JSON object. Returning original cleaned string.")
+#     return cleaned_resp_str
 
 # ------------------------
 # Evaluation
@@ -1154,7 +1170,7 @@ def evaluate_with_llm_low_level(
         }
     
 # ------------------------
-# Summarize
+# Summarize (FULL VERSION)
 # ------------------------
 def create_context_summary_llm(
     context: str, 
@@ -1164,330 +1180,378 @@ def create_context_summary_llm(
     llm_executor: Any 
 ) -> Dict[str, Any]:
     """
-    ใช้ LLM เพื่อสรุปเนื้อหา Context...
+    ใช้ LLM เพื่อสรุปเนื้อหาหลักฐานเป็นภาษาไทย และให้คำแนะนำราย Level
+    รองรับการจัดการผลลัพธ์ทั้งแบบ String และ Object (LLMResult/AIMessage)
     """
-    # 0. ตรวจสอบ llm_executor
+    logger = logging.getLogger("AssessmentApp")
+
+    # 0. ตรวจสอบความพร้อมของ LLM
     if llm_executor is None: 
         logger.error("LLM instance is None. Cannot summarize context.")
-        return {"summary":"LLM not available","suggestion_for_next_level":"Check LLM"}
+        return {
+            "summary": "ไม่สามารถสรุปได้เนื่องจากระบบ LLM ไม่พร้อมใช้งาน",
+            "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ LLM"
+        }
 
-    # 0.1 ตรวจสอบ Context สั้นเกินไป
-    context_limited = (context or "").strip()
+    # 1. ตรวจสอบ Context และเตรียมข้อมูล
+    # ป้องกันกรณี context เป็น None
+    context_safe = context or ""
+    context_limited = context_safe.strip()
+    
     if not context_limited or len(context_limited) < 50:
         logger.info(f"Context too short for summarization L{level} {sub_id}. Skipping LLM call.")
         return {
-            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้อง",
-            "suggestion_for_next_level": "ตรวจสอบแหล่งข้อมูลหรือปรับปรุงคำค้นหา RAG"
+            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้องชัดเจนในระดับนี้",
+            "suggestion_for_next_level": "ตรวจสอบความครบถ้วนของหลักฐานในฐานข้อมูล KM"
         }
 
-    # 1. จำกัด Context ให้สั้นลงเพื่อความเร็วและความเสถียร (4000 tokens)
-    context_to_send = context_limited[:4000]
+    # Cap context เพื่อไม่ให้เกิน Token Limit (ประมาณ 4000 ตัวอักษร)
+    context_to_send = context_limited[:4000] 
+    next_level = min(level + 1, 5)
+
+    # 2. ดึง Prompt Template
+    from seam_prompts import USER_EVIDENCE_DESCRIPTION_TEMPLATE, SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
     
-    human_prompt = EVIDENCE_DESCRIPTION_PROMPT.format(
-        sub_criteria_name=sub_criteria_name, 
-        level=level, 
-        context=context_to_send, 
-        sub_id=sub_id
-    )
-
-    # 2. สร้าง System Prompt พร้อม JSON Schema
-    try: 
-        schema_json = json.dumps(EvidenceSummary.model_json_schema(), ensure_ascii=False, indent=2)
-    except: 
-        schema_json = '{"summary":"string", "suggestion_for_next_level":"string"}'
-
-    # system_prompt = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
-    system_prompt = (
-        SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
-        + "\n\n--- JSON SCHEMA ---\n"
-        + schema_json
-        + "\nIMPORTANT: Respond only with valid JSON. เนื้อหาในทุก key ต้องเป็นภาษาไทยเท่านั้น ห้ามใช้ภาษาอังกฤษ."
-    )
-
-
-    # 3. เรียกใช้ LLM พร้อม Retries
     try:
-        raw = _fetch_llm_response(system_prompt, human_prompt, 2, llm_executor=llm_executor)
-        
-        # 4. แปลงผลลัพธ์ JSON
-        parsed = _extract_normalized_dict(raw) or {}
-        parsed.setdefault("summary", "Fallback: No summary provided by LLM.")
-        parsed.setdefault("suggestion_for_next_level", "Fallback: No suggestion provided.")
-        
-        # 5. ตรวจสอบความถูกต้องของ Schema เบื้องต้น
-        if not all(k in parsed for k in ["summary", "suggestion_for_next_level"]):
-             logger.warning(f"LLM Summary: Missing expected keys in JSON. Raw: {raw[:100]}...")
-             
-        return parsed
-        
+        human_prompt = USER_EVIDENCE_DESCRIPTION_TEMPLATE.format(
+            sub_id=f"{sub_id} - {sub_criteria_name}",
+            level=level,
+            next_level=next_level,
+            context=context_to_send
+        )
     except Exception as e:
-        logger.exception(f"create_context_summary_llm failed for {sub_id} L{level}: {e}")
-        # Fallback กรณีเกิดข้อผิดพลาด
-        return {"summary":f"LLM Error during summarization: {e.__class__.__name__}","suggestion_for_next_level": "Manual review required due to LLM failure."}
+        logger.error(f"Error formatting prompt template: {e}")
+        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "Check template variables"}
 
-#=================================================================
-# 5. FINAL FUNCTION (Production-Ready 100%)
-# =================================================================
+    system_instruction = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\nIMPORTANT: ตอบเป็น JSON ภาษาไทยเท่านั้น ห้ามมีคำอธิบายอื่นนอก JSON."
 
-
-# 🚨 IMPORTANT: ต้องรับ logger เข้ามาเป็น argument
-def _extract_json_array_for_action_plan(llm_response: str, logger: Callable) -> List[Dict[str, Any]]:
-    """Extract JSON object/array อย่างแข็งแกร่งสุด ๆ"""
-    if not llm_response or not isinstance(llm_response, str):
-        return []
-
-    text = llm_response.strip()
-    json_str = ""
-
-    # 1. ลองหาใน code block ก่อน (```json หรือ ```)
-    fenced_search = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
-    if not fenced_search:
-        fenced_search = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
-
-    if fenced_search:
-        json_str = fenced_search.group(1).strip()
-    else:
-        # 2. หา balanced [] array หรือ {} object
-        start_array = text.find("[")
-        start_object = text.find("{")
-        
-        if start_array != -1 and (start_object == -1 or start_array < start_object):
-             start, end_char = start_array, ']'
-        elif start_object != -1:
-             start, end_char = start_object, '}'
-        else:
-             return []
-        
-        # ใช้วิธีหาแบบเน้นวงเล็บเปิดปิดให้สมดุล (Robust parsing)
-        depth = 0
-        json_str_builder = []
-        is_in_string = False
-        
-        # เริ่มจาก index ที่เจอวงเล็บเปิด
-        for i in range(start, len(text)):
-            char = text[i]
-            if char == '"' and (i == 0 or text[i-1] != '\\'):
-                is_in_string = not is_in_string
-            
-            if not is_in_string:
-                if char == '[' or char == '{':
-                    depth += 1
-                elif char == ']' or char == '}':
-                    depth -= 1
-            
-            json_str_builder.append(char)
-            
-            if depth == 0 and (char == end_char):
-                json_str = "".join(json_str_builder).strip()
-                break
-        
-        if depth != 0 and not json_str:
-            logger("ActionPlan JSON parse failed (Depth Error): วงเล็บเปิดปิดไม่สมดุล")
-            return []
-
-
-    # 3. Parse ด้วย json → json5 fallback
-    if not json_str:
-        return []
-
-    try:
-        data = json.loads(json_str)
-    except:
+    # 3. เรียกใช้ LLM พร้อมจัดการ Retries และ Object Parsing
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
         try:
-            data = json5.loads(json_str)
+            logger.info(f"Generating Thai Summary for {sub_id} L{level} (Attempt {attempt})")
+            
+            # เรียกใช้ LLM
+            raw_response_obj = llm_executor.generate(
+                system=system_instruction, 
+                prompts=[human_prompt]
+            )
+
+            # --- CRITICAL FIX START: ดึง String ออกจาก Object ---
+            raw_response_str = ""
+            if hasattr(raw_response_obj, 'generations'): # LLMResult
+                raw_response_str = raw_response_obj.generations[0][0].text
+            elif hasattr(raw_response_obj, 'content'):   # AIMessage
+                raw_response_str = raw_response_obj.content
+            else:
+                raw_response_str = str(raw_response_obj)
+            # --- CRITICAL FIX END ---
+
+            # 4. Extract และ Normalize JSON
+            # เรียกใช้ _extract_normalized_dict จาก core/json_extractor.py
+            parsed = _extract_normalized_dict(raw_response_str)
+            
+            if parsed and isinstance(parsed, dict) and "summary" in parsed:
+                # ทำความสะอาดข้อมูล String ขั้นสุดท้าย
+                summary_val = str(parsed.get("summary", "")).strip()
+                suggestion_val = str(parsed.get("suggestion_for_next_level", "")).strip()
+                
+                return {
+                    "summary": summary_val if summary_val else "ไม่พบข้อมูลสรุป",
+                    "suggestion_for_next_level": suggestion_val if suggestion_val else "ไม่พบคำแนะนำ"
+                }
+            
+            logger.warning(f"Attempt {attempt}: LLM returned invalid summary format.")
+            
         except Exception as e:
-            logger(f"ActionPlan JSON parse failed (Fallback): {str(e)} | Snippet: {json_str[:200]}")
+            logger.error(f"Attempt {attempt}: create_context_summary_llm failed: {str(e)}")
+            time.sleep(1)
+
+    # 5. Fallback สุดท้ายหากรันไม่สำเร็จ
+    return {
+        "summary": f"ระบบประเมินพบหลักฐานในระดับ {level} แต่ไม่สามารถสรุปเนื้อหาได้โดยอัตโนมัติ (LLM Parse Error)",
+        "suggestion_for_next_level": f"ตรวจสอบข้อกำหนดเป้าหมายของ Level {next_level} ในคู่มือ SE-AM"
+    }
+
+
+# =================================================================
+# 1. JSON Extractor (ทนทานที่สุด)
+# =================================================================
+def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
+    try:
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+
+        if not text.strip():
             return []
 
-    # 4. ตรวจสอบและคืนค่าเป็น List of Dict
-    if isinstance(data, list):
-        # ตรวจสอบเบื้องต้นว่าแต่ละ item น่าจะเป็น ActionPlanActions
-        return [item for item in data if isinstance(item, dict) and ('Phase' in item or 'Goal' in item)]
-    
-    if isinstance(data, dict):
-        # หาก LLM ตอบเป็น object เดียว ให้ห่อหุ้มไว้ใน List
-        if 'Phase' in data or 'Goal' in data:
-            return [data]
+        # 1. ลบ Markdown Block
+        clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
+
+        # 2. ค้นหาหาขอบเขตที่กว้างที่สุดของ [ ]
+        start_idx = clean_text.find('[')
+        end_idx = clean_text.rfind(']')
+
+        if start_idx == -1:
+            # ถ้าไม่เจอ [ ] อาจส่งมาเป็น Object เดียว { }
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            if start_idx == -1: return []
+            json_candidate = clean_text[start_idx:end_idx + 1]
+        else:
+            json_candidate = clean_text[start_idx:end_idx + 1]
+
+        # 3. ล้างอักขระควบคุม (Control Characters) ที่มักทำ JSON พัง
+        json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
+
+        # 4. พยายาม Parse ด้วย JSON5 (ซึ่งฉลาดเรื่อง Single Quote และ Trailing Comma อยู่แล้ว)
+        def try_parse(content):
+            try:
+                data = json5.loads(content)
+                return data if isinstance(data, list) else [data]
+            except:
+                return None
+
+        # --- ลองครั้งที่ 1: Parse ปกติ ---
+        result = try_parse(json_candidate)
+        if result: return result
+
+        # --- ลองครั้งที่ 2: ถ้า Parse ไม่ผ่าน อาจเป็นเพราะ JSON ตัดจบ (Truncated) ---
+        # เราจะพยายาม "ปิด" โครงสร้างให้มัน (Brute-force close)
+        logger.warning("JSON parsing failed, attempting auto-repair (closing brackets)...")
+        for suffix in ["]", "}", "}]", "}]}]", "}\n]"]:
+            result = try_parse(json_candidate + suffix)
+            if result:
+                logger.info(f"✅ Auto-repair success with suffix: {suffix}")
+                return result
+
+        # 5. สุดท้ายจริงๆ: ถ้ายังไม่ผ่าน ให้พยายามหา Object ที่สมบูรณ์ภายในทีละตัว (Regex Extraction)
+        logger.warning("Auto-repair failed, falling back to regex object extraction...")
+        objects = re.findall(r'\{[^{}]*\}', json_candidate)
+        fallback_results = []
+        for obj_str in objects:
+            try:
+                obj_data = json5.loads(obj_str)
+                fallback_results.append(obj_data)
+            except:
+                continue
         
-    return []
+        if fallback_results:
+            logger.info(f"✅ Recovered {len(fallback_results)} objects via regex fallback")
+            return fallback_results
+
+        # ถ้าถึงตรงนี้คือพังจริง ให้ Debug ดูว่าหน้าตาเป็นยังไง
+        logger.error(f"Failed to parse JSON. Raw snippet: {json_candidate[:200]}...")
+        return []
+
+    except Exception as e:
+        logger.error(f"Extraction logic failed: {str(e)}", exc_info=True)
+        return []
 
 
-# 🚨 IMPORTANT: ต้องรับ logger เข้ามาเป็น argument
+# =================================================================
+# 2. Key Normalizer (ตรงกับ schema ล่าสุด)
+# =================================================================
+def action_plan_normalize_keys(obj: Any) -> Any:
+    """
+    แปลง key ให้ตรงกับ alias (lowercase) และ Capitalized fields ใน StepDetail
+    """
+    if isinstance(obj, list):
+        return [action_plan_normalize_keys(i) for i in obj]
+    
+    if isinstance(obj, dict):
+        field_mapping = {
+            # Phase & Action level → lowercase alias
+            'phase': 'phase', 'Phase': 'phase',
+            'goal': 'goal', 'Goal': 'goal',
+            'actions': 'actions', 'Actions': 'actions',
+            
+            'statement_id': 'statement_id', 'Statement_ID': 'statement_id',
+            'statement id': 'statement_id', 'title': 'statement_id', 'id': 'statement_id',
+            
+            'failed_level': 'failed_level', 'Failed_Level': 'failed_level',
+            'failed level': 'failed_level', 'level': 'failed_level',
+            
+            'recommendation': 'recommendation', 'Recommendation': 'recommendation',
+            'recommend': 'recommendation',
+            
+            'target_evidence_type': 'target_evidence_type', 'Target_Evidence_Type': 'target_evidence_type',
+            'evidence_type': 'target_evidence_type', 'evidence': 'target_evidence_type',
+            
+            'key_metric': 'key_metric', 'Key_Metric': 'key_metric',
+            'metric': 'key_metric',
+            
+            'steps': 'steps', 'Steps': 'steps',
+            
+            # StepDetail → Capitalized (ตาม schema)
+            'step': 'Step', 'Step': 'Step',
+            'description': 'Description', 'desc': 'Description', 'Description': 'Description',
+            'responsible': 'Responsible', 'owner': 'Responsible', 'Responsible': 'Responsible',
+            'tools_templates': 'Tools_Templates', 'tools': 'Tools_Templates', 'template': 'Tools_Templates',
+            'Tools_Templates': 'Tools_Templates',
+            'verification_outcome': 'Verification_Outcome', 'outcome': 'Verification_Outcome',
+            'result': 'Verification_Outcome', 'Verification_Outcome': 'Verification_Outcome',
+        }
+        
+        new_obj = {}
+        for k, v in obj.items():
+            k_lower = k.lower().replace('_', ' ').replace('-', ' ').strip()
+            k_lower_no_space = k_lower.replace(' ', '')
+            
+            target_key = field_mapping.get(k_lower) or field_mapping.get(k_lower_no_space) or k
+            new_obj[target_key] = action_plan_normalize_keys(v)
+        
+        return new_obj
+    
+    return obj
+
+
+# =================================================================
+# 3. Main Function: create_structured_action_plan
+# =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
     sub_id: str,
     sub_criteria_name: str,
     target_level: int,
-    llm_executor: Any, # ใช้สำหรับเรียก LLM จริง
-    ActionPlanActions: Any, # รับ Pydantic Model เข้ามา
+    llm_executor: Any,
+    logger: logging.Logger,
     max_retries: int = 3
 ) -> List[Dict[str, Any]]:
-    
-    # ------------------------------------------------------------------
-    # 1. Logic สำหรับกรณี "ทุกอย่างผ่าน" (Sustain/Optimize Logic)
-    # ------------------------------------------------------------------
-    # (โค้ดส่วนนี้ยังคงเดิม)
+    """
+    สร้าง Action Plan ที่ผ่าน Pydantic validation 100%
+    ควบคุมจาก config.global_vars อย่างเต็มรูปแบบ:
+    - จำนวน Phase สูงสุด
+    - จำนวน Steps ต่อ Action
+    - ความยาว Step (คำ)
+    - ภาษา
+    """
+    from config import global_vars as gv
+
+    # --- Sustain Mode (ไม่มี Gap) ---
     if not recommendation_statements:
+        logger.info(f"[Sustain Mode] No gaps found → Level {target_level}")
         return [{
-            "Phase": f"Level {target_level} - Sustain & Next Level Prep",
-            "Goal": f"รักษามาตรฐาน Level {target_level} และเตรียมความพร้อมสู่ Level {min(target_level + 1, 5)} สำหรับ {sub_criteria_name}",
-            "Actions": [
-                {
-                    "Statement_ID": f"SUSTAIN_L{target_level}", 
-                    "Failed_Level": target_level, 
-                    "Recommendation": "ทบทวนแผนงานและปรับปรุง Evidence P/D/C/A ให้มีความชัดเจนและเข้มแข็งยิ่งขึ้น เพื่อเตรียมพร้อมสำหรับการตรวจสอบภายนอก", 
-                    "Target_Evidence_Type": "หลักฐาน PDCA ที่ครบถ้วน", 
-                    "Key_Metric": "ความสมบูรณ์ของหลักฐาน (P/D/C/A)", 
-                    "Steps": [{"Step": "1", "Description": "รวบรวมหลักฐาน P/D/C/A ที่ครบถ้วน", "Responsible": "KM", "Tools_Templates": "N/A", "Verification_Outcome": "เอกสารครบถ้วน"}]
-                }
-            ]
+            "phase": f"Level {target_level} Sustain & Innovation",
+            "goal": f"รักษามาตรฐานและยกระดับ {sub_criteria_name} สู่ความเป็นเลิศอย่างต่อเนื่อง",
+            "actions": [{
+                "statement_id": f"SUSTAIN_L{target_level}",
+                "failed_level": target_level,
+                "recommendation": "รักษามาตรฐานการดำเนินงาน พร้อมทำ Benchmarking กับ Best Practice สากล",
+                "target_evidence_type": "Internal Audit Report / External Benchmarking Report",
+                "key_metric": f"Maintain Maturity ≥ Level {target_level}",
+                "steps": [{
+                    "Step": "1",
+                    "Description": "ทบทวนกระบวนการและ KPI รายไตรมาส พร้อมปรับปรุงตาม PDCA",
+                    "Responsible": "KM Committee / Top Management",
+                    "Tools_Templates": "PDCA Dashboard / Quarterly Review Template",
+                    "Verification_Outcome": "Quarterly KM Review Report"
+                }, {
+                    "Step": "2",
+                    "Description": "ศึกษาค้นคว้า Best Practices จากองค์กรชั้นนำทั้งในและต่างประเทศ",
+                    "Responsible": "KM Team",
+                    "Tools_Templates": "Benchmarking Framework",
+                    "Verification_Outcome": "Benchmarking Study Report"
+                }]
+            }]
         }]
 
+    # --- วิเคราะห์ Gap และกำหนดจำนวน Phase ตามระดับ ---
+    max_failed_level = max([s.get('level', 0) for s in recommendation_statements] or [1])
 
-    # ------------------------------------------------------------------
-    # 2. เตรียม Prompt Context และ Logic การดึงค่าสำหรับ Prompt
-    # ------------------------------------------------------------------
-    
-    # 2.1 Pydantic Schema JSON (ใช้ ActionPlanActions)
+    if max_failed_level >= 5:
+        advice_focus = "Innovation, External Benchmarking, Digital Transformation และ Continuous Improvement"
+    elif max_failed_level >= 3:
+        advice_focus = "Standardization, KPI Monitoring, PDCA Cycle และ Evidence Strengthening"
+    else:
+        advice_focus = "Policy Establishment, Resource Allocation, Communication และ Basic Training"
+
+    stmt_blocks = [
+        f"- [Level {s.get('level')}] {s.get('statement')} (Gap: {s.get('reason')})"
+        for s in recommendation_statements
+    ]
+
+    # --- เตรียม JSON Schema ---
     try:
-        # ใช้ function clean schema
-        raw_schema_json = json.dumps(ActionPlanActions.model_json_schema(), ensure_ascii=False, indent=2)
-        schema_json = get_clean_action_plan_schema(raw_schema_json)
+        from core.action_plan_schema import get_clean_action_plan_schema
+        schema_json = json.dumps(get_clean_action_plan_schema(), ensure_ascii=False, indent=2)
     except Exception as e:
-        logger(f"Error generating clean Pydantic schema: {e}")
-        # Fallback schema
-        schema_json = '{"Phase":"string", "Goal":"string", "Actions":[{"Statement_ID":"string", "Recommendation":"string", "Steps":[]}]}'
-    
-    # 2.2 Define Prompts
-    SYSTEM_ACTION_PLAN_PROMPT: str = """
-คุณคือที่ปรึกษา Strategic Planning ระดับสูงสุด
-หน้าที่: สร้าง Action Plan ที่ปฏิบัติได้จริงจาก Statements ที่ Fail หรือมีหลักฐานอ่อน
-คำแนะนำ: เน้นการแก้ไขปัญหาหลักฐาน PDCA ที่ขาดหาย และเสริมความแข็งแกร่งของหลักฐาน
-"""
-    ACTION_PLAN_TEMPLATE: str = f"""
-Sub-Criteria: {{sub_id}}
-เป้าหมายที่ต้องการบรรลุ: Level {{target_level}}
-คำแนะนำหลัก: Action Plan ควรเน้นการปรับปรุงด้าน {{advice_focus}} (Process/Evidence/People)
+        logger.error(f"Schema load failed: {e}")
+        return []
 
-Statements ที่ต้องแก้ (รวมถึงหลักฐานอ่อนแอ):
-{{recommendation_statements_list}}
+    # --- สร้าง Prompt พร้อมส่ง config ทั้งหมดเข้าไปบังคับ LLM ---
+    human_prompt = ACTION_PLAN_PROMPT.format(
+        sub_id=sub_id,
+        sub_criteria_name=sub_criteria_name,
+        target_level=target_level,
+        advice_focus=advice_focus,
+        recommendation_statements_list="\n".join(stmt_blocks),
+        json_schema=schema_json,
+        max_phases=gv.MAX_ACTION_PLAN_PHASES,
+        max_steps=gv.MAX_STEPS_PER_ACTION,
+        max_words_per_step=gv.ACTION_PLAN_STEP_MAX_WORDS,
+        language="ภาษาไทย" if gv.ACTION_PLAN_LANGUAGE == "th" else "English"
+    )
 
---- JSON SCHEMA ---
-{schema_json}
-
-โปรดสร้าง Action Plan ในรูปแบบ **JSON ARRAY** ของ objects (List[ActionPlanActions]) โดยแต่ละ object ควรเป็น 1 Phase หรือ 1 กลุ่มการแก้ไข และ Actions ภายในต้องสอดคล้องกับ Statement ID ที่ระบุ
-"""
-
-    # 2.3 Logic การดึงค่าและกำหนด Advice_Focus (ไม่มีการเปลี่ยนแปลงหลัก)
-    stmt_blocks = []
-    unique_recommendation_statements = []
-    seen_ids = set()
-    highest_stmt = {}
-    
-    # [Logic for filtering unique statements and determining highest_stmt remains unchanged]
-    for s in recommendation_statements:
-        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
-        if sid not in seen_ids:
-            unique_recommendation_statements.append(s)
-            seen_ids.add(sid)
-
-    failed_only_stmts = [s for s in unique_recommendation_statements if s.get('recommendation_type') in ['FAILED', 'GAP_ANALYSIS']]
-    
-    if not failed_only_stmts and unique_recommendation_statements:
-         highest_stmt = max(unique_recommendation_statements, key=lambda s: s.get('level', 0))
-    elif failed_only_stmts:
-         highest_stmt = max(failed_only_stmts, key=lambda s: s.get('level', 0))
-    
-    advice_focus = "Process" 
-    if highest_stmt:
-        pdca_breakdown = highest_stmt.get('pdca_breakdown', {})
-        a_score = pdca_breakdown.get('A', 0.0)
-        c_score = pdca_breakdown.get('C', 0.0)
-        d_score = pdca_breakdown.get('D', 0.0)
-        
-        if d_score < 0.5 or c_score < 0.5 or a_score < 0.5:
-            advice_focus = "Evidence" 
-        elif sub_id in ["1.2", "3.1", "3.2", "3.3"]:
-            advice_focus = "People"
-    
-    for i, s in enumerate(unique_recommendation_statements, 1):
-        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
-        rec_type = s.get("recommendation_type", "FAILED")
-        text = str(s.get("statement") or "").strip()
-        reason = str(s.get("reason") or "").strip()
-        stmt_blocks.append(
-            f"{i}. Statement ID: {sid} (Level {s.get('level', '?')})\n   ประเภทคำแนะนำ: {rec_type}\n   ข้อความ: {text}\n   ปัญหา: {reason}\n"
-        )
-    
-    prompt_args = {
-        "sub_id": sub_id,
-        "target_level": target_level,
-        "recommendation_statements_list": "\n\n".join(stmt_blocks),
-        "advice_focus": advice_focus
-    }
-
-    human_prompt = ACTION_PLAN_TEMPLATE.format(**prompt_args)
-    system_prompt = SYSTEM_ACTION_PLAN_PROMPT
-
-    # ------------------------------------------------------------------
-    # 3. เรียก LLM + Extract + Validate (Final Logic)
-    # ------------------------------------------------------------------
-    for attempt in range(max_retries):
+    # --- Retry Loop ---
+    for attempt in range(1, max_retries + 1):
         try:
-            # 🚨 ใช้ llm_executor จริง (แทนที่ด้วย _fetch_llm_response ถ้ายังใช้ mock)
-            raw = llm_executor.generate(system_prompt, human_prompt) 
-            # raw = _fetch_llm_response(system_prompt, human_prompt) # ใช้ Mock Function 
-            
-            # 🚨 Pass logger เข้าไป
-            items = _extract_json_array_for_action_plan(raw, logger)
-            
-            if not items: continue
+            logger.info(f"Action Plan Generation | Attempt {attempt}/{gv.OLLAMA_MAX_RETRIES}")
+            response = llm_executor.generate(
+                system=SYSTEM_ACTION_PLAN_PROMPT,
+                prompts=[human_prompt],
+                temperature=gv.LLM_TEMPERATURE,
+                max_tokens=3000
+            )
 
-            # Validate ด้วย Pydantic Model ActionPlanActions
-            validated_list = []
-            for item in items:
+            raw_text = ""
+            if hasattr(response, 'generations') and response.generations:
+                raw_text = response.generations[0][0].text
+            elif hasattr(response, 'text'):
+                raw_text = response.text
+            else:
+                raw_text = str(response)
+
+            if attempt == 1:
+                logger.debug(f"Raw Response (first 800 chars):\n{raw_text[:800]}")
+
+            items = _extract_json_array_for_action_plan(raw_text, logger)
+            if not items:
+                logger.warning(f"Attempt {attempt}: No JSON extracted")
+                continue
+
+            validated_output = []
+            for idx, entry in enumerate(items):
                 try:
-                    # Validate แต่ละ object ใน array
-                    validated_item = ActionPlanActions.model_validate(item) 
-                    # ใช้ model_dump(by_alias=True) เพื่อให้แน่ใจว่าได้ field name ที่ถูกต้อง
-                    validated_list.append(validated_item.model_dump(by_alias=True)) 
+                    clean_entry = action_plan_normalize_keys(entry)
+                    validated = ActionPlanActions.model_validate(clean_entry)
+                    validated_output.append(validated.model_dump(by_alias=False))
                 except Exception as ve:
-                    logger(f"⚠️ ActionPlan attempt {attempt+1}: Pydantic Validation Failed: {ve}")
-                    continue
+                    logger.error(f"Entry {idx} validation failed: {ve}")
+                    if idx < 3:
+                        logger.debug(f"Failed Entry:\n{json.dumps(clean_entry, ensure_ascii=False, indent=2)[:1500]}")
 
-            if validated_list:
-                logger(f"✅ Action Plan สร้างสำเร็จและผ่าน Validation → {len(validated_list)} phase(s)")
-                return validated_list
+            if validated_output:
+                logger.info(f"✅ Success: {len(validated_output)} valid phase(s) on attempt {attempt}")
+                return validated_output
 
         except Exception as e:
-            logger(f"⚠️ ActionPlan attempt {attempt+1} เกิด error: {e}")
-            time.sleep(1)
+            logger.error(f"Attempt {attempt} error: {e}", exc_info=True)
 
-    # ------------------------------------------------------------------
-    # 4. Final Fallback (ใช้ Pydantic Schema ใหม่)
-    # ------------------------------------------------------------------
-    # (โค้ดส่วนนี้ยังคงเดิม)
-    logger("❌ ActionPlan: ทุกอย่างล้มเหลว (Max Retries Reached) → ใช้ Hardcoded Template")
-    
-    actions_fallback: List[Dict[str, Any]] = []
-    for i, s in enumerate(unique_recommendation_statements[:5], 1): 
-        sid = f"{s.get('sub_id', sub_id)}_{s.get('level', '?')}"
-        rec_type = s.get("recommendation_type", "FAILED")
-        text = str(s.get("statement") or "").strip()[:150]
-        
-        # สร้าง ActionItem Fallback
-        action_item_fallback = {
-            "Statement_ID": sid, 
-            "Failed_Level": s.get('level', 0), 
-            "Recommendation": f"[{rec_type}] ดำเนินการตามข้อกำหนด: {text}", 
-            "Target_Evidence_Type": "เอกสารที่ขาดหาย/อ่อนแอ", 
-            "Key_Metric": "ความครบถ้วนของเอกสาร", 
-            "Steps": [{"Step": "1", "Description": "ตรวจสอบหลักฐานและจัดทำเอกสารใหม่", "Responsible": "หน่วยงานที่เกี่ยวข้อง", "Tools_Templates": "N/A", "Verification_Outcome": "เอกสารที่ขาดหาย"}]
-        }
-        actions_fallback.append(action_item_fallback)
-        
+    # --- Emergency Fallback ---
+    logger.warning("All attempts failed → returning emergency fallback plan")
     return [{
-        "Phase": f"Level {target_level} - ปรับปรุงด่วน (FALLBACK)",
-        "Goal": f"แก้ไขข้อบกพร่องเพื่อให้ได้ Level {target_level}",
-        "Actions": actions_fallback
+        "phase": "Phase 1: Immediate Action Required",
+        "goal": f"เริ่มต้นแก้ไขช่องว่างหลักใน {sub_criteria_name} อย่างเร่งด่วน",
+        "actions": [{
+            "statement_id": f"GAP_L{max_failed_level}",
+            "failed_level": max_failed_level,
+            "recommendation": f"แต่งตั้งทีมงานและจัดทำแผนพัฒนาอย่างเป็นระบบ โดยเน้น {advice_focus}",
+            "target_evidence_type": "คำสั่งแต่งตั้ง / แผนปฏิบัติการ",
+            "key_metric": "จัดตั้งทีมและอนุมัติแผนภายใน 3 เดือน",
+            "steps": [
+                {"Step": "1", "Description": "แต่งตั้งคณะทำงานพัฒนา KM เฉพาะเกณฑ์นี้", "Responsible": "ผู้บริหารสูงสุด", "Tools_Templates": "คำสั่งแต่งตั้ง", "Verification_Outcome": "คำสั่งแต่งตั้งอย่างเป็นทางการ"},
+                {"Step": "2", "Description": "จัดประชุม Kick-off และวิเคราะห์ Gap ร่วมกัน", "Responsible": "หัวหน้าทีม KM", "Tools_Templates": "Gap Analysis Template", "Verification_Outcome": "รายงานผลการประชุม"}
+            ]
+        }]
     }]
