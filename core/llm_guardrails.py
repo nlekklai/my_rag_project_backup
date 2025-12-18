@@ -10,8 +10,8 @@ from config.global_vars import (
     ACTION_PLAN_LANGUAGE,
     SUPPORTED_ENABLERS,
     DEFAULT_ENABLER,
-    PDCA_ANALYSIS_SIGNALS,  # ตัวแปรใหม่ที่เพิ่มใน global_vars
-    ANALYSIS_FRAMEWORK      # ตัวแปรใหม่ที่เพิ่มใน global_vars
+    PDCA_ANALYSIS_SIGNALS,  
+    ANALYSIS_FRAMEWORK      
 )
 
 logger = logging.getLogger(__name__)
@@ -19,10 +19,9 @@ logger = logging.getLogger(__name__)
 # =================================================================
 # 1. INTENT DETECTION (DETECTING WHAT USER WANTS)
 # =================================================================
-def detect_intent(question: str, doc_type: str = "document") -> Dict[str, Any]:
+def detect_intent(question: str, doc_type: str = "document", contextual_rules: Dict[str, Any] = None) -> Dict[str, Any]:
     """
-    ตรวจจับความต้องการของผู้ใช้ (Intent) เพื่อเลือก Prompt ที่เหมาะสม
-    รองรับ: FAQ, Synthesis, Evidence Search, และ PDCA Analysis
+    ตรวจจับความต้องการของผู้ใช้ (Intent) พร้อมใช้ Contextual Rules ช่วยเพิ่มความแม่นยำ
     """
     q = question.strip().lower()
 
@@ -30,56 +29,54 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, Any]:
         "is_faq": False,
         "is_synthesis": False,
         "is_evidence": False,
-        "is_analysis": False,  # บ่งบอกว่าต้องการให้ "วิเคราะห์" (เช่น PDCA)
+        "is_analysis": False,  
         "sub_topic": None,
         "enabler_hint": None
     }
 
     # --- A. Extract Enabler & Sub-topic (e.g., KM 1.1) ---
     enabler_pattern = "|".join(SUPPORTED_ENABLERS).lower()
+    # ปรับ Regex ให้ครอบคลุมรูปแบบการพิมพ์ที่หลากหลาย
     sub_topic_match = re.search(fr"({enabler_pattern}|topic)\s*(?:topic\s*)?(\d+\.\d+)", q)
     
     if sub_topic_match:
         found_enabler = sub_topic_match.group(1).upper()
         intent["enabler_hint"] = found_enabler if found_enabler != "TOPIC" else DEFAULT_ENABLER
-        intent["sub_topic"] = f"{intent['enabler_hint']}-{sub_topic_match.group(2)}"
+        intent["sub_topic"] = sub_topic_match.group(2) # เก็บเฉพาะเลขข้อ เช่น "1.1"
 
     # --- B. Check Analysis Intent (PDCA Inquiry) ---
-    # ใช้สัญญาณจาก global_vars เพื่อตัดสินใจว่าเป็นคำถามเชิงวิเคราะห์หรือไม่
-    if any(sig in q for sig in PDCA_ANALYSIS_SIGNALS):
+    # ใช้ทั้ง Global Signals และ Keywords จาก Contextual Rules
+    analysis_keywords = list(PDCA_ANALYSIS_SIGNALS) if PDCA_ANALYSIS_SIGNALS else ["plan", "do", "check", "act", "คะแนน", "ระดับ"]
+    
+    # ถ้ามี Contextual Rules ของข้อนั้นๆ ให้ดึง Keyword P-D-C-A มาช่วย Detect
+    if intent["sub_topic"] and contextual_rules:
+        rules = contextual_rules.get(intent["sub_topic"], {})
+        for stage in ["Plan", "Do", "Check", "Act"]:
+            analysis_keywords.extend([k.lower() for k in rules.get(stage, [])])
+
+    if any(sig in q for sig in analysis_keywords):
         intent["is_analysis"] = True
-        return intent # Priority สูงสุดสำหรับการวิเคราะห์หลักฐาน
+        return intent 
 
     # --- C. Check Synthesis/Comparison Intent ---
-    synthesis_signals = [
-        "เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "ความต่าง", "เทียบ", "vs", "versus",
-        "compare", "difference", "สรุปความเหมือน", "สรุปความต่าง"
-    ]
+    synthesis_signals = ["เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "เทียบ", "vs", "compare", "diff"]
     if any(word in q for word in synthesis_signals):
         intent["is_synthesis"] = True
         return intent
         
     # --- D. Check FAQ/Definition Intent ---
-    faq_signals = [
-        "คืออะไร", "คือ", "อะไร", "ใคร", "หมายถึง", "คือยังไง", "แปลว่า", "สรุปภาพรวม"
-    ]
+    faq_signals = ["คืออะไร", "คือ", "หมายถึง", "แปลว่า", "สรุปภาพรวม"]
     if any(sig in q for sig in faq_signals):
         intent["is_faq"] = True
         
     # --- E. Check Evidence/Source Intent ---
-    evidence_signals = [
-        "ตามเอกสาร", "ในเอกสาร", "หลักฐาน", "อ้างอิง", "source", "reference",
-        "จากไฟล์", "ระบุแหล่ง", "อิงจาก", "คะแนน", "ระดับ"
-    ]
+    evidence_signals = ["หลักฐาน", "อ้างอิง", "source", "จากไฟล์", "ขอดูไฟล์"]
     if any(sig in q for sig in evidence_signals):
         intent["is_evidence"] = True
 
-    # --- F. Fallback Logic ---
+    # --- F. Fallback ---
     if not any([intent["is_faq"], intent["is_synthesis"], intent["is_evidence"], intent["is_analysis"]]):
-        if doc_type in ["seam", "evidence", "document"]:
-            intent["is_evidence"] = True
-        else:
-            intent["is_faq"] = True 
+        intent["is_evidence"] = True if doc_type in ["seam", "evidence"] else intent.update({"is_faq": True}) or True
         
     return intent
 
@@ -87,71 +84,57 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, Any]:
 # =================================================================
 # 2. PROMPT BUILDER (CRAFTING THE FINAL PROMPT)
 # =================================================================
-def build_prompt(context: str, question: str, intent: Dict[str, Any]) -> str:
+def build_prompt(context: str, question: str, intent: Dict[str, Any], contextual_rules: Dict[str, Any] = None) -> str:
     """
-    สร้าง Prompt ตาม Intent ที่ตรวจจับได้ พร้อมแทรก Logic การวิเคราะห์ PDCA
+    สร้าง Prompt ตาม Intent และแทรกเกณฑ์จาก Contextual Rules เข้าไปในแนวทางการวิเคราะห์
     """
     sections = []
 
     # 0. Language Instruction
-    lang_map = {"th": "ภาษาไทย (Thai)", "en": "English"}
-    target_lang = lang_map.get(ACTION_PLAN_LANGUAGE, "ภาษาไทย (Thai)")
-    sections.append(f"CRITICAL: Always respond in {target_lang} only.")
+    sections.append("CRITICAL: Always respond in THAI language only.")
 
-    # 1. Role Assignment (กำหนดบทบาท)
+    # 1. Role Assignment
     if intent["is_analysis"]:
-        role = (f"คุณคือผู้เชี่ยวชาญด้านการตรวจสอบคุณภาพหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK} "
-                "โปรดวิเคราะห์ข้อมูลที่ได้รับอย่างละเอียดและระบุความครบถ้วนของกระบวนการ")
+        role = f"คุณคือผู้เชี่ยวชาญด้านการตรวจสอบคุณภาพหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK} และเกณฑ์ SE-AM"
     elif intent["is_synthesis"]:
-        role = ("คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์และเปรียบเทียบเอกสาร "
-                "ระบุความเหมือน ความต่าง และข้อสรุปอย่างเป็นระบบ")
-    elif intent["is_faq"]:
-        role = ("คุณคือผู้ช่วยตอบคำถามสรุป (FAQ) ที่กระชับและเข้าใจง่าย "
-                "ใช้ข้อมูลจากเอกสารที่ให้มาเท่านั้น")
+        role = "คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์เปรียบเทียบข้อมูล"
     else:
-        role = ("คุณคือผู้ช่วยวิเคราะห์ที่ตอบคำถามโดยยึดหลักฐานจากเอกสารอย่างเคร่งครัด "
-                "ห้ามแต่งข้อมูลเพิ่มเอง")
+        role = "คุณคือผู้ช่วยที่ตอบคำถามโดยอิงจากเอกสารอ้างอิงอย่างเคร่งครัด"
     sections.append(role)
 
-    # 2. Context Information
-    if context.strip():
-        sections.append(f"ข้อมูลอ้างอิงจากฐานข้อมูล:\n{context}")
-    else:
-        sections.append("หมายเหตุ: ไม่พบข้อมูลที่เกี่ยวข้องโดยตรงในระบบ")
+    # 2. Contextual Guidelines (กฎเฉพาะของ Enabler/Sub-topic)
+    if intent["sub_topic"] and contextual_rules:
+        rules = contextual_rules.get(intent["sub_topic"])
+        if rules:
+            rule_text = f"### เกณฑ์เฉพาะสำหรับข้อ {intent['sub_topic']}:\n"
+            for stage in ["Plan", "Do", "Check", "Act"]:
+                keywords = rules.get(stage, [])
+                if keywords:
+                    rule_text += f"- **{stage}**: ควรมีหลักฐานเกี่ยวกับ {', '.join(keywords)}\n"
+            sections.append(rule_text)
 
-    # 3. User Question
-    sections.append(f"คำถามที่ต้องตอบ:\n{question.strip()}")
+    # 3. Reference Context
+    sections.append(f"ข้อมูลอ้างอิงจากระบบ:\n{context if context.strip() else '--- ไม่พบข้อมูลที่เกี่ยวข้อง ---'}")
 
-    # 4. Response Guidelines (กฎการตอบ)
+    # 4. User Question
+    sections.append(f"คำถามของผู้ใช้: {question.strip()}")
+
+    # 5. Specific Guidelines based on Intent
     if intent["is_analysis"]:
-        # 
         sections.append(f"""
-คำแนะนำในการวิเคราะห์แบบ {ANALYSIS_FRAMEWORK}:
-1. P (Plan): มีการระบุแผน วัตถุประสงค์ หรือเป้าหมายชัดเจนหรือไม่?
-2. D (Do): มีหลักฐานการปฏิบัติงานจริง หรือบันทึกกิจกรรมหรือไม่?
-3. C (Check): มีการวัดผล ติดตามผล หรือสรุปผลสำเร็จเทียบกับเป้าหมายหรือไม่?
-4. A (Act): มีการนำผลมาปรับปรุง (Lesson Learned) หรือแนวทางแก้ไขปัญหาหรือไม่?
-
-**ให้สรุปว่าส่วนใด "มี" และส่วนใด "ขาด" พร้อมคำแนะนำในการเพิ่มหลักฐานให้ครบถ้วน**
-""")
-    elif intent["is_synthesis"]:
-        sections.append("""
-รูปแบบคำตอบ:
-- แยกเป็นหัวข้อ "ความเหมือน", "ความแตกต่าง", "ข้อสรุป"
-- อ้างอิงชื่อไฟล์ (Source: filename) เสมอ
+### คำแนะนำในการวิเคราะห์ ({ANALYSIS_FRAMEWORK}):
+1. วิเคราะห์ว่าจากข้อมูลที่มี มีส่วนใดที่ตรงกับเกณฑ์ P, D, C หรือ A บ้าง
+2. **จุดแข็ง**: ระบุหลักฐานที่พบชัดเจนพร้อมชื่อไฟล์
+3. **สิ่งที่ขาด**: ระบุส่วนที่ยังไม่มีหลักฐานสนับสนุนตามเกณฑ์เฉพาะข้างต้น
+4. **ข้อเสนอแนะ**: แนะนำประเภทเอกสารที่ควรเพิ่มเพื่อให้ได้คะแนนสูงขึ้น
 """)
     elif intent["is_evidence"]:
         sections.append("""
-กฎสำคัญ:
-- ระบุชื่อไฟล์แหล่งอ้างอิงท้ายประโยคเสมอ เช่น (Source: filename.pdf)
-- หากข้อมูลเป็นเกณฑ์ระดับ 1-5 ให้ตอบเป็น Bullet points โดยใช้ข้อความจริงจากเอกสาร
-- หากไม่พบข้อมูล ให้ตอบว่า "ไม่พบข้อมูลที่เกี่ยวข้องในเอกสาร"
+### กฎการตอบ:
+- ระบุชื่อไฟล์ (Source: ...) ทุกครั้งที่นำข้อมูลมาตอบ
+- หากเป็นเกณฑ์ระดับคะแนน ให้สรุปเป็นข้อๆ ให้ชัดเจน
 """)
     else:
-        sections.append("กฎสำคัญ: ตอบอย่างสุภาพ กระชับ และใช้ข้อมูลจากเอกสารเท่านั้น")
-
-    # 5. Focus Topic
-    if intent.get("sub_topic"):
-        sections.append(f"**[FOCUS]** คำถามนี้เกี่ยวข้องกับหัวข้อ: {intent['sub_topic']}")
+        sections.append("### กฎการตอบ: ตอบให้ตรงประเด็น สุภาพ และไม่ออกนอกเหนือจากข้อมูลที่ให้")
 
     return "\n\n".join(sections)

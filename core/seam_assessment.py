@@ -508,7 +508,7 @@ class SEAMPDCAEngine:
             self.logger.info("ActionPlanActions successfully linked to Engine.")
 
         self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
-        
+
         # =======================================================
         # Core Configuration
         # =======================================================
@@ -1875,12 +1875,10 @@ class SEAMPDCAEngine:
     def _export_results(self, results: dict, sub_criteria_id: str, **kwargs) -> str:
         """
         Exports the assessment results to a JSON file.
-        Includes enhanced summary stats: Highest Level, Weights, and Progress.
+        Includes enhanced summary stats and persistence support with record_id.
         """
-        import os
-        import json
-        from datetime import datetime
-        from utils.path_utils import get_assessment_export_file_path
+        # --- 0. ดึง record_id จาก kwargs (ส่งมาจาก run_assessment) ---
+        record_id = kwargs.get("record_id", "no_id")
 
         enabler = self.enabler_id
         target_level = self.config.target_level
@@ -1888,19 +1886,20 @@ class SEAMPDCAEngine:
         year = self.config.year
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # กำหนด Suffix สำหรับชื่อไฟล์
-        suffix = f"assessment_results_{sub_criteria_id}_{timestamp}"
+        # --- 1. การจัดการ Path และชื่อไฟล์ (เพิ่ม record_id เพื่อให้ Router หาเจอ) ---
+        # ปรับ Suffix ให้มี ID: assessment_results_b0deb65560b3_1.1_20251218...
+        suffix = f"results_{record_id}_{sub_criteria_id}_{timestamp}"
 
-        # 1. การจัดการ Path และ Directory
         full_path = ""
         export_dir = ""
 
         try:
             if self.config.export_path:
                 export_dir = self.config.export_path
-                file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
+                file_name = f"assessment_{enabler}_{record_id}_{sub_criteria_id}_{timestamp}.json"
                 full_path = os.path.join(export_dir, file_name)
             else:
+                # ใช้ utility ช่วยสร้าง path โดยใส่ suffix ที่มี record_id
                 full_path = get_assessment_export_file_path(
                     tenant=tenant,
                     year=year,
@@ -1913,17 +1912,18 @@ class SEAMPDCAEngine:
         except Exception as e:
             self.logger.warning(f"⚠️ Path utility failed, using fallback: {e}")
             export_dir = os.path.join("data_store", tenant, "exports", str(year), enabler)
-            file_name = f"assessment_results_{enabler}_{sub_criteria_id}_{timestamp}.json"
+            file_name = f"assessment_{enabler}_{record_id}_{sub_criteria_id}_{timestamp}.json"
             full_path = os.path.join(export_dir, file_name)
 
         if not os.path.exists(export_dir):
             os.makedirs(export_dir, exist_ok=True)
 
-        # 2. จัดการ/คำนวณ Summary Field (จุดสำคัญที่ต้องการเพิ่ม)
+        # --- 2. จัดการ/คำนวณ Summary Field ---
         if 'summary' not in results:
             results['summary'] = {}
         
         summary = results['summary']
+        summary['record_id'] = record_id  # ฝัง ID ลงในไฟล์ JSON ด้วย
         summary['enabler'] = enabler
         summary['sub_criteria_id'] = sub_criteria_id
         summary['target_level'] = target_level
@@ -1935,8 +1935,7 @@ class SEAMPDCAEngine:
         sub_res_list = results.get('sub_criteria_results', [])
         
         if sub_criteria_id.lower() != "all" and len(sub_res_list) > 0:
-            # --- กรณีรัน Single Sub-Criteria ---
-            # ใช้ข้อมูลจากผลลัพธ์ข้อแรกที่เจอ
+            # กรณีรัน Single Sub-Criteria
             main_res = sub_res_list[0]
             summary['highest_pass_level'] = main_res.get('highest_full_level', 0)
             summary['achieved_weight'] = main_res.get('weighted_score', 0.0)
@@ -1944,7 +1943,7 @@ class SEAMPDCAEngine:
             summary['is_target_achieved'] = main_res.get('target_level_achieved', False)
             summary['total_subcriteria_assessed'] = 1
         else:
-            # --- กรณีรัน All Sub-Criteria ---
+            # กรณีรัน All Sub-Criteria
             all_pass_levels = [r.get('highest_full_level', 0) for r in sub_res_list]
             total_achieved = sum(r.get('weighted_score', 0.0) for r in sub_res_list)
             total_possible = sum(r.get('weight', 0.0) for r in sub_res_list)
@@ -1954,13 +1953,12 @@ class SEAMPDCAEngine:
             summary['total_possible_weight'] = round(total_possible, 2)
             summary['total_subcriteria_assessed'] = len(sub_res_list)
             
-            # คำนวณ % ภาพรวม
             if total_possible > 0:
                 summary['overall_percentage'] = round((total_achieved / total_possible) * 100, 2)
             else:
                 summary['overall_percentage'] = 0.0
 
-        # 3. ตรวจสอบ Action Plan Status
+        # --- 3. ตรวจสอบ Action Plan Status ---
         total_action_plans = 0
         for res in sub_res_list:
             ap = res.get('action_plan', [])
@@ -1968,18 +1966,21 @@ class SEAMPDCAEngine:
                 total_action_plans += len(ap)
         summary['total_action_plan_phases'] = total_action_plans
 
-        # 4. เขียนไฟล์ JSON
+        # --- 4. เขียนไฟล์ JSON ---
         try:
             with open(full_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=4)
             
             self.logger.info(f"💾 Exported Results to: {full_path}")
-            # แสดง Summary สั้นๆ ใน Log
+            
+            # แสดง Log Summary
+            final_lvl = summary.get('highest_pass_level', summary.get('highest_pass_level_overall', 0))
+            final_score = summary.get('achieved_weight', summary.get('total_achieved_weight', 0.0))
+            total_score = summary.get('total_weight', summary.get('total_possible_weight', 0.0))
+            
             self.logger.info(
-                f"📊 [SUMMARY] Sub: {sub_criteria_id} | "
-                f"Level: L{summary.get('highest_pass_level', summary.get('highest_pass_level_overall', 0))} | "
-                f"Score: {summary.get('achieved_weight', summary.get('total_achieved_weight', 0.0))}/"
-                f"{summary.get('total_weight', summary.get('total_possible_weight', 0.0))}"
+                f"📊 [SUMMARY] ID: {record_id} | Sub: {sub_criteria_id} | "
+                f"Level: L{final_lvl} | Score: {final_score}/{total_score}"
             )
             return full_path
         
@@ -2912,6 +2913,7 @@ class SEAMPDCAEngine:
         vectorstore_manager: Optional['VectorStoreManager'] = None,
         sequential: bool = False,
         document_map: Optional[Dict[str, str]] = None,
+        record_id: str = None,  # [ADDED] รองรับ ID จาก Router
     ) -> Dict[str, Any]:
         """
         Main runner ของ Assessment Engine
@@ -2920,6 +2922,8 @@ class SEAMPDCAEngine:
         """
         start_ts = time.time()
         self.is_sequential = sequential
+        # เก็บ record_id ไว้ใน instance เพื่อใช้อ้างอิงในการทำ Log หรือตั้งชื่อไฟล์
+        self.current_record_id = record_id 
 
         # ============================== 1. Filter Rubric ==============================
         if target_sub_id.lower() == "all":
@@ -2937,7 +2941,7 @@ class SEAMPDCAEngine:
         self.raw_llm_results = []
         self.final_subcriteria_results = []
 
-        # โหลด evidence map ที่มีอยู่แล้ว (ไม่ clear!)
+        # โหลด evidence map ที่มีอยู่แล้ว
         if os.path.exists(self.evidence_map_path):
             loaded = self._load_evidence_map()
             if loaded:
@@ -2971,7 +2975,7 @@ class SEAMPDCAEngine:
                 getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
                 getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
-                ActionPlanActions  # <--- เพิ่มตัวนี้เป็น element สุดท้าย
+                # ActionPlanActions <--- ตรวจสอบว่าในไฟล์จริงของคุณใช้ตัวแปรชื่อนี้หรือไม่
             ) for sub_data in sub_criteria_list]
 
             try:
@@ -3019,26 +3023,20 @@ class SEAMPDCAEngine:
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
-        # ============================== 3. บันทึก Evidence Map (บังคับบันทึกเสมอ) ==============================
+        # ============================== 3. บันทึก Evidence Map ==============================
         if self.evidence_map:
-            self.logger.info(f"[EVIDENCE] Attempting to persist Evidence Map → {self.evidence_map_path}")
             try:
                 self._save_evidence_map(map_to_save=self.evidence_map)
                 total_items = sum(len(v) for v in self.evidence_map.values() if isinstance(v, list))
-                self.logger.info(
-                    f"Evidence Map SAVED SUCCESSFULLY | Keys: {len(self.evidence_map)} | "
-                    f"Items: {total_items} | Path: {self.evidence_map_path}"
-                )
+                self.logger.info(f"Evidence Map SAVED | Items: {total_items}")
             except Exception as e:
-                self.logger.critical(f"FAILED TO SAVE Evidence Map → {self.evidence_map_path}")
-                self.logger.exception(e)
-        else:
-            self.logger.warning("[EVIDENCE] Evidence Map is EMPTY → Nothing to save")
+                self.logger.error(f"Failed to save evidence map: {e}")
 
         # ============================== 4. สรุปผล & Export ==============================
         self._calculate_overall_stats(target_sub_id)
 
         final_results = {
+            "record_id": record_id, # [ADDED] ใส่ ID ลงในข้อมูลเพื่อใช้อ้างอิงภายหลัง
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "raw_llm_results": self.raw_llm_results,
@@ -3047,11 +3045,11 @@ class SEAMPDCAEngine:
         }
 
         if export:
+            # ส่ง record_id ผ่าน kwargs เพื่อให้ฟังก์ชัน export เอาไปตั้งชื่อไฟล์
             export_path = self._export_results(
                 results=final_results,
-                enabler=self.config.enabler,
                 sub_criteria_id=target_sub_id if target_sub_id != "all" else "ALL",
-                target_level=self.config.target_level
+                record_id=record_id # <--- ส่ง record_id ผ่าน kwargs
             )
             final_results["export_path_used"] = export_path
             final_results["evidence_map_snapshot"] = deepcopy(self.evidence_map)
