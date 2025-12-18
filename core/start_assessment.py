@@ -86,28 +86,26 @@ def main():
     )
     start_ts = time.time()
 
-    # 1. Load Vectorstores and Document Map (โหลดเพียงครั้งเดียวใน Process หลัก)
+    # 1. Load Vectorstores and Document Map
     vsm: Optional[VectorStoreManager] = None
     document_map: Optional[Dict[str, str]] = None 
     
-    # 🟢 FIX: Skip VSM loading if running in Sequential Mode 
     if args.sequential and args.mock == "none":
-        logger.info("Sequential mode (non-mock): Skipping initial VSM load in main process. VSM will be loaded one time inside the Engine for robustness.")
-        # vsm remains None, forcing the load in SEAMPDCAEngine
+        logger.info("Sequential mode (non-mock): Skipping initial VSM load in main process.")
     else:
         try:
             logger.info("Loading central evidence vectorstore(s)...")
-            # 🎯 FIX: เพิ่ม tenant และ year ในการเรียกฟังก์ชัน load_all_vectorstores 
+            # 🎯 FIX: เปลี่ยนชื่อ Parameter ให้ตรงตาม core/vectorstore.py
             vsm = load_all_vectorstores(
                 doc_types=[EVIDENCE_DOC_TYPES], 
-                evidence_enabler=args.enabler,
+                enabler_filter=args.enabler,  # ⬅️ แก้จาก evidence_enabler เป็น enabler_filter
                 tenant=args.tenant,        
                 year=args.year             
             )
         except Exception as e:
             logger.error(f"Failed to load vectorstores: {e}")
             if args.mock == "none":
-                 logger.error("Non-mock mode requires VectorStoreManager to load successfully. Raising fatal error.")
+                 logger.error("Non-mock mode requires VectorStoreManager to load successfully.")
                  raise
 
     # 1.3 Load Document Map (สำหรับ mapping doc_id -> filename)

@@ -485,7 +485,8 @@ class SEAMPDCAEngine:
         evidence_map_path: Optional[str] = None,
         document_map: Optional[Dict[str, str]] = None,
         is_parallel_all_mode: bool = False,
-        sub_id: str = 'all'
+        sub_id: str = 'all',
+        **kwargs  # 🎯 FIX: เพิ่ม **kwargs เพื่อรองรับ ActionPlanActions และค่าอื่นๆ จาก Parallel Worker
     ):
         # =======================================================
         # 🎯 Logger Setup (อันดับแรกสุด)
@@ -497,6 +498,7 @@ class SEAMPDCAEngine:
                 f"Engine|{config.enabler}|{config.tenant}/{config.year}"
             )
         
+        self.ActionPlanActions = kwargs.get('ActionPlanActions', globals().get('ActionPlanActions'))
         self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
 
         # =======================================================

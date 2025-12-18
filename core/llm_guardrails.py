@@ -1,13 +1,22 @@
-# core/llm_guardrails.py
 import re
-from typing import Dict, Optional
+import logging
+from typing import Dict, Optional, Any, List
+
+# ดึงค่าคอนฟิกจาก global_vars
+from config.global_vars import (
+    ACTION_PLAN_LANGUAGE,
+    SUPPORTED_ENABLERS,
+    DEFAULT_ENABLER
+)
+
+logger = logging.getLogger(__name__)
 
 # =============================
-#    Intent Detection (ฉลาด + แม่นสุด ๆ)
+#    Intent Detection
 # =============================
-def detect_intent(question: str, doc_type: str = "document") -> Dict[str, any]:
+def detect_intent(question: str, doc_type: str = "document") -> Dict[str, Any]:
     """
-    ตรวจจับ intent ได้แม่นยำสูงมาก รองรับภาษาไทยเต็มรูปแบบ + คำพูดจริงของคน
+    ตรวจจับ intent แม่นยำสูง รองรับภาษาไทย + ดึงข้อมูลจาก global_vars
     """
     q = question.strip().lower()
 
@@ -15,69 +24,58 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, any]:
         "is_faq": False,
         "is_synthesis": False,
         "is_evidence": False,
-        "sub_topic": None  # เพิ่ม field สำหรับ subtopic เช่น "KM-4.1"
+        "sub_topic": None,
+        "enabler_hint": None
     }
 
-    # Extract sub_topic จาก query (e.g. "KM topic 4.1" → "KM-4.1")
-    sub_topic_match = re.search(r"(?:km|topic)\s*(?:topic\s*)?(\d+\.\d+)", q)
+    # 1. Extract sub_topic (e.g. "KM 4.1" -> "KM-4.1")
+    # ใช้ SUPPORTED_ENABLERS จาก global_vars มาสร้าง regex
+    enabler_pattern = "|".join(SUPPORTED_ENABLERS).lower()
+    sub_topic_match = re.search(fr"({enabler_pattern}|topic)\s*(?:topic\s*)?(\d+\.\d+)", q)
+    
     if sub_topic_match:
-        intent["sub_topic"] = f"KM-{sub_topic_match.group(1)}"  # Assume KM context
+        found_enabler = sub_topic_match.group(1).upper()
+        # ถ้าเจอคำว่า 'topic' ให้ใช้ DEFAULT_ENABLER (เช่น KM)
+        intent["enabler_hint"] = found_enabler if found_enabler != "TOPIC" else DEFAULT_ENABLER
+        intent["sub_topic"] = f"{intent['enabler_hint']}-{sub_topic_match.group(2)}"
 
     # --------------------
-    # 1. Intent จาก Keyword + Pattern matching (Priority สูงสุด)
+    # 2. Intent Signals
     # --------------------
     
-    # Synthesis/Compare Signals (Priority 1: ชัดเจน ไม่ควรมี Fallback)
+    # Synthesis/Compare
     synthesis_signals = [
         "เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "ความต่าง", "เทียบ", "vs", "versus",
         "compare", "difference", "ต่างกันยังไง", "ต่างกันอย่างไร", "เทียบกับ",
         "สรุปความเหมือน", "สรุปความต่าง", "ไฮไลต์", "highlight"
     ]
-    
     if any(word in q for word in synthesis_signals):
         intent["is_synthesis"] = True
-        return intent # Synthesis มี priority สูงสุด
+        return intent
         
-    # FAQ/Definition Signals (Priority 2: ถ้าไม่ใช่ Synthesis)
+    # FAQ/Definition
     faq_signals = [
         "คืออะไร", "คือ", "อะไร", "ใคร", "เมื่อไร", "ที่ไหน", "อย่างไร", "ทำไม", "หมายถึง",
-        "what ", "who ", "when ", "where ", "why ", "how ", "faq", "คือยังไง", "แปลว่า", "แปลว่าอะไร",
-        "สรุป", "ภาพรวม" # เพิ่มคำว่า "สรุป" และ "ภาพรวม" เพื่อจับคำถามระดับสูง/นิยาม
+        "what", "who", "when", "where", "why", "how", "faq", "คือยังไง", "แปลว่า",
+        "สรุป", "ภาพรวม"
     ]
     if any(sig in q for sig in faq_signals):
         intent["is_faq"] = True
         
-    # Evidence/Detail signals (Priority 3: ถ้าไม่ใช่ Synthesis หรือ FAQ)
-    # เพิ่มคำที่บ่งชี้การค้นหารายละเอียดเชิงลึก หรือการประเมิน
+    # Evidence/Detail (SEAM Context)
     evidence_signals = [
         "ตามเอกสาร", "ในเอกสาร", "เอกสารบอก", "หลักฐาน", "อ้างอิง", "source", "reference",
         "จากไฟล์", "ระบุแหล่ง", "อิงจาก", "ตามที่ระบุ", "ดำเนินการ", "รายงาน", "ผลลัพธ์",
-        "ประเมิน", "คะแนน", "PDCA", "เกณฑ์", "ระดับ", "รายละเอียด", "แยกย่อย"  # เพิ่มสำหรับ SEAM/KM Evidence
+        "ประเมิน", "คะแนน", "pdca", "เกณฑ์", "ระดับ", "รายละเอียด", "แยกย่อย"
     ]
     if any(sig in q for sig in evidence_signals):
         intent["is_evidence"] = True
 
     # --------------------
-    # 2. Intent จาก doc_type (Default/Fallback)
+    # 3. Fallback Logic
     # --------------------
-    
-    # Fallback Logic:
-    
-    # 2.1 ถ้าเป็น Doc Type ที่เน้น FAQ (และไม่ใช่ Synthesis) ให้เป็น FAQ เสมอ
-    if doc_type in ["faq"] and not intent["is_synthesis"]:
-        intent["is_faq"] = True
-        intent["is_evidence"] = False # ล้าง Evidence/Detail ที่อาจถูกจับได้
-        
-    # 2.2 ถ้าเป็น Doc Type ที่เน้น Evidence/Detail/Document
-    elif doc_type in ["document", "evidence", "seam"]:
-        # ถ้ายังไม่มี Intent หลักถูกจับได้ (ไม่ใช่ Synthesis/FAQ ที่ชัดเจน)
-        if not intent["is_synthesis"] and not intent["is_faq"]:
-            intent["is_evidence"] = True
-            
-    # 2.3 Fallback สุดท้าย: ถ้ายังไม่มี Intent ใดถูกจับได้เลย
     if not any([intent["is_faq"], intent["is_synthesis"], intent["is_evidence"]]):
-        # ให้เป็น Evidence สำหรับ seam/doc_type (ดีกว่าสำหรับ query รายละเอียด)
-        if doc_type in ["seam", "document", "evidence"]:
+        if doc_type in ["seam", "evidence", "document"]:
             intent["is_evidence"] = True
         else:
             intent["is_faq"] = True 
@@ -88,8 +86,16 @@ def detect_intent(question: str, doc_type: str = "document") -> Dict[str, any]:
 # =============================
 #    Prompt Builder
 # =============================
-def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
+def build_prompt(context: str, question: str, intent: Dict[str, Any]) -> str:
+    """
+    สร้าง Prompt โดยใช้เงื่อนไขภาษาจาก global_vars.ACTION_PLAN_LANGUAGE
+    """
     sections = []
+
+    # 0. Language Instruction (ดึงจาก global_vars)
+    lang_map = {"th": "ภาษาไทย (Thai)", "en": "English"}
+    target_lang = lang_map.get(ACTION_PLAN_LANGUAGE, "ภาษาไทย (Thai)")
+    sections.append(f"CRITICAL: Always respond in {target_lang} only.")
 
     # 1. บทบาทหลัก
     if intent["is_synthesis"]:
@@ -101,12 +107,13 @@ def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
     else:
         role = ("คุณคือผู้ช่วยวิเคราะห์ที่ตอบคำถามโดยยึดหลักฐานจากเอกสารเท่านั้น "
                 "ห้ามแต่งข้อมูลเพิ่ม ห้ามสรุปเกินกว่าที่มี")
-
     sections.append(role)
 
     # 2. ข้อมูลอ้างอิง
     if context.strip():
         sections.append(f"ข้อมูลจากเอกสาร:\n{context}")
+    else:
+        sections.append("หมายเหตุ: ไม่พบข้อมูลที่เกี่ยวข้องในฐานข้อมูล")
 
     # 3. คำถามผู้ใช้
     sections.append(f"คำถาม:\n{question.strip()}")
@@ -116,29 +123,22 @@ def build_prompt(context: str, question: str, intent: Dict[str, bool]) -> str:
         sections.append("""
 รูปแบบคำตอบที่ต้องการ:
 • ใช้หัวข้อชัดเจน เช่น "ความเหมือน", "ความแตกต่าง", "ข้อสรุป"
-• อ้างอิงแหล่งที่มาเสมอ เช่น (Source 1: SEAM 101.pdf)
-• ตอบเป็นข้อ ๆ อ่านง่าย
+• อ้างอิงแหล่งที่มาเสมอ เช่น (Source: filename.pdf)
+• ตอบเป็นข้อ ๆ หรือตารางเพื่อความชัดเจน
 """)
     elif intent["is_evidence"]:
         sections.append("""
 กฎสำคัญ:
-• ทุกข้อมูลที่ใช้ ต้องระบุแหล่งที่มาในวงเล็บท้ายประโยค เช่น (Source 2)
-• **[CRITICAL OVERRIDE]** หากคำถามระบุปี (เช่น 2568) แต่หลักฐานที่ดึงมามีเนื้อหาคล้ายกันแต่ระบุปีที่ใกล้เคียงที่สุด (เช่น 2567) **คุณต้องใช้ Context นั้นตอบ** โดยตอบนโยบายปีที่พบในเอกสาร (2567) และ **ต้องระบุปีที่พบใน Context** อย่างชัดเจนในคำตอบ (เช่น 'ข้อมูลนี้เป็นของปี 2567...')
-• ถ้าไม่พบข้อมูลในเอกสารที่ให้มา ให้ตอบว่า "ไม่พบข้อมูลในเอกสารที่เกี่ยวข้อง"
-• ห้ามเดา ห้ามแต่งข้อมูล
-• **[SUBTOPIC OVERRIDE]** ถ้าคำถามระบุ subtopic เฉพาะ (เช่น KM topic 4.1) ตอบเฉพาะหัวข้อนั้น ห้ามผสมหัวข้ออื่น (เช่น ห้ามใช้ข้อมูลจาก 2.1) ถ้า context ไม่ match subtopic บอก 'ไม่พบข้อมูลที่ตรง subtopic ในเอกสาร'
-• สำหรับรายละเอียด 5 ระดับ: แยกเป็น bullet points ชัดเจน ยึด text จาก context เท่านั้น ห้ามเพิ่ม 'ไม่มีการระบุ' หรือ negation ใดๆ
+• ทุกข้อมูลที่ใช้ ต้องระบุแหล่งที่มาในวงเล็บท้ายประโยค เช่น (Source: filename.pdf)
+• หากคำถามระบุปี แต่ในเอกสารเป็นปีที่ใกล้เคียงที่สุด ให้ใช้ข้อมูลนั้นตอบและระบุปีที่พบจริงอย่างชัดเจน
+• หากไม่พบข้อมูล ให้ตอบตรงๆ ว่า "ไม่พบข้อมูลที่เกี่ยวข้องในเอกสาร"
+• สำหรับรายละเอียดเกณฑ์ 5 ระดับ: แยกเป็น Bullet points 1-5 โดยใช้ข้อความจากเอกสารเท่านั้น
 """)
-    else: # is_faq:
-        sections.append("""
-กฎสำคัญ:
-• ตอบกระชับและสุภาพ
-• ใช้ข้อมูลจากเอกสารที่ให้มาเท่านั้น
-• ห้ามเดา ห้ามแต่งข้อมูล
-""")
+    else:
+        sections.append("กฎสำคัญ: ตอบให้กระชับ สุภาพ และอ้างอิงข้อมูลจากเอกสารเท่านั้น")
 
-    # รวม sub_topic เข้า prompt ถ้ามี
+    # 5. Subtopic Focus (ถ้ามี)
     if intent.get("sub_topic"):
-        sections.append(f"**[SUBTOPIC FOCUS]** มุ่งเน้นเฉพาะ subtopic: {intent['sub_topic']} เท่านั้น")
+        sections.append(f"**[FOCUS AREA]** คำถามนี้เน้นเฉพาะหัวข้อ: {intent['sub_topic']} ห้ามนำข้อมูลหัวข้ออื่นมาปน")
 
     return "\n\n".join(sections)

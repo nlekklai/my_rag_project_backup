@@ -1,11 +1,7 @@
-# -*- coding: utf-8 -*-
 # core/action_plan_schema.py
-# SE-AM Action Plan Pydantic Schema v2.0 — Full & Fixed (2025-12-17)
-# FIX: รองรับ LLM ที่ตอบ key ตัวพิมพ์เล็ก (phase, goal, actions)
-# FIX: Clean schema without $defs leakage
 
-from pydantic import BaseModel, Field, field_validator, RootModel
-from typing import List, Any, Dict
+from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict
+from typing import List, Any, Dict, Optional
 import re
 import json
 
@@ -13,17 +9,26 @@ import json
 # 1. Step Detail: ขั้นตอนย่อย
 # -----------------------------
 class StepDetail(BaseModel):
-    Step: str = Field(..., description="ลำดับที่ (1, 2, 3...)")
+    # เปลี่ยนจาก str เป็น int เพื่อความ Strict
+    Step: int = Field(..., description="ลำดับที่ (1, 2, 3...)")
     Description: str = Field(..., description="กิจกรรมที่ต้องทำ")
     Responsible: str = Field(..., description="หน่วยงาน/ตำแหน่งที่รับผิดชอบ")
     Tools_Templates: str = Field(..., description="ชื่อไฟล์ Template หรือระบบที่ใช้")
     Verification_Outcome: str = Field(..., description="ผลลัพธ์หรือหลักฐานที่ได้ (Evidence)")
 
-    @field_validator("*", mode="before")
+    @field_validator("Step", mode="before")
     @classmethod
-    def sanitize(cls, v: Any) -> str:
-        if v is None:
-            return ""
+    def ensure_int(cls, v: Any) -> int:
+        if isinstance(v, int): return v
+        # ดักจับกรณีหลุดมาเป็น "Step 1" หรือ "1"
+        nums = re.findall(r'\d+', str(v))
+        return int(nums[0]) if nums else 0
+
+    @field_validator("Description", "Responsible", "Tools_Templates", "Verification_Outcome", mode="before")
+    @classmethod
+    def sanitize_text(cls, v: Any) -> str:
+        if v is None: return ""
+        # ล้างพวก Newline หรือช่องว่างประหลาด
         v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
         return v.strip()
 
@@ -31,76 +36,48 @@ class StepDetail(BaseModel):
 # 2. Action Item: รายการแผนงาน
 # -----------------------------
 class ActionItem(BaseModel):
-    Statement_ID: str = Field(..., alias="statement_id", description="ID ของเกณฑ์ เช่น 1.2.L4")
-    Failed_Level: int = Field(..., alias="failed_level", description="ระดับที่ต้องการแก้ไข (1-5)")
-    Recommendation: str = Field(..., alias="recommendation", description="ข้อแนะนำเชิงกลยุทธ์")
-    Target_Evidence_Type: str = Field(..., alias="target_evidence_type", description="ประเภทหลักฐาน (P/D/C/A)")
-    Key_Metric: str = Field(..., alias="key_metric", description="ตัวชี้วัดความสำเร็จ")
+    Statement_ID: str = Field(..., alias="statement_id")
+    Failed_Level: int = Field(..., alias="failed_level")
+    Recommendation: str = Field(..., alias="recommendation")
+    Target_Evidence_Type: str = Field(..., alias="target_evidence_type")
+    Key_Metric: str = Field(..., alias="key_metric")
     Steps: List[StepDetail] = Field(default_factory=list, alias="steps")
 
-    model_config = {"populate_by_name": True}  # สำคัญ! อนุญาตให้ใช้ alias (ตัวพิมพ์เล็ก)
+    model_config = ConfigDict(populate_by_name=True, coerce_numbers_to_str=False)
 
-    @field_validator("Statement_ID", mode="before")
+    @field_validator("Failed_Level", mode="before")
     @classmethod
-    def normalize_id(cls, v: Any) -> str:
-        if not v:
-            return "L0_S0"
-        v = str(v).strip().upper().replace('-', '_').replace(' ', '_')
-        return v if v.startswith('L') else f"L{v}"
-
-    @field_validator("Steps", mode="before")
-    @classmethod
-    def ensure_list(cls, v: Any) -> List:
-        if isinstance(v, list):
-            return v
-        if isinstance(v, dict):
-            return [v]
-        return []
+    def clean_level(cls, v: Any) -> int:
+        if isinstance(v, int): return v
+        # ดักจับ "Level 3" -> 3
+        nums = re.findall(r'\d+', str(v))
+        return int(nums[0]) if nums else 0
 
 # -----------------------------
 # 3. ActionPlanActions: ระยะ (Phase)
 # -----------------------------
 class ActionPlanActions(BaseModel):
-    Phase: str = Field(..., alias="phase", description="ชื่อระยะ เช่น Phase 1: Quick Wins")
-    Goal: str = Field(..., alias="goal", description="เป้าหมายของระยะนี้")
+    Phase: str = Field(..., alias="phase")
+    Goal: str = Field(..., alias="goal")
     Actions: List[ActionItem] = Field(default_factory=list, alias="actions")
 
-    model_config = {"populate_by_name": True}  # สำคัญ! รองรับ key ตัวพิมพ์เล็กจาก LLM
+    model_config = ConfigDict(populate_by_name=True)
 
 # -----------------------------
-# 4. Root Model สำหรับ JSON Array
+# 4. Root Model & Helper
 # -----------------------------
 class ActionPlanResult(RootModel):
-    root: List[ActionPlanActions] = Field(..., description="รายการ Phase ทั้งหมดของ Action Plan")
+    root: List[ActionPlanActions]
 
-    def to_json(self) -> str:
-        return json.dumps(self.model_dump(by_alias=True, exclude_none=True), ensure_ascii=False, indent=2)
-
-# =================================================================
-# HELPER: Clean JSON Schema (ป้องกัน $defs leakage)
-# =================================================================
 def get_clean_action_plan_schema() -> Dict[str, Any]:
-    """
-    สร้าง JSON Schema ที่สะอาดสำหรับส่งให้ LLM
-    """
-    try:
-        full_schema = ActionPlanResult.model_json_schema(by_alias=True)
-        
-        clean_schema = {
-            "type": "array",
-            "description": "รายการ Phase ของ Action Plan",
-            "items": full_schema.get("items", {})
-        }
-        
-        # ลบคีย์ที่ทำให้ LLM สับสน
-        for key in ["$defs", "$schema", "title", "definitions"]:
-            clean_schema.pop(key, None)
-            if "items" in clean_schema:
-                clean_schema["items"].pop(key, None)
-        
-        return clean_schema
-    except Exception as e:
-        print(f"Schema generation error: {e}")
+    # ดึง Schema โดยใช้ alias เพื่อให้ LLM เห็นเป็นตัวพิมพ์เล็กตามที่ตกลงกัน
+    full_schema = ActionPlanResult.model_json_schema(by_alias=True)
+    
+    # ดึงโครงสร้างหลักของ item ใน array ออกมา
+    # ป้องกันปัญหา $defs โดยการดึงเฉพาะ properties ของ ActionPlanActions
+    if "$defs" in full_schema:
+        # วิธีการที่สะอาดที่สุดคือระบุโครงสร้างแบบ Manual หรือใช้ Ref Resolution
+        # แต่เพื่อความรวดเร็วและแม่นยำสำหรับ LLM เราจะใช้ Schema สั้นๆ:
         return {
             "type": "array",
             "items": {
@@ -108,7 +85,33 @@ def get_clean_action_plan_schema() -> Dict[str, Any]:
                 "properties": {
                     "phase": {"type": "string"},
                     "goal": {"type": "string"},
-                    "actions": {"type": "array"}
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "statement_id": {"type": "string"},
+                                "failed_level": {"type": "integer"},
+                                "recommendation": {"type": "string"},
+                                "target_evidence_type": {"type": "string"},
+                                "key_metric": {"type": "string"},
+                                "steps": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "Step": {"type": "integer"},
+                                            "Description": {"type": "string"},
+                                            "Responsible": {"type": "string"},
+                                            "Tools_Templates": {"type": "string"},
+                                            "Verification_Outcome": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    return full_schema

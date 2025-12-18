@@ -1278,6 +1278,10 @@ def create_context_summary_llm(
 # 1. JSON Extractor (ทนทานที่สุด)
 # =================================================================
 def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
+    """
+    สกัด JSON Array ออกจาก Text โดยรองรับการซ่อมแซมโครงสร้าง (Auto-Repair)
+    และจัดการปัญหา Delimiter Error/Control Characters
+    """
     try:
         if not isinstance(text, str):
             text = str(text) if text is not None else ""
@@ -1285,15 +1289,15 @@ def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> Li
         if not text.strip():
             return []
 
-        # 1. ลบ Markdown Block
+        # 1. ลบ Markdown Block (ถ้ามี)
         clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
 
-        # 2. ค้นหาหาขอบเขตที่กว้างที่สุดของ [ ]
+        # 2. ค้นหาขอบเขตที่กว้างที่สุดของ [ ] หรือ { }
         start_idx = clean_text.find('[')
         end_idx = clean_text.rfind(']')
 
         if start_idx == -1:
-            # ถ้าไม่เจอ [ ] อาจส่งมาเป็น Object เดียว { }
+            # กรณี LLM ส่งมาเป็น Object เดียว (Single Phase)
             start_idx = clean_text.find('{')
             end_idx = clean_text.rfind('}')
             if start_idx == -1: return []
@@ -1301,67 +1305,79 @@ def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> Li
         else:
             json_candidate = clean_text[start_idx:end_idx + 1]
 
-        # 3. ล้างอักขระควบคุม (Control Characters) ที่มักทำ JSON พัง
+        # 3. ล้างอักขระควบคุม (Control Characters) ที่มักทำให้ JSON Parse พัง
+        # ลบ ASCII 0-31 ยกเว้น newline, tab, carriage return
         json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
 
-        # 4. พยายาม Parse ด้วย JSON5 (ซึ่งฉลาดเรื่อง Single Quote และ Trailing Comma อยู่แล้ว)
+        # 4. ฟังก์ชันย่อยสำหรับพยายาม Parse
         def try_parse(content):
             try:
+                # json5 รองรับ Trailing Comma และ Single Quote
                 data = json5.loads(content)
                 return data if isinstance(data, list) else [data]
-            except:
+            except Exception:
                 return None
 
         # --- ลองครั้งที่ 1: Parse ปกติ ---
         result = try_parse(json_candidate)
         if result: return result
 
-        # --- ลองครั้งที่ 2: ถ้า Parse ไม่ผ่าน อาจเป็นเพราะ JSON ตัดจบ (Truncated) ---
-        # เราจะพยายาม "ปิด" โครงสร้างให้มัน (Brute-force close)
-        logger.warning("JSON parsing failed, attempting auto-repair (closing brackets)...")
+        # --- ลองครั้งที่ 2: ซ่อมแซมเครื่องหมายคำพูด (Smart Quotes) ---
+        repaired_quotes = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
+        result = try_parse(repaired_quotes)
+        if result: return result
+
+        # --- ลองครั้งที่ 3: กรณี JSON ตัดจบ (Truncated Repair) ---
+        # พยายามปิด Bracket ที่ LLM เจนไม่จบ
+        logger.warning("JSON truncated or malformed, attempting brute-force closure...")
         for suffix in ["]", "}", "}]", "}]}]", "}\n]"]:
             result = try_parse(json_candidate + suffix)
             if result:
-                logger.info(f"✅ Auto-repair success with suffix: {suffix}")
+                logger.info(f"✅ Auto-repaired JSON success with suffix: {suffix}")
                 return result
 
-        # 5. สุดท้ายจริงๆ: ถ้ายังไม่ผ่าน ให้พยายามหา Object ที่สมบูรณ์ภายในทีละตัว (Regex Extraction)
-        logger.warning("Auto-repair failed, falling back to regex object extraction...")
-        objects = re.findall(r'\{[^{}]*\}', json_candidate)
+        # --- ลองครั้งที่ 4: สุดท้าย ใช้ Regex ดึง Object ทีละตัว (Fallback) ---
+        logger.warning("Falling back to Regex Object Extraction...")
+        # ค้นหา pattern { ... } ที่ดูเหมือนจะเป็น object
+        objects = re.findall(r'\{(?:[^{}]|(?R))*\}', json_candidate) # ต้องการ regex module พิเศษ หรือเขียนแบบง่าย:
+        if not objects:
+            objects = re.findall(r'\{[\s\S]*?\}', json_candidate)
+            
         fallback_results = []
         for obj_str in objects:
             try:
                 obj_data = json5.loads(obj_str)
-                fallback_results.append(obj_data)
+                if isinstance(obj_data, dict):
+                    fallback_results.append(obj_data)
             except:
                 continue
         
         if fallback_results:
-            logger.info(f"✅ Recovered {len(fallback_results)} objects via regex fallback")
+            logger.info(f"✅ Recovered {len(fallback_results)} objects via regex")
             return fallback_results
 
-        # ถ้าถึงตรงนี้คือพังจริง ให้ Debug ดูว่าหน้าตาเป็นยังไง
-        logger.error(f"Failed to parse JSON. Raw snippet: {json_candidate[:200]}...")
+        logger.error(f"Failed to parse JSON. Snippet: {json_candidate[:200]}...")
         return []
 
     except Exception as e:
         logger.error(f"Extraction logic failed: {str(e)}", exc_info=True)
         return []
 
-
 # =================================================================
 # 2. Key Normalizer (ตรงกับ schema ล่าสุด)
 # =================================================================
+
 def action_plan_normalize_keys(obj: Any) -> Any:
     """
-    แปลง key ให้ตรงกับ alias (lowercase) และ Capitalized fields ใน StepDetail
+    แปลง key ให้ตรงกับ schema และบังคับประเภทข้อมูล (Data Type Enforcement)
+    โดยเฉพาะ failed_level และ Step ที่ต้องเป็น Integer 100%
     """
     if isinstance(obj, list):
         return [action_plan_normalize_keys(i) for i in obj]
     
     if isinstance(obj, dict):
         field_mapping = {
-            # Phase & Action level → lowercase alias
+            # Phase & Action level
             'phase': 'phase', 'Phase': 'phase',
             'goal': 'goal', 'Goal': 'goal',
             'actions': 'actions', 'Actions': 'actions',
@@ -1383,22 +1399,33 @@ def action_plan_normalize_keys(obj: Any) -> Any:
             
             'steps': 'steps', 'Steps': 'steps',
             
-            # StepDetail → Capitalized (ตาม schema)
+            # StepDetail (Capitalized per schema)
             'step': 'Step', 'Step': 'Step',
-            'description': 'Description', 'desc': 'Description', 'Description': 'Description',
-            'responsible': 'Responsible', 'owner': 'Responsible', 'Responsible': 'Responsible',
-            'tools_templates': 'Tools_Templates', 'tools': 'Tools_Templates', 'template': 'Tools_Templates',
-            'Tools_Templates': 'Tools_Templates',
-            'verification_outcome': 'Verification_Outcome', 'outcome': 'Verification_Outcome',
-            'result': 'Verification_Outcome', 'Verification_Outcome': 'Verification_Outcome',
+            'description': 'Description', 'Description': 'Description', 'desc': 'Description',
+            'responsible': 'Responsible', 'Responsible': 'Responsible', 'owner': 'Responsible',
+            'tools_templates': 'Tools_Templates', 'Tools_Templates': 'Tools_Templates', 'tools': 'Tools_Templates',
+            'verification_outcome': 'Verification_Outcome', 'Verification_Outcome': 'Verification_Outcome', 'outcome': 'Verification_Outcome',
         }
         
         new_obj = {}
         for k, v in obj.items():
-            k_lower = k.lower().replace('_', ' ').replace('-', ' ').strip()
-            k_lower_no_space = k_lower.replace(' ', '')
+            # ทำความสะอาด Key
+            k_clean = k.lower().replace('_', ' ').replace('-', ' ').strip()
+            k_no_space = k_clean.replace(' ', '')
+            target_key = field_mapping.get(k_clean) or field_mapping.get(k_no_space) or k
             
-            target_key = field_mapping.get(k_lower) or field_mapping.get(k_lower_no_space) or k
+            # --- [CRITICAL FIX] บังคับประเภทข้อมูลตัวเลข ---
+            if target_key in ['failed_level', 'Step']:
+                try:
+                    if isinstance(v, str):
+                        # ดึงเฉพาะตัวเลขที่เจอใน string เช่น "Level 3" -> 3
+                        nums = re.findall(r'\d+', v)
+                        v = int(nums[0]) if nums else 0
+                    else:
+                        v = int(v) if v is not None else 0
+                except (ValueError, IndexError):
+                    v = 0 # Fallback default
+            
             new_obj[target_key] = action_plan_normalize_keys(v)
         
         return new_obj

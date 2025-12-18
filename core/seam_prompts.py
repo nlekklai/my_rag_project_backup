@@ -197,8 +197,7 @@ USER_LOW_LEVEL_PROMPT = PromptTemplate(
 # =================================================================
 # 4. ACTION PLAN PROMPT (FIXED SCHEMA LEAKAGE & CONFIG DRIVEN)
 # =================================================================
-
-# SYSTEM PROMPT: กำหนดบทบาทและตรรกะการวิเคราะห์เชิงยุทธศาสตร์
+# SYSTEM PROMPT: กำหนดบทบาทและตรรกะการวิเคราะห์เชิงยุทธศาสตร์ พร้อมกฎเหล็กด้าน Data Type
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 คุณคือผู้เชี่ยวชาญด้าน State Enterprise Assessment Model (SE-AM) 
 และที่ปรึกษาด้านการพัฒนาระบบการจัดการความรู้ (Knowledge Management) ตามมาตรฐาน ISO 30401
@@ -208,12 +207,15 @@ SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 - สร้าง "แผนปฏิบัติการที่จับต้องได้จริง" (Actionable Action Plan)
 - แบ่ง Phase อย่างสมเหตุสมผลตามระดับช่องว่างที่ตรวจพบ
 
-หลักการแบ่ง Phase ตามระดับที่ติด (Strategic Logic):
+### [STRATEGIC LOGIC PER LEVEL]
 • ถ้าติด Level 5 → เน้น Innovation, External Benchmarking, Continuous Improvement Loop
 • ถ้าติด Level 3-4 → เน้น Standardization, KPI Definition, Monitoring & Evaluation (PDCA)
 • ถ้าติด Level 1-2 → เน้น Policy Establishment, Resource Allocation, Communication & Training
 
-ทุก Action ต้องมี Steps ที่ชัดเจน: ใครทำ / ใช้เครื่องมืออะไร / หลักฐานที่ได้คืออะไร
+### [STRICT DATA TYPE RULES]
+1. ฟิลด์ "failed_level" และ "Step" **ต้องเป็นตัวเลข (Integer) เท่านั้น** ห้ามใส่เครื่องหมายคำพูด (เช่น 3, ไม่ใช่ "3")
+2. ห้ามมีข้อความอธิบายใดๆ นอกเหนือจากโครงสร้าง JSON
+3. ห้ามใช้ Single Quote (') ในการล้อมรอบ String
 """
 
 # HUMAN PROMPT: บังคับ Output Format และควบคุมปริมาณ Token ด้วย Global Vars
@@ -227,17 +229,20 @@ ACTION_PLAN_TEMPLATE: Final[str] = """
 ### [2. รายการเกณฑ์ที่ไม่ผ่าน (Gaps)]:
 {recommendation_statements_list}
 
-### [3. กฎเหล็กในการตอบ (STRICT RULES - ปฏิบัติตามอย่างเคร่งครัด)]
-1. ตอบเฉพาะ JSON Array เท่านั้น — ห้ามมีข้อความใดๆ นอก JSON (ห้ามมีคำนำหน้า "Here is..." หรือ Markdown ```json)
-2. ใช้ Double Quotes (") ล้อมรอบ Property และ String เท่านั้น **ห้ามใช้ Single Quote (') เด็ดขาด**
-3. ข้อจำกัดด้านโครงสร้าง (Constraints Driven by Global Config):
-   - จำนวน Phase: สร้าง 1 ถึง {max_phases} Phase(s) (ตามความเหมาะสม)
+### [3. กฎเหล็กในการตอบ (STRICT RULES)]
+1. ตอบเฉพาะ JSON Array เท่านั้น — ห้ามมีคำนำหน้า "Here is..." หรือ Markdown ```json
+2. ใช้ Double Quotes (") สำหรับ Property และ String เสมอ
+3. **Integer Strictness**: 
+   - "failed_level": ใส่เฉพาะตัวเลข (1-5)
+   - "Step": ใส่เฉพาะตัวเลขลำดับ (1, 2, 3...)
+4. ข้อจำกัดด้านโครงสร้าง:
+   - จำนวน Phase: สร้าง 1 ถึง {max_phases} Phase(s)
    - จำนวน Steps ต่อ Action: ไม่เกิน {max_steps} ขั้นตอน
-   - ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ (เน้นกระชับ ขึ้นต้นด้วยคำกริยา)
-4. ภาษาที่ใช้ในการเขียนเนื้อหา: {language}
+   - ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ
+5. ภาษาที่ใช้เขียน: {language}
 
-### [4. KEY NAMES - ต้องสะกดให้ตรงตาม Schema เป๊ะ]
-- ระดับ Phase/Action (พิมพ์เล็ก): "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "target_evidence_type", "key_metric", "steps"
+### [4. KEY NAMES - ต้องสะกดให้ตรงเป๊ะ]
+- ระดับ Phase/Action: "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "target_evidence_type", "key_metric", "steps"
 - ระดับ Steps (PascalCase): "Step", "Description", "Responsible", "Tools_Templates", "Verification_Outcome"
 
 ### [5. JSON SCHEMA REFERENCE]
@@ -247,7 +252,6 @@ ACTION_PLAN_TEMPLATE: Final[str] = """
 """
 
 # FINAL PROMPT DEFINITION
-# ผูกตัวแปรให้ตรงกับฟังก์ชัน create_structured_action_plan ใน core/action_plan.py
 ACTION_PLAN_PROMPT = PromptTemplate(
     input_variables=[
         "sub_id",
@@ -256,10 +260,10 @@ ACTION_PLAN_PROMPT = PromptTemplate(
         "recommendation_statements_list",
         "advice_focus",
         "json_schema",
-        "max_phases",          # ส่งมาจาก gv.MAX_ACTION_PLAN_PHASES
-        "max_steps",           # ส่งมาจาก gv.MAX_STEPS_PER_ACTION
-        "max_words_per_step",  # ส่งมาจาก gv.ACTION_PLAN_STEP_MAX_WORDS
-        "language"             # ส่งมาจาก gv.ACTION_PLAN_LANGUAGE
+        "max_phases",          
+        "max_steps",           
+        "max_words_per_step",  
+        "language"             
     ],
     template=SYSTEM_ACTION_PLAN_PROMPT + "\n" + ACTION_PLAN_TEMPLATE
 )

@@ -233,14 +233,15 @@ def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Docume
     ext = "." + file_path.lower().split('.')[-1]
     
     # --- 1. Handle Known Loaders (CSV) ---
-    if loader_class is CSVLoader:
+    if loader_class.__name__ == 'CSVLoader' or ext == ".csv":
         try:
-            # 💡 FIX: เพิ่ม csv_args={"delimiter": "|"} เพื่อรองรับการใช้ Pipe
-            # 📌 หมายเหตุ: คุณจะต้องสร้างไฟล์ FAQ .csv โดยใช้ | เป็นตัวแบ่งแทน ,
             loader = loader_class(
                 file_path, 
-                encoding='utf-8', 
-                csv_args={"delimiter": "|"} 
+                encoding='utf-8-sig', # 💡 FIX: ใช้ utf-8-sig เพื่อรองรับไฟล์ไทยที่มี BOM
+                csv_args={
+                    "delimiter": "|", 
+                    "quotechar": '"'
+                } 
             )
             raw_docs = loader.load()
         except Exception as e:
