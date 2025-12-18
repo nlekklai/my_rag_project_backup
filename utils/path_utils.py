@@ -369,4 +369,9 @@ def get_mapping_key_from_physical_path(physical_path: str) -> str:
          return ""
          
     return relative_key
+
+# OTHER PATHS เ
+def get_tenant_year_export_root(tenant: str, year: Union[int, str]) -> str:
+    """คืนค่า Path ระดับปี (Root ของ exports) เพื่อใช้วนหาไฟล์ในทุก Enabler"""
+    return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year))
 # ==================== จบ utils/path_utils.py ====================

@@ -198,3 +198,18 @@ PDCA_LEVEL_SYNONYMS: Final[Dict[int, str]] = {
     4: "การปรับปรุง, Corrective Action, Preventive Action, บทเรียนที่ได้รับ, การแก้ไข, ปรับแผน, การสร้างนวัตกรรม",
     5: "นวัตกรรม, ความยั่งยืน, Best Practice, การขยายผล, ผลกระทบระยะยาว, รางวัล, External Recognition, การทบทวนวิสัยทัศน์",
 }
+
+# --- Intent & Analysis Settings ---
+
+# เพิ่ม signals สำหรับตรวจจับคำถามประเภทวิเคราะห์ PDCA
+PDCA_ANALYSIS_SIGNALS: Final[List[str]] = [
+    "วิเคราะห์", "ตรวจสอบ", "มี pdca ไหม", "ครบไหม", 
+    "ประเมินหลักฐาน", "ความสมบูรณ์", "p-d-c-a", "analyze",
+    "ขาดอะไร", "เช็คหลักฐาน"
+]
+
+# กำหนดหัวข้อหลักของการวิเคราะห์ (ป้องกัน LLM ออกนอกลู่นอกทาง)
+ANALYSIS_FRAMEWORK: Final[str] = "PDCA (Plan-Do-Check-Act)"
+
+# ข้อความแจ้งเตือนกรณีข้อมูลไม่เพียงพอต่อการวิเคราะห์
+INSUFFICIENT_DATA_MSG: Final[str] = "ข้อมูลในเอกสารไม่เพียงพอต่อการวิเคราะห์ครบวงจร PDCA"

@@ -498,9 +498,17 @@ class SEAMPDCAEngine:
                 f"Engine|{config.enabler}|{config.tenant}/{config.year}"
             )
         
+        # 🎯 แก้ไขส่วน ActionPlanActions ใน __init__
+        # ดึงจาก kwargs ก่อน (ถ้าส่งมาจาก Worker) ถ้าไม่มีให้ดึงจาก Global ถ้าไม่มีอีกให้เป็น None
         self.ActionPlanActions = kwargs.get('ActionPlanActions', globals().get('ActionPlanActions'))
-        self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
 
+        if self.ActionPlanActions is None:
+            self.logger.warning("ActionPlanActions not found in kwargs or globals. Action planning features may be limited.")
+        else:
+            self.logger.info("ActionPlanActions successfully linked to Engine.")
+
+        self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
+        
         # =======================================================
         # Core Configuration
         # =======================================================

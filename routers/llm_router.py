@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+# routers/llm_router.py
+
 import logging
 import uuid
 import asyncio
@@ -8,20 +11,21 @@ from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Form, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-# LangChain Core
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.documents import Document as LcDocument
 
-# Project Core Imports
+# Core Imports
 from core.history_utils import async_save_message
 from core.llm_data_utils import retrieve_context_for_endpoint
 from core.vectorstore import get_vectorstore_manager
 
-# Import Prompts และ Guardrails
+# Import Prompts ที่ผ่านการ Revise (รวมกฎเหล็กเดิม + PDCA + General Chat)
 from core.rag_prompts import (
     SYSTEM_QA_INSTRUCTION, 
-    QA_PROMPT, 
-    SYSTEM_COMPARE_INSTRUCTION, 
+    SYSTEM_ANALYSIS_INSTRUCTION,
+    SYSTEM_GENERAL_CHAT_INSTRUCTION,
+    QA_PROMPT,
+    SYSTEM_COMPARE_INSTRUCTION,
     COMPARE_PROMPT
 )
 from core.llm_guardrails import detect_intent, build_prompt 
@@ -29,7 +33,7 @@ from core.llm_guardrails import detect_intent, build_prompt
 from models.llm import create_llm_instance
 from routers.auth_router import UserMe, get_current_user
 
-# คอนฟิกหลัก
+# Global Config
 from config.global_vars import (
     DEFAULT_ENABLER,
     EVIDENCE_DOC_TYPES,
@@ -57,9 +61,9 @@ class QueryResponse(BaseModel):
     conversation_id: str
     result: Optional[Dict[str, Any]] = None
 
-# ==========================================
-#  1. /query - ถามตอบทั่วไป (QA)
-# ==========================================
+# ===================================================================
+# 1. /query - รองรับ FAQ, KM Chat, General Chat, และ PDCA Analysis
+# ===================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
     question: str = Form(...),
@@ -73,11 +77,11 @@ async def query_llm(
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
     
-    # [1] Detect Intent เพื่อหา Sub-topic
+    # [1] Detect Intent เพื่อแยกประเภทคำถาม (FAQ / Analysis / Chat)
     intent = detect_intent(question)
     detected_sub_topic = intent.get("sub_topic")
 
-    # [2] Retrieval Context โดยใช้ Sub-topic ช่วยกรอง
+    # [2] Retrieval Context (ใช้ Sub-topic ช่วยกรองถ้ามี)
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
     all_chunks = await _get_context_chunks(
         question, doc_types or [EVIDENCE_DOC_TYPES], doc_ids or [], 
@@ -85,32 +89,42 @@ async def query_llm(
         sub_topic=detected_sub_topic
     )
 
-    # [3] สร้าง Prompt (รวม Context ไทย)
+    # [3] เตรียม Context Text
     context_text = "\n\n---\n\n".join([
         f"Source [{d.metadata.get('source', 'Unknown')}]:\n{d.page_content}" 
         for d in all_chunks
     ])
     
-    # ใช้ build_prompt จาก guardrails ช่วยประกอบบทบาท
-    user_prompt_content = build_prompt(context_text, question, intent) 
+    # [4] **Intent Switching Logic** - เลือก System Instruction ตามประเภทคำถาม
+    if intent.get("is_analysis"):
+        # โหมดวิเคราะห์หลักฐาน/ประเมิน (PDCA)
+        base_system_instruction = SYSTEM_ANALYSIS_INSTRUCTION
+    elif intent.get("is_faq") or intent.get("is_evidence") or intent.get("sub_topic"):
+        # โหมด KM / SE-AM / ข้อมูลเชิงลึกจากเอกสาร (ใช้กฎเหล็ก Original)
+        base_system_instruction = SYSTEM_QA_INSTRUCTION
+    else:
+        # โหมด Chat ทั่วไป / FAQ สวัสดิการพนักงาน
+        base_system_instruction = SYSTEM_GENERAL_CHAT_INSTRUCTION
 
-    # 🟢 บังคับภาษาไทยใน System Message (ด่านสุดท้าย)
+    # 🟢 บังคับภาษาไทย (Strict Thai)
     strict_thai_instruction = (
-        "ALWAYS ANSWER IN THAI LANGUAGE. คุณต้องตอบเป็นภาษาไทยเท่านั้น "
-        "ห้ามตอบเป็นภาษาอังกฤษเด็ดขาดแม้เนื้อหาต้นฉบับจะเป็นภาษาอื่นก็ตาม\n" 
-        + SYSTEM_QA_INSTRUCTION
+        "ALWAYS ANSWER IN THAI LANGUAGE. คุณต้องตอบเป็นภาษาไทยเท่านั้น\n" 
+        + base_system_instruction
     )
+
+    # ใช้ build_prompt เพื่อประกอบ User Message (ใส่กฎเหล็กเรื่อง Subtopic และ Source)
+    user_prompt_content = build_prompt(context_text, question, intent) 
 
     messages = [
         SystemMessage(content=strict_thai_instruction),
         HumanMessage(content=user_prompt_content)
     ]
 
-    # [4] เรียก LLM (Ollama/Local)
+    # [5] เรียก LLM
     response = llm.invoke(messages)
     answer = response if isinstance(response, str) else getattr(response, 'content', str(response))
     
-    # [5] Save History
+    # [6] บันทึกประวัติ
     await async_save_message(conv_id, "user", question)
     await async_save_message(conv_id, "ai", answer)
 
@@ -120,19 +134,18 @@ async def query_llm(
         conversation_id=conv_id
     )
 
-# ==========================================
-#  2. /compare - เปรียบเทียบเอกสาร
-# ==========================================
+# ===================================================================
+# 2. /compare - เปรียบเทียบเอกสาร (JSON Output 100%)
+# ===================================================================
 @llm_router.post("/compare", response_model=QueryResponse)
 async def compare_llm(
     question: str = Form(...),
     doc_ids: List[str] = Form(...),
     doc_types: Optional[List[str]] = Form(None),
-    enabler: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
     if len(doc_ids) < 2:
-        raise HTTPException(status_code=400, detail="กรุณาเลือกอย่างน้อย 2 เอกสาร")
+        raise HTTPException(status_code=400, detail="กรุณาเลือกอย่างน้อย 2 เอกสารเพื่อเปรียบเทียบ")
 
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
@@ -151,42 +164,36 @@ async def compare_llm(
         )
         return "\n".join([ev["text"] for ev in res.get("top_evidences", [])])
 
+    # ดึงข้อมูลจากทั้ง 2 เอกสารพร้อมกัน
     doc1_content, doc2_content = await asyncio.gather(
         fetch_single_doc_context(doc_ids[0]),
         fetch_single_doc_context(doc_ids[1])
     )
 
-    # ประกอบ Prompt เปรียบเทียบ
     user_compare_content = COMPARE_PROMPT.format(
         doc1_content=doc1_content or "ไม่พบข้อมูล",
         doc2_content=doc2_content or "ไม่พบข้อมูล",
         query=question
     )
 
-    # 🟢 บังคับ JSON + ภาษาไทย
-    strict_compare_instruction = (
-        "RESPONSE MUST BE IN THAI. OUTPUT MUST BE VALID JSON ONLY.\n" 
-        + SYSTEM_COMPARE_INSTRUCTION
-    )
-
+    # 🟢 บังคับ JSON + ภาษาไทย (ตาม Original)
     messages = [
-        SystemMessage(content=strict_compare_instruction),
+        SystemMessage(content="RESPONSE MUST BE IN THAI. OUTPUT MUST BE VALID JSON ONLY.\n" + SYSTEM_COMPARE_INSTRUCTION),
         HumanMessage(content=user_compare_content)
     ]
 
-    # เรียก LLM
     raw_response_obj = llm.invoke(messages)
-    raw_response = raw_response_obj if isinstance(raw_response_obj, str) else getattr(raw_response_obj, 'content', str(raw_response_obj))
+    raw_response = getattr(raw_response_obj, 'content', str(raw_response_obj))
     
-    # ทำความสะอาด JSON string
+    # Clean JSON
     json_str = re.sub(r'^```json\s*|```$', '', raw_response.strip(), flags=re.MULTILINE)
     try:
         result_data = json.loads(json_str)
-        summary = result_data.get("overall_summary", "เปรียบเทียบข้อมูลสำเร็จ")
+        summary = result_data.get("overall_summary", "วิเคราะห์เปรียบเทียบเรียบร้อยแล้ว")
     except Exception as e:
-        logger.error(f"JSON Parse Error: {e}")
-        result_data = {"error": "AI response was not valid JSON", "raw": raw_response}
-        summary = "เกิดข้อผิดพลาดในการสร้างตาราง: AI ไม่ได้ตอบกลับเป็นรูปแบบ JSON ภาษาไทย"
+        logger.error(f"Compare JSON Parse Error: {e}")
+        result_data = {"error": "Invalid JSON from AI", "raw": raw_response}
+        summary = "เกิดข้อผิดพลาดในการประมวลผลข้อมูลเปรียบเทียบ"
 
     return QueryResponse(
         answer=summary,
@@ -195,10 +202,11 @@ async def compare_llm(
         result=result_data
     )
 
+# ===================================================================
 # --- Helper Functions ---
+# ===================================================================
 
 async def _get_context_chunks(question, d_types, d_ids, enabler, subject, vsm, user, sub_topic=None):
-    all_chunks = []
     tasks = [
         asyncio.to_thread(
             retrieve_context_for_endpoint,
@@ -211,18 +219,20 @@ async def _get_context_chunks(question, d_types, d_ids, enabler, subject, vsm, u
         ) for dt in d_types
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    all_chunks = []
     for res in results:
         if isinstance(res, dict):
             for ev in res.get("top_evidences", []):
                 all_chunks.append(LcDocument(
                     page_content=ev["text"],
                     metadata={
-                        "score": ev.get("score", ev.get("rerank_score", 0)), 
+                        "score": ev.get("score", 0), 
                         "doc_id": ev.get("doc_id"), 
                         "source": ev.get("source"),
                         "chunk_uuid": ev.get("chunk_uuid")
                     }
                 ))
+    # จัดลำดับตามความเกี่ยวข้อง
     return sorted(all_chunks, key=lambda x: x.metadata["score"], reverse=True)[:FINAL_K_RERANKED]
 
 def _map_sources(chunks):

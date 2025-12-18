@@ -4,6 +4,12 @@ Robust LLM + RAG utilities for SEAM assessment (CLEAN FINAL VERSION)
 """
 
 import logging
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
 import time
 import json
 import hashlib
@@ -16,7 +22,12 @@ from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
-from core.action_plan_schema import get_clean_action_plan_schema
+# --- เตรียม JSON Schema ---
+try:
+    from core.action_plan_schema import get_clean_action_plan_schema
+    schema_json = json.dumps(get_clean_action_plan_schema(), ensure_ascii=False, indent=2)
+except Exception as e:
+    logger.error(f"Schema load failed: {e}")
 
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
@@ -25,9 +36,6 @@ try:
 except ImportError:
     pass  # ใช้ re มาตรฐานต่อไป
 
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # ===================================================================
 # 1. Core Configuration (ต้องมีแน่นอน)
@@ -71,7 +79,8 @@ from core.seam_prompts import (
     EVIDENCE_DESCRIPTION_PROMPT,
     SYSTEM_LOW_LEVEL_PROMPT,
     USER_LOW_LEVEL_PROMPT,
-    USER_LOW_LEVEL_PROMPT_TEMPLATE
+    USER_LOW_LEVEL_PROMPT_TEMPLATE,
+    USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
@@ -1209,9 +1218,6 @@ def create_context_summary_llm(
     context_to_send = context_limited[:4000] 
     next_level = min(level + 1, 5)
 
-    # 2. ดึง Prompt Template
-    from seam_prompts import USER_EVIDENCE_DESCRIPTION_TEMPLATE, SYSTEM_EVIDENCE_DESCRIPTION_PROMPT
-    
     try:
         human_prompt = USER_EVIDENCE_DESCRIPTION_TEMPLATE.format(
             sub_id=f"{sub_id} - {sub_criteria_name}",
@@ -1497,14 +1503,6 @@ def create_structured_action_plan(
         f"- [Level {s.get('level')}] {s.get('statement')} (Gap: {s.get('reason')})"
         for s in recommendation_statements
     ]
-
-    # --- เตรียม JSON Schema ---
-    try:
-        from core.action_plan_schema import get_clean_action_plan_schema
-        schema_json = json.dumps(get_clean_action_plan_schema(), ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Schema load failed: {e}")
-        return []
 
     # --- สร้าง Prompt พร้อมส่ง config ทั้งหมดเข้าไปบังคับ LLM ---
     human_prompt = ACTION_PLAN_PROMPT.format(
