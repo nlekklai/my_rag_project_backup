@@ -143,151 +143,139 @@ def retrieve_context_for_endpoint(
     doc_type: Optional[str] = None,
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
-    sub_topic: Optional[str] = None,  # ใหม่: เช่น "KM-4.1"
+    sub_topic: Optional[str] = None,
     k_to_retrieve: int = INITIAL_TOP_K,
     k_to_rerank: int = FINAL_K_RERANKED,
+    strict_filter: bool = False, # 🟢 รองรับจาก llm_router
+    **kwargs                      # 🟢 ป้องกัน TypeError จาก argument อื่นๆ
 ) -> Dict[str, Any]:
     """
-    ดึง context จากเอกสารที่เลือกมาแล้ว (stable_doc_ids) หรือ filter แม่น ๆ
-    รองรับ sub_topic เช่น "KM-4.1" → แม่นสุด
+    ดึง context ด้วย Hybrid Search + Strict Metadata Filtering
+    เวอร์ชันนิ่ง: รองรับการเปรียบเทียบเอกสารแบบเจาะจงไฟล์ (Anti-Hallucination)
     """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # 1. กำหนด collection และแก้ไขปัญหา doc_type เป็น List/String Literal
-    
+    # --- 1. Clean & Normalize doc_type ---
     clean_doc_type = doc_type or 'seam'
+    if isinstance(clean_doc_type, list):
+        clean_doc_type = clean_doc_type[0]
+    clean_doc_type = str(clean_doc_type).strip().lower()
+
+    # --- 2. Resolve Collection Name ---
+    collection_name = get_doc_type_collection_key(doc_type=clean_doc_type, enabler=enabler)
     
-    # 💡 FIX A: ตรวจสอบและพยายามแปลง String Literal ที่มาจาก curl เช่น '["seam"]'
-    if isinstance(clean_doc_type, str) and clean_doc_type.strip().startswith('['):
-        try:
-            # พยายามโหลดเป็น JSON Array
-            parsed_list = json.loads(clean_doc_type.strip())
-            
-            if isinstance(parsed_list, (list, tuple)) and parsed_list:
-                # ถ้าโหลดได้เป็น List/Tuple ให้ใช้สมาชิกตัวแรก
-                clean_doc_type = parsed_list[0]
-            elif isinstance(parsed_list, str):
-                # ถ้าโหลดได้เป็น String (อาจเกิดขึ้นได้)
-                clean_doc_type = parsed_list
-                
-        except json.JSONDecodeError:
-            # ถ้าโหลดไม่ได้ ให้ข้ามไปใช้ String เดิม
-            logger.debug(f"Could not parse doc_type string literal: {clean_doc_type}")
-            pass
-
-    # 💡 FIX B: จัดการกับ List/Tuple ที่เข้ามาปกติ (กรณี Router ส่งมาถูก หรือหลังจากการ Parse JSON)
-    if isinstance(clean_doc_type, (list, tuple)):
-        # ใช้ element แรกเท่านั้น
-        clean_doc_type = str(clean_doc_type[0]) if clean_doc_type else 'seam'
-    elif not isinstance(clean_doc_type, str):
-        # บังคับเป็น String
-        clean_doc_type = str(clean_doc_type)
-
-    # 💡 FIX C: ทำความสะอาด Quote ที่อาจติดมา (เช่น 'seam' หรือ "seam")
-    clean_doc_type = str(clean_doc_type).strip().strip("'\"")
-
-    # 🎯 ใช้ get_doc_type_collection_key จาก utils/path_utils.py
-    collection_name = get_doc_type_collection_key(
-        doc_type=clean_doc_type, 
-        enabler=enabler
-    )
-
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
-        # 📌 NOTE: ใช้ clean_doc_type ใน Log เพื่อความถูกต้อง
-        logger.error(f"Collection {collection_name} (Doc Type: {clean_doc_type}) not found!")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
+        logger.error(f"❌ Collection {collection_name} NOT FOUND!")
+        return {
+            "top_evidences": [],
+            "aggregated_context": "ไม่พบฐานข้อมูลที่ระบุ",
+            "retrieval_time": 0,
+            "used_chunk_uuids": []
+        }
 
-    # 2. สร้าง filter ที่แข็งแกร่ง
+    # --- 3. สร้าง Filter สำหรับ ChromaDB ---
     where_filter = _create_where_filter(stable_doc_ids, subject, sub_topic)
-    logger.info(f"Retrieval → Collection: {collection_name} | Filter: {where_filter} | Query: {query[:80]}...")
+    logger.info(f"🔍 Retrieval Start | Collection: {collection_name} | Filter: {where_filter}")
 
-    # 3. Embed query
+    # --- 4. เลือกใช้ Retriever ---
+    # หากมีการระบุ stable_doc_ids (โหมดเปรียบเทียบ) 
+    # จะบังคับใช้ Vector Search เพื่อให้ Filter แม่นยำที่สุด (Hybrid บางครั้ง Filter รั่ว)
+    retriever = None
+    if USE_HYBRID_SEARCH and not stable_doc_ids:
+        try:
+            retriever = vsm.create_hybrid_retriever(collection_name=collection_name)
+            logger.info(f"✅ Using HYBRID retriever")
+        except Exception as e:
+            logger.warning(f"⚠️ Hybrid failed: {e} -> Falling back to Vector")
+
+    if not retriever:
+        retriever = vsm.get_retriever(collection_name)
+
+    # --- 5. ดึงข้อมูล (Invoke) ---
     try:
-        emb = get_hf_embeddings()
-        # BGE-M3 แนะนำให้ใช้ prefix
-        query_emb = emb.embed_query(f"query: {query}") 
+        search_kwargs = {"k": k_to_retrieve}
+        if where_filter:
+            # ใส่ทั้ง 'where' และ 'filter' เพื่อรองรับ LangChain หลายเวอร์ชัน
+            search_kwargs["where"] = where_filter
+            search_kwargs["filter"] = where_filter
+
+        docs = retriever.invoke(query, config={"search_kwargs": search_kwargs})
+        
+        # 🛡️ Double-Gate Filtering: กรองด้วย Code อีกชั้นเพื่อป้องกันไฟล์หลุด (Hallucination Prevention)
+        if stable_doc_ids:
+            raw_chunks = [
+                d for d in docs 
+                if (d.metadata.get("stable_doc_uuid") in stable_doc_ids or 
+                    d.metadata.get("doc_id") in stable_doc_ids)
+            ]
+            logger.info(f"🛡️ Strict Filter Applied: {len(raw_chunks)}/{len(docs)} chunks matched IDs")
+        else:
+            raw_chunks = [d for d in docs if hasattr(d, "page_content") and d.page_content.strip()]
+            
     except Exception as e:
-        logger.error(f"Embedding failed: {e}")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
+        logger.error(f"❌ Retrieval Invoke Error: {e}")
+        raw_chunks = []
 
-    # 4. Query Chroma
-    try:
-        results = chroma._collection.query(
-            query_embeddings=[query_emb],
-            n_results=k_to_retrieve,
-            where=where_filter if where_filter else None,
-            include=["documents", "metadatas", "distances"]
-        )
-    except Exception as e:
-        logger.error(f"Chroma query failed: {e}")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0, "used_chunk_uuids": []}
-
-    # 5. แปลงเป็น LcDocument
-    raw_chunks: List[LcDocument] = []
-    for doc, meta, dist in zip(
-        results["documents"][0],
-        results["metadatas"][0],
-        results["distances"][0]
-    ):
-        meta["retrieval_distance"] = float(dist)
-        raw_chunks.append(LcDocument(page_content=doc, metadata=meta))
-
-    logger.info(f"Raw retrieval: {len(raw_chunks)} chunks")
-
-    # 6. Rerank (สำคัญมาก!)
+    # --- 6. Rerank ---
     final_chunks = raw_chunks
     reranker = get_global_reranker()
-    if reranker and len(raw_chunks) > k_to_rerank:
+    
+    if reranker and len(raw_chunks) > 0:
         try:
+            # ถ้าเป็นโหมดเปรียบเทียบ และ chunks น้อยกว่าที่ต้อง rerank ให้ปรับ top_n ลง
+            top_n = min(len(raw_chunks), k_to_rerank)
             reranked = reranker.compress_documents(
                 documents=raw_chunks,
                 query=query,
-                top_n=k_to_rerank
+                top_n=top_n
             )
-            # ดึง Document ออกมา
-            final_chunks = [getattr(r, "document", r) for r in reranked]
-            logger.info(f"Reranked → {len(final_chunks)} chunks")
+            
+            processed_reranked = []
+            for r in reranked:
+                if hasattr(r, "page_content"): processed_reranked.append(r)
+                elif hasattr(r, "document"): processed_reranked.append(r.document)
+            
+            if processed_reranked:
+                final_chunks = processed_reranked
+            
         except Exception as e:
-            logger.warning(f"Reranker failed: {e}")
+            logger.error(f"⚠️ Reranker Error: {e}")
+            final_chunks = raw_chunks[:k_to_rerank]
 
-    # 7. สร้าง output
+    # --- 7. บรรจุผลลัพธ์ ---
     top_evidences = []
     aggregated_parts = []
     used_chunk_uuids = []
 
-    for doc in final_chunks[:k_to_rerank]:
-        md = doc.metadata or {}
-        text = str(doc.page_content or "").strip()
-        if not text:
-            continue
-
-        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid")
-        if not chunk_uuid or len(chunk_uuid) < 32:
-            continue  # กรอง TEMP ID
-
+    for doc in final_chunks:
+        md = getattr(doc, "metadata", {}) or {}
+        text = doc.page_content.strip()
+        
+        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or str(uuid.uuid4())
         used_chunk_uuids.append(chunk_uuid)
 
         top_evidences.append({
-            "doc_id": md.get("stable_doc_uuid"),
+            "doc_id": md.get("stable_doc_uuid") or md.get("doc_id"),
             "chunk_uuid": chunk_uuid,
-            "source": md.get("source") or md.get("filename") or "Unknown",
+            "source": md.get("source") or md.get("file_name") or "Unknown",
             "text": text,
+            "score": md.get("relevance_score", 0),
             "pdca_tag": md.get("pdca_tag", "Other"),
-            "retrieval_distance": md.get("retrieval_distance", 1.0),
             "sub_topic": md.get("sub_topic"),
         })
         aggregated_parts.append(f"[SOURCE: {md.get('source', 'Unknown')}] {text}")
 
-    result = {
+    retrieval_time = round(time.time() - start_time, 3)
+    logger.info(f"🏁 Final retrieval: {len(top_evidences)} chunks in {retrieval_time}s")
+
+    return {
         "top_evidences": top_evidences,
-        "aggregated_context": "\n\n---\n\n".join(aggregated_parts),
-        "retrieval_time": round(time.time() - start_time, 3),
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง",
+        "retrieval_time": retrieval_time,
         "used_chunk_uuids": used_chunk_uuids
     }
-    logger.info(f"Final retrieval: {len(top_evidences)} chunks | Sub-topic: {sub_topic}")
-    return result
 
 # ========================
 # 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
@@ -490,7 +478,8 @@ def retrieve_context_with_filter(
                 # 🎯 FIX: ใช้ get_relevant_documents ที่รับ **search_kwargs โดยตรงจะเสถียรกว่า
                 if hasattr(retriever, "get_relevant_documents"):
                     # EnsembleRetriever และ ChromaRetriever มักจะรับ kwargs โดยตรง
-                    docs = retriever.get_relevant_documents(q, **search_kwargs)
+                    # docs = retriever.get_relevant_documents(q, **search_kwargs)
+                    docs = retriever.invoke(q, config={"search_kwargs": search_kwargs})
                 elif hasattr(retriever, "invoke"):
                     # Fallback สำหรับ LangChain Runnable API 
                     docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})

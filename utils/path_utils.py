@@ -375,3 +375,18 @@ def get_tenant_year_export_root(tenant: str, year: Union[int, str]) -> str:
     """คืนค่า Path ระดับปี (Root ของ exports) เพื่อใช้วนหาไฟล์ในทุก Enabler"""
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year))
 # ==================== จบ utils/path_utils.py ====================
+
+# utils/path_utils.py (เพิ่มเติม)
+
+def get_tenant_year_report_root(tenant: str, year: Union[int, str], enabler: str = None) -> str:
+    """
+    สร้างและส่งคืน Path สำหรับเก็บไฟล์รายงาน (Reports)
+    โครงสร้าง: data_store/<tenant>/reports/<year>/<enabler>
+    """
+    base_dir = os.path.join("data_store", _n(tenant), "reports", str(year))
+    if enabler:
+        base_dir = os.path.join(base_dir, _n(enabler))
+    
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir, exist_ok=True)
+    return base_dir

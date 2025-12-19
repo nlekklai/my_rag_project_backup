@@ -452,42 +452,60 @@ class VectorStoreManager:
     # สำคัญที่สุด: ต้องใช้ default_factory=dict หรือ default=None เท่านั้น!
     _client: Optional[chromadb.PersistentClient] = PrivateAttr(default=None)
 
+
     def __new__(cls, *args, **kwargs):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT,  year: Optional[int] = None, enabler: Optional[str] = None, doc_type: str = EVIDENCE_DOC_TYPES,): 
-        # 📌 FIX: ทำให้ init รับแค่ base_path และ tenant เพื่อให้คงความเป็น Singleton
+    def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT, 
+                 year: Optional[int] = None, enabler: Optional[str] = None, 
+                 doc_type: str = EVIDENCE_DOC_TYPES):
         if not self._is_initialized:
-            self._base_path = base_path
-            self.tenant = tenant.lower()
-            
-            # 💡 FIX: ต้องกำหนดค่าเริ่มต้นให้ Attributes ที่จำเป็นต้องใช้ในเมธอดอื่น ๆ ของ Class
-            self.year = year if year is not None else DEFAULT_YEAR    
-            self.doc_type = doc_type
-            self.enabler = enabler.upper() if enabler else DEFAULT_ENABLER 
-            
-            self._chroma_cache = {}
-            self._embeddings = get_hf_embeddings()
-            
+            with self._lock:
+                if not self._is_initialized:
+                    # --- Basic Setup ---
+                    self._base_path = base_path
+                    self.tenant = tenant.lower()
+                    self.year = year if year is not None else DEFAULT_YEAR    
+                    self.doc_type = doc_type
+                    self.enabler = enabler.upper() if enabler else DEFAULT_ENABLER 
 
-            client_base_path = self._get_chroma_client_base_path(tenant, year)
+                    # --- Caches ---
+                    self._chroma_cache: Dict[str, Any] = {}
+                    self._multi_doc_retriever: Optional[Any] = None
+                    self._doc_id_mapping: Dict[str, Dict[str, Any]] = {}
+                    self._uuid_to_doc_id: Dict[str, str] = {}
+                    self._hybrid_retriever_cache: Dict[str, Any] = {}
+                    self._bm25_docs_cache: Dict[str, List[Document]] = {}
 
-            chroma_client_root = get_vectorstore_tenant_root_path(tenant=self.tenant)
-            self._client = chromadb.PersistentClient(path=client_base_path)
+                    # --- Core Components ---
+                    self._embeddings = get_hf_embeddings()
+                    self._client: Optional[chromadb.PersistentClient] = None
 
-            self._hybrid_retriever_cache: Dict[str, EnsembleRetriever] = {}
-            self._bm25_docs_cache: Dict[str, List[Document]] = {}
+                    # --- Logger (สำคัญ!) ---
+                    self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+                    self.logger.info(f"VectorStoreManager initialized for tenant={self.tenant}, year={self.year}")
 
-            logger.info(f"ChromaDB Client initialized at CLIENT BASE PATH: {client_base_path}")
-            
-            self._load_doc_id_mapping()
-            
-            logger.info(f"Initialized VectorStoreManager (Tenant: {self.tenant})") 
-            
-            VectorStoreManager._is_initialized = True
+                    # --- Initialize Client ---
+                    try:
+                        client_base_path = self._get_chroma_client_base_path(tenant, year)
+                        self._client = chromadb.PersistentClient(path=client_base_path)
+                        self.logger.info(f"ChromaDB Client initialized at: {client_base_path}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to initialize ChromaDB client: {e}")
+                        self._client = None
+
+                    # --- Load Mapping ---
+                    try:
+                        self._load_doc_id_mapping()
+                        self.logger.info(f"Loaded doc_id_mapping: {len(self._doc_id_mapping)} documents")
+                    except Exception as e:
+                        self.logger.error(f"Failed to load doc_id_mapping: {e}")
+
+                    self._is_initialized = True  # ← ใช้ instance variable
+                    self.logger.info(f"VectorStoreManager fully initialized (Tenant: {self.tenant})")
     
     def _get_chroma_client_base_path(self, tenant: str, year: Optional[int]) -> str:
         """

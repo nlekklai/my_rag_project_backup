@@ -4,137 +4,76 @@
 import re
 import logging
 from typing import Dict, Optional, Any, List
-
-# ดึงค่าคอนฟิกจาก global_vars
 from config.global_vars import (
-    ACTION_PLAN_LANGUAGE,
-    SUPPORTED_ENABLERS,
-    DEFAULT_ENABLER,
-    PDCA_ANALYSIS_SIGNALS,  
-    ANALYSIS_FRAMEWORK      
+    SUPPORTED_ENABLERS, DEFAULT_ENABLER,
+    PDCA_ANALYSIS_SIGNALS, ANALYSIS_FRAMEWORK
 )
 
 logger = logging.getLogger(__name__)
 
-# =================================================================
-# 1. INTENT DETECTION (DETECTING WHAT USER WANTS)
-# =================================================================
 def detect_intent(question: str, doc_type: str = "document", contextual_rules: Dict[str, Any] = None) -> Dict[str, Any]:
-    """
-    ตรวจจับความต้องการของผู้ใช้ (Intent) พร้อมใช้ Contextual Rules ช่วยเพิ่มความแม่นยำ
-    """
     q = question.strip().lower()
-
     intent = {
-        "is_faq": False,
-        "is_synthesis": False,
-        "is_evidence": False,
-        "is_analysis": False,  
-        "sub_topic": None,
-        "enabler_hint": None
+        "is_faq": False, "is_synthesis": False, "is_summary": False,
+        "is_comparison": False, "is_evidence": False, "is_analysis": False,
+        "sub_topic": None, "enabler_hint": None
     }
 
-    # --- A. Extract Enabler & Sub-topic (e.g., KM 1.1) ---
-    enabler_pattern = "|".join(SUPPORTED_ENABLERS).lower()
-    # ปรับ Regex ให้ครอบคลุมรูปแบบการพิมพ์ที่หลากหลาย
-    sub_topic_match = re.search(fr"({enabler_pattern}|topic)\s*(?:topic\s*)?(\d+\.\d+)", q)
-    
-    if sub_topic_match:
-        found_enabler = sub_topic_match.group(1).upper()
-        intent["enabler_hint"] = found_enabler if found_enabler != "TOPIC" else DEFAULT_ENABLER
-        intent["sub_topic"] = sub_topic_match.group(2) # เก็บเฉพาะเลขข้อ เช่น "1.1"
+    # 1. เปรียบเทียบ (Comparison)
+    comparison_signals = ["เปรียบเทียบ", "ต่างจาก", "ความแตกต่าง", "เทียบ", "vs", "compare"]
+    if any(sig in q for sig in comparison_signals):
+        intent["is_comparison"] = True
+        return intent
 
-    # --- B. Check Analysis Intent (PDCA Inquiry) ---
-    # ใช้ทั้ง Global Signals และ Keywords จาก Contextual Rules
-    analysis_keywords = list(PDCA_ANALYSIS_SIGNALS) if PDCA_ANALYSIS_SIGNALS else ["plan", "do", "check", "act", "คะแนน", "ระดับ"]
-    
-    # ถ้ามี Contextual Rules ของข้อนั้นๆ ให้ดึง Keyword P-D-C-A มาช่วย Detect
-    if intent["sub_topic"] and contextual_rules:
-        rules = contextual_rules.get(intent["sub_topic"], {})
-        for stage in ["Plan", "Do", "Check", "Act"]:
-            analysis_keywords.extend([k.lower() for k in rules.get(stage, [])])
+    # 2. สรุปภาพรวม (Summary)
+    summary_signals = ["สรุปทั้งหมด", "ภาพรวม", "ทุกไฟล์", "summary"]
+    if any(sig in q for sig in summary_signals):
+        intent["is_summary"] = True
+        return intent
 
+    # 3. ตรวจจับหัวข้อ/Enabler
+    enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS] + ["km", "cg", "hcm", "sp", "it", "risk"])
+    match = re.search(fr"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
+    if match:
+        found_enabler = (match.group(1) or "").strip().upper()
+        intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else DEFAULT_ENABLER
+        intent["sub_topic"] = match.group(2) or match.group(3)
+
+    # 4. วิเคราะห์ PDCA
+    analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
+    analysis_keywords.update(["plan", "do", "check", "act", "pdca", "เกณฑ์", "ประเมิน"])
     if any(sig in q for sig in analysis_keywords):
         intent["is_analysis"] = True
-        return intent 
-
-    # --- C. Check Synthesis/Comparison Intent ---
-    synthesis_signals = ["เปรียบเทียบ", "ต่างกัน", "ความแตกต่าง", "เทียบ", "vs", "compare", "diff"]
-    if any(word in q for word in synthesis_signals):
-        intent["is_synthesis"] = True
         return intent
-        
-    # --- D. Check FAQ/Definition Intent ---
-    faq_signals = ["คืออะไร", "คือ", "หมายถึง", "แปลว่า", "สรุปภาพรวม"]
-    if any(sig in q for sig in faq_signals):
-        intent["is_faq"] = True
-        
-    # --- E. Check Evidence/Source Intent ---
-    evidence_signals = ["หลักฐาน", "อ้างอิง", "source", "จากไฟล์", "ขอดูไฟล์"]
-    if any(sig in q for sig in evidence_signals):
-        intent["is_evidence"] = True
 
-    # --- F. Fallback ---
-    if not any([intent["is_faq"], intent["is_synthesis"], intent["is_evidence"], intent["is_analysis"]]):
-        intent["is_evidence"] = True if doc_type in ["seam", "evidence"] else intent.update({"is_faq": True}) or True
-        
+    # 5. ทั่วไป
+    if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง"]): intent["is_faq"] = True
+    else: intent["is_evidence"] = True
+
     return intent
 
-
-# =================================================================
-# 2. PROMPT BUILDER (CRAFTING THE FINAL PROMPT)
-# =================================================================
 def build_prompt(context: str, question: str, intent: Dict[str, Any], contextual_rules: Dict[str, Any] = None) -> str:
-    """
-    สร้าง Prompt ตาม Intent และแทรกเกณฑ์จาก Contextual Rules เข้าไปในแนวทางการวิเคราะห์
-    """
-    sections = []
+    sections = ["CRITICAL: Always respond in THAI language only."]
+    
+    # บทบาท
+    role = "ผู้เชี่ยวชาญด้านการวิเคราะห์เอกสาร SE-AM"
+    if intent["is_comparison"]: role = "ผู้เชี่ยวชาญการเปรียบเทียบและวิเคราะห์จุดต่าง"
+    elif intent["is_summary"]: role = "ผู้เชี่ยวชาญการสรุปประเด็นยุทธศาสตร์"
+    elif intent["is_analysis"]: role = f"ผู้เชี่ยวชาญการตรวจสอบหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK}"
+    sections.append(f"บทบาทของคุณ: {role}")
 
-    # 0. Language Instruction
-    sections.append("CRITICAL: Always respond in THAI language only.")
+    # บริบท
+    sections.append(f"ข้อมูลอ้างอิง:\n{context}")
+    sections.append(f"คำถามจากผู้ใช้: {question}")
 
-    # 1. Role Assignment
-    if intent["is_analysis"]:
-        role = f"คุณคือผู้เชี่ยวชาญด้านการตรวจสอบคุณภาพหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK} และเกณฑ์ SE-AM"
-    elif intent["is_synthesis"]:
-        role = "คุณคือผู้เชี่ยวชาญด้านการวิเคราะห์เปรียบเทียบข้อมูล"
+    # คำสั่งตาม Intent
+    if intent["is_comparison"]:
+        sections.append("คำสั่ง: วิเคราะห์เปรียบเทียบจุดเหมือนและจุดต่างระหว่างไฟล์อ้างอิง ระบุชื่อไฟล์ประกอบ และสรุปเป็นข้อๆ")
+    elif intent["is_summary"]:
+        sections.append("คำสั่ง: สรุปภาพรวมเนื้อหาของทุกเอกสารที่เลือก โดยเน้นสาระสำคัญที่ผู้บริหารควรรู้")
+    elif intent["is_analysis"]:
+        sections.append("คำสั่ง: วิเคราะห์คุณภาพหลักฐานตามวงจร PDCA ระบุจุดแข็งและสิ่งที่ควรปรับปรุง")
     else:
-        role = "คุณคือผู้ช่วยที่ตอบคำถามโดยอิงจากเอกสารอ้างอิงอย่างเคร่งครัด"
-    sections.append(role)
-
-    # 2. Contextual Guidelines (กฎเฉพาะของ Enabler/Sub-topic)
-    if intent["sub_topic"] and contextual_rules:
-        rules = contextual_rules.get(intent["sub_topic"])
-        if rules:
-            rule_text = f"### เกณฑ์เฉพาะสำหรับข้อ {intent['sub_topic']}:\n"
-            for stage in ["Plan", "Do", "Check", "Act"]:
-                keywords = rules.get(stage, [])
-                if keywords:
-                    rule_text += f"- **{stage}**: ควรมีหลักฐานเกี่ยวกับ {', '.join(keywords)}\n"
-            sections.append(rule_text)
-
-    # 3. Reference Context
-    sections.append(f"ข้อมูลอ้างอิงจากระบบ:\n{context if context.strip() else '--- ไม่พบข้อมูลที่เกี่ยวข้อง ---'}")
-
-    # 4. User Question
-    sections.append(f"คำถามของผู้ใช้: {question.strip()}")
-
-    # 5. Specific Guidelines based on Intent
-    if intent["is_analysis"]:
-        sections.append(f"""
-### คำแนะนำในการวิเคราะห์ ({ANALYSIS_FRAMEWORK}):
-1. วิเคราะห์ว่าจากข้อมูลที่มี มีส่วนใดที่ตรงกับเกณฑ์ P, D, C หรือ A บ้าง
-2. **จุดแข็ง**: ระบุหลักฐานที่พบชัดเจนพร้อมชื่อไฟล์
-3. **สิ่งที่ขาด**: ระบุส่วนที่ยังไม่มีหลักฐานสนับสนุนตามเกณฑ์เฉพาะข้างต้น
-4. **ข้อเสนอแนะ**: แนะนำประเภทเอกสารที่ควรเพิ่มเพื่อให้ได้คะแนนสูงขึ้น
-""")
-    elif intent["is_evidence"]:
-        sections.append("""
-### กฎการตอบ:
-- ระบุชื่อไฟล์ (Source: ...) ทุกครั้งที่นำข้อมูลมาตอบ
-- หากเป็นเกณฑ์ระดับคะแนน ให้สรุปเป็นข้อๆ ให้ชัดเจน
-""")
-    else:
-        sections.append("### กฎการตอบ: ตอบให้ตรงประเด็น สุภาพ และไม่ออกนอกเหนือจากข้อมูลที่ให้")
+        sections.append("คำสั่ง: ตอบคำถามให้ตรงประเด็นโดยอ้างอิงจากข้อมูลที่มี")
 
     return "\n\n".join(sections)

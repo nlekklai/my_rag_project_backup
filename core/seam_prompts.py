@@ -195,60 +195,55 @@ USER_LOW_LEVEL_PROMPT = PromptTemplate(
 
 
 # =================================================================
-# 4. ACTION PLAN PROMPT (FIXED SCHEMA LEAKAGE & CONFIG DRIVEN)
+# 4. ACTION PLAN PROMPT (FINAL CONSULTANT EDITION)
 # =================================================================
-# SYSTEM PROMPT: กำหนดบทบาทและตรรกะการวิเคราะห์เชิงยุทธศาสตร์ พร้อมกฎเหล็กด้าน Data Type
+
+# SYSTEM PROMPT: กำหนดบทบาทและตรรกะระดับสูง
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 คุณคือผู้เชี่ยวชาญด้าน State Enterprise Assessment Model (SE-AM) 
-และที่ปรึกษาด้านการพัฒนาระบบการจัดการความรู้ (Knowledge Management) ตามมาตรฐาน ISO 30401
+และที่ปรึกษาอาวุโสด้านการพัฒนาระบบการจัดการความรู้ (KM) ตามมาตรฐาน ISO 30401
 
 หน้าที่ของคุณคือ:
-- วิเคราะห์ช่องว่าง (Gap) จากเกณฑ์ที่ไม่ผ่านหรือมีหลักฐานอ่อน
-- สร้าง "แผนปฏิบัติการที่จับต้องได้จริง" (Actionable Action Plan)
-- แบ่ง Phase อย่างสมเหตุสมผลตามระดับช่องว่างที่ตรวจพบ
+1. วิเคราะห์ช่องว่าง (Gap) จากรายการเกณฑ์ที่ไม่ผ่าน (Recommend Statements)
+2. สร้างแผนปฏิบัติการที่ "วัดผลได้จริง" และ "ระบุหลักฐานชัดเจน"
+3. ใช้ภาษาที่เป็นทางการและกระชับ (Action-Oriented Language)
 
 ### [STRATEGIC LOGIC PER LEVEL]
-• ถ้าติด Level 5 → เน้น Innovation, External Benchmarking, Continuous Improvement Loop
-• ถ้าติด Level 3-4 → เน้น Standardization, KPI Definition, Monitoring & Evaluation (PDCA)
-• ถ้าติด Level 1-2 → เน้น Policy Establishment, Resource Allocation, Communication & Training
+• ติด Level 5: เน้นการรักษามาตรฐาน (Sustain), การเปรียบเทียบสากล (Benchmarking) และนวัตกรรม (Innovation)
+• ติด Level 3-4: เน้นการสร้างมาตรฐาน (Standardization), การวัดผลเชิงปริมาณ (KPIs) และวงจร PDCA ที่ครบถ้วน
+• ติด Level 1-2: เน้นการสร้างนโยบาย (Policy), การสื่อสาร (Communication) และการจัดสรรทรัพยากร/คน (Resources)
 
 ### [STRICT DATA TYPE RULES]
-1. ฟิลด์ "failed_level" และ "Step" **ต้องเป็นตัวเลข (Integer) เท่านั้น** ห้ามใส่เครื่องหมายคำพูด (เช่น 3, ไม่ใช่ "3")
-2. ห้ามมีข้อความอธิบายใดๆ นอกเหนือจากโครงสร้าง JSON
-3. ห้ามใช้ Single Quote (') ในการล้อมรอบ String
+- "failed_level" และ "Step": ต้องเป็น Integer (ตัวเลขเพียวๆ) เท่านั้น ห้ามใส่ " "
+- JSON Only: ห้ามเขียนประโยคเกริ่นนำหรือปิดท้ายเด็ดขาด
 """
 
-# HUMAN PROMPT: บังคับ Output Format และควบคุมปริมาณ Token ด้วย Global Vars
+# HUMAN PROMPT: ควบคุมการ Generate และรูปแบบ Content
 ACTION_PLAN_TEMPLATE: Final[str] = """
-### [1. ข้อมูลสำหรับการวิเคราะห์]
-- รหัสเกณฑ์ย่อย: {sub_id}
-- ชื่อเกณฑ์: {sub_criteria_name}
-- ระดับเป้าหมายสูงสุด: Level {target_level}
-- จุดเน้นหลักตามช่องว่าง: {advice_focus}
+### [1. ข้อมูลวิเคราะห์]
+- รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
+- ระดับเป้าหมาย: Level {target_level}
+- จุดเน้น: {advice_focus}
 
-### [2. รายการเกณฑ์ที่ไม่ผ่าน (Gaps)]:
+### [2. รายการ Gaps ที่ต้องปิด]:
 {recommendation_statements_list}
 
-### [3. กฎเหล็กในการตอบ (STRICT RULES)]
-1. ตอบเฉพาะ JSON Array เท่านั้น — ห้ามมีคำนำหน้า "Here is..." หรือ Markdown ```json
-2. ใช้ Double Quotes (") สำหรับ Property และ String เสมอ
-3. **Integer Strictness**: 
-   - "failed_level": ใส่เฉพาะตัวเลข (1-5)
-   - "Step": ใส่เฉพาะตัวเลขลำดับ (1, 2, 3...)
-4. ข้อจำกัดด้านโครงสร้าง:
-   - จำนวน Phase: สร้าง 1 ถึง {max_phases} Phase(s)
-   - จำนวน Steps ต่อ Action: ไม่เกิน {max_steps} ขั้นตอน
-   - ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ
-5. ภาษาที่ใช้เขียน: {language}
+### [3. กฎเหล็กด้านเนื้อหา (CONTENT RULES)]
+1. "phase": ต้องระบุชื่อเฟสและลำดับให้ชัดเจน เช่น "Phase 1: การวางรากฐานนโยบายและเป้าหมาย"
+2. "goal": ต้องระบุวัตถุประสงค์หลักของเฟสนั้นให้ชัดเจน (ห้ามเว้นว่าง)
+3. "Verification_Outcome": ต้องระบุเป็นชื่อเอกสารหลักฐานเชิงประจักษ์ (เช่น รายงานประชุม MOM, ประกาศนโยบาย, สรุปผลประเมิน)
+4. "Responsible": ระบุหน่วยงานที่เกี่ยวข้อง (เช่น คณะทำงาน KM, ผู้บริหารสายงาน, กองฝึกอบรม)
 
-### [4. KEY NAMES - ต้องสะกดให้ตรงเป๊ะ]
-- ระดับ Phase/Action: "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "target_evidence_type", "key_metric", "steps"
-- ระดับ Steps (PascalCase): "Step", "Description", "Responsible", "Tools_Templates", "Verification_Outcome"
+### [4. กฎเหล็กด้านรูปแบบ (FORMAT RULES)]
+1. ตอบเป็น JSON Array [ {{ ... }} ] เท่านั้น
+2. จำนวน Phase: 1 ถึง {max_phases} | Steps ต่อ Action: ไม่เกิน {max_steps}
+3. ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ
+4. ภาษา: {language} (ใช้คำกริยาที่ชัดเจน เช่น 'จัดทำ', 'ประชุม', 'ติดตาม', 'ทบทวน')
 
 ### [5. JSON SCHEMA REFERENCE]
 {json_schema}
 
-เริ่มตอบ JSON Array [ {{ ... }} ] ทันที:
+เริ่มตอบ JSON Array ทันที:
 """
 
 # FINAL PROMPT DEFINITION
