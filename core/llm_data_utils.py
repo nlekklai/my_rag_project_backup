@@ -110,29 +110,52 @@ def set_mock_control_mode(enable: bool):
     logger.info(f"Mock control mode: {_MOCK_FLAG}")
 
 # Helper: สร้าง Chroma where filter
-def _create_where_filter(stable_doc_ids: Optional[Set[str]] = None, 
-                         subject: Optional[str] = None,
-                         sub_topic: Optional[str] = None) -> Dict[str, Any]:
-    """สร้าง where filter สำหรับ ChromaDB ที่แข็งแกร่งที่สุด"""
+def _create_where_filter(
+    stable_doc_ids: Optional[Union[Set[str], List[str]]] = None, 
+    subject: Optional[str] = None,
+    sub_topic: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    สร้าง where filter สำหรับ ChromaDB ที่รองรับ Metadata Schema ของระบบ SEAM
+    รองรับทั้ง stable_doc_uuid และ doc_id (Cross-check) เพื่อป้องกันข้อมูลหล่นหาย
+    """
     filters = []
     
+    # 1. จัดการเรื่อง ID เอกสาร (หัวใจสำคัญของการ Compare)
     if stable_doc_ids:
-        filters.append({"stable_doc_uuid": {"$in": list(stable_doc_ids)}})
+        # แปลงเป็น list ของ string เพื่อความชัวร์ (ChromaDB $in ต้องการ list)
+        ids_list = [str(i) for i in stable_doc_ids if i]
+        
+        if ids_list:
+            # 🟢 ใช้ $or เพื่อดักทั้งสอง Key ที่คุณ Ingest ไว้ใน load_and_chunk_document
+            filters.append({
+                "$or": [
+                    {"stable_doc_uuid": {"$in": ids_list}},
+                    {"doc_id": {"$in": ids_list}}
+                ]
+            })
     
+    # 2. จัดการเรื่อง Subject (หัวข้อหลัก เช่น KM, HRM)
     if subject:
-        cleaned = subject.strip()
-        if cleaned:
-            filters.append({"subject": cleaned})
+        cleaned_subject = subject.strip()
+        if cleaned_subject:
+            filters.append({"subject": {"$eq": cleaned_subject}})
     
+    # 3. จัดการเรื่อง Sub Topic (หัวข้อย่อยระดับ Chunk)
     if sub_topic:
-        filters.append({"sub_topic": {"$eq": sub_topic}})
+        cleaned_sub = sub_topic.strip()
+        if cleaned_sub:
+            filters.append({"sub_topic": {"$eq": cleaned_sub}})
     
-    if len(filters) > 1:
-        return {"$and": filters}
-    elif filters:
-        return filters[0]
-    else:
+    # --- รวมเงื่อนไขทั้งหมด ---
+    if not filters:
         return {}
+        
+    if len(filters) == 1:
+        return filters[0]
+    
+    # ถ้ามีหลายเงื่อนไข ให้ใช้ $and ครอบทั้งหมด
+    return {"$and": filters}
 
 def retrieve_context_for_endpoint(
     vectorstore_manager,
