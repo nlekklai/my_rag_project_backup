@@ -118,47 +118,6 @@ def get_mapping_file_path(
     )
 
 
-def get_mapping_file_path(
-    doc_type: str,
-    tenant: str,
-    year: Optional[Union[int, str]] = None,
-    enabler: Optional[str] = None
-) -> str:
-    """
-    สร้าง path ของ mapping file ตามมาตรฐานใหม่ (ธ.ค. 2568)
-
-    - evidence → /mapping/{year}/pea_{year}_{enabler}_doc_id_mapping.json
-    - global doc_type → /mapping/pea_{doc_type}_doc_id_mapping.json
-      เช่น:
-        pea_seam_doc_id_mapping.json
-        pea_document_doc_id_mapping.json
-        pea_faq_doc_id_mapping.json
-        pea_policy_doc_id_mapping.json
-
-    ไม่มี fallback ชื่อเก่า (pea_doc_id_mapping.json) อีกต่อไป → สะอาด 100%
-    """
-    base = get_mapping_tenant_root_path(tenant)
-
-    # === 1. Evidence: ต้องมี year + enabler เท่านั้น ===
-    if _n(doc_type) == EVIDENCE_DOC_TYPES.lower():
-        if year is None:
-            raise ValueError("Evidence doc_type ต้องระบุ year")
-        if not enabler:
-            raise ValueError("Evidence doc_type ต้องระบุ enabler")
-        return os.path.join(
-            base,
-            str(year),
-            f"{_n(tenant)}_{year}_{_n(enabler)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}"
-        )
-
-    # === 2. Global doc_type: ใช้ชื่อเต็มเสมอ ไม่สน year/enabler ===
-    # แม้จะส่ง year/enabler มาก็ตาม → ต้องแยกไฟล์ชัดเจน
-    return os.path.join(
-        base,
-        f"{_n(tenant)}_{_n(doc_type)}{DOCUMENT_ID_MAPPING_FILENAME_SUFFIX}"
-    )
-    
-
 def get_evidence_mapping_file_path(tenant: str, year: Union[int, str], enabler: str) -> str:
     # 🟢 FIX: สร้าง Path โดยตรง โดยใช้ EVIDENCE_MAPPING_FILENAME_SUFFIX
     #        (แทนการเรียก get_mapping_file_path ที่สร้างชื่อไฟล์ผิด)
