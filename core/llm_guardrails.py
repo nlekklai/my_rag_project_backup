@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# core/llm_guardrails.py (Enhanced Multi-User Version)
+# core/llm_guardrails.py (Ultimate Revised Version - 20 ธันวาคม 2568)
 
 import re
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from config.global_vars import (
     SUPPORTED_ENABLERS,
@@ -15,218 +15,168 @@ from config.global_vars import (
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# Intent Detection (Enhanced: multi-user aware)
+# Intent Detection (Smart Logic for Multi-Path Routing)
 # ======================================================================
 
 def detect_intent(
     question: str,
-    doc_type: str = "document",
-    contextual_rules: Dict[str, Any] | None = None,
     user_context: List[Dict[str, Any]] | None = None  # conversation history
 ) -> Dict[str, Any]:
     """
-    วิเคราะห์ intent ของคำถาม โดยสามารถใช้ conversation history ของผู้ใช้
-    เพื่อ infer sub-topic / enabler / analysis signals ได้แม่นยำขึ้น
+    วิเคราะห์ความตั้งใจของผู้ใช้ (Intent) พร้อมสกัด Metadata สำคัญ
+    เพื่อส่งต่อให้ llm_router ตัดสินใจเลือกใช้ Endpoint (/query, /compare, /analysis)
     """
     q = question.strip().lower()
     intent = {
         "is_faq": False,
-        "is_synthesis": False,
         "is_summary": False,
         "is_comparison": False,
-        "is_evidence": False,
         "is_analysis": False,
+        "is_criteria_query": False,
         "sub_topic": None,
         "enabler_hint": None,
     }
 
-    # ใช้ conversation history ช่วย infer
-    if user_context:
-        # ตัวอย่างง่าย: หา last referenced enabler/sub-topic
+    # --- 1. สกัด Enabler/Sub-topic จาก Question หรือ History ---
+    # Regex สำหรับตรวจจับรหัส เช่น KM 1.1, HR 2.2 หรือแค่ 1.1
+    enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
+    # ค้นหาในคำถามปัจจุบันก่อน
+    match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
+    
+    if match:
+        found_enabler = (match.group(1) or "").upper()
+        intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else None
+        intent["sub_topic"] = match.group(2) or match.group(3)
+    
+    # ถ้าคำถามไม่มีรหัส แต่ในประวัติมี ให้ดึงจากประวัติมาเติม (Context Awareness)
+    if not intent["sub_topic"] and user_context:
         for msg in reversed(user_context):
             text = msg.get("content", "").lower()
-            enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
-            match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", text)
-            if match:
-                found_enabler = (match.group(1) or "").upper()
-                intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else DEFAULT_ENABLER
-                intent["sub_topic"] = match.group(2) or match.group(3)
+            m = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", text)
+            if m:
+                found_enabler = (m.group(1) or "").upper()
+                intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else None
+                intent["sub_topic"] = m.group(2) or m.group(3)
                 break
 
-    # --------------------------------------------------
-    # Comparison
-    # --------------------------------------------------
+    # --- 2. การตรวจสอบ Comparison Intent ---
     comparison_signals = ["เปรียบเทียบ", "ความแตกต่าง", "ต่างจาก", "เทียบ", "vs", "compare"]
     if any(sig in q for sig in comparison_signals):
         intent["is_comparison"] = True
         return intent
 
-    # --------------------------------------------------
-    # Summary / Synthesis
-    # --------------------------------------------------
-    summary_signals = ["สรุป", "ภาพรวม", "ทั้งหมด", "ทุกไฟล์", "summary", "overview"]
-    if any(sig in q for sig in summary_signals):
-        intent["is_summary"] = True
-        return intent
-
-    # --------------------------------------------------
-    # Enabler / Sub-criteria detection (จาก question)
-    # --------------------------------------------------
-    enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
-    match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
-    if match:
-        found_enabler = (match.group(1) or "").upper()
-        intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else DEFAULT_ENABLER
-        intent["sub_topic"] = match.group(2) or match.group(3)
-
-    # --------------------------------------------------
-    # PDCA / Analysis
-    # --------------------------------------------------
+    # --- 3. การตรวจสอบ Analysis & Criteria Intent ---
+    criteria_signals = [
+        "ผ่านเกณฑ์", "sub criteria", "ผ่าน level", "สนับสนุนเกณฑ์", "evidence ผ่าน",
+        "เกณฑ์อะไรบ้าง", "level เท่าไหร่", "ครบ level", "ขาดเกณฑ์", "criteria"
+    ]
     analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
-    analysis_keywords.update(["pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "ตรวจสอบ", "เกณฑ์", "analyze"])
+    analysis_keywords.update([
+        "pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "ตรวจสอบ",
+        "analyze", "จุดแข็ง", "ช่องว่าง", "gap", "strength", "weakness"
+    ])
+
+    if any(sig in q for sig in criteria_signals):
+        intent["is_analysis"] = True
+        intent["is_criteria_query"] = True
+        return intent
+    
     if any(sig in q for sig in analysis_keywords):
         intent["is_analysis"] = True
         return intent
 
-    # --------------------------------------------------
-    # FAQ / Evidence
-    # --------------------------------------------------
+    # --- 4. การตรวจสอบ Summary Intent ---
+    summary_signals = ["สรุป", "ภาพรวม", "ทั้งหมด", "summary", "overview"]
+    if any(sig in q for sig in summary_signals):
+        intent["is_summary"] = True
+        return intent
+
+    # --- 5. Default Case (FAQ / General QA) ---
     if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง", "definition"]):
         intent["is_faq"] = True
-    else:
-        intent["is_evidence"] = True
 
     return intent
 
 
 # ======================================================================
-# Prompt Guardrails Builder (Enhanced: conversation-aware)
+# Prompt Guardrails Builder
 # ======================================================================
 
 def build_prompt(
     context: str,
     question: str,
     intent: Dict[str, Any],
-    user_context: List[Dict[str, Any]] | None = None,
-    contextual_rules: Dict[str, Any] | None = None
+    user_context: List[Dict[str, Any]] | None = None
 ) -> str:
     """
-    สร้าง system-style instruction แบบ multi-user aware
-    - ใส่ conversation snapshot ของผู้ใช้ เพื่อให้ LLM เข้าใจบริบทต่อเนื่อง
+    สร้าง Prompt ที่ประกอบด้วยบทบาท (Role) ข้อมูลอ้างอิง และประวัติการคุย
     """
-    sections: List[str] = []
+    sections = []
 
-    # --------------------------------------------------
-    # HARD LANGUAGE RULE
-    # --------------------------------------------------
-    sections.append(
-        "ข้อบังคับสูงสุด: "
-        "ตอบเป็นภาษาไทยเท่านั้น "
-        "ยกเว้นคำศัพท์ที่ปรากฏในเอกสารอ้างอิงโดยตรง"
-    )
+    # กฎภาษาเข้มงวด
+    sections.append("### RULE: ANSWER IN THAI ONLY. (Except file names or technical codes) ###")
 
-    # --------------------------------------------------
-    # ROLE DEFINITION
-    # --------------------------------------------------
-    role = "ผู้เชี่ยวชาญด้านการวิเคราะห์เอกสารและองค์ความรู้ขององค์กร"
-    if intent.get("is_comparison"):
-        role = "ผู้เชี่ยวชาญด้านการเปรียบเทียบเอกสารและวิเคราะห์ความแตกต่างเชิงนโยบาย"
-    elif intent.get("is_summary"):
-        role = "ผู้เชี่ยวชาญด้านการสรุปสาระสำคัญเชิงผู้บริหาร"
-    elif intent.get("is_analysis"):
-        role = f"ผู้เชี่ยวชาญด้านการประเมินหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK}"
-
+    # กำหนดบทบาทตาม Intent
+    role = "ผู้เชี่ยวชาญด้านองค์ความรู้องค์กร"
+    if intent.get("is_analysis"):
+        role = f"ผู้ประเมินคุณภาพหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK} และเกณฑ์ SE-AM"
+    elif intent.get("is_comparison"):
+        role = "นักวิเคราะห์นโยบายและเปรียบเทียบเอกสารอ้างอิง"
+    
     sections.append(f"บทบาทของคุณ: {role}")
+    sections.append(f"ข้อมูลอ้างอิง:\n{context}")
 
-    # --------------------------------------------------
-    # CONTEXT & QUESTION
-    # --------------------------------------------------
-    sections.append("ข้อมูลอ้างอิงจากระบบคลังความรู้:")
-    sections.append(context)
-    sections.append("คำถามจากผู้ใช้:")
-    sections.append(question)
-
-    # --------------------------------------------------
-    # Conversation snapshot
-    # --------------------------------------------------
+    # แทรกประวัติการสนทนาล่าสุด (ถ้ามี)
     if user_context:
-        snapshot_lines = []
-        for msg in user_context[-6:]:  # limit last 6 turns
-            role_label = "ผู้ใช้" if msg.get("type") == "user" else "AI"
-            snapshot_lines.append(f"[{role_label}] {msg.get('content')}")
-        sections.append("ข้อมูลจากการสนทนาก่อนหน้า:")
-        sections.append("\n".join(snapshot_lines))
+        snapshot = "\n".join([f"- {m.get('content')}" for m in user_context[-4:]])
+        sections.append(f"บริบทการสนทนาก่อนหน้า:\n{snapshot}")
 
-    # --------------------------------------------------
-    # TASK INSTRUCTION BY INTENT
-    # --------------------------------------------------
+    sections.append(f"คำถามของผู้ใช้: {question}")
+
+    # คำสั่งเฉพาะ (Task Instructions)
     if intent.get("is_comparison"):
-        sections.append(
-            "คำสั่ง: เปรียบเทียบเอกสารโดยระบุจุดเหมือน/แตกต่าง "
-            "อ้างอิงข้อความจริงจากเอกสารแต่ละฉบับ "
-            "สรุปผลเป็น Markdown table "
-            "หากประเด็นไม่ปรากฏในเอกสาร ให้ระบุ 'ไม่ปรากฏข้อมูลในเอกสารนี้'"
-        )
-    elif intent.get("is_summary"):
-        sections.append(
-            "คำสั่ง: สรุปภาพรวมเอกสารทั้งหมด "
-            "เน้นสาระสำคัญสำหรับผู้บริหาร "
-            "ห้ามสรุปนอกเหนือจากเอกสาร"
-        )
+        sections.append("คำสั่ง: เปรียบเทียบข้อมูลจุดต่อจุด แสดงผลเป็นตาราง Markdown และระบุความแตกต่าง")
     elif intent.get("is_analysis"):
-        sections.append(
-            "คำสั่ง: วิเคราะห์คุณภาพและความครบถ้วนของหลักฐาน "
-            "ตามกรอบ PDCA (Plan-Do-Check-Act) "
-            "ระบุจุดแข็ง ช่องว่าง และข้อปรับปรุง "
-            "อ้างอิงจากเอกสารเท่านั้น"
-        )
+        sections.append("คำสั่ง: วิเคราะห์ตาม PDCA ระบุจุดแข็งและช่องว่าง (Gap) โดยอ้างอิงรหัสเกณฑ์ให้ถูกต้อง")
     else:
-        sections.append(
-            "คำสั่ง: ตอบคำถามตรงประเด็น "
-            "อ้างอิงข้อมูลจากเอกสารที่ให้มา "
-            "หากไม่เพียงพอ ให้ตอบว่า 'ไม่พบข้อมูลที่เพียงพอในเอกสารที่เกี่ยวข้อง'"
-        )
+        sections.append("คำสั่ง: ตอบคำถามให้กระชับ อ้างอิงแหล่งข้อมูลจากคลังความรู้เท่านั้น")
 
     return "\n\n".join(sections)
 
 
 # ======================================================================
-# Post-response Validation (Thai-only Safety Net)
+# Post-response Validation (Enhanced Safety Net)
 # ======================================================================
-
-# core/llm_guardrails.py
 
 def enforce_thai_primary_language(response_text: str) -> str:
     """
-    ป้องกันการตอบเป็นภาษาอังกฤษทั้งหมด 
-    แต่ยอมรับกรณี compare/analysis ที่อาจมีชื่อไฟล์หรือคำเทคนิคอังกฤษ
+    คัดกรองคำตอบเพื่อป้องกันการตอบเป็นภาษาอังกฤษล้วน 
+    โดยละเว้นส่วนที่เป็นตาราง รหัส หรือชื่อไฟล์
     """
-    lines = [line.strip() for line in response_text.splitlines() if line.strip()]
-    if not lines:
+    if not response_text:
         return response_text
 
-    # คัดกรองเอาเฉพาะบรรทัดที่เป็นบทบรรยาย (Narrative)
+    # แยกบรรทัดที่เป็นข้อความอธิบาย (Narrative) ออกมาตรวจสอบ
     narrative_lines = []
-    for line in lines:
-        # ข้าม Markdown Table, Headers, และ List tags
-        if line.startswith(("#", "|", "-", "*")) or "```" in line:
+    for line in response_text.splitlines():
+        line = line.strip()
+        # ข้ามบรรทัดที่เป็น Markdown Structure หรือสั้นเกินไป
+        if not line or any(line.startswith(c) for c in ["#", "|", "-", "*", "`", "["]):
             continue
-        # ข้ามบรรทัดสั้นๆ ที่มักเป็นชื่อไฟล์หรือชื่อตัวแปร
-        if len(line.split()) <= 4:
+        if len(line.split()) < 4:
             continue
         narrative_lines.append(line)
 
-    # หากคำตอบมีแต่ตารางหรือหัวข้อ (ไม่มีบทบรรยายยาวๆ) ให้ปล่อยผ่าน
     if not narrative_lines:
-        return response_text
+        return response_text # ถ้าตอบแต่ตารางหรือ JSON ปล่อยผ่าน
 
+    # ตรวจสอบสัดส่วนอักษรไทย
     narrative_text = " ".join(narrative_lines)
+    thai_chars = re.findall(r"[ก-๙]", narrative_text)
     
-    # ตรวจสอบว่าในบทบรรยายมีตัวอักษรภาษาไทยหรือไม่
-    thai_count = len(re.findall(r"[ก-๙]", narrative_text))
-    
-    if thai_count == 0:
-        logger.warning("Response has no Thai characters in narrative - blocked")
-        return "ไม่สามารถแสดงผลคำตอบได้ เนื่องจากคำอธิบายหลักไม่เป็นภาษาไทยตามนโยบาย"
+    # หากมีตัวอักษรไทยน้อยมากเมื่อเทียบกับความยาวข้อความ (Narrative)
+    if len(thai_chars) < 10 and len(narrative_text) > 40:
+        logger.warning("English narrative detected! Blocking response.")
+        return "ขออภัย ระบบสามารถตอบได้เฉพาะภาษาไทยเท่านั้น กรุณาตรวจสอบคำถามของคุณอีกครั้ง"
 
     return response_text

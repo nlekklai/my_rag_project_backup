@@ -220,30 +220,73 @@ SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 
 # HUMAN PROMPT: ควบคุมการ Generate และรูปแบบ Content
 ACTION_PLAN_TEMPLATE: Final[str] = """
-### [1. ข้อมูลวิเคราะห์]
-- รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
+### [ข้อมูลวิเคราะห์]
+- รหัสเกณฑ์: {sub_id}
+- ชื่อเกณฑ์: {sub_criteria_name}
 - ระดับเป้าหมาย: Level {target_level}
 - จุดเน้น: {advice_focus}
 
-### [2. รายการ Gaps ที่ต้องปิด]:
+### [รายการช่องว่างที่ต้องแก้ไข]
 {recommendation_statements_list}
 
-### [3. กฎเหล็กด้านเนื้อหา (CONTENT RULES)]
-1. "phase": ต้องระบุชื่อเฟสและลำดับให้ชัดเจน เช่น "Phase 1: การวางรากฐานนโยบายและเป้าหมาย"
-2. "goal": ต้องระบุวัตถุประสงค์หลักของเฟสนั้นให้ชัดเจน (ห้ามเว้นว่าง)
-3. "Verification_Outcome": ต้องระบุเป็นชื่อเอกสารหลักฐานเชิงประจักษ์ (เช่น รายงานประชุม MOM, ประกาศนโยบาย, สรุปผลประเมิน)
-4. "Responsible": ระบุหน่วยงานที่เกี่ยวข้อง (เช่น คณะทำงาน KM, ผู้บริหารสายงาน, กองฝึกอบรม)
+### [กฎเหล็กที่ต้องทำตามเป๊ะ ๆ - ห้ามผิดแม้แต่ตัวเดียว]
+1. ตอบเป็น JSON Array เท่านั้น (ไม่มีข้อความอื่นใด)
+2. ใช้ key ตัวพิมพ์เล็กเท่านั้น (เช่น "phase", "goal", "actions", "statement_id")
+3. ทุก action ต้องมี field ครบ:
+   - "statement_id": ต้องเป็น "{sub_id}"
+   - "failed_level": ต้องเป็น {target_level} (ตัวเลขเท่านั้น)
+   - "recommendation": คำแนะนำหลัก
+   - "target_evidence_type": ประเภทหลักฐาน
+   - "key_metric": ตัวชี้วัด
+   - "steps": รายการขั้นตอน
 
-### [4. กฎเหล็กด้านรูปแบบ (FORMAT RULES)]
-1. ตอบเป็น JSON Array [ {{ ... }} ] เท่านั้น
-2. จำนวน Phase: 1 ถึง {max_phases} | Steps ต่อ Action: ไม่เกิน {max_steps}
-3. ความยาวต่อ Step: ไม่เกิน {max_words_per_step} คำ
-4. ภาษา: {language} (ใช้คำกริยาที่ชัดเจน เช่น 'จัดทำ', 'ประชุม', 'ติดตาม', 'ทบทวน')
+4. ทุก step ต้องมี:
+   - "Step": ตัวเลข (เช่น 1, 2)
+   - "Description": รายละเอียด
+   - "Responsible": ผู้รับผิดชอบ
+   - "Tools_Templates": เครื่องมือ
+   - "Verification_Outcome": หลักฐานตรวจสอบ
 
-### [5. JSON SCHEMA REFERENCE]
-{json_schema}
+### [จำนวนสูงสุด]
+- Phase: ไม่เกิน {max_phases}
+- Steps ต่อ Action: ไม่เกิน {max_steps}
+- คำต่อ Description: ไม่เกิน {max_words_per_step}
+- ภาษา: {language}
 
-เริ่มตอบ JSON Array ทันที:
+### [ตัวอย่าง JSON ที่ถูกต้อง 100% (ต้องเลียนแบบเป๊ะ)]
+[
+  {
+    "phase": "Phase 1: การวางรากฐานนโยบาย",
+    "goal": "จัดทำนโยบาย KM ฉบับใหม่ให้ได้รับอนุมัติ",
+    "actions": [
+      {
+        "statement_id": "{sub_id}",
+        "failed_level": {target_level},
+        "recommendation": "จัดทำและประกาศใช้นโยบายการจัดการความรู้ฉบับใหม่",
+        "target_evidence_type": "นโยบาย KM ที่ได้รับอนุมัติ",
+        "key_metric": "นโยบาย KM ฉบับใหม่ได้รับอนุมัติภายในไตรมาส 1 ปี 2569",
+        "steps": [
+          {
+            "Step": 1,
+            "Description": "แต่งตั้งคณะทำงานจัดทำนโยบาย",
+            "Responsible": "ฝ่ายจัดการความรู้",
+            "Tools_Templates": "แบบฟอร์มแต่งตั้งคณะทำงาน",
+            "Verification_Outcome": "คำสั่งแต่งตั้งอย่างเป็นทางการ"
+          },
+          {
+            "Step": 2,
+            "Description": "จัดประชุมระดมความเห็นและร่างนโยบาย",
+            "Responsible": "คณะทำงาน KM",
+            "Tools_Templates": "แบบร่างนโยบาย KM",
+            "Verification_Outcome": "รายงานการประชุมและร่างนโยบาย"
+          }
+        ]
+      }
+    ]
+  }
+]
+
+เริ่มตอบ JSON Array ทันที (ห้ามมีข้อความใด ๆ นอกจาก JSON):
 """
 
 # FINAL PROMPT DEFINITION
@@ -279,11 +322,20 @@ USER_EVIDENCE_DESCRIPTION_TEMPLATE: Final[str] = """
 หลักฐานที่พบ:
 {context}
 
-ตอบ JSON เท่านั้น:
+กฎเหล็ก:
+- ตอบเป็น JSON เท่านั้น
+- ห้ามมีข้อความใด ๆ นอก JSON
+- ใช้ key "summary" และ "suggestion_for_next_level"
+- summary: สรุปสั้น ๆ 3-5 ประโยค เป็นภาษาไทย
+- suggestion_for_next_level: คำแนะนำที่ทำได้จริง
+
+ตัวอย่างที่ต้องเลียนแบบเป๊ะ:
 {{
-  "summary": "สรุปหลักฐานที่พบใน Level {level} โดยอ้างอิงถึงความครบถ้วนของหลักฐาน PDCA ที่ใช้ในการประเมิน",
-  "suggestion_for_next_level": "ข้อแนะนำที่ทำได้จริงเพื่อไป Level {next_level} โดยระบุประเภทหลักฐาน PDCA ที่ต้องเพิ่มเติมและปรับปรุง"
+  "summary": "ในระดับนี้พบหลักฐานการวางแผน (Plan) และการดำเนินการ (Do) ที่ชัดเจน เช่น มีนโยบาย KM และมีการจัดกิจกรรมถ่ายทอดความรู้ แต่ยังขาดการตรวจสอบผล (Check) และการปรับปรุง (Act)",
+  "suggestion_for_next_level": "เพื่อไป Level {next_level} ควรเพิ่มหลักฐานการวัดผล KPI การจัดการความรู้ และรายงานการปรับปรุงกระบวนการตาม PDCA"
 }}
+
+เริ่มตอบ JSON ทันที:
 """
 
 EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(

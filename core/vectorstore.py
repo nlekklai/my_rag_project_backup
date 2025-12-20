@@ -1008,6 +1008,44 @@ class VectorStoreManager:
         logger.info(f"Hydration complete → Retrieved {len(docs)} full-text chunks (requested {len(chunk_uuids)})")
         return docs
 
+    def retrieve(
+        self,
+        query: str,
+        collection_name: str,
+        top_k: int = 10,
+        filter_doc_ids: Optional[Set[str]] = None
+    ) -> List[LcDocument]:
+        """
+        เวอร์ชันอัปเกรด: เรียกใช้ Hybrid Retriever ที่คุณเขียนไว้แล้ว
+        """
+        self.logger.info(f"🔍 VSM: Retrieving context for: {query[:50]}...")
+
+        # 1. เรียกใช้ get_retriever ที่คุณมี (ซึ่งมันจะทำ Hybrid + Rerank ให้เสร็จสรรพ)
+        # โดยกำหนด use_hybrid=True และ use_rerank ตาม global config
+        retriever = self.get_retriever(
+            collection_name=collection_name, 
+            top_k=top_k, 
+            use_hybrid=True
+        )
+
+        if not retriever:
+            return []
+
+        # 2. ค้นหาข้อมูล
+        # ใช้ invoke (หรือ get_relevant_documents ตาม version langchain)
+        docs = retriever.invoke(query)
+
+        # 3. จัดการ Filter (Manual Filter สำหรับ EnsembleRetriever)
+        # เนื่องจาก EnsembleRetriever บางครั้งจัดการ filter ในระดับลึกยาก 
+        # การกรองหลังดึงข้อมูล (Post-filtering) ด้วย stable_doc_uuid จึงชัวร์ที่สุด
+        if filter_doc_ids:
+            docs = [
+                d for d in docs 
+                if d.metadata.get("stable_doc_uuid") in filter_doc_ids or 
+                   d.metadata.get("doc_id") in filter_doc_ids
+            ]
+
+        return docs[:top_k]
 
     def create_hybrid_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K) -> EnsembleRetriever:
         """

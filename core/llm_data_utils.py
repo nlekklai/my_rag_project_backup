@@ -59,7 +59,7 @@ from config.global_vars import (
 # ===================================================================
 # 🎯 FIX 1: เปลี่ยน Import จาก _get_collection_name ไปเป็น get_doc_type_collection_key
 from core.vectorstore import get_hf_embeddings
-from utils.path_utils import get_doc_type_collection_key # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
+from utils.path_utils import get_doc_type_collection_key, _n, get_mapping_file_path # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
 from core.json_extractor import (
     _robust_extract_json,
     _normalize_keys,
@@ -115,28 +115,23 @@ def _create_where_filter(
     sub_topic: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    สร้าง where filter สำหรับ ChromaDB
-    - รองรับ stable_doc_uuid + doc_id (cross-check)
-    - ใช้กับ Retrieval และ Compare
+    สร้าง Filter สำหรับ ChromaDB โดยเน้นความแม่นยำของ stable_doc_uuid
     """
     filters: List[Dict[str, Any]] = []
 
-    # --- 1. Document ID Filter (หัวใจของ Compare) ---
     if stable_doc_ids:
+        # กำจัดค่าว่างและแปลงเป็น list of strings
         ids_list = [str(i) for i in stable_doc_ids if i]
         if ids_list:
-            filters.append({
-                "$or": [
-                    {"stable_doc_uuid": {"$in": ids_list}},
-                    {"doc_id": {"$in": ids_list}}
-                ]
-            })
+            # 🎯 ปรับให้ใช้ stable_doc_uuid เป็นหลักตามโครงสร้าง ingest.py
+            if len(ids_list) == 1:
+                filters.append({"stable_doc_uuid": {"$eq": ids_list[0]}})
+            else:
+                filters.append({"stable_doc_uuid": {"$in": ids_list}})
 
-    # --- 2. Subject ---
     if subject and subject.strip():
         filters.append({"subject": {"$eq": subject.strip()}})
 
-    # --- 3. Sub-topic ---
     if sub_topic and sub_topic.strip():
         filters.append({"sub_topic": {"$eq": sub_topic.strip()}})
 
@@ -146,8 +141,8 @@ def _create_where_filter(
     if len(filters) == 1:
         return filters[0]
 
+    # กรณีมีหลายเงื่อนไขให้ใช้ $and
     return {"$and": filters}
-
 
 
 def retrieve_context_for_endpoint(
@@ -160,175 +155,121 @@ def retrieve_context_for_endpoint(
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    k_to_retrieve: int = 20,
+    k_to_retrieve: int = 25,  # เพิ่มจำนวนเบื้องต้นเพื่อให้ Reranker มีตัวเลือก
     k_to_rerank: int = 12,
     strict_filter: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Hybrid / Vector Retrieval with Compare-Safe Guardrails
+    ดึง Context พร้อมระบบป้องกันการดึงไฟล์ผิด (Metadata Guardrail)
     """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # --- 1. Normalize doc_type ---
-    clean_doc_type = (doc_type or "seam")
-    if isinstance(clean_doc_type, list):
-        clean_doc_type = clean_doc_type[0]
-    clean_doc_type = str(clean_doc_type).strip().lower()
-
-    # --- 2. Resolve collection ---
-    collection_name = get_doc_type_collection_key(
-        doc_type=clean_doc_type,
-        enabler=enabler
-    )
-
+    # 1. Normalize doc_type & Resolve collection
+    clean_doc_type = str(doc_type or "document").strip().lower()
+    collection_name = get_doc_type_collection_key(doc_type=clean_doc_type, enabler=enabler)
+    
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
-        return {
-            "top_evidences": [],
-            "aggregated_context": "ไม่พบฐานข้อมูล",
-            "retrieval_time": 0,
-            "used_chunk_uuids": []
-        }
+        logger.error(f"❌ Collection not found: {collection_name}")
+        return {"top_evidences": [], "aggregated_context": "ไม่พบฐานข้อมูล", "retrieval_time": 0}
 
-    # --- 3. WHERE filter ---
-    where_filter = _create_where_filter(
-        stable_doc_ids=stable_doc_ids,
-        subject=subject,
-        sub_topic=sub_topic
-    )
+    # 2. Create where_filter
+    where_filter = _create_where_filter(stable_doc_ids=stable_doc_ids, subject=subject, sub_topic=sub_topic)
+    logger.info(f"🔍 Retrieval Start | Collection: {collection_name} | Target IDs: {stable_doc_ids}")
 
-    logger.info(f"🔍 Retrieval | {collection_name} | Filter={where_filter}")
+    final_chunks: List[LcDocument] = []
 
     # =====================================================
-    # 🔴 COMPARE MODE (Bypass semantic + rerank)
+    # CASE A: STRICT FILTER / COMPARE MODE
     # =====================================================
-    if stable_doc_ids and strict_filter:
+    if stable_doc_ids and (strict_filter or clean_doc_type == "document"):
+        # หากมีการระบุ ID ชัดเจน ให้ใช้ similarity_search ของ Chroma โดยตรง (เลี่ยงปัญหา BM25 Filter รั่ว)
+        logger.info(f"🎯 Using Strict Vector Search for stable_doc_ids")
         docs = chroma.similarity_search(
-            query="*",
-            k=9999,
+            query if query and query != "*" else "", 
+            k=k_to_retrieve, 
             filter=where_filter
         )
-
-        final_chunks = [
-            d for d in docs
-            if getattr(d, "page_content", "").strip()
-        ]
-
-        logger.info(f"📄 Compare mode loaded {len(final_chunks)} chunks")
+        final_chunks = [d for d in docs if d.page_content.strip()]
 
     # =====================================================
-    # 🟢 NORMAL RETRIEVAL MODE
+    # CASE B: NORMAL HYBRID RETRIEVAL (Fallback or General Query)
     # =====================================================
-    else:
-        # --- 4. Retriever selection ---
+    if not final_chunks:
         retriever = None
         if USE_HYBRID_SEARCH:
             try:
-                retriever = vsm.create_hybrid_retriever(
-                    collection_name=collection_name
-                )
-                logger.info("✅ Using HYBRID retriever")
+                retriever = vsm.create_hybrid_retriever(collection_name=collection_name)
+                logger.info("✅ Hybrid Retriever activated")
             except Exception as e:
-                logger.warning(f"⚠️ Hybrid failed → Vector | {e}")
+                logger.warning(f"⚠️ Hybrid failed: {e}")
 
         if not retriever:
             retriever = vsm.get_retriever(collection_name)
 
-        search_kwargs = {"k": k_to_retrieve}
-        if where_filter:
-            search_kwargs["where"] = where_filter
-            search_kwargs["filter"] = where_filter
-
-        docs = retriever.invoke(
-            query,
-            config={"search_kwargs": search_kwargs}
-        )
-
-        # --- 5. Strict doc gate ---
+        # ดึงข้อมูลผ่าน Retriever
+        docs = retriever.invoke(query, config={"search_kwargs": {"k": k_to_retrieve, "filter": where_filter}})
+        
+        # 🎯 Metadata Guardrail: กรองซ้ำด้วยมือเพื่อให้ชัวร์ว่าไม่มีไฟล์อื่นหลุดมาจาก BM25
         if stable_doc_ids:
-            raw_chunks = [
-                d for d in docs
-                if (
-                    d.metadata.get("stable_doc_uuid") in stable_doc_ids or
-                    d.metadata.get("doc_id") in stable_doc_ids
-                )
+            target_ids = {str(i) for i in stable_doc_ids}
+            final_chunks = [
+                d for d in docs 
+                if str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")) in target_ids
             ]
-            logger.info(f"🛡️ Strict Filter: {len(raw_chunks)}/{len(docs)}")
+            logger.info(f"🛡️ Guardrail filtered: {len(docs)} -> {len(final_chunks)} chunks")
         else:
-            raw_chunks = [
-                d for d in docs
-                if getattr(d, "page_content", "").strip()
-            ]
+            final_chunks = docs
 
-        # --- 6. Rerank ---
-        final_chunks = raw_chunks
-        reranker = get_global_reranker()
+    # =====================================================
+    # 3. RERANKING PROCESS
+    # =====================================================
+    reranker = get_global_reranker()
+    if reranker and final_chunks and query:
+        try:
+            top_n = min(len(final_chunks), k_to_rerank)
+            reranked = reranker.compress_documents(documents=final_chunks, query=query, top_n=top_n)
+            final_chunks = [r.document if hasattr(r, "document") else r for r in reranked]
+            # แปะ score กลับเข้าไปใน metadata
+            for i, res in enumerate(reranked):
+                final_chunks[i].metadata["rerank_score"] = getattr(res, "relevance_score", 0)
+        except Exception as e:
+            logger.error(f"⚠️ Rerank failed: {e}")
+            final_chunks = final_chunks[:k_to_rerank]
 
-        if reranker and raw_chunks:
-            try:
-                top_n = min(len(raw_chunks), k_to_rerank)
-                reranked = reranker.compress_documents(
-                    documents=raw_chunks,
-                    query=query,
-                    top_n=top_n
-                )
-                final_chunks = [
-                    r.document if hasattr(r, "document") else r
-                    for r in reranked
-                ]
-            except Exception as e:
-                logger.error(f"⚠️ Rerank error: {e}")
-                final_chunks = raw_chunks[:k_to_rerank]
-
-    # --- 7. Build response ---
+    # 4. Build Response Model
     top_evidences = []
     aggregated_parts = []
-    used_chunk_uuids = []
-
+    
     for doc in final_chunks:
         md = doc.metadata or {}
         text = doc.page_content.strip()
-
-        chunk_uuid = (
-            md.get("chunk_uuid")
-            or md.get("dedup_chunk_uuid")
-            or str(uuid.uuid4())
-        )
-
-        used_chunk_uuids.append(chunk_uuid)
-
+        # ใช้ Key ที่ ingest.py สร้างไว้
+        s_uuid = md.get("stable_doc_uuid") or md.get("doc_id")
+        
         top_evidences.append({
-            "doc_id": md.get("stable_doc_uuid") or md.get("doc_id"),
-            "chunk_uuid": chunk_uuid,
+            "doc_id": s_uuid,
+            "chunk_uuid": md.get("chunk_uuid"),
             "source": md.get("source") or md.get("file_name") or "Unknown",
             "text": text,
-            "score": md.get("relevance_score", 0),
+            "score": md.get("rerank_score") or md.get("score") or 0.0,
             "pdca_tag": md.get("pdca_tag", "Other"),
             "sub_topic": md.get("sub_topic"),
+            "page_number": md.get("page_number")
         })
-
-        aggregated_parts.append(
-            f"[SOURCE: {md.get('source', 'Unknown')}] {text}"
-        )
+        aggregated_parts.append(f"[ไฟล์: {md.get('source', 'Unknown')}] {text}")
 
     retrieval_time = round(time.time() - start_time, 3)
-
-    logger.info(
-        f"🏁 Retrieval done | {len(top_evidences)} chunks | {retrieval_time}s"
-    )
+    logger.info(f"🏁 Finished: {len(top_evidences)} chunks in {retrieval_time}s")
 
     return {
         "top_evidences": top_evidences,
-        "aggregated_context": (
-            "\n\n---\n\n".join(aggregated_parts)
-            if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง"
-        ),
+        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง",
         "retrieval_time": retrieval_time,
-        "used_chunk_uuids": used_chunk_uuids
+        "used_chunk_uuids": [e["chunk_uuid"] for e in top_evidences if e["chunk_uuid"]]
     }
-
 
 # ========================
 # 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
@@ -1578,3 +1519,130 @@ def create_structured_action_plan(
             ]
         }]
     }]
+
+def retrieve_context_with_rubric(
+    vectorstore_manager,
+    query: str,
+    doc_type: str,
+    enabler: Optional[str] = None,
+    stable_doc_ids: Optional[Set[str]] = None,
+    tenant: Optional[str] = None,
+    year: Optional[int] = None,
+    subject: Optional[str] = None,
+    rubric_vectorstore_name: str = "seam",
+    top_k: int = 20, 
+    rubric_top_k: int = 10,
+) -> List[dict]:
+    """
+    ดึงเนื้อหาจาก VectorStore (document หรือ evidence) 
+    พร้อมเชื่อมโยงเกณฑ์ประเมิน (Rubric) และจัดการ Deduplication
+    """
+
+    # 1. เตรียม Collection และค่า Parameter
+    actual_top_k = 60 if stable_doc_ids else top_k
+    evidence_collection = get_doc_type_collection_key(doc_type, enabler)
+    
+    logger.info(f"🔍 [Retrieval] Start -> Collection: {evidence_collection} | Target IDs: {stable_doc_ids}")
+
+    # --- Phase 1: Context Retrieval (Evidence/Document) ---
+    unique_docs = {}
+
+    def add_to_unique_docs(docs):
+        if not docs: return
+        for d in docs:
+            m = d.metadata or {}
+            # สร้าง unique key เพื่อป้องกัน Chunk ซ้ำ (ใช้ ID หรือ Hash เนื้อหา)
+            uid = m.get("chunk_uuid") or hashlib.md5(d.page_content.encode()).hexdigest()
+            if uid not in unique_docs:
+                unique_docs[uid] = d
+
+    # 1.1 First Pass: Semantic Search + Filter (แม่นยำตาม Query)
+    first_pass = vectorstore_manager.retrieve(
+        query=query,
+        collection_name=evidence_collection,
+        top_k=actual_top_k,
+        filter_doc_ids=stable_doc_ids,
+    )
+    add_to_unique_docs(first_pass)
+
+    # 1.2 Second Pass: Fallback (ถ้าดึงมาได้น้อยเกินไปให้ดึงแบบกว้างขึ้น)
+    if (not unique_docs or len(unique_docs) < 5) and stable_doc_ids:
+        logger.warning(f"⚠️ Low results ({len(unique_docs)}). Triggering Broad Fallback Retrieval...")
+        fallback_query = "summarize main content, policy, objectives, and implementation details"
+        second_pass = vectorstore_manager.retrieve(
+            query=fallback_query, 
+            collection_name=evidence_collection,
+            top_k=actual_top_k,
+            filter_doc_ids=stable_doc_ids,
+        )
+        add_to_unique_docs(second_pass)
+
+    if not unique_docs:
+        logger.error(f"❌ [Critical] No content found in {evidence_collection} for IDs: {stable_doc_ids}")
+        return []
+
+    # --- Phase 2: Rubric Retrieval (SE-AM Criteria) ---
+    rubric_docs = []
+    if rubric_vectorstore_name:
+        try:
+            rubric_docs = vectorstore_manager.retrieve(
+                query=query,
+                collection_name=rubric_vectorstore_name,
+                top_k=rubric_top_k,
+            )
+        except Exception as e:
+            logger.error(f"❌ Rubric retrieval failed: {e}")
+
+    # --- Phase 3: Matching, ID Filtering & Normalization ---
+    enabler_clean = _n(enabler) if enabler else None
+    results = []
+    
+    # แปลง stable_doc_ids เป็น string ทั้งหมดเพื่อการเปรียบเทียบที่แม่นยำ
+    target_ids_str = {str(i) for i in stable_doc_ids} if stable_doc_ids else set()
+
+    for uid, d in unique_docs.items():
+        m = d.metadata or {}
+        
+        # 🎯 ตรวจสอบ ID แบบ Flexible (กันปัญหา Metadata Key ไม่ตรงกัน)
+        m_doc_id = m.get("doc_id")
+        m_stable_id = m.get("stable_doc_uuid")
+        m_uuid = m.get("doc_uuid")
+        m_id = m.get("id")
+        
+        potential_ids = {str(m_doc_id), str(m_stable_id), str(m_uuid), str(m_id)}
+        
+        # กรองด่านสุดท้าย: ต้องมี ID ใด ID หนึ่งตรงกับที่ผู้ใช้เลือก
+        if target_ids_str:
+            if not any(pid in target_ids_str for pid in potential_ids if pid and pid != "None"):
+                continue
+
+        # จับคู่ Rubric Score (เชื่อมโยงเกณฑ์ประเมินที่เกี่ยวข้อง)
+        relevant_scores = [0.0]
+        for r in rubric_docs:
+            rm = r.metadata or {}
+            r_enabler = _n(rm.get("enabler", ""))
+            source_manual = "manual" in _n(rm.get("source", ""))
+            
+            if (enabler_clean and r_enabler == enabler_clean) or source_manual:
+                score = rm.get("_rerank_score_force") or rm.get("score") or 0.0
+                relevant_scores.append(float(score))
+        
+        # สรุป ID ที่ดีที่สุดเพื่อส่งกลับ
+        final_id = m_doc_id or m_stable_id or m_uuid or m_id or "unknown"
+
+        results.append({
+            "text": d.page_content,
+            "source": m.get("source") or m.get("file_name") or "Unknown Document",
+            "page": m.get("page") or m.get("page_label"),
+            "doc_id": str(final_id),
+            "chunk_uuid": uid,
+            "rerank_score": float(m.get("_rerank_score_force") or m.get("score") or 0.1),
+            "pdca_tag": m.get("pdca_tag") or "Content",
+            "matched_rubric_score": max(relevant_scores)
+        })
+
+    # เรียงลำดับตามความเกี่ยวข้องสูงสุด (Rerank Score)
+    results.sort(key=lambda x: x['rerank_score'], reverse=True)
+    
+    logger.info(f"✅ [Success] Retrieved {len(results)} valid chunks from {evidence_collection}")
+    return results

@@ -169,7 +169,8 @@ PDCA_PHASE_MAP: Final[Dict[int, str]] = {
 # =================================================================
 PDCA_PRIORITY_ORDER = ['Act', 'Check', 'Do', 'Plan']
 
-# Keyword พื้นฐาน (fallback)
+# config/global_vars.py
+
 BASE_PDCA_KEYWORDS: Final[Dict[str, List[str]]] = {
     'Plan': [
         r'นโยบาย', r'แผน', r'กลยุทธ์', r'กรอบแนวทาง', r'วิสัยทัศน์', r'เป้าหมาย', r'กำหนด',
@@ -181,13 +182,13 @@ BASE_PDCA_KEYWORDS: Final[Dict[str, List[str]]] = {
     ],
     'Check': [
         r'การวัดผล', r'kpi', r'การประเมิน', r'รายงานผล', r'การวิเคราะห์ช่องว่าง', r'ตรวจสอบ', r'ผลลัพธ์', r'ติดตาม',
-        r'ตัวชี้วัด', r'audit', r'review', r'ประเมินผล',
-        r'ความคืบหน้า', r'ปัญหาและอุปสรรค'  # <-- เพิ่ม
+        r'ตัวชี้วัด', r'audit', r'review', r'ประเมินผล', r'ความคืบหน้า', r'ปัญหาและอุปสรรค',
+        r'dashboard', r'real-time monitoring', r'analytics'  # <--- เพิ่มตรงนี้
     ],
     'Act': [
         r'การปรับปรุง', r'การแก้ไข', r'บทเรียนที่ได้รับ', r'corrective action', r'เปลี่ยนแปลงวิธีการ', r'มาตรการ',
-        r'ปรับปรุงอย่างต่อเนื่อง', r'lesson learned', r'นำมาปรับปรุง',
-        r'ข้อเสนอแนะ', r'แนวทางแก้ไข' # <-- เพิ่ม
+        r'ปรับปรุงอย่างต่อเนื่อง', r'lesson learned', r'นำมาปรับปรุง', r'ข้อเสนอแนะ', r'แนวทางแก้ไข',
+        r'นวัตกรรม', r'digital transformation', r'ความยั่งยืน', r'sustainability', r'esg' # <--- เพิ่มตรงนี้
     ]
 }
 
