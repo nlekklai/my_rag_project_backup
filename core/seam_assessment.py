@@ -2975,7 +2975,7 @@ class SEAMPDCAEngine:
                 getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
                 getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
-                # ActionPlanActions <--- ตรวจสอบว่าในไฟล์จริงของคุณใช้ตัวแปรชื่อนี้หรือไม่
+                self.ActionPlanActions  # <--- เพิ่มตัวนี้เป็นตัวที่ 11
             ) for sub_data in sub_criteria_list]
 
             try:

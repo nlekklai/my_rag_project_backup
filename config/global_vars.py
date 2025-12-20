@@ -73,7 +73,7 @@ QUERY_FINAL_K: Final[int] = 5
 # ==================== Priority & Parallel Processing ====================
 LIMIT_CHUNKS_PER_PRIORITY_DOC: Final[int] = 5
 PRIORITY_CHUNK_LIMIT: Final[int] = 30
-MAX_PARALLEL_WORKERS: Final[int] = 4
+MAX_PARALLEL_WORKERS: Final[int] = 2
 
 
 # ==================== Logging & Context Control ====================
