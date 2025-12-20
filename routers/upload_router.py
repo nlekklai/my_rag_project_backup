@@ -10,6 +10,8 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Q
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
+from core.vectorstore import get_vectorstore_manager
+import asyncio
 
 # --- Import Auth, Path Utils & Global Vars ---
 from routers.auth_router import UserMe, get_current_user
@@ -158,7 +160,7 @@ async def list_files(
 
 
 # =========================
-# 2. POST: Upload
+# 2. POST: Upload (ฉบับปรับปรุง ID ให้ตรงกับ VectorStore)
 # =========================
 
 @upload_router.post("/assessment")
@@ -174,39 +176,37 @@ async def upload_file(
         target_year = year or getattr(current_user, "year", DEFAULT_YEAR)
         target_enabler = enabler or DEFAULT_ENABLER
 
-        # 1. Save physical file
-        save_dir = get_document_source_dir(
-            tenant, target_year, target_enabler, type
-        )
+        # 1. บันทึกไฟล์ลง Disk
+        save_dir = get_document_source_dir(tenant, target_year, target_enabler, type)
         os.makedirs(save_dir, exist_ok=True)
-
         file_path = os.path.join(save_dir, file.filename)
+        
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. Create mapping entry
-        doc_id = str(uuid.uuid4())
+        # 2. ⚡️ แก้ไขจุดสำคัญ: สร้าง Stable Doc ID (UUID v5) 
+        # ต้องใช้ชื่อไฟล์ (หรือ path) เป็น Seed เพื่อให้รันกี่ครั้งก็ได้ ID เดิม
+        doc_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, file.filename))
+        
         relative_key = get_mapping_key_from_physical_path(file_path)
 
         new_entry = {
             "file_name": file.filename,
             "filepath": relative_key,
-            "status": "Pending",
+            "status": "Pending",  # รอการ Ingest
             "enabler": target_enabler,
             "year": target_year,
             "file_size": os.path.getsize(file_path),
             "upload_date": datetime.now().isoformat(),
+            "stable_doc_uuid": doc_id # เก็บอ้างอิงไว้
         }
 
-        # 3. Load → Update → Save mapping
-        mapping = load_doc_id_mapping(
-            type, tenant, target_year, target_enabler
-        )
+        # 3. อัปเดต Mapping JSON
+        mapping = load_doc_id_mapping(type, tenant, target_year, target_enabler)
         mapping[doc_id] = new_entry
-        save_doc_id_mapping(
-            mapping, type, tenant, target_year, target_enabler
-        )
+        save_doc_id_mapping(mapping, type, tenant, target_year, target_enabler)
 
+        logger.info(f"✅ File uploaded & Mapped: {file.filename} with Stable ID: {doc_id}")
         return {"message": "Upload successful", "doc_id": doc_id}
 
     except Exception as e:
@@ -281,19 +281,67 @@ async def delete_file(
 
 
 # =========================
-# 5. POST: Ingest
+# 5. POST: Ingest (Implemented)
 # =========================
 
 @upload_router.post("/ingest", response_model=IngestResponse)
 async def ingest_files(
     request: IngestRequest,
+    doc_type: str = Query("document"),
+    year: Optional[int] = Query(None),
+    enabler: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user),
 ):
     results = []
+    tenant = current_user.tenant
+    target_year = year or getattr(current_user, "year", DEFAULT_YEAR)
+    target_enabler = enabler or DEFAULT_ENABLER
+    
+    # 1. เรียกใช้ VectorStoreManager สำหรับ Tenant นั้นๆ
+    vsm = get_vectorstore_manager(tenant=tenant)
+    
+    # 2. โหลด Mapping เพื่อดูว่าไฟล์อยู่ที่ไหน (Physical Path)
+    mapping = await run_in_threadpool(
+        load_doc_id_mapping, doc_type, tenant, target_year, target_enabler
+    )
 
     for doc_id in request.doc_ids:
-        # TODO: implement actual ingestion logic here (load → chunk → vectorstore)
-        results.append(IngestResult(doc_id=doc_id, result="Success"))
-        # Optionally update mapping status → "Ingested"
+        if doc_id not in mapping:
+            results.append(IngestResult(doc_id=doc_id, result="Error: ID not found in mapping"))
+            continue
+            
+        try:
+            doc_info = mapping[doc_id]
+            # ดึง Path เต็มจาก Utils
+            resolved = get_document_file_path(doc_id, tenant, target_year, target_enabler, doc_type)
+            
+            if not resolved or not os.path.exists(resolved["file_path"]):
+                results.append(IngestResult(doc_id=doc_id, result="Error: Physical file missing"))
+                continue
 
+            # 3. ⚡️ สั่ง Ingest เข้า VectorStore
+            # ขั้นตอนนี้จะทำ: Load -> Chunk -> Embed -> Save to ChromaDB
+            success = await asyncio.to_thread(
+                vsm.ingest_document,
+                file_path=resolved["file_path"],
+                doc_type=doc_type,
+                enabler=target_enabler,
+                year=str(target_year),
+                stable_doc_uuid=doc_id # ส่ง ID เดียวกันเข้าไปบันทึก
+            )
+
+            if success:
+                # 4. อัปเดตสถานะใน Mapping เป็น Ingested
+                mapping[doc_id]["status"] = "Ingested"
+                results.append(IngestResult(doc_id=doc_id, result="Success"))
+            else:
+                results.append(IngestResult(doc_id=doc_id, result="Failed to process document"))
+
+        except Exception as e:
+            logger.error(f"Ingest error for {doc_id}: {str(e)}")
+            results.append(IngestResult(doc_id=doc_id, result=f"Error: {str(e)}"))
+
+    # บันทึกสถานะใหม่ลงไฟล์ JSON
+    save_doc_id_mapping(mapping, doc_type, tenant, target_year, target_enabler)
+    
     return IngestResponse(results=results)

@@ -148,35 +148,32 @@ def build_prompt(
 # Post-response Validation (Enhanced Safety Net)
 # ======================================================================
 
+# core/llm_guardrails.py
+
 def enforce_thai_primary_language(response_text: str) -> str:
-    """
-    คัดกรองคำตอบเพื่อป้องกันการตอบเป็นภาษาอังกฤษล้วน 
-    โดยละเว้นส่วนที่เป็นตาราง รหัส หรือชื่อไฟล์
-    """
     if not response_text:
         return response_text
 
-    # แยกบรรทัดที่เป็นข้อความอธิบาย (Narrative) ออกมาตรวจสอบ
+    # แยกบรรทัดเนื้อหา
     narrative_lines = []
     for line in response_text.splitlines():
         line = line.strip()
-        # ข้ามบรรทัดที่เป็น Markdown Structure หรือสั้นเกินไป
         if not line or any(line.startswith(c) for c in ["#", "|", "-", "*", "`", "["]):
-            continue
-        if len(line.split()) < 4:
             continue
         narrative_lines.append(line)
 
     if not narrative_lines:
-        return response_text # ถ้าตอบแต่ตารางหรือ JSON ปล่อยผ่าน
+        return response_text
 
-    # ตรวจสอบสัดส่วนอักษรไทย
     narrative_text = " ".join(narrative_lines)
     thai_chars = re.findall(r"[ก-๙]", narrative_text)
     
-    # หากมีตัวอักษรไทยน้อยมากเมื่อเทียบกับความยาวข้อความ (Narrative)
-    if len(thai_chars) < 10 and len(narrative_text) > 40:
-        logger.warning("English narrative detected! Blocking response.")
-        return "ขออภัย ระบบสามารถตอบได้เฉพาะภาษาไทยเท่านั้น กรุณาตรวจสอบคำถามของคุณอีกครั้ง"
+    # --- แก้ไขตรงนี้ ---
+    # เดิม: ถ้าตัวอักษรไทย < 10 และข้อความยาว > 40 จะบล็อก
+    # ใหม่: ให้ Log เตือนเฉยๆ หรือปล่อยผ่านไปก่อน เพื่อให้ AI ตอบอังกฤษได้บ้างหากจำเป็น
+    if len(thai_chars) < 5 and len(narrative_text) > 50:
+        logger.warning("English response detected. Consider re-prompting AI to speak Thai.")
+        # หากต้องการบังคับไทยจริงๆ ให้ส่งกลับไปให้ LLM แปล หรือปล่อยผ่านไปก่อนตามด้านล่าง
+        return response_text 
 
     return response_text

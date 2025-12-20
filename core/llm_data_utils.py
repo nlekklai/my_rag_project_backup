@@ -96,6 +96,7 @@ except ImportError:
         reason: str = ""
 
 from langchain_core.documents import Document as LcDocument
+# แก้ไขบรรทัด Import ใน routers/llm_router.py
 
 # ===================================================================
 # 4. Constants

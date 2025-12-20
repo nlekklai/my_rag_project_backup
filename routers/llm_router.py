@@ -15,7 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.documents import Document as LcDocument
 
 from core.history_utils import async_save_message
-from core.llm_data_utils import retrieve_context_with_rubric, _create_where_filter
+from core.llm_data_utils import retrieve_context_with_rubric, _create_where_filter, retrieve_context_for_endpoint
 from core.vectorstore import get_vectorstore_manager
 from core.seam_assessment import SEAMPDCAEngine
 from core.llm_guardrails import enforce_thai_primary_language
@@ -38,6 +38,8 @@ from core.rag_prompts import (
 )
 from utils.path_utils import _n, get_doc_type_collection_key, get_rubric_file_path
 import os, json
+# routers/llm_router.py
+from core.history_utils import async_save_message, get_recent_history
 
 logger = logging.getLogger(__name__)
 llm_router = APIRouter(prefix="/api", tags=["LLM"])
@@ -129,97 +131,112 @@ def _map_sources(chunks: List[Union[LcDocument, dict]]) -> List[QuerySource]:
             ))
     return sources
 
+# เพิ่มฟังก์ชันเหล่านี้ลงใน routers/llm_router.py
+
+def ensure_deterministic_id(doc_id: str) -> str:
+    if not doc_id: return doc_id
+    try:
+        import uuid
+        uuid.UUID(doc_id)
+        return str(doc_id)
+    except ValueError:
+        import uuid
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, doc_id))
+
+def _parse_doc_ids(doc_ids: Any) -> List[str]:
+    """
+    ฟังก์ชันสำหรับแปลงข้อมูล doc_ids ที่ส่งมาจาก Frontend (ซึ่งอาจเป็น String หรือ List)
+    ให้กลายเป็น List[str] ที่สะอาดพร้อมใช้งาน
+    """
+    import re
+    if not doc_ids: return []
+    if isinstance(doc_ids, str):
+        # ล้างเครื่องหมาย [], '', "" และช่องว่าง แล้วแยกด้วย comma
+        clean = re.sub(r"[\[\]'\" ]", "", doc_ids)
+        return [d for d in clean.split(",") if d]
+    if isinstance(doc_ids, list):
+        return [str(d) for d in doc_ids if d]
+    return []
+
 # =====================================================================
-# 1. /query — General RAG QA (Revised for Stability)
+# 1. /query — General RAG QA (Updated to use retrieve_context_for_endpoint)
 # =====================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
     question: str = Form(...),
     doc_types: Optional[List[str]] = Form(None),
-    doc_ids: Optional[List[str]] = Form(None),
+    doc_ids: Optional[Any] = Form(None), # รับเป็น Any เพื่อใช้ _parse_doc_ids
     enabler: Optional[str] = Form(None),
     subject: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
-    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
+    # 1. เตรียมข้อมูลพื้นฐาน
+    actual_doc_ids = _parse_doc_ids(doc_ids)
     conv_id = conversation_id or str(uuid.uuid4())
-    q_lower = question.lower()
-
-    # 1. Intent Detection for Analysis
-    # ปรับปรุง: ตรวจสอบ keywords สำหรับการวิเคราะห์ SE-AM
-    analysis_keywords = ["วิเคราะห์", "pdca", "จุดแข็ง", "ช่องว่าง", "ผ่าน level", "ประเมินหลักฐาน", "criteria"]
-    if any(kw in q_lower for kw in analysis_keywords):
-        logger.info(f"🔍 [Intent] Analysis Detected for user: {current_user.id}")
-        return await analysis_llm(question, doc_ids, doc_types, enabler, subject, conv_id, current_user)
-
-    vsm = get_vectorstore_manager(tenant=current_user.tenant)
-    used_doc_types = doc_types or [EVIDENCE_DOC_TYPES]
+    history = await get_recent_history(current_user.id, conv_id, limit=4)
     
-    # 2. Retrieval Phase
-    # เพิ่มความระวัง: กรณีส่ง doc_ids มาแต่หาไม่เจอ
-    stable_ids_set = set(doc_ids) if doc_ids else None
-    all_chunks = await _get_context_chunks(
-        question=question,
-        doc_types=used_doc_types,
-        stable_doc_ids=stable_ids_set,
+    # 2. ตรวจสอบ Intent (ใช้ logic เดิมของคุณหรือ detect_intent)
+    # ในที่นี้ใช้ logic keywords ตามที่คุณเขียนมา
+    q_lower = question.lower()
+    analysis_keywords = ["วิเคราะห์", "pdca", "จุดแข็ง", "ช่องว่าง", "ผ่าน level", "ประเมินหลักฐาน"]
+    
+    if any(kw in q_lower for kw in analysis_keywords) and actual_doc_ids:
+        return await analysis_llm(question, actual_doc_ids, doc_types, enabler, subject, conv_id, current_user)
+
+    # 3. เรียกใช้ retrieve_context_for_endpoint (หัวใจสำคัญที่เปลี่ยน)
+    vsm = get_vectorstore_manager(tenant=current_user.tenant)
+    
+    # ดึงข้อมูลเพียงครั้งเดียวด้วย Endpoint Logic
+    retrieval_result = await asyncio.to_thread(
+        retrieve_context_for_endpoint,
+        vectorstore_manager=vsm,
+        query=question,
+        tenant=current_user.tenant,
+        stable_doc_ids=set(actual_doc_ids) if actual_doc_ids else None,
+        doc_type=doc_types[0] if doc_types else EVIDENCE_DOC_TYPES,
         enabler=enabler or DEFAULT_ENABLER,
         subject=subject,
-        vsm=vsm,
-        user=current_user,
+        k_to_retrieve=25,
+        k_to_rerank=QUERY_FINAL_K # ใช้ค่าจาก global_vars
     )
 
-    # 3. Error Handling: ถ้าไม่เจอข้อมูล (จุดที่ Log คุณ Error)
-    if not all_chunks:
-        error_msg = "ไม่พบข้อมูลที่เกี่ยวข้อง"
-        if doc_ids:
-            error_msg = f"ไม่พบเนื้อหาในเอกสารที่ระบุ (IDs: {', '.join(doc_ids[:2])}...) กรุณาตรวจสอบการเลือกไฟล์"
-        
-        logger.warning(f"⚠️ [Query] No chunks found for query: {question[:50]}")
-        raise HTTPException(status_code=400, detail=error_msg)
+    context_text = retrieval_result.get("aggregated_context", "ไม่พบข้อมูลที่เกี่ยวข้อง")
+    top_evidences = retrieval_result.get("top_evidences", [])
 
-    # 4. Context Preparation (Type Safe)
-    context_parts = []
-    for idx, c in enumerate(all_chunks):
-        # รองรับทั้ง dict (จาก reranker/manual) และ LcDocument (จาก vectorstore)
-        if isinstance(c, dict):
-            src = c.get('source', 'Unknown File')
-            txt = c.get('text', '')
-            page = f"หน้า {c.get('page_label', '-')}" if c.get('page_label') else ""
-        else:
-            m = c.metadata or {}
-            src = m.get('source', 'Unknown File')
-            txt = c.page_content
-            page = f"หน้า {m.get('page_label', '-')}" if m.get('page_label') else ""
-        
-        context_parts.append(f"[{src} {page}]\n{txt}")
+    if not top_evidences:
+        raise HTTPException(status_code=400, detail="ไม่พบข้อมูลที่เกี่ยวข้องในเอกสารที่เลือก")
 
-    context_text = "\n\n".join(context_parts)
-    
-    # 5. Prompting
+    # 4. เตรียม Prompt และเรียก LLM
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     prompt_text = QA_PROMPT_TEMPLATE.format(context=context_text, question=question)
 
     messages = [
-        SystemMessage(content=SYSTEM_QA_INSTRUCTION + "\nALWAYS ANSWER IN THAI."),
+        SystemMessage(content="ALWAYS ANSWER IN THAI.\n" + SYSTEM_QA_INSTRUCTION),
         HumanMessage(content=prompt_text),
     ]
 
-    # 6. LLM Invocation & Guardrails
-    try:
-        raw = await asyncio.to_thread(llm.invoke, messages)
-        # ตรวจสอบภาษาไทยเข้มงวด
-        answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
-    except Exception as e:
-        logger.error(f"❌ LLM Invocation Error: {e}")
-        raise HTTPException(status_code=500, detail="เกิดข้อผิดพลาดในการประมวลผลคำตอบ")
+    raw = await asyncio.to_thread(llm.invoke, messages)
+    answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # 7. Save History & Return
+    # 5. บันทึกประวัติและส่งคำตอบ
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
+    # แปลงรูปแบบ sources ให้เข้ากับ QuerySource model
+    sources = [
+        QuerySource(
+            source_id=str(e["doc_id"]),
+            file_name=e["source"],
+            chunk_text=e["text"][:500],
+            chunk_id=e["chunk_uuid"],
+            score=float(e["score"])
+        ) for e in top_evidences
+    ]
+
     return QueryResponse(
         answer=answer.strip(), 
-        sources=_map_sources(all_chunks), 
+        sources=sources, 
         conversation_id=conv_id
     )
 

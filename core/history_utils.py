@@ -102,3 +102,26 @@ def load_conversation_history(
         return future.result(timeout=5)
     else:
         return asyncio.run(async_load_conversation_history(user_id, conversation_id))
+
+# เพิ่มต่อท้ายไฟล์ core/history_utils.py
+
+async def get_recent_history(
+    user_id: str, 
+    conversation_id: str, 
+    limit: int = 5
+) -> List[Dict[str, Any]]:
+    """
+    ดึงประวัติการสนทนาในรูปแบบ List of Dict เพื่อใช้สำหรับ Intent Detection และ Prompt Building
+    """
+    async with _get_lock(user_id, conversation_id):
+        raw_history = CONVERSATION_STORE.get(user_id, {}).get(conversation_id, [])
+        
+        # กรองเอาเฉพาะ content และ type (role) เพื่อส่งให้ LLM
+        formatted_history = []
+        for msg in raw_history[-limit:]:  # เอาเฉพาะจำนวนที่จำกัด
+            formatted_history.append({
+                "role": "user" if msg["type"] == "user" else "assistant",
+                "content": msg["content"]
+            })
+            
+        return formatted_history
