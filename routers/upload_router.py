@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import shutil
 import uuid
@@ -30,6 +31,7 @@ from config.global_vars import (
 
 logger = logging.getLogger(__name__)
 upload_router = APIRouter(prefix="/api/uploads", tags=["Knowledge Management"])
+
 
 # =========================
 # Pydantic Models
@@ -70,6 +72,7 @@ def map_entries(
     year: int,
     enabler: str
 ) -> List[UploadResponse]:
+    """Map mapping_data entries to UploadResponse"""
     return [
         UploadResponse(
             doc_id=uid,
@@ -195,12 +198,11 @@ async def upload_file(
             "upload_date": datetime.now().isoformat(),
         }
 
-        # 3. Load → Update → Save mapping (REPLACEMENT of _update_doc_id_mapping)
+        # 3. Load → Update → Save mapping
         mapping = load_doc_id_mapping(
             type, tenant, target_year, target_enabler
         )
         mapping[doc_id] = new_entry
-
         save_doc_id_mapping(
             mapping, type, tenant, target_year, target_enabler
         )
@@ -290,7 +292,8 @@ async def ingest_files(
     results = []
 
     for doc_id in request.doc_ids:
+        # TODO: implement actual ingestion logic here (load → chunk → vectorstore)
         results.append(IngestResult(doc_id=doc_id, result="Success"))
-        # TODO: update mapping status -> Ingested
+        # Optionally update mapping status → "Ingested"
 
     return IngestResponse(results=results)

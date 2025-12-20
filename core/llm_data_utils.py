@@ -894,50 +894,6 @@ def _fetch_llm_response(
 
     return '{"score": 0, "reason": "Unknown execution error"}'
 
-# # ------------------------------------------------------------------
-# # ฟังก์ชันตัวช่วยใหม่: ทำความสะอาดและดึงค่า String/Dict ออกจาก Response
-# # ------------------------------------------------------------------
-# def _clean_llm_response_content(resp: Any) -> str:
-#     """
-#     พยายามดึง content ออกมาในรูปแบบ string ที่สะอาดที่สุด
-#     รองรับการห่อหุ้มแบบ Tuple/List ที่มี Dict/String อยู่ภายใน และใช้ Regex Cleanup 
-#     เพื่อดึงเฉพาะ JSON Object
-#     """
-    
-#     # --- 1. การทำความสะอาดเบื้องต้น (Existing Logic) ---
-#     cleaned_resp_str: str = ""
-
-#     # 1.1 จัดการการห่อหุ้ม (Handle Tuple/List wrapper)
-#     if isinstance(resp, (list, tuple)) and resp:
-#         resp = resp[0]
-#         logger.debug(f"LLM Response was wrapped in {type(resp).__name__}, extracted first element.")
-
-#     # 1.2 จัดการ Response Object/Dict ที่มี 'content' field
-#     if hasattr(resp, "content"): 
-#         cleaned_resp_str = str(resp.content).strip()
-#     elif isinstance(resp, dict) and "content" in resp: 
-#         cleaned_resp_str = str(resp["content"]).strip()
-#     elif isinstance(resp, str): 
-#         cleaned_resp_str = resp.strip()
-#     else: 
-#         # 1.3 Fallback: แปลงเป็น String
-#         cleaned_resp_str = str(resp).strip()
-    
-#     # --- 2. การทำความสะอาด Regex (The CRITICAL Fix for Malform) ---
-    
-#     # 2.1 ค้นหาและดึงเฉพาะส่วนที่อยู่ในเครื่องหมายปีกกา { ... }
-#     # re.DOTALL: เพื่อให้ . จับคู่ได้แม้กระทั่งอักขระขึ้นบรรทัดใหม่
-#     match = re.search(r'\{.*\}', cleaned_resp_str, re.DOTALL)
-    
-#     if match:
-#         json_string_only = match.group(0)
-#         logger.debug("Regex Cleanup performed: Extracted pure JSON string.")
-#         return json_string_only
-    
-#     # 2.2 หากไม่พบ JSON Object: คืนค่า String ที่ทำความสะอาดเบื้องต้นไป
-#     logger.warning("Regex Cleanup failed: Could not find JSON object. Returning original cleaned string.")
-#     return cleaned_resp_str
-
 # ------------------------
 # Evaluation
 # ------------------------

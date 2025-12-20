@@ -349,3 +349,50 @@ def get_tenant_year_report_root(tenant: str, year: Union[int, str], enabler: str
     if not os.path.exists(base_dir):
         os.makedirs(base_dir, exist_ok=True)
     return base_dir
+
+# ==================== 12. STABLE UUID V5 GENERATOR (Production Final) ====================
+
+def create_stable_uuid_from_path(
+    filepath: str,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None,
+) -> str:
+    if not filepath:
+        logger.error("Empty filepath provided")
+        return str(uuid.uuid4())
+
+    tenant_clean = _n(tenant or "")
+    enabler_clean = _n(enabler or "")
+    year_str = str(year) if year is not None else ""
+
+    key_seed = None
+
+    # Stat-based (preferred)
+    try:
+        st = os.stat(filepath)
+        filename_norm = _n(os.path.basename(filepath))
+        key_seed = f"{filename_norm}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year_str}:{enabler_clean}"
+    except Exception:
+        pass
+
+    # Path-based fallback
+    if not key_seed:
+        try:
+            rel_key = get_mapping_key_from_physical_path(filepath)
+            if rel_key:
+                key_seed = f"{rel_key}:{tenant_clean}:{year_str}:{enabler_clean}"
+        except Exception:
+            pass
+
+    if not key_seed:
+        logger.error("Failed to create stable key, using random UUID4")
+        return str(uuid.uuid4())
+
+    # Namespace
+    try:
+        namespace = uuid.UUID(PROJECT_NAMESPACE_UUID) if isinstance(PROJECT_NAMESPACE_UUID, str) else PROJECT_NAMESPACE_UUID
+    except Exception:
+        namespace = uuid.NAMESPACE_DNS
+
+    return str(uuid.uuid5(namespace, key_seed))

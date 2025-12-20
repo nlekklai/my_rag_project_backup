@@ -1,6 +1,6 @@
+# -*- coding: utf-8 -*-
 # routers/assessment_router.py
-# Production Final Version - 19 ธันวาคม 2568 (เวอร์ชันสมบูรณ์สุด รองรับทั้ง single และ ALL)
-# แสดง Level 1-5 ครบ + Action Plan ละเอียด + Metrics ถูกต้องทุกโหมด
+# Production Final Version - 20 ธันวาคม 2568 (Fixed parameter order + stable UUID + full assessment flow)
 
 import os
 import uuid
@@ -14,13 +14,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# --- Core Imports ---
 from routers.auth_router import UserMe, get_current_user
-from utils.path_utils import (
-    _n,
-    get_tenant_year_export_root,
-    load_doc_id_mapping
-)
+from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
@@ -37,6 +32,13 @@ class StartAssessmentRequest(BaseModel):
     enabler: str
     sub_criteria: Optional[str] = "all"
     sequential_mode: bool = True
+
+# ------------------- Permission Helper -------------------
+def check_user_permission(user: UserMe, tenant: str, enabler: str):
+    if _n(user.tenant) != _n(tenant):
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if user.enablers and enabler.upper() not in [e.upper() for e in user.enablers]:
+        raise HTTPException(status_code=403, detail=f"Enabler '{enabler}' not allowed")
 
 # ------------------- Helpers -------------------
 def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
@@ -87,14 +89,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> 
     strengths = []
     weaknesses = []
 
-    # คำนวณ Metrics ให้รองรับทั้ง single และ ALL
     total_sub_in_file = len(sub_results)
     passed_count = sum(1 for r in sub_results if int(r.get("highest_full_level", 0)) >= 1)
     total_expected = int(summary.get("total_subcriteria", 12))
     completion_rate = float(summary.get("percentage_achieved_run", 
                                         (passed_count / total_expected * 100) if total_expected > 0 else 0))
 
-    # Overall level (รองรับ highest_pass_level_overall สำหรับโหมด ALL)
     overall_level = summary.get("highest_pass_level_overall") or summary.get("highest_pass_level", 0)
     overall_level = int(overall_level) if overall_level else 0
 
@@ -167,7 +167,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> 
 
         gap_text = "\n".join(gap_lines)
 
-        # Strengths & Weaknesses
         if highest_pass >= 1:
             strengths.append(f"[{cid}] บรรลุระดับ L{highest_pass}")
         weaknesses.append(f"[{cid}] {gap_text}")
@@ -217,6 +216,9 @@ async def get_assessment_status(record_id: str, current_user: UserMe = Depends(g
     with open(file_path, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
 
+    enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
+    check_user_permission(current_user, current_user.tenant, enabler)
+
     return _transform_result_for_ui(raw_data, current_user)
 
 @assessment_router.get("/history")
@@ -238,12 +240,15 @@ async def get_assessment_history(tenant: str, year: Union[int, str], current_use
                     with open(file_path, "r", encoding="utf-8") as jf:
                         data = json.load(jf)
                         summary = data.get("summary", {})
+                        enabler = (summary.get("enabler") or "KM").upper()
+                        check_user_permission(current_user, tenant, enabler)
+
                         history_list.append({
                             "record_id": data.get("record_id") or summary.get("record_id") or f.rsplit('.', 1)[0],
                             "date": parse_safe_date(summary.get("export_timestamp"), file_path),
                             "tenant": tenant,
                             "year": str(year),
-                            "enabler": (summary.get("enabler") or "KM").upper(),
+                            "enabler": enabler,
                             "scope": summary.get("sub_criteria_id", "ALL"),
                             "level": f"L{summary.get('highest_pass_level_overall', summary.get('highest_pass_level', 0))}",
                             "score": round(float(summary.get("Total Weighted Score Achieved", summary.get("achieved_weight", 0.0))), 2),
@@ -256,8 +261,7 @@ async def get_assessment_history(tenant: str, year: Union[int, str], current_use
 
 @assessment_router.post("/start")
 async def start_assessment(request: StartAssessmentRequest, background_tasks: BackgroundTasks, current_user: UserMe = Depends(get_current_user)):
-    if _n(request.tenant) != _n(current_user.tenant):
-        raise HTTPException(status_code=403, detail="Permission Denied")
+    check_user_permission(current_user, request.tenant, request.enabler)
 
     record_id = uuid.uuid4().hex[:12]
     ACTIVE_TASKS[record_id] = {
@@ -283,20 +287,50 @@ async def start_assessment(request: StartAssessmentRequest, background_tasks: Ba
 
 async def run_assessment_engine_task(record_id: str, tenant: str, year: int, enabler: str, sub_id: str, sequential: bool):
     try:
-        vsm = await asyncio.to_thread(load_all_vectorstores, [EVIDENCE_DOC_TYPES], enabler, tenant, year)
-        doc_map_raw = await asyncio.to_thread(load_doc_id_mapping, EVIDENCE_DOC_TYPES, tenant, year, enabler)
+        vsm = await asyncio.to_thread(
+            load_all_vectorstores,
+            doc_types=EVIDENCE_DOC_TYPES,
+            enabler_filter=enabler,
+            tenant=tenant,
+            year=str(year)
+        )
+        
+        doc_map_raw = await asyncio.to_thread(
+            load_doc_id_mapping, 
+            EVIDENCE_DOC_TYPES, 
+            tenant, 
+            str(year), 
+            enabler
+        )
+        
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
         llm = await asyncio.to_thread(create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
-        config = AssessmentConfig(enabler=enabler, tenant=tenant, year=year, force_sequential=sequential)
+        
+        config = AssessmentConfig(
+            enabler=enabler, 
+            tenant=tenant, 
+            year=str(year),
+            force_sequential=sequential
+        )
 
-        engine = SEAMPDCAEngine(config, llm, logger, EVIDENCE_DOC_TYPES, vsm, doc_map)
+        # แก้ตรงนี้: ส่ง parameter ถูกต้องตาม constructor
+        engine = SEAMPDCAEngine(
+            config=config,
+            llm_instance=llm,
+            logger_instance=logger,
+            doc_type=EVIDENCE_DOC_TYPES,
+            vectorstore_manager=vsm,        # object จริง
+            document_map=doc_map            # dict แยก
+        )
+
         await asyncio.to_thread(engine.run_assessment, sub_id, True, vsm, sequential, record_id)
 
         if record_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[record_id]
+            
     except Exception as e:
-        logger.error(f"Engine Failed: {e}")
+        logger.error(f"Engine Failed: {e}", exc_info=True)
         if record_id in ACTIVE_TASKS:
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = str(e)
@@ -311,5 +345,10 @@ async def download_assessment_file(record_id: str, file_type: str, current_user:
 
     if not file_path.endswith(expected_ext):
         raise HTTPException(status_code=404, detail="ประเภทไฟล์ไม่ถูกต้อง")
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+        enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
+        check_user_permission(current_user, current_user.tenant, enabler)
 
     return FileResponse(path=file_path, filename=os.path.basename(file_path))

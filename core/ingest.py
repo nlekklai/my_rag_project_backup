@@ -458,8 +458,6 @@ def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     return result
 
 
-# ==================== STABLE UUID [REVISED TO UUID V5] ====================
-# ==================== 5. STABLE UUID [UUID V5 FINAL FIX] ====================
 def create_stable_uuid_from_path(
     filepath: str,
     tenant: Optional[str] = None,
@@ -467,83 +465,85 @@ def create_stable_uuid_from_path(
     enabler: Optional[str] = None,
 ) -> str:
     """
-    Creates a Stable Document UUID (UUID V5) that is fixed and predictable.
-    Keying: (Filename + Size + Mtime + Context) or (Cleaned Relative Path + Context).
+    สร้าง Stable Document UUID (UUID V5) ที่แน่นอนและทำซ้ำได้สูงสุด
     
-    ต้องอาศัย: 
-    - PROJECT_NAMESPACE_UUID ใน config.global_vars (เป็น UUID string หรือ uuid.UUID object)
-    - _n, resolve_filepath_to_absolute, get_mapping_key_from_physical_path ถูกกำหนดไว้แล้ว
+    ลำดับความสำคัญของ seed:
+    1. Stat-based (filename + size + mtime) ← stable ที่สุด
+    2. Path-based (relative key จาก mapping)
+    3. UUID4 (fallback สุดท้าย)
+    
+    Namespace: ใช้ PROJECT_NAMESPACE_UUID จาก config หากมี มิฉะนั้นใช้ NAMESPACE_DNS
     """
-    # 1. Normalize และ Resolve Path
-    resolved_filepath_nfkc = resolve_filepath_to_absolute(filepath)
-    
+    if not filepath:
+        logger.error("Empty filepath provided for stable UUID generation")
+        return str(uuid.uuid4())
+
+    # Normalize inputs
     tenant_clean = _n(tenant or "")
     enabler_clean = _n(enabler or "")
-    
-    key_seed = None # Seed ที่ใช้ในการสร้าง UUID V5
+    year_str = str(year) if year is not None else ""
 
-    # 🎯 STEP 1: Try Stat-based key (Most stable, preferred seed)
-    st = None
+    key_seed: Optional[str] = None
     stat_path = filepath
-    
+
+    # === STEP 1: Try Stat-based seed (preferred) ===
     try:
-        st = os.stat(stat_path)
+        # ลอง stat จาก path เดิมก่อน
+        st = os.stat(filepath)
+        stat_path = filepath
     except FileNotFoundError:
         try:
-            st = os.stat(resolved_filepath_nfkc)
-            stat_path = resolved_filepath_nfkc 
-        except Exception:
-            logger.debug(f"Failed to stat file for {filepath}. Falling back to path-based key.")
-            pass # st ยังคงเป็น None
+            # ลอง resolve path แล้ว stat
+            resolved = resolve_filepath_to_absolute(filepath)
+            st = os.stat(resolved)
+            stat_path = resolved
+        except Exception as e:
+            logger.debug(f"Stat failed for {filepath}: {e}")
+            st = None
+    except Exception as e:
+        logger.debug(f"Unexpected stat error for {filepath}: {e}")
+        st = None
 
     if st:
-        # Key 1 (Stat-based): Filename (Normalized) + Size + Mtime + Context
-        key_seed = f"{_n(os.path.basename(stat_path))}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year or ''}:{enabler_clean}"
-        logger.debug(f"Using Stat-based seed for UUID V5: {key_seed[:50]}...")
-        
+        filename_norm = _n(os.path.basename(stat_path))
+        key_seed = f"{filename_norm}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year_str}:{enabler_clean}"
+        logger.debug(f"Using stat-based seed: {key_seed[:100]}...")
     else:
-        # 🎯 STEP 2: Fallback to Path-based key (When stat fails)
-        relative_key = get_mapping_key_from_physical_path(filepath)
-        
-        if relative_key:
-            # Key 2 (Path-based): Cleaned Relative Key + Context
-            key_seed = f"{relative_key}:{tenant_clean}:{year or ''}:{enabler_clean}"
-            logger.warning(f"Forced Path-based UUID V5 seed for {filepath}")
-        else:
-            # Final Fallback: Random UUID (ควรจะเกิดขึ้นน้อยมาก)
-            logger.error(f"Cannot generate stable key for: {filepath}")
-            return str(uuid.uuid4())
+        logger.debug(f"Stat unavailable for {filepath}, falling back to path-based")
 
-    # 🟢 FINAL STEP: Generate UUID V5 using corrected Namespace handling
-    
-    namespace: uuid.UUID
+    # === STEP 2: Fallback to Path-based seed ===
+    if not key_seed:
+        try:
+            relative_key = get_mapping_key_from_physical_path(filepath)
+            if relative_key:
+                key_seed = f"{relative_key}:{tenant_clean}:{year_str}:{enabler_clean}"
+                logger.info(f"Using path-based seed for {filepath}")
+            else:
+                logger.warning(f"get_mapping_key_from_physical_path returned empty for {filepath}")
+        except Exception as e:
+            logger.warning(f"Path-based key generation failed: {e}")
+
+    # === STEP 3: Final fallback to random UUID4 ===
+    if not key_seed:
+        logger.error(f"All stable key attempts failed for {filepath}. Using random UUID4.")
+        return str(uuid.uuid4())
+
+    # === STEP 4: Prepare Namespace ===
     try:
-         # ตรวจสอบว่า PROJECT_NAMESPACE_UUID ถูกกำหนดไว้ใน Global Scope หรือไม่
-         if 'PROJECT_NAMESPACE_UUID' not in globals():
-             raise NameError("PROJECT_NAMESPACE_UUID is not defined.")
-         
-         # ถ้าเป็น string ให้แปลงเป็น UUID object
-         if isinstance(PROJECT_NAMESPACE_UUID, str):
-             namespace = uuid.UUID(PROJECT_NAMESPACE_UUID) 
-         # ถ้าเป็น UUID object อยู่แล้ว ก็ใช้เลย
-         elif isinstance(PROJECT_NAMESPACE_UUID, uuid.UUID):
-             namespace = PROJECT_NAMESPACE_UUID
-         else:
-             raise TypeError("PROJECT_NAMESPACE_UUID has an unknown type.")
-             
-    except (ValueError, NameError, TypeError) as e:
-         # หากมีปัญหา (เช่น ไม่ได้กำหนด, หรือประเภทผิด) ให้ใช้ NAMESPACE_DNS เป็น fallback
-         logger.warning(
-             f"PROJECT_NAMESPACE_UUID invalid/missing ({type(e).__name__}). "
-             f"Using uuid.NAMESPACE_DNS as fallback."
-         )
-         namespace = uuid.NAMESPACE_DNS 
+        if isinstance(PROJECT_NAMESPACE_UUID, str):
+            namespace = uuid.UUID(PROJECT_NAMESPACE_UUID)
+        elif isinstance(PROJECT_NAMESPACE_UUID, uuid.UUID):
+            namespace = PROJECT_NAMESPACE_UUID
+        else:
+            raise TypeError("Invalid type for PROJECT_NAMESPACE_UUID")
+    except Exception as e:
+        logger.warning(f"PROJECT_NAMESPACE_UUID invalid ({e}). Falling back to NAMESPACE_DNS")
+        namespace = uuid.NAMESPACE_DNS
 
-    # สร้าง UUID V5 โดยใช้ namespace และ key_seed ที่เตรียมไว้
+    # === FINAL: Generate UUID5 ===
     stable_doc_uuid = str(uuid.uuid5(namespace, key_seed))
-    
-    logger.debug(f"Generated UUID V5: {stable_doc_uuid}")
-    
+    logger.debug(f"Generated stable UUID V5: {stable_doc_uuid} (from {'stat' if st else 'path'}-based seed)")
+
     return stable_doc_uuid
 
 def load_and_chunk_document(
