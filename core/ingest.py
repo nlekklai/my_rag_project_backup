@@ -458,6 +458,11 @@ def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     return result
 
 
+def _n(s: Union[str, None]) -> str:
+    """Normalize string และจัดการเรื่อง macOS NFD ให้เป็น NFKC"""
+    if not s: return ""
+    return unicodedata.normalize('NFKC', str(s).strip().lower().replace(" ", "_"))
+
 def create_stable_uuid_from_path(
     filepath: str,
     tenant: Optional[str] = None,
@@ -465,85 +470,64 @@ def create_stable_uuid_from_path(
     enabler: Optional[str] = None,
 ) -> str:
     """
-    สร้าง Stable Document UUID (UUID V5) ที่แน่นอนและทำซ้ำได้สูงสุด
+    สร้าง Stable Document UUID (UUID V5) ที่แน่นอนและทำซ้ำได้ (Deterministic)
     
-    ลำดับความสำคัญของ seed:
-    1. Stat-based (filename + size + mtime) ← stable ที่สุด
-    2. Path-based (relative key จาก mapping)
-    3. UUID4 (fallback สุดท้าย)
-    
-    Namespace: ใช้ PROJECT_NAMESPACE_UUID จาก config หากมี มิฉะนั้นใช้ NAMESPACE_DNS
+    ปรับปรุงใหม่ (21 ธ.ค. 2568):
+    - ตัด st_mtime ออกเพื่อไม่ให้ ID เปลี่ยนเมื่อไฟล์ถูกแก้ไข
+    - ใช้ Relative Path + File Size เป็น Seed หลัก
     """
     if not filepath:
         logger.error("Empty filepath provided for stable UUID generation")
         return str(uuid.uuid4())
 
-    # Normalize inputs
-    tenant_clean = _n(tenant or "")
-    enabler_clean = _n(enabler or "")
+    # 1. Normalize inputs
+    tenant_clean = _n(tenant)
+    enabler_clean = _n(enabler)
     year_str = str(year) if year is not None else ""
 
     key_seed: Optional[str] = None
-    stat_path = filepath
-
-    # === STEP 1: Try Stat-based seed (preferred) ===
+    
+    # 2. ดึงข้อมูลพื้นฐานของไฟล์ (Size)
+    file_size = "0"
     try:
-        # ลอง stat จาก path เดิมก่อน
-        st = os.stat(filepath)
-        stat_path = filepath
-    except FileNotFoundError:
-        try:
-            # ลอง resolve path แล้ว stat
-            resolved = resolve_filepath_to_absolute(filepath)
-            st = os.stat(resolved)
-            stat_path = resolved
-        except Exception as e:
-            logger.debug(f"Stat failed for {filepath}: {e}")
-            st = None
+        if os.path.exists(filepath):
+            file_size = str(os.path.getsize(filepath))
     except Exception as e:
-        logger.debug(f"Unexpected stat error for {filepath}: {e}")
-        st = None
+        logger.debug(f"Could not get file size for {filepath}: {e}")
 
-    if st:
-        filename_norm = _n(os.path.basename(stat_path))
-        key_seed = f"{filename_norm}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year_str}:{enabler_clean}"
-        logger.debug(f"Using stat-based seed: {key_seed[:100]}...")
-    else:
-        logger.debug(f"Stat unavailable for {filepath}, falling back to path-based")
-
-    # === STEP 2: Fallback to Path-based seed ===
-    if not key_seed:
-        try:
-            relative_key = get_mapping_key_from_physical_path(filepath)
-            if relative_key:
-                key_seed = f"{relative_key}:{tenant_clean}:{year_str}:{enabler_clean}"
-                logger.info(f"Using path-based seed for {filepath}")
-            else:
-                logger.warning(f"get_mapping_key_from_physical_path returned empty for {filepath}")
-        except Exception as e:
-            logger.warning(f"Path-based key generation failed: {e}")
-
-    # === STEP 3: Final fallback to random UUID4 ===
-    if not key_seed:
-        logger.error(f"All stable key attempts failed for {filepath}. Using random UUID4.")
-        return str(uuid.uuid4())
-
-    # === STEP 4: Prepare Namespace ===
+    # 3. สร้าง Seed โดยเน้นที่เอกลักษณ์ของตำแหน่งไฟล์
     try:
+        # พยายามสร้าง Relative Key (เช่น pea/data/evidence/2568/km/doc.pdf)
+        # หมายเหตุ: ควรใช้ฟังก์ชัน get_mapping_key_from_physical_path ที่เรามี
+        from utils.path_utils import get_mapping_key_from_physical_path
+        rel_key = get_mapping_key_from_physical_path(filepath)
+    except ImportError:
+        # Fallback กรณีเรียกใช้ข้ามไฟล์ไม่ได้
+        rel_key = _n(os.path.basename(filepath))
+
+    if not rel_key or rel_key == ".":
+        rel_key = _n(os.path.basename(filepath))
+
+    # 🎯 หัวใจหลัก: Seed ต้องไม่มี mtime เพื่อให้ ID คงที่ตลอดไป
+    # โครงสร้าง: {relative_path}:{size}:{tenant}:{year}:{enabler}
+    key_seed = f"{rel_key}:{file_size}:{tenant_clean}:{year_str}:{enabler_clean}"
+    
+    logger.debug(f"Generated Key Seed: {key_seed}")
+
+    # 4. Prepare Namespace (ดึงจาก Global หรือใช้ DNS เป็นสำรอง)
+    try:
+        # พยายามดึงจาก config ถ้ามี
+        from config.global_vars import PROJECT_NAMESPACE_UUID
         if isinstance(PROJECT_NAMESPACE_UUID, str):
             namespace = uuid.UUID(PROJECT_NAMESPACE_UUID)
-        elif isinstance(PROJECT_NAMESPACE_UUID, uuid.UUID):
-            namespace = PROJECT_NAMESPACE_UUID
         else:
-            raise TypeError("Invalid type for PROJECT_NAMESPACE_UUID")
-    except Exception as e:
-        logger.warning(f"PROJECT_NAMESPACE_UUID invalid ({e}). Falling back to NAMESPACE_DNS")
+            namespace = PROJECT_NAMESPACE_UUID
+    except (ImportError, Exception):
         namespace = uuid.NAMESPACE_DNS
 
-    # === FINAL: Generate UUID5 ===
+    # 5. Generate UUID5
     stable_doc_uuid = str(uuid.uuid5(namespace, key_seed))
-    logger.debug(f"Generated stable UUID V5: {stable_doc_uuid} (from {'stat' if st else 'path'}-based seed)")
-
+    
     return stable_doc_uuid
 
 def load_and_chunk_document(

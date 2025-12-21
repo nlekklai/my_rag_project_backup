@@ -192,11 +192,12 @@ USER_LOW_LEVEL_PROMPT = PromptTemplate(
     ],
     template=FULL_LOW_LEVEL_TEMPLATE
 )
-
-
 # =================================================================
-# 4. ACTION PLAN PROMPT (FINAL CONSULTANT EDITION)
+# 4. ACTION PLAN PROMPT (REVISED & FIXED)
 # =================================================================
+
+from typing import Final
+from langchain.prompts import PromptTemplate
 
 # SYSTEM PROMPT: กำหนดบทบาทและตรรกะระดับสูง
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
@@ -218,7 +219,7 @@ SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 - JSON Only: ห้ามเขียนประโยคเกริ่นนำหรือปิดท้ายเด็ดขาด
 """
 
-# HUMAN PROMPT: ควบคุมการ Generate และรูปแบบ Content
+# HUMAN PROMPT: แก้ไขปัญหา KeyError ด้วย Double Braces {{ }} ในส่วนโครงสร้าง JSON
 ACTION_PLAN_TEMPLATE: Final[str] = """
 ### [ข้อมูลวิเคราะห์]
 - รหัสเกณฑ์: {sub_id}
@@ -255,41 +256,43 @@ ACTION_PLAN_TEMPLATE: Final[str] = """
 
 ### [ตัวอย่าง JSON ที่ถูกต้อง 100% (ต้องเลียนแบบเป๊ะ)]
 [
-  {
+  {{
     "phase": "Phase 1: การวางรากฐานนโยบาย",
     "goal": "จัดทำนโยบาย KM ฉบับใหม่ให้ได้รับอนุมัติ",
     "actions": [
-      {
+      {{
         "statement_id": "{sub_id}",
         "failed_level": {target_level},
         "recommendation": "จัดทำและประกาศใช้นโยบายการจัดการความรู้ฉบับใหม่",
         "target_evidence_type": "นโยบาย KM ที่ได้รับอนุมัติ",
         "key_metric": "นโยบาย KM ฉบับใหม่ได้รับอนุมัติภายในไตรมาส 1 ปี 2569",
         "steps": [
-          {
+          {{
             "Step": 1,
             "Description": "แต่งตั้งคณะทำงานจัดทำนโยบาย",
             "Responsible": "ฝ่ายจัดการความรู้",
             "Tools_Templates": "แบบฟอร์มแต่งตั้งคณะทำงาน",
             "Verification_Outcome": "คำสั่งแต่งตั้งอย่างเป็นทางการ"
-          },
-          {
+          }},
+          {{
             "Step": 2,
             "Description": "จัดประชุมระดมความเห็นและร่างนโยบาย",
             "Responsible": "คณะทำงาน KM",
             "Tools_Templates": "แบบร่างนโยบาย KM",
             "Verification_Outcome": "รายงานการประชุมและร่างนโยบาย"
-          }
+          }}
         ]
-      }
+      }}
     ]
-  }
+  }}
 ]
 
 เริ่มตอบ JSON Array ทันที (ห้ามมีข้อความใด ๆ นอกจาก JSON):
 """
 
 # FINAL PROMPT DEFINITION
+# หมายเหตุ: เอา "json_schema" ออกจาก input_variables เพราะเราไม่ได้ใช้ใน template แล้ว 
+# เพื่อป้องกันความสับสนของ LangChain
 ACTION_PLAN_PROMPT = PromptTemplate(
     input_variables=[
         "sub_id",
@@ -297,7 +300,6 @@ ACTION_PLAN_PROMPT = PromptTemplate(
         "target_level",
         "recommendation_statements_list",
         "advice_focus",
-        "json_schema",
         "max_phases",          
         "max_steps",           
         "max_words_per_step",  

@@ -22,6 +22,7 @@ from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
+import os
 # --- เตรียม JSON Schema ---
 try:
     from core.action_plan_schema import get_clean_action_plan_schema
@@ -51,7 +52,8 @@ from config.global_vars import (
     MAX_ACTION_PLAN_PHASES,
     MAX_STEPS_PER_ACTION,
     ACTION_PLAN_STEP_MAX_WORDS,
-    ACTION_PLAN_LANGUAGE
+    ACTION_PLAN_LANGUAGE,
+    QUERY_INITIAL_K
 )
 
 # ===================================================================
@@ -1521,6 +1523,27 @@ def create_structured_action_plan(
         }]
     }]
 
+
+def get_rubric_collection_name(enabler: Optional[str] = None) -> str:
+    """
+    คืนค่าชื่อ Collection สำหรับ Rubric (ปัจจุบันใช้ 'seam' เป็นศูนย์กลาง)
+    """
+    return "seam"
+
+def get_rubric_filter(enabler: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    สร้าง Metadata Filter เพื่อค้นหาเฉพาะไฟล์เกณฑ์ที่ตรงกับ Enabler
+    เพื่อให้ retrieve_context_with_rubric ทำงานได้แม่นยำขึ้น
+    """
+    if not enabler:
+        return None
+    
+    # กรองตาม enabler (เช่น KM, CG, HR) ที่ถูกฝังไว้ใน Metadata ตอน Ingest
+    return {"enabler": enabler.upper()}
+
+# =====================================================================
+# 🚀 Full Revised: retrieve_context_with_rubric
+# =====================================================================
 def retrieve_context_with_rubric(
     vectorstore_manager,
     query: str,
@@ -1532,118 +1555,148 @@ def retrieve_context_with_rubric(
     subject: Optional[str] = None,
     rubric_vectorstore_name: str = "seam",
     top_k: int = 20, 
-    rubric_top_k: int = 10,
+    rubric_top_k: int = 15,
 ) -> List[dict]:
     """
-    ดึงเนื้อหาจาก VectorStore (document หรือ evidence) 
-    พร้อมเชื่อมโยงเกณฑ์ประเมิน (Rubric) และจัดการ Deduplication
+    เวอร์ชันอัปเกรด: มีระบบเช็ค Rubric อัตโนมัติ และผ่อนปรน Guardrail กรณี Broad Search
     """
-
-    # 1. เตรียม Collection และค่า Parameter
-    actual_top_k = 60 if stable_doc_ids else top_k
-    evidence_collection = get_doc_type_collection_key(doc_type, enabler)
     
-    logger.info(f"🔍 [Retrieval] Start -> Collection: {evidence_collection} | Target IDs: {stable_doc_ids}")
+    # --- 🎯 Step 0: Ensure Rubric Readiness ---
+    # ตั้งค่า Path สำหรับ Rubric ตามโครงสร้างโฟลเดอร์ที่ตกลงกัน
+    # ตัวอย่าง: data_store/pea/data/seam/km_rubric.pdf
+    rubric_file_path = f"/Users/oddnaphat/my_rag_project/data_store/{tenant}/data/seam/{enabler.lower()}_rubric.pdf"
+    
+    # ตรวจสอบและ Auto-Ingest ถ้ายังไม่มี Collection 'seam'
+    vectorstore_manager.ensure_rubric_is_ready(
+        enabler=enabler, 
+        rubric_file_path=rubric_file_path
+    )
 
-    # --- Phase 1: Context Retrieval (Evidence/Document) ---
-    unique_docs = {}
+    # 1. ปรับชื่อ Collection ให้ตรงตามมาตรฐาน
+    actual_doc_type = "evidence" if enabler and doc_type == "document" else doc_type
+    evidence_collection = get_doc_type_collection_key(actual_doc_type, enabler)
+    
+    logger.info(f"🔍 [Retrieval] Adjusted Collection: {evidence_collection} | Target IDs: {stable_doc_ids}")
 
-    def add_to_unique_docs(docs):
-        if not docs: return
-        for d in docs:
-            m = d.metadata or {}
-            # สร้าง unique key เพื่อป้องกัน Chunk ซ้ำ (ใช้ ID หรือ Hash เนื้อหา)
-            uid = m.get("chunk_uuid") or hashlib.md5(d.page_content.encode()).hexdigest()
-            if uid not in unique_docs:
-                unique_docs[uid] = d
-
-    # 1.1 First Pass: Semantic Search + Filter (แม่นยำตาม Query)
-    first_pass = vectorstore_manager.retrieve(
+    # --- Phase 1: Context Retrieval ---
+    # พยายามดึงแบบ Strict Filter ก่อน
+    unique_docs_list = vectorstore_manager.retrieve(
         query=query,
         collection_name=evidence_collection,
-        top_k=actual_top_k,
-        filter_doc_ids=stable_doc_ids,
+        top_k=60, 
+        filter_doc_ids=stable_doc_ids
     )
-    add_to_unique_docs(first_pass)
 
-    # 1.2 Second Pass: Fallback (ถ้าดึงมาได้น้อยเกินไปให้ดึงแบบกว้างขึ้น)
-    if (not unique_docs or len(unique_docs) < 5) and stable_doc_ids:
-        logger.warning(f"⚠️ Low results ({len(unique_docs)}). Triggering Broad Fallback Retrieval...")
-        fallback_query = "summarize main content, policy, objectives, and implementation details"
-        second_pass = vectorstore_manager.retrieve(
-            query=fallback_query, 
+    is_broad_search = False
+    if not unique_docs_list and stable_doc_ids:
+        logger.warning(f"⚠️ ID Filter ({stable_doc_ids}) returned 0. Switching to BROAD search...")
+        unique_docs_list = vectorstore_manager.retrieve(
+            query=query,
             collection_name=evidence_collection,
-            top_k=actual_top_k,
-            filter_doc_ids=stable_doc_ids,
+            top_k=30 
         )
-        add_to_unique_docs(second_pass)
+        is_broad_search = True
 
-    if not unique_docs:
-        logger.error(f"❌ [Critical] No content found in {evidence_collection} for IDs: {stable_doc_ids}")
+    if not unique_docs_list:
+        logger.error(f"❌ No content found in {evidence_collection}")
         return []
 
-    # --- Phase 2: Rubric Retrieval (SE-AM Criteria) ---
+    # --- Phase 2: Rubric Retrieval ---
     rubric_docs = []
-    if rubric_vectorstore_name:
-        try:
-            rubric_docs = vectorstore_manager.retrieve(
-                query=query,
-                collection_name=rubric_vectorstore_name,
-                top_k=rubric_top_k,
-            )
-        except Exception as e:
-            logger.error(f"❌ Rubric retrieval failed: {e}")
+    try:
+        rubric_docs = vectorstore_manager.retrieve(
+            query=query,
+            collection_name=rubric_vectorstore_name,
+            top_k=rubric_top_k
+        )
+    except Exception as e:
+        logger.error(f"❌ Rubric retrieval failed: {e}")
 
-    # --- Phase 3: Matching, ID Filtering & Normalization ---
-    enabler_clean = _n(enabler) if enabler else None
+    # --- Phase 3: Matching & Relaxed Guardrail ---
     results = []
-    
-    # แปลง stable_doc_ids เป็น string ทั้งหมดเพื่อการเปรียบเทียบที่แม่นยำ
-    target_ids_str = {str(i) for i in stable_doc_ids} if stable_doc_ids else set()
+    target_ids_clean = {str(i).lower().strip() for i in stable_doc_ids} if stable_doc_ids else set()
 
-    for uid, d in unique_docs.items():
+    for idx, d in enumerate(unique_docs_list):
         m = d.metadata or {}
-        
-        # 🎯 ตรวจสอบ ID แบบ Flexible (กันปัญหา Metadata Key ไม่ตรงกัน)
-        m_doc_id = m.get("doc_id")
-        m_stable_id = m.get("stable_doc_uuid")
-        m_uuid = m.get("doc_uuid")
-        m_id = m.get("id")
-        
-        potential_ids = {str(m_doc_id), str(m_stable_id), str(m_uuid), str(m_id)}
-        
-        # กรองด่านสุดท้าย: ต้องมี ID ใด ID หนึ่งตรงกับที่ผู้ใช้เลือก
-        if target_ids_str:
-            if not any(pid in target_ids_str for pid in potential_ids if pid and pid != "None"):
-                continue
+        m_stable_id = str(m.get("stable_doc_uuid", "")).lower().strip()
+        m_doc_id = str(m.get("doc_id", "")).lower().strip()
+        m_source = str(m.get("source", "")).lower().strip()
 
-        # จับคู่ Rubric Score (เชื่อมโยงเกณฑ์ประเมินที่เกี่ยวข้อง)
-        relevant_scores = [0.0]
+        # Relaxed Matching Logic
+        is_match = False
+        if not target_ids_clean:
+            is_match = True
+        else:
+            if m_stable_id in target_ids_clean or m_doc_id in target_ids_clean:
+                is_match = True
+            elif any(tid in m_source for tid in target_ids_clean):
+                is_match = True
+            elif is_broad_search and len(results) < 10: 
+                # ถ้าหาแบบกว้าง ให้ยอมรับ 10 อันดับแรกที่ Semantic ตรงที่สุด
+                is_match = True
+
+        if not is_match:
+            continue
+
+        # Matching Rubric Score (เชื่อมโยงเกณฑ์)
+        relevant_scores = [0.1]
+        enabler_clean = _n(enabler)
         for r in rubric_docs:
             rm = r.metadata or {}
-            r_enabler = _n(rm.get("enabler", ""))
-            source_manual = "manual" in _n(rm.get("source", ""))
-            
-            if (enabler_clean and r_enabler == enabler_clean) or source_manual:
-                score = rm.get("_rerank_score_force") or rm.get("score") or 0.0
-                relevant_scores.append(float(score))
-        
-        # สรุป ID ที่ดีที่สุดเพื่อส่งกลับ
-        final_id = m_doc_id or m_stable_id or m_uuid or m_id or "unknown"
+            if _n(rm.get("enabler")) == enabler_clean:
+                relevant_scores.append(float(rm.get("score") or 0.1))
 
         results.append({
             "text": d.page_content,
             "source": m.get("source") or m.get("file_name") or "Unknown Document",
-            "page": m.get("page") or m.get("page_label"),
-            "doc_id": str(final_id),
-            "chunk_uuid": uid,
-            "rerank_score": float(m.get("_rerank_score_force") or m.get("score") or 0.1),
+            "page": m.get("page") or m.get("page_label") or "N/A",
+            "doc_id": m.get("stable_doc_uuid") or m.get("doc_id") or "unknown",
+            "chunk_uuid": m.get("chunk_uuid", "n/a"),
+            "rerank_score": float(m.get("score") or 0.1),
             "pdca_tag": m.get("pdca_tag") or "Content",
             "matched_rubric_score": max(relevant_scores)
         })
 
-    # เรียงลำดับตามความเกี่ยวข้องสูงสุด (Rerank Score)
     results.sort(key=lambda x: x['rerank_score'], reverse=True)
+    final_results = results[:top_k]
     
-    logger.info(f"✅ [Success] Retrieved {len(results)} valid chunks from {evidence_collection}")
-    return results
+    logger.info(f"✅ Finished: Returning {len(final_results)} chunks (Broad Search: {is_broad_search})")
+    return final_results
+
+def ensure_rubric_is_ready(self, enabler: str, rubric_file_path: Optional[str] = None):
+    """
+    ตรวจสอบความพร้อมของคอลเลกชัน 'seam' (Rubric)
+    หากไม่พบ จะทำการ Ingest ให้อัตโนมัติถ้าระบุ path ไว้
+    """
+    collection_name = "seam"
+    
+    # 1. ตรวจสอบว่ามี Collection อยู่ในระบบแล้วหรือยัง
+    chroma_path = os.path.join(self.tenant_root_path, collection_name)
+    
+    if os.path.exists(chroma_path):
+        logger.info(f"✅ Rubric collection '{collection_name}' exists.")
+        return True
+
+    # 2. ถ้าไม่พบ และไม่มี path ไฟล์ให้โหลด -> แจ้งเตือน
+    if not rubric_file_path or not os.path.exists(rubric_file_path):
+        logger.error(f"❌ Rubric Source NOT FOUND at: {rubric_file_path}. Cannot assess SE-AM!")
+        return False
+
+    # 3. เริ่มกระบวนการ Auto-Ingest
+    try:
+        logger.info(f"🏗️ Auto-ingesting Rubric for {enabler} from: {rubric_file_path}")
+        
+        # ใช้ Logic การ Ingest เดิมของคุณที่มีอยู่
+        # โดยระบุ doc_type ให้เป็น 'seam' เพื่อให้ระบบแยกแยะได้
+        self.ingest_documents(
+            file_path=rubric_file_path,
+            doc_type="seam",
+            collection_name=collection_name,
+            enabler=enabler
+        )
+        
+        logger.info(f"✅ Rubric for {enabler} is now ready in 'seam' collection.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to auto-ingest rubric: {e}")
+        return False

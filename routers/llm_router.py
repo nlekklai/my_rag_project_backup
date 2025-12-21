@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# routers/llm_router.py - Enterprise RAG (Query + Compare + PDCA Analysis)
-# FINAL STABLE VERSION - FIXED AttributeError: 'dict' object has no attribute 'metadata'
+# routers/llm_router.py - Enterprise RAG (Query + Compare + PDCA Analysis + Summary)
+# ULTIMATE REVISED VERSION - 21 ธันวาคม 2568
+# เพิ่ม: Intent detection + Auto-route + User guidance + Summary support
 
 import logging
 import uuid
@@ -14,11 +15,11 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.documents import Document as LcDocument
 
-from core.history_utils import async_save_message
-from core.llm_data_utils import retrieve_context_with_rubric, _create_where_filter, retrieve_context_for_endpoint
+from core.history_utils import async_save_message, get_recent_history
+from core.llm_data_utils import retrieve_context_for_endpoint, _create_where_filter
 from core.vectorstore import get_vectorstore_manager
 from core.seam_assessment import SEAMPDCAEngine
-from core.llm_guardrails import enforce_thai_primary_language
+from core.llm_guardrails import enforce_thai_primary_language, detect_intent, build_prompt
 from config.global_vars import (
     EVIDENCE_DOC_TYPES,
     DEFAULT_ENABLER,
@@ -34,12 +35,13 @@ from core.rag_prompts import (
     SYSTEM_COMPARE_INSTRUCTION,
     QA_PROMPT_TEMPLATE,
     COMPARE_PROMPT_TEMPLATE,
-    ANALYSIS_PROMPT  # ใช้ ANALYSIS_PROMPT ฉบับใหม่ที่รองรับ rubric_json
+    ANALYSIS_PROMPT_TEMPLATE,
+    SUMMARY_PROMPT,
+    SUMMARY_PROMPT_TEMPLATE
 )
-from utils.path_utils import _n, get_doc_type_collection_key, get_rubric_file_path
-import os, json
-# routers/llm_router.py
-from core.history_utils import async_save_message, get_recent_history
+
+from utils.path_utils import _n, get_doc_type_collection_key
+from utils.path_utils import get_document_file_path
 
 logger = logging.getLogger(__name__)
 llm_router = APIRouter(prefix="/api", tags=["LLM"])
@@ -60,8 +62,9 @@ class QueryResponse(BaseModel):
     conversation_id: str
     result: Optional[Dict[str, Any]] = None
 
+
 # =====================================================================
-# Helpers (Revised for Type Safety)
+# Helpers
 # =====================================================================
 async def _get_context_chunks(
     question: str,
@@ -71,144 +74,208 @@ async def _get_context_chunks(
     subject: Optional[str],
     vsm,
     user: UserMe,
-    rubric_vectorstore_name: Optional[str] = None,
 ):
-    tasks = []
-    for dt in doc_types:
-        tasks.append(
-            asyncio.to_thread(
-                retrieve_context_with_rubric,
-                vectorstore_manager=vsm,
-                query=question,
-                doc_type=dt,
-                enabler=enabler,
-                stable_doc_ids=stable_doc_ids,
-                tenant=user.tenant,
-                year=user.year,
-                subject=subject,
-                rubric_vectorstore_name=rubric_vectorstore_name,
-                top_k=QUERY_FINAL_K,
-            )
+    tasks = [
+        asyncio.to_thread(
+            retrieve_context_for_endpoint,
+            vectorstore_manager=vsm,
+            query=question,
+            doc_type=dt,
+            enabler=enabler,
+            stable_doc_ids=stable_doc_ids,
+            tenant=user.tenant,
+            year=user.year,
+            subject=subject,
         )
-    
+        for dt in doc_types
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    all_retrieved: List[Union[LcDocument, dict]] = []
-    
+
+    chunks: List[LcDocument] = []
     for res in results:
-        if isinstance(res, list):
-            all_retrieved.extend(res)
-        elif isinstance(res, Exception):
-            logger.error(f"❌ Retrieval Task Failed: {res}")
+        if isinstance(res, dict):
+            for ev in res.get("top_evidences", []):
+                chunks.append(
+                    LcDocument(
+                        page_content=ev["text"],
+                        metadata={
+                            "score": ev.get("score", 0),
+                            "doc_id": ev.get("doc_id"),
+                            "source": ev.get("source"),
+                            "chunk_uuid": ev.get("chunk_uuid"),
+                            "pdca_tag": ev.get("pdca_tag", "Other"),
+                        },
+                    )
+                )
+    chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
+    return chunks[:QUERY_FINAL_K]
 
-    def extract_score(item):
-        if isinstance(item, dict):
-            return float(item.get("rerank_score") or item.get("score") or 0.1)
-        return float(item.metadata.get("_rerank_score_force") or item.metadata.get("score") or 0.1)
 
-    all_retrieved.sort(key=extract_score, reverse=True)
-    return all_retrieved[:QUERY_FINAL_K]
+def _map_sources(chunks: List[LcDocument]) -> List[QuerySource]:
+    return [
+        QuerySource(
+            source_id=str(c.metadata.get("doc_id", "unknown")),
+            file_name=c.metadata.get("source", "Unknown"),
+            chunk_text=c.page_content[:500],
+            chunk_id=c.metadata.get("chunk_uuid"),
+            score=float(c.metadata.get("score", 0)),
+        )
+        for c in chunks
+    ]
 
 
-def _map_sources(chunks: List[Union[LcDocument, dict]]) -> List[QuerySource]:
-    sources = []
-    for c in chunks:
-        if isinstance(c, dict):
-            sources.append(QuerySource(
-                source_id=str(c.get("doc_id", "unknown")),
-                file_name=c.get("source", "Unknown"),
-                chunk_text=c.get("text", "")[:500],
-                chunk_id=c.get("chunk_uuid"),
-                score=float(c.get("rerank_score") or 0.0),
-            ))
-        else:
-            m = c.metadata or {}
-            sources.append(QuerySource(
-                source_id=str(m.get("doc_id", m.get("stable_doc_uuid", "unknown"))),
-                file_name=m.get("source", "Unknown"),
-                chunk_text=c.page_content[:500],
-                chunk_id=m.get("chunk_uuid"),
-                score=float(m.get("_rerank_score_force") or m.get("score") or 0.0),
-            ))
-    return sources
+def load_all_chunks_by_doc_ids(
+    vectorstore_manager,
+    collection_name: str,
+    stable_doc_ids: Union[Set[str], List[str]]
+) -> List[LcDocument]:
+    chroma = vectorstore_manager._load_chroma_instance(collection_name)
+    if not chroma:
+        logger.warning(f"Chroma collection not found: {collection_name}")
+        return []
+    where_filter = _create_where_filter(stable_doc_ids=set(stable_doc_ids))
+    docs = chroma.similarity_search(query="*", k=9999, filter=where_filter)
+    return [d for d in docs if getattr(d, "page_content", "").strip()]
 
-# เพิ่มฟังก์ชันเหล่านี้ลงใน routers/llm_router.py
-
-def ensure_deterministic_id(doc_id: str) -> str:
-    if not doc_id: return doc_id
-    try:
-        import uuid
-        uuid.UUID(doc_id)
-        return str(doc_id)
-    except ValueError:
-        import uuid
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, doc_id))
-
-def _parse_doc_ids(doc_ids: Any) -> List[str]:
-    """
-    ฟังก์ชันสำหรับแปลงข้อมูล doc_ids ที่ส่งมาจาก Frontend (ซึ่งอาจเป็น String หรือ List)
-    ให้กลายเป็น List[str] ที่สะอาดพร้อมใช้งาน
-    """
-    import re
-    if not doc_ids: return []
-    if isinstance(doc_ids, str):
-        # ล้างเครื่องหมาย [], '', "" และช่องว่าง แล้วแยกด้วย comma
-        clean = re.sub(r"[\[\]'\" ]", "", doc_ids)
-        return [d for d in clean.split(",") if d]
-    if isinstance(doc_ids, list):
-        return [str(d) for d in doc_ids if d]
-    return []
 
 # =====================================================================
-# 1. /query — General RAG QA (Updated to use retrieve_context_for_endpoint)
+# 1. /query — Smart General RAG with Intent Detection & Auto-Routing
 # =====================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
     question: str = Form(...),
     doc_types: Optional[List[str]] = Form(None),
-    doc_ids: Optional[Any] = Form(None), # รับเป็น Any เพื่อใช้ _parse_doc_ids
+    doc_ids: Optional[List[str]] = Form(None),
     enabler: Optional[str] = Form(None),
     subject: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
-    # 1. เตรียมข้อมูลพื้นฐาน
-    actual_doc_ids = _parse_doc_ids(doc_ids)
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
-    history = await get_recent_history(current_user.id, conv_id, limit=4)
-    
-    # 2. ตรวจสอบ Intent (ใช้ logic เดิมของคุณหรือ detect_intent)
-    # ในที่นี้ใช้ logic keywords ตามที่คุณเขียนมา
-    q_lower = question.lower()
-    analysis_keywords = ["วิเคราะห์", "pdca", "จุดแข็ง", "ช่องว่าง", "ผ่าน level", "ประเมินหลักฐาน"]
-    
-    if any(kw in q_lower for kw in analysis_keywords) and actual_doc_ids:
-        return await analysis_llm(question, actual_doc_ids, doc_types, enabler, subject, conv_id, current_user)
 
-    # 3. เรียกใช้ retrieve_context_for_endpoint (หัวใจสำคัญที่เปลี่ยน)
-    vsm = get_vectorstore_manager(tenant=current_user.tenant)
+    # ดึงประวัติการสนทนาเพื่อใช้ใน intent detection
+    history = await get_recent_history(current_user.id, conv_id, limit=6)
+
+    # วิเคราะห์ intent
+    intent = detect_intent(question, user_context=history)
+
+    # === Greeting Intent (ตรวจก่อนอย่างอื่น เพราะเป็นคำทักทายธรรมดา) ===
+    if intent.get("is_greeting"):
+        answer = (
+            "สวัสดีครับ! 😊\n"
+            "ผมคือ Digital Knowledge Assistant ของ PEA\n"
+            "พร้อมช่วยตอบคำถามเกี่ยวกับเอกสาร นโยบาย การจัดการความรู้ (KM)\n"
+            "หรือวิเคราะห์เกณฑ์ SE-AM ให้ครับ\n\n"
+            "มีอะไรให้ช่วยวันนี้บ้างครับ?"
+        )
+        await async_save_message(current_user.id, conv_id, "user", question)
+        await async_save_message(current_user.id, conv_id, "ai", answer)
+        return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
     
-    # ดึงข้อมูลเพียงครั้งเดียวด้วย Endpoint Logic
-    retrieval_result = await asyncio.to_thread(
-        retrieve_context_for_endpoint,
-        vectorstore_manager=vsm,
-        query=question,
-        tenant=current_user.tenant,
-        stable_doc_ids=set(actual_doc_ids) if actual_doc_ids else None,
-        doc_type=doc_types[0] if doc_types else EVIDENCE_DOC_TYPES,
-        enabler=enabler or DEFAULT_ENABLER,
+    # Auto-route ตาม intent
+    if intent.get("is_comparison"):
+        return await compare_llm(
+            question=question,
+            doc_ids=doc_ids or [],
+            doc_types=doc_types,
+            enabler=enabler,
+            current_user=current_user
+        )
+
+    if intent.get("is_analysis") or intent.get("is_criteria_query"):
+        if doc_ids:
+            return await analysis_llm(
+                question=question,
+                doc_ids=doc_ids,
+                doc_types=doc_types,
+                enabler=enabler,
+                subject=subject,
+                conversation_id=conv_id,
+                current_user=current_user
+            )
+        else:
+            answer = (
+                "🔍 คำถามของคุณเกี่ยวกับการวิเคราะห์หลักฐานตามเกณฑ์ SE-AM\n\n"
+                "เพื่อผลลัพธ์ที่แม่นยำที่สุด กรุณาเลือกเอกสารที่ต้องการวิเคราะห์ก่อน\n"
+                "แล้วใช้คำสั่ง **วิเคราะห์** หรือกดปุ่ม 'วิเคราะห์หลักฐาน'\n\n"
+                "ระบบจะบอกได้ชัดเจนว่า:\n"
+                "- ผ่าน Level ไหนบ้าง\n"
+                "- จุดแข็งและช่องว่าง\n"
+                "- ข้อเสนอแนะเพื่อยกระดับ"
+            )
+            await async_save_message(current_user.id, conv_id, "user", question)
+            await async_save_message(current_user.id, conv_id, "ai", answer)
+            return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
+
+    if intent.get("is_summary"):
+        used_doc_types = doc_types or [EVIDENCE_DOC_TYPES]
+        used_enabler = enabler or DEFAULT_ENABLER
+
+        vsm = get_vectorstore_manager(tenant=current_user.tenant)
+        stable_doc_ids = set(doc_ids) if doc_ids else None
+
+        all_chunks = await _get_context_chunks(
+            question=question,
+            doc_types=used_doc_types,
+            stable_doc_ids=stable_doc_ids,
+            enabler=used_enabler,
+            subject=subject,
+            vsm=vsm,
+            user=current_user,
+        )
+
+        if not all_chunks:
+            raise HTTPException(400, "ไม่พบข้อมูลสำหรับสรุป")
+
+        context_text = "\n\n".join(f"[{c.metadata.get('source')}]\n{c.page_content}" for c in all_chunks)
+
+        # แก้ตรงนี้: ใช้ template.format()
+        prompt_text = SUMMARY_PROMPT_TEMPLATE.format(context=context_text)
+
+        messages = [
+            SystemMessage(content=(
+                "คุณคือที่ปรึกษาอาวุโสด้านการจัดการความรู้ของการไฟฟ้าส่วนภูมิภาค\n"
+                "ตอบเป็นภาษาไทยเท่านั้น ห้ามใช้ภาษาอังกฤษแม้แต่คำเดียว\n"
+                "ยกเว้นชื่อเอกสารหรือคำย่อที่ปรากฏในเอกสารจริง เช่น KM, KMS, PEA\n"
+                "ห้ามใช้คำว่า Executive Summary ให้ใช้ 'สรุปสาระสำคัญสำหรับผู้บริหาร' แทน"
+            )),
+            HumanMessage(content=prompt_text),
+        ]
+
+        raw = await asyncio.to_thread(llm.invoke, messages)
+        answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
+
+        await async_save_message(current_user.id, conv_id, "user", question)
+        await async_save_message(current_user.id, conv_id, "ai", answer)
+
+        return QueryResponse(answer=answer.strip(), sources=_map_sources(all_chunks), conversation_id=conv_id)
+    
+    # === General QA (fallback) ===
+    used_doc_types = doc_types or [EVIDENCE_DOC_TYPES]
+    is_evidence = any(_n(dt) == _n(EVIDENCE_DOC_TYPES) for dt in used_doc_types)
+    used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
+
+    if is_evidence and not used_enabler:
+        raise HTTPException(status_code=400, detail="สำหรับเอกสาร evidence ต้องระบุ enabler (เช่น KM, IM)")
+
+    vsm = get_vectorstore_manager(tenant=current_user.tenant)
+    stable_doc_ids = set(doc_ids) if doc_ids else None
+
+    all_chunks = await _get_context_chunks(
+        question=question,
+        doc_types=used_doc_types,
+        stable_doc_ids=stable_doc_ids,
+        enabler=used_enabler,
         subject=subject,
-        k_to_retrieve=25,
-        k_to_rerank=QUERY_FINAL_K # ใช้ค่าจาก global_vars
+        vsm=vsm,
+        user=current_user,
     )
 
-    context_text = retrieval_result.get("aggregated_context", "ไม่พบข้อมูลที่เกี่ยวข้อง")
-    top_evidences = retrieval_result.get("top_evidences", [])
+    if not all_chunks and doc_ids:
+        raise HTTPException(status_code=400, detail="ไม่พบข้อมูลในเอกสารที่เลือก")
 
-    if not top_evidences:
-        raise HTTPException(status_code=400, detail="ไม่พบข้อมูลที่เกี่ยวข้องในเอกสารที่เลือก")
-
-    # 4. เตรียม Prompt และเรียก LLM
-    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
+    context_text = "\n\n".join(f"[{c.metadata.get('source')}]\n{c.page_content}" for c in all_chunks)
     prompt_text = QA_PROMPT_TEMPLATE.format(context=context_text, question=question)
 
     messages = [
@@ -219,26 +286,11 @@ async def query_llm(
     raw = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # 5. บันทึกประวัติและส่งคำตอบ
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    # แปลงรูปแบบ sources ให้เข้ากับ QuerySource model
-    sources = [
-        QuerySource(
-            source_id=str(e["doc_id"]),
-            file_name=e["source"],
-            chunk_text=e["text"][:500],
-            chunk_id=e["chunk_uuid"],
-            score=float(e["score"])
-        ) for e in top_evidences
-    ]
+    return QueryResponse(answer=answer.strip(), sources=_map_sources(all_chunks), conversation_id=conv_id)
 
-    return QueryResponse(
-        answer=answer.strip(), 
-        sources=sources, 
-        conversation_id=conv_id
-    )
 
 # =====================================================================
 # 2. /compare — Document Comparison
@@ -255,43 +307,34 @@ async def compare_llm(
         raise HTTPException(400, "ต้องเลือกอย่างน้อย 2 เอกสารเพื่อเปรียบเทียบ")
 
     used_doc_types = doc_types or [EVIDENCE_DOC_TYPES]
-    used_enabler = enabler or DEFAULT_ENABLER
-    conv_id = str(uuid.uuid4())
+    is_evidence = any(_n(dt) == _n(EVIDENCE_DOC_TYPES) for dt in used_doc_types)
+    used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
 
+    if is_evidence and not used_enabler:
+        raise HTTPException(400, "สำหรับ compare เอกสาร evidence ต้องระบุ enabler")
+
+    collection_name = get_doc_type_collection_key(used_doc_types[0], used_enabler)
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
 
-    # Retrieval for all selected IDs
-    all_chunks = await _get_context_chunks(
-        question=question,
-        doc_types=used_doc_types,
-        stable_doc_ids=set(doc_ids),
-        enabler=used_enabler,
-        subject=None,
-        vsm=vsm,
-        user=current_user,
-    )
+    all_chunks = load_all_chunks_by_doc_ids(vsm, collection_name, set(doc_ids))
+    if not all_chunks:
+        raise HTTPException(400, "ไม่พบข้อมูลในเอกสารที่เลือก")
 
     doc_groups = defaultdict(list)
-    for c in all_chunks:
-        if isinstance(c, dict):
-            did = str(c.get("doc_id"))
-            txt = c.get("text", "")
-            src = c.get("source", "Unknown")
-        else:
-            did = str(c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id"))
-            txt = c.page_content
-            src = c.metadata.get("source", "Unknown")
-        doc_groups[did].append({"text": txt, "source": src})
+    for d in all_chunks:
+        doc_key = str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id"))
+        doc_groups[doc_key].append(d)
 
     doc_blocks = []
-    for idx, did in enumerate(doc_ids, start=1):
-        items = doc_groups.get(str(did), [])
-        if not items:
+    for idx, doc_id in enumerate(doc_ids, start=1):
+        chunks = doc_groups.get(str(doc_id), [])
+        if not chunks:
             block = f"### เอกสารที่ {idx}\n(ไม่พบข้อมูลในเอกสารนี้)"
         else:
-            body = "\n".join(f"- {i['text']}" for i in items[:10])
-            block = f"### เอกสารที่ {idx}: {items[0]['source']}\n{body}"
+            fname = chunks[0].metadata.get("source", f"ID:{doc_id}")
+            body = "\n".join(f"- {c.page_content}" for c in chunks)
+            block = f"### เอกสารที่ {idx}: {fname}\n{body}"
         doc_blocks.append(block)
 
     prompt_text = COMPARE_PROMPT_TEMPLATE.format(documents_content="\n\n".join(doc_blocks), query=question)
@@ -303,6 +346,7 @@ async def compare_llm(
     raw = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
+    conv_id = str(uuid.uuid4())
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
@@ -310,7 +354,7 @@ async def compare_llm(
 
 
 # =====================================================================
-# 3. /analysis — SE-AM Analysis with JSON Rubrics
+# 3. /analysis — PDCA-focused SE-AM analysis
 # =====================================================================
 @llm_router.post("/analysis", response_model=QueryResponse)
 async def analysis_llm(
@@ -323,26 +367,19 @@ async def analysis_llm(
     current_user: UserMe = Depends(get_current_user),
 ):
     conv_id = conversation_id or str(uuid.uuid4())
+
     used_doc_types = doc_types or [EVIDENCE_DOC_TYPES]
-    used_enabler = enabler or DEFAULT_ENABLER
-    stable_doc_ids = set(doc_ids) if doc_ids else None
+    is_evidence = any(_n(dt) == _n(EVIDENCE_DOC_TYPES) for dt in used_doc_types)
+    used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
+
+    if is_evidence and not used_enabler:
+        raise HTTPException(400, "สำหรับ analysis เอกสาร evidence ต้องระบุ enabler")
 
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
 
-    # 1. Load JSON Rubrics (หัวใจของการฟันธง Level)
-    rubric_json_str = "{}"
-    try:
-        rubric_path = get_rubric_file_path(current_user.tenant, used_enabler)
-        if os.path.exists(rubric_path):
-            with open(rubric_path, 'r', encoding='utf-8') as f:
-                rubric_data = json.load(f)
-                rubric_json_str = json.dumps(rubric_data, ensure_ascii=False)
-                logger.info(f"✅ Loaded Rubric JSON for {used_enabler}")
-    except Exception as e:
-        logger.error(f"❌ Failed to load Rubric JSON: {e}")
+    stable_doc_ids = set(doc_ids) if doc_ids else None
 
-    # 2. Retrieval Phase
     all_chunks = await _get_context_chunks(
         question=question,
         doc_types=used_doc_types,
@@ -351,53 +388,44 @@ async def analysis_llm(
         subject=subject,
         vsm=vsm,
         user=current_user,
-        rubric_vectorstore_name="seam", # ใช้คอลเลกชันกลางช่วยค้นหาเกณฑ์
     )
 
     if not all_chunks:
-        raise HTTPException(400, "ไม่พบข้อมูลสำหรับวิเคราะห์")
+        raise HTTPException(400, "ไม่พบข้อมูลหลักฐานสำหรับวิเคราะห์")
 
-    # 3. Normalize Data for Engine
-    evidences = []
-    for c in all_chunks:
-        if isinstance(c, dict):
-            evidences.append(c)
-        else:
-            m = c.metadata or {}
-            evidences.append({
-                "text": c.page_content,
-                "source": m.get("source") or "Unknown",
-                "doc_id": m.get("doc_id") or m.get("stable_doc_uuid"),
-                "pdca_tag": m.get("pdca_tag", "Other"),
-            })
+    evidences = [
+        {
+            "text": c.page_content,
+            "source": c.metadata.get("source"),
+            "doc_id": c.metadata.get("doc_id"),
+            "chunk_uuid": c.metadata.get("chunk_uuid"),
+            "rerank_score": c.metadata.get("score", 0.0),
+            "pdca_tag": c.metadata.get("pdca_tag", "Other")
+        }
+        for c in all_chunks
+    ]
 
-    # 4. PDCA Engine Grouping
-    class ConfigObj:
-        def __init__(self, **entries): self.__dict__.update(entries)
-        def __getattr__(self, name): return None
-
-    engine_config = ConfigObj(
-        tenant=current_user.tenant, year=current_user.year,
-        enabler=used_enabler, target_level=5
-    )
-    engine = SEAMPDCAEngine(config=engine_config, llm_instance=llm, vectorstore_manager=vsm)
-
-    p_b, d_b, c_b, a_b, o_b = engine._get_pdca_blocks_from_evidences(
-        evidences=evidences, baseline_evidences={}, level=5,
-        sub_id=subject or "all", contextual_rules_map=engine.contextual_rules_map
+    engine = SEAMPDCAEngine(
+        config=dict(
+            tenant=current_user.tenant,
+            year=current_user.year,
+            enabler=used_enabler,
+            target_level=5,
+        ),
+        llm_instance=llm,
+        vectorstore_manager=vsm
     )
 
-    # 5. Final LLM Prompting with Rubric JSON
-    pdca_context = "\n\n".join(filter(None, [p_b, d_b, c_b, a_b, o_b]))
-    final_prompt = ANALYSIS_PROMPT.format(
-        rubric_json=rubric_json_str, 
-        documents_content=pdca_context, 
-        question=question
+    plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = engine._get_pdca_blocks_from_evidences(
+        evidences=evidences, baseline_evidences={}, level=5, sub_id=subject or "all",
+        contextual_rules_map=engine.contextual_rules_map
     )
+    pdca_context = "\n\n".join(filter(None, [plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks]))
+    prompt_text = ANALYSIS_PROMPT_TEMPLATE.format(documents_content=pdca_context, question=question)
 
     messages = [
-        SystemMessage(content=SYSTEM_ANALYSIS_INSTRUCTION),
-        HumanMessage(content=final_prompt),
+        SystemMessage(content="ALWAYS ANSWER IN THAI.\n" + SYSTEM_ANALYSIS_INSTRUCTION),
+        HumanMessage(content=prompt_text),
     ]
 
     raw = await asyncio.to_thread(llm.invoke, messages)
@@ -406,4 +434,15 @@ async def analysis_llm(
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    return QueryResponse(answer=answer.strip(), sources=_map_sources(all_chunks[:10]), conversation_id=conv_id)
+    sources = [
+        QuerySource(
+            source_id=str(c.get("doc_id", "unknown")),
+            file_name=c.get("source", "Unknown"),
+            chunk_text=c.get("text", "")[:500],
+            chunk_id=c.get("chunk_uuid"),
+            score=float(c.get("rerank_score", 0)),
+        )
+        for c in evidences[:10]
+    ]
+
+    return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)

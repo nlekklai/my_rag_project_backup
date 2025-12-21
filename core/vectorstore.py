@@ -766,125 +766,92 @@ class VectorStoreManager:
 
     def get_documents_by_id(self, stable_doc_ids: Union[str, List[str]], doc_type: str = "default_collection", enabler: Optional[str] = None) -> List[LcDocument]:
         """
-        Retrieve documents from Chroma collection by stable_doc_ids (64-char hash).
+        เวอร์ชันปรับปรุง: เน้นความเร็วในการค้นหาและความถูกต้องของ Metadata
+        รองรับทั้งการหาผ่าน Primary Keys (Chunk IDs) และ Metadata (Stable IDs)
         """
-        import chromadb 
         from langchain_core.documents import Document as LcDocument
-        from typing import Set, Dict, Any 
-
+        
+        # 1. ปรับเตรียม Input
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
-            
-        if not stable_doc_ids:
+        
+        stable_doc_ids_cleaned = list(set([uid.strip() for uid in stable_doc_ids if uid.strip()]))
+        if not stable_doc_ids_cleaned:
             return []
 
-        # 1. กำหนดชื่อ Collection และโหลด Instance
+        # 2. เตรียม Collection และตรวจสอบ Client (Worker Safety)
         collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
+        self._ensure_chroma_client_is_valid() # 🛡️ มั่นใจว่า Client ไม่หลุดใน Worker
         chroma_instance = self._load_chroma_instance(collection_name)
         
         if not chroma_instance:
-            logger.warning(f"VSM: Cannot load collection '{collection_name}' for document retrieval.")
+            logger.error(f"❌ VSM: Collection '{collection_name}' load failed.")
             return []
 
-        # 2. แปลง Stable Doc IDs เป็น Chunk UUIDs (เพื่อใช้ในการค้นหา Primary Key)
-        chunk_uuids_for_search: List[str] = []
-        
-        for stable_id in stable_doc_ids:
-            stable_id_clean = stable_id.strip() 
-            map_entry = self.doc_id_map.get(stable_id_clean)
-            if map_entry and map_entry.get("chunk_uuids"):
-                chunk_uuids_for_search.extend(map_entry["chunk_uuids"])
-            else:
-                chunk_uuids_for_search.append(stable_id_clean) 
-                
-        # 3. จัดการ ID ซ้ำซ้อนและเตรียม Query สำหรับ Primary Key Search (Chunk UUIDs)
-        search_ids_raw = list(set([
-            str(i).strip()
-            for i in chunk_uuids_for_search if str(i).strip()
-        ]))
-        
-        # เพิ่ม Flexible UUID Search: ค้นหาทั้ง ID ที่มีขีดกลางและไม่มีขีดกลาง
-        final_chunk_uuids_to_try: Set[str] = set()
-        for chunk_id in search_ids_raw:
-            final_chunk_uuids_to_try.add(chunk_id) 
-            if "-" in chunk_id:
-                final_chunk_uuids_to_try.add(chunk_id.replace("-", "")) 
-                
-        final_chunk_uuids_list = list(final_chunk_uuids_to_try)
-
-        if not final_chunk_uuids_list:
-              logger.warning(f"Hydration failed: No valid Chunk UUIDs derived from {len(stable_doc_ids)} Stable IDs.")
-              return []
-
+        collection = chroma_instance._collection
+        documents: List[LcDocument] = []
 
         try:
-            collection = chroma_instance._collection
-            documents: List[LcDocument] = []
-            result: Dict[str, Any] = {}
+            # 3. สร้างรายการ Chunk IDs ที่เป็นไปได้จาก Doc ID Map
+            search_ids: Set[str] = set()
+            for s_id in stable_doc_ids_cleaned:
+                map_entry = self.doc_id_map.get(s_id)
+                if map_entry and map_entry.get("chunk_uuids"):
+                    search_ids.update(map_entry["chunk_uuids"])
+                # เผื่อกรณี s_id ที่ส่งมาเป็น Chunk ID โดยตรง
+                search_ids.add(s_id)
             
-            # --- Attempt 1: Primary Key Search (Chunk UUIDs) ---
-            logger.info(f"Attempt 1/2: Primary Key Search ({len(final_chunk_uuids_list)} Chunk UUIDs)")
-            result = collection.get(
-                ids=final_chunk_uuids_list,
-                include=["documents", "metadatas"] # <-- 🎯 FIX 21.0: ลบ "ids"
-            )
-
-            docs_result = result.get("documents", [])
+            # ทำความสะอาด ID (รองรับทั้งแบบมี dash และไม่มี dash)
+            final_ids = list(search_ids)
+            for cid in list(search_ids):
+                if "-" in cid: final_ids.append(cid.replace("-", ""))
             
-            # 🎯 FINAL FIX 19.0: ถ้าได้ 0 chunks ให้ลอง Fallback Search ด้วย $or
-            if not docs_result:
-                
-                # --- Attempt 2: Fallback Search (Metadata: stable_doc_uuid OR doc_id) ---
-                logger.warning("Attempt 1 returned 0 chunks. Falling back to Robust Metadata Search (stable_doc_uuid / doc_id).")
-                
-                # ใช้ Stable Doc IDs ที่ Cleaned แล้ว เป็น Query สำหรับ Metadata Search
-                stable_doc_ids_cleaned = list(set([uid.strip() for uid in stable_doc_ids if uid.strip()]))
+            # --- Attempt 1: ค้นหาด้วย Primary Key (IDs) ---
+            logger.info(f"🔄 Attempt 1: Fetching {len(final_ids)} IDs from {collection_name}")
+            result = collection.get(ids=final_ids, include=["documents", "metadatas"])
 
-                if stable_doc_ids_cleaned:
-                    # ค้นหาด้วย $or: stable_doc_uuid หรือ doc_id
-                    result = collection.get(
-                        where={"$or": [
-                            {"stable_doc_uuid": {"$in": stable_doc_ids_cleaned}},
-                            {"doc_id": {"$in": stable_doc_ids_cleaned}}
-                        ]},
-                        include=["documents", "metadatas"] # <-- 🎯 FIX 21.0: ลบ "ids"
-                    )
-                    docs_result = result.get("documents", [])
-                else:
-                    logger.warning("Fallback Search failed: No valid Stable Doc IDs for metadata query.")
-            
-            # --- ประมวลผลผลลัพธ์ ---
-            docs = docs_result
-            metadatas = result.get("metadatas", [{}] * len(docs))
-            # ids ยังคงถูกคืนมาเสมอ
-            ids = result.get("ids", [""] * len(docs)) 
+            # --- Attempt 2: Fallback ด้วย Metadata Search (กรณี ID Map ไม่อัปเดต) ---
+            if not result.get("documents"):
+                logger.warning("⚠️ Primary key search empty. Falling back to Metadata filter...")
+                result = collection.get(
+                    where={"$or": [
+                        {"stable_doc_uuid": {"$in": stable_doc_ids_cleaned}},
+                        {"doc_id": {"$in": stable_doc_ids_cleaned}}
+                    ]},
+                    include=["documents", "metadatas"]
+                )
 
-            for i, text in enumerate(docs):
-                meta = metadatas[i].copy() if metadatas and metadatas[i] else {}
-                chunk_uuid = ids[i] if ids else (meta.get("chunk_uuid") or "")
-                
-                if chunk_uuid:
-                    meta["chunk_uuid"] = chunk_uuid
+            # 4. ประมวลผลและสร้าง LcDocument
+            docs_raw = result.get("documents", [])
+            metas_raw = result.get("metadatas", [])
+            ids_raw = result.get("ids", [])
 
-                # ใช้ map (uuid_to_doc_id_map) ในการหา Stable ID ที่แน่นอน
-                stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid) or meta.get("stable_doc_uuid") or meta.get("doc_id")
+            for i, text in enumerate(docs_raw):
+                meta = metas_raw[i].copy() if metas_raw and metas_raw[i] else {}
+                current_id = ids_raw[i]
                 
-                # Fallback: หากหาไม่เจอ ให้ลองหาแบบไม่มีขีดด้วย
-                if not stable_doc_id and "-" in chunk_uuid:
-                    stable_doc_id = self.uuid_to_doc_id_map.get(chunk_uuid.replace("-", ""))
+                # ฝัง ID ที่แท้จริงกลับเข้าไป
+                meta["chunk_uuid"] = current_id
                 
-                if stable_doc_id:
-                      meta["stable_doc_uuid"] = stable_doc_id
+                # พยายาม Map กลับหา Stable ID ที่ถูกต้องที่สุด
+                stable_ref = (
+                    self.uuid_to_doc_id_map.get(current_id) or 
+                    self.uuid_to_doc_id_map.get(current_id.replace("-", "")) or
+                    meta.get("stable_doc_uuid") or 
+                    meta.get("doc_id")
+                )
+                if stable_ref:
+                    meta["stable_doc_uuid"] = stable_ref
 
-                doc = LcDocument(page_content=text, metadata=meta)
-                documents.append(doc)
-                
-            logger.info(f"✅ Retrieved {len(documents)} documents for {len(stable_doc_ids)} Stable IDs from '{collection_name}' (Search Mode: {'Primary/Fallback'}).")
+                documents.append(LcDocument(page_content=text, metadata=meta))
+
+            logger.info(f"✅ Success: Retrieved {len(documents)} chunks from '{collection_name}'")
             return documents
 
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by Stable/Chunk IDs from collection '{collection_name}': {e}", exc_info=True)
+            logger.error(f"❌ Error in get_documents_by_id: {str(e)}", exc_info=True)
             return []
+
 
     def _ensure_chroma_client_is_valid(self):
         """
@@ -1013,15 +980,15 @@ class VectorStoreManager:
         query: str,
         collection_name: str,
         top_k: int = 10,
-        filter_doc_ids: Optional[Set[str]] = None
+        filter_doc_ids: Optional[Set[str]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None  # 👈 เพิ่มมาเพื่อรับ Rubric Filter
     ) -> List[LcDocument]:
         """
-        เวอร์ชันอัปเกรด: เรียกใช้ Hybrid Retriever ที่คุณเขียนไว้แล้ว
+        เวอร์ชันอัปเกรด: รองรับ Hybrid + Flexible Post-filtering
         """
-        self.logger.info(f"🔍 VSM: Retrieving context for: {query[:50]}...")
+        self.logger.info(f"🔍 VSM: Retrieving from {collection_name} | Query: {query[:50]}...")
 
-        # 1. เรียกใช้ get_retriever ที่คุณมี (ซึ่งมันจะทำ Hybrid + Rerank ให้เสร็จสรรพ)
-        # โดยกำหนด use_hybrid=True และ use_rerank ตาม global config
+        # 1. เรียกใช้ get_retriever
         retriever = self.get_retriever(
             collection_name=collection_name, 
             top_k=top_k, 
@@ -1032,85 +999,120 @@ class VectorStoreManager:
             return []
 
         # 2. ค้นหาข้อมูล
-        # ใช้ invoke (หรือ get_relevant_documents ตาม version langchain)
         docs = retriever.invoke(query)
 
-        # 3. จัดการ Filter (Manual Filter สำหรับ EnsembleRetriever)
-        # เนื่องจาก EnsembleRetriever บางครั้งจัดการ filter ในระดับลึกยาก 
-        # การกรองหลังดึงข้อมูล (Post-filtering) ด้วย stable_doc_uuid จึงชัวร์ที่สุด
+        # 3. จัดการ Filter (แบบ Flexible)
         if filter_doc_ids:
-            docs = [
-                d for d in docs 
-                if d.metadata.get("stable_doc_uuid") in filter_doc_ids or 
-                   d.metadata.get("doc_id") in filter_doc_ids
-            ]
+            # ทำความสะอาด ID ทั้งหมดให้เป็น lowercase string และลบช่องว่าง
+            clean_targets = {str(tid).lower().strip() for tid in filter_doc_ids}
+            
+            filtered_docs = []
+            for d in docs:
+                m = d.metadata or {}
+                # ดึง ID จากทุก key ที่เป็นไปได้
+                m_stable = str(m.get("stable_doc_uuid", "")).lower().strip()
+                m_doc = str(m.get("doc_id", "")).lower().strip()
+                
+                if m_stable in clean_targets or m_doc in clean_targets:
+                    filtered_docs.append(d)
+                # Fallback: เช็คชื่อไฟล์เผื่อกรณี ID หลุด
+                elif any(tid in str(m.get("source", "")).lower() for tid in clean_targets):
+                    filtered_docs.append(d)
+            
+            docs = filtered_docs
+
+        # 4. จัดการ Metadata Filter (สำหรับ Rubric/Enabler)
+        if metadata_filter:
+            for key, value in metadata_filter.items():
+                docs = [d for d in docs if d.metadata.get(key) == value]
 
         return docs[:top_k]
 
-    def create_hybrid_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K) -> EnsembleRetriever:
+
+    def create_hybrid_retriever(self, collection_name: str, top_k: int = 20) -> EnsembleRetriever:
         """
-        สร้างและ Cache Hybrid Retriever (Vector + BM25) (FIXED LOGIC)
+        สร้างและ Cache Hybrid Retriever (Vector + BM25)
+        เวอร์ชันปรับปรุง: รองรับการตัดคำภาษาไทยและป้องกัน Metadata เป็น None
         """
-        # 0. ตรวจสอบ Cache ก่อน (Performance Optimization)
+        # 1. ตรวจสอบ Cache เพื่อประหยัดทรัพยากร
         if collection_name in self._hybrid_retriever_cache:
-            self.logger.info(f"Requesting Hybrid Retriever from Manager for {collection_name} (Cached)...")
+            logger.info(f"♻️ Using cached Hybrid Retriever for: {collection_name}")
             return self._hybrid_retriever_cache[collection_name]
             
-        self.logger.info(f"Creating NEW Hybrid Retriever for {collection_name}...")
+        logger.info(f"🏗️ Creating NEW Hybrid Retriever for: {collection_name}...")
 
         try:
-            # 1. โหลด Chroma Instance (ใช้ Logic ใน _load_chroma_instance ที่ถูกต้อง)
+            # 2. โหลด Chroma Instance
             chroma_instance = self._load_chroma_instance(collection_name) 
             if not chroma_instance:
                 raise ValueError(f"Chroma instance for '{collection_name}' failed to load.")
             
-            # 2. Vector Retriever
+            # 3. สร้าง Vector Retriever (Dense)
+            # เราจะตั้งค่า k ให้สูงกว่า top_k เล็กน้อยเพื่อให้ Ensemble มีตัวเลือกในการคำนวณคะแนน
             vector_retriever = chroma_instance.as_retriever(
                 search_kwargs={"k": top_k}
             )
 
-            # 3. ดึง Documents สำหรับ BM25 Index (ใช้ Cache หรือดึงใหม่)
+            # 4. ดึง Documents ทั้งหมดมาเตรียมทำ BM25 Index (Sparse)
             if collection_name in self._bm25_docs_cache:
                 langchain_docs = self._bm25_docs_cache[collection_name]
-                self.logger.info(f"Loaded {len(langchain_docs)} documents for BM25 from cache.")
+                logger.info(f"📦 Loaded {len(langchain_docs)} docs for BM25 from cache.")
             else:
-                self.logger.info("Fetching documents from Chroma for BM25 Indexing...")
+                logger.info(f"🔍 Fetching docs from Chroma collection '{collection_name}' for BM25 indexing...")
                 
-                # 💡 ดึงเอกสารทั้งหมดจาก Chroma Instance ที่โหลดมาแล้ว
-                docs = chroma_instance._collection.get( # ใช้ _collection โดยตรงเพื่อเลี่ยงการสร้าง Client ซ้ำ
+                # ดึงข้อมูลดิบจาก Chroma (ดึงเฉพาะที่จำเป็น)
+                raw_data = chroma_instance._collection.get(
                     include=["documents", "metadatas"]
                 )
                 
-                texts = docs["documents"]
+                texts = raw_data.get("documents", [])
+                metas = raw_data.get("metadatas", [])
+                
+                # ป้องกันกรณี metas เป็น None หรือยาวไม่เท่ากับ texts
+                if not metas:
+                    metas = [{} for _ in texts]
+                
+                # แปลงเป็น LangChain Document Objects
                 langchain_docs = [
-                    Document(page_content=text, metadata=meta)
-                    for text, meta in zip(texts, docs["metadatas"])
+                    Document(page_content=text, metadata=meta if meta else {})
+                    for text, meta in zip(texts, metas)
                 ]
                 
+                # เก็บลง Cache เพื่อไม่ให้ต้องดึงใหม่บ่อยๆ
                 self._bm25_docs_cache[collection_name] = langchain_docs
-                self.logger.info(f"✅ Fetched and cached {len(langchain_docs)} documents for BM25.")
+                logger.info(f"✅ Indexed {len(langchain_docs)} documents for BM25.")
 
-            # 4. BM25 Retriever
+            # 5. สร้าง BM25 Retriever พร้อมตัวตัดคำภาษาไทย
+            if not langchain_docs:
+                logger.warning(f"⚠️ Collection '{collection_name}' is empty. Returning vector retriever only.")
+                return vector_retriever
+
             bm25_retriever = BM25Retriever.from_documents(
                 langchain_docs, 
-                tokenizer=word_tokenize # 🎯 FIX: ใช้ pythainlp.word_tokenize สำหรับภาษาไทย
+                preprocess_func=word_tokenize # 🎯 FIX: ใช้ pythainlp ตัดคำเพื่อให้ Search ภาษาไทยแม่นยำ
             )
             bm25_retriever.k = top_k
 
-            # 5. Ensemble Retriever (Hybrid)
+            # 6. รวมร่างเป็น Ensemble Retriever (Hybrid)
+            # โดยปกติ Vector 0.7 และ BM25 0.3 เป็นค่าเริ่มต้นที่ดีสำหรับงาน RAG
             ensemble_retriever = EnsembleRetriever(
                 retrievers=[vector_retriever, bm25_retriever],
-                weights=[HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT]
+                weights=[0.7, 0.3] # หรือใช้ค่าจาก global_vars
             )
             
+            # 7. เก็บเข้า Cache และส่งออก
             self._hybrid_retriever_cache[collection_name] = ensemble_retriever
-            self.logger.info(f"✅ Hybrid Retriever created successfully for {collection_name}. HYBRID mode activated.")
+            logger.info(f"🚀 Hybrid Retriever for '{collection_name}' is ready (Vector + BM25).")
             return ensemble_retriever
         
         except Exception as e:
-            self.logger.error(f"❌ Failed to create Hybrid Retriever for '{collection_name}': {e}", exc_info=True)
-            raise e # ยก Exception ออกไปเพื่อให้ Logic Fallback (ใน get_retriever) ทำงาน
-    
+            logger.error(f"❌ Failed to create Hybrid Retriever for '{collection_name}': {str(e)}", exc_info=True)
+            # กรณีพลาด ให้คืนค่าเป็น Vector Retriever ปกติเพื่อไม่ให้ระบบล่ม
+            try:
+                return chroma_instance.as_retriever(search_kwargs={"k": top_k})
+            except:
+                return None
+        
     def get_limited_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], query: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None, limit_per_doc: int = 5) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
