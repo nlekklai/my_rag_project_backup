@@ -569,7 +569,7 @@ class SEAMPDCAEngine:
         self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
 
         # =======================================================
-        # 2. Core Configuration (Fix: rubric & retry_policy)
+        # 2. Core Configuration & Safety First
         # =======================================================
         self.config = config
         self.enabler_id = config.enabler
@@ -578,9 +578,13 @@ class SEAMPDCAEngine:
         self.llm = llm_instance
         self.vectorstore_manager = vectorstore_manager
 
+        # ✅ [CRITICAL FIX] ประกาศ doc_type ทันทีตรงนี้ เพื่อให้ Worker มองเห็นแน่นอน
+        # ไม่ว่าจะรัน Parallel หรือมี document_map ส่งเข้ามาหรือไม่ก็ตาม
+        self.doc_type = doc_type or getattr(config, 'doc_type', EVIDENCE_DOC_TYPES)
+
         # --- [CRITICAL LOADING] ---
-        self.rubric = self._load_rubric()  # แก้ไข AttributeError: 'rubric'
-        self.retry_policy = RetryPolicy(   # แก้ไข AttributeError: 'retry_policy'
+        self.rubric = self._load_rubric()
+        self.retry_policy = RetryPolicy(
             max_attempts=3,
             base_delay=2.0,
             jitter=True,
@@ -588,7 +592,6 @@ class SEAMPDCAEngine:
             shorten_prompt_on_fail=True,
             exponential_backoff=True,
         )
-        # --------------------------
 
         self.is_sequential = getattr(config, 'force_sequential', True)
         self.is_parallel_all_mode = is_parallel_all_mode
@@ -607,14 +610,13 @@ class SEAMPDCAEngine:
         self.evidence_map = self._load_evidence_map()
         self.temp_map_for_save = {}
 
-       
         # =======================================================
         # 4. Document Map Loading (Dynamic Logic)
         # =======================================================
         map_to_use: Dict[str, str] = document_map or {}
 
         if not map_to_use:
-            self.doc_type = doc_type or getattr(config, 'doc_type', EVIDENCE_DOC_TYPES)
+            # ใช้ self.doc_type ที่เราประกาศไว้ชัวร์ๆ ด้านบน
             clean_dt = str(self.doc_type).strip().lower()
             
             if clean_dt == EVIDENCE_DOC_TYPES.lower():
@@ -638,15 +640,15 @@ class SEAMPDCAEngine:
         self.doc_id_to_filename_map = map_to_use
         self.document_map = map_to_use
 
-         # =======================================================
+        # =======================================================
         # 5. Lazy Initialization (VSM & LLM)
         # =======================================================
+        # ตอนนี้ _initialize_vsm_if_none จะทำงานได้ราบรื่นเพราะมี self.doc_type แล้ว
         if self.llm is None: self._initialize_llm_if_none()
         if self.vectorstore_manager is None: self._initialize_vsm_if_none()
 
         if self.vectorstore_manager and not getattr(self.vectorstore_manager, '_doc_id_mapping', None):
             self.vectorstore_manager._load_doc_id_mapping()
-
 
         # =======================================================
         # 6. Function Pointers
@@ -675,52 +677,56 @@ class SEAMPDCAEngine:
                 self.logger.error(f"FATAL: Could not initialize LLM: {e}")
                 raise
 
-
     def _initialize_vsm_if_none(self):
         """
         Initializes VectorStoreManager if self.vectorstore_manager is None.
         Handles multi-tenant/multi-year vector store loading.
         """
-        # NOTE: Assumes EVIDENCE_DOC_TYPES is imported from config.global_vars
-        if self.vectorstore_manager is None:
-            self.logger.info("Loading central evidence vectorstore(s)...")
-            try:
-                # 🎯 FIX: เปลี่ยน evidence_enabler เป็น enabler_filter ให้ถูกต้องตาม load_all_vectorstores
-                self.vectorstore_manager = load_all_vectorstores(
-                    doc_types=[self.doc_type], 
-                    enabler_filter=self.enabler_id, # <--- **แก้ไขตรงนี้!**
-                    tenant=self.config.tenant, 
-                    year=self.config.year       
-                )
+        # 1. ถ้ามีอยู่แล้วให้ return ออกไปเลย
+        if self.vectorstore_manager is not None:
+            return
+
+        # 2. Safety Net: ตรวจสอบ doc_type ก่อนเริ่มงาน
+        if not hasattr(self, 'doc_type') or self.doc_type is None:
+             self.logger.warning("doc_type was missing during VSM init, falling back to default.")
+             from config.global_vars import EVIDENCE_DOC_TYPES # Ensure import
+             self.doc_type = EVIDENCE_DOC_TYPES
+
+        self.logger.info("Loading central evidence vectorstore(s)...")
+
+        try:
+            # 3. เรียกใช้ load_all_vectorstores (แก้ไข enabler_filter แล้ว)
+            self.vectorstore_manager = load_all_vectorstores(
+                doc_types=[self.doc_type], 
+                enabler_filter=self.enabler_id, 
+                tenant=self.config.tenant, 
+                year=self.config.year       
+            )
+            
+            # 4. บังคับโหลด Doc ID Map ซ้ำเพื่อป้องกัน Map หายใน Worker (Critical for Parallel Mode)
+            if self.vectorstore_manager:
+                self.vectorstore_manager._load_doc_id_mapping() 
+
+            # 5. ตรวจสอบความสำเร็จของการโหลด Collections
+            len_retrievers = 0
+            if (self.vectorstore_manager and 
+                hasattr(self.vectorstore_manager, '_multi_doc_retriever') and 
+                self.vectorstore_manager._multi_doc_retriever):
                 
-                # บังคับโหลด Doc ID Map ซ้ำเพื่อป้องกัน Map หายใน Worker (Safety Net)
-                if self.vectorstore_manager:
-                    # NOTE: การโหลดครั้งแรกจะทำภายใน VSM.__init__ 
-                    # แต่การเรียกซ้ำนี้ช่วยรับประกันว่า Map มีข้อมูล
-                    self.vectorstore_manager._load_doc_id_mapping() 
+                # เข้าถึง _all_retrievers ผ่าน MultiDocRetriever
+                len_retrievers = len(self.vectorstore_manager._multi_doc_retriever._all_retrievers)
+                self.logger.info("✅ MultiDocRetriever loaded with %s collections.", len_retrievers) 
+            else:
+                self.logger.warning("VectorStoreManager loaded but MultiDocRetriever is missing.")
+            
+            if len_retrievers == 0:
+                self.logger.error("FATAL: 0 vector store collections loaded. Check data path: %s", 
+                                  f"data_store/{self.config.tenant}/vectorstore/{self.config.year}")
+                raise ValueError("0 vector store collections loaded. Cannot proceed.")
 
-                # โค้ด Log เพื่อยืนยัน
-                len_retrievers = 0
-                if self.vectorstore_manager and hasattr(self.vectorstore_manager, '_multi_doc_retriever') and self.vectorstore_manager._multi_doc_retriever:
-                     # 💡 การเข้าถึง _all_retrievers ต้องทำผ่าน self.vectorstore_manager._multi_doc_retriever._all_retrievers
-                     len_retrievers = len(
-                        self.vectorstore_manager._multi_doc_retriever._all_retrievers
-                    )
-                     self.logger.info("✅ MultiDocRetriever loaded with %s collections and cached in VSM.", 
-                                 len_retrievers) 
-                else:
-                    self.logger.warning("VectorStoreManager loaded but MultiDocRetriever is None or missing expected attributes.")
-                
-                if len_retrievers == 0:
-                    self.logger.error("FATAL: VectorStoreManager initialized but loaded 0 vector store collections. Check data path.")
-                    raise ValueError("0 vector store collections loaded. Cannot proceed with assessment.")
-
-
-            except Exception as e:
-                # 📌 Log เดิม: ERROR - FATAL: Could not initialize VectorStoreManager: load_all_vectorstores() got an unexpected keyword argument 'evidence_enabler'
-                # 📌 หลังจากแก้ไขแล้ว: จะเจอข้อความ Error ที่แท้จริง (เช่น No collections found)
-                self.logger.error(f"FATAL: Could not initialize VectorStoreManager: {e}")
-                raise # Re-raise the exception to หยุดโปรแกรม
+        except Exception as e:
+            self.logger.error(f"FATAL: Could not initialize VectorStoreManager: {e}")
+            raise
 
     def _get_applicable_contextual_rule(self, sub_id: str, level: int) -> Optional[Dict[str, Any]]:
         """
