@@ -20,15 +20,29 @@ if not logger.handlers:
 def _safe_int_parse(value: Any, default: int = 0) -> int:
     if value is None:
         return default
+    
+    # ถ้าเป็นตัวเลขอยู่แล้ว แปลงตรงๆ
     if isinstance(value, (int, float)):
-        return int(value)
+        return int(round(value))
+
     if isinstance(value, str):
         value = value.strip()
         if not value or value.lower() in {"null", "none", "n/a", "-", "ไม่พบ", "ไม่มี"}:
             return default
-        match = re.search(r'\d+', value)
-        if match:
-            return int(match.group(0))
+        
+        # ลองแปลงเป็น float ก่อน (รองรับ "8", "8.0", " 8.5 ")
+        try:
+            return int(round(float(value)))
+        except ValueError:
+            # ถ้าแปลงตรงๆ ไม่ได้ ให้ใช้ Regex ช่วย
+            # ปรับ regex ให้ดึงเลขที่มีทศนิยมได้ (เช่น 8.5)
+            match = re.search(r'[-+]?\d*\.\d+|\d+', value)
+            if match:
+                try:
+                    return int(round(float(match.group(0))))
+                except ValueError:
+                    return default
+    
     return default
 
 
@@ -38,20 +52,46 @@ def _safe_int_parse(value: Any, default: int = 0) -> int:
 def _extract_first_json_object(text: str) -> Optional[str]:
     if not text:
         return None
-    fence_idx = text.find("```")
-    if fence_idx != -1:
-        text = text[:fence_idx]
+
+    # 1. ทำความสะอาด Control Characters (ยกเว้น \n \r \t)
+    # ป้องกัน Error: Invalid control character ที่คุณเจอใน Log
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+
+    # 2. ค้นหาจุดเริ่มต้นของ JSON ก้อนแรก
     start = text.find("{")
     if start == -1:
         return None
+
+    # 3. ใช้เทคนิค Balanced Braces แบบระวัง String
     depth = 0
+    in_string = False
+    escape_char = False
+
     for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
+        char = text[i]
+
+        # จัดการเรื่อง Escape characters (เช่น \")
+        if escape_char:
+            escape_char = False
+            continue
+        if char == "\\":
+            escape_char = True
+            continue
+
+        # จัดการเรื่องเครื่องหมายคำพูด (เพื่อไม่ให้นับ { หรือ } ที่อยู่ใน string)
+        if char == '"':
+            in_string = not in_string
+            continue
+
+        if not in_string:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    # เจอจุดปิดที่แท้จริงแล้ว
+                    return text[start:i + 1]
+
     return None
 
 

@@ -5,29 +5,7 @@
 
 import logging
 from langchain_core.prompts import PromptTemplate
-from typing import Final, List, Dict, Any
-import json
-import re
-import time
-# สมมติว่ามี ActionPlanActions, ActionPlanResult และ logger ที่ถูก define ใน project ของคุณ
-# from your_models import ActionPlanActions, ActionPlanResult
-# from your_utils import logger
-
-logger = logging.getLogger(__name__)
-
-# [NOTE: Since I cannot access your ActionPlanActions model, 
-# I am providing the logic to correctly generate the schema string and the revised prompts.]
-
-# =================================================================
-# 0. PDCA PHASE MAP
-# =================================================================
-PDCA_PHASE_MAP: Final[dict[int, str]] = {
-    1: "Plan (P)",
-    2: "Plan (P) + Do (D)",
-    3: "Plan (P) + Do (D) + Check (C)",
-    4: "Plan (P) + Do (D) + Check (C) + Act (A)",
-    5: "PDCA ครบวงจร (P + D + C + A) + Sustainability & Innovation"
-}
+from typing import Final
 
 # =================================================================
 # 1. GLOBAL HARD RULES
