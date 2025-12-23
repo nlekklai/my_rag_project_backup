@@ -1,119 +1,102 @@
-# models/llm.py
+# -*- coding: utf-8 -*-
+# models/llm.py - Production Version (Ollama Unified Connector)
+# รองรับทั้ง Local (Mac 8B) และ Cloud (NVIDIA 70B) ผ่าน Ollama
+
 import logging
 import os
-from typing import Optional, Final
+from typing import Optional, Any, Final
 from langchain_core.language_models.llms import BaseLLM
 
-# --- Conditional Imports for Specific Backend ---
-# Local Ollama Backend
+# --- Conditional Imports ---
 try:
     from langchain_ollama import OllamaLLM
 except ImportError:
+    logger = logging.getLogger(__name__)
+    logger.error("❌ 'langchain-ollama' not found. Please install it using 'pip install langchain-ollama'")
     OllamaLLM = None
-
-# Cloud Backend (Placeholder/OpenAI)
-try:
-    import openai
-except ImportError:
-    openai = None
 
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION CONSTANTS (ดึงจาก Global Config และ Environment) ---
+# --- Configuration Constants (ดึงจาก Global Config) ---
 from config.global_vars import (
     DEFAULT_LLM_MODEL_NAME, 
     LLM_CONTEXT_WINDOW, 
     LLM_TEMPERATURE,
-    RAG_RUN_MODE # ใช้ค่าที่ถูกตั้งค่าใน global_vars.py
+    RAG_RUN_MODE
 )
-
-# การตั้งค่าสำหรับ CLOUD Mode (ถ้ามี)
-CLOUD_LLM_MODEL: Final[str] = "gpt-4o" 
-OPENAI_API_KEY: Final[str] = os.environ.get("OPENAI_API_KEY", "")
-
 
 # -----------------------------------------------------
 # 🎯 Global LLM Instance (สำหรับ Backward Compatibility)
 # -----------------------------------------------------
-llm: Optional[BaseLLM] = None 
+# เก็บอินสแตนซ์แรกที่สร้างขึ้นเพื่อใช้งานร่วมกับส่วนอื่นๆ ของระบบ
+llm: Optional[Any] = None 
 
 # -----------------------------------------------------
-# 🧩 Placeholder Class สำหรับ Cloud (จำลองการทำงาน)
-# -----------------------------------------------------
-class CloudLLMPlaceholder(BaseLLM):
-    """Placeholder for the Cloud LLM connector (e.g., OpenAI)."""
-    model_name: str = CLOUD_LLM_MODEL
-
-    def _generate(self, prompts: list[str], stop: Optional[list[str]] = None, **kwargs) -> str:
-        logger.warning(f"--- Simulating CLOUD call to {self.model_name} ---")
-        # จำลอง JSON output ที่ Assessment Engine คาดหวัง
-        return '{"summary": "Simulation result", "score": 5, "explanation": "This is a cloud simulation.", "evidence_map": []}' 
-
-    @property
-    def _llm_type(self) -> str:
-        return "cloud-placeholder"
-    
-    def _call(self, prompt: str, stop: Optional[list[str]] = None, **kwargs) -> str:
-        return self._generate([prompt], stop=stop, **kwargs)
-
-
-# -----------------------------------------------------
-# 🛠️ Factory Logic: สร้าง Instance ตามโหมด
+# 🛠️ Factory Logic: create_llm_instance
 # -----------------------------------------------------
 
 def create_llm_instance(
-    model_name: str = DEFAULT_LLM_MODEL_NAME,
+    model_name: Optional[str] = None,
     temperature: float = LLM_TEMPERATURE,
-    context_window: int = LLM_CONTEXT_WINDOW
-) -> Optional[BaseLLM]:
+    context_window: Optional[int] = None
+) -> Optional[Any]:
     """
-    Initializes and returns the appropriate LLM instance based on RAG_RUN_MODE.
+    Initializes and returns the appropriate Ollama LLM instance.
+    รองรับการทำงานทั้งบน Mac (localhost) และ Cloud (IP/URL ผ่าน .env)
     """
     global llm 
     
-    selected_model = CLOUD_LLM_MODEL if RAG_RUN_MODE == "CLOUD" else model_name
+    # 1. เลือกค่า Default ตามโหมด (ถ้าไม่ได้ระบุ Model หรือ Context มา)
+    selected_model = model_name or DEFAULT_LLM_MODEL_NAME
+    selected_ctx = context_window or LLM_CONTEXT_WINDOW
     
-    logger.warning(f"⚠️ Initializing LLM in {RAG_RUN_MODE} mode with model: {selected_model}")
+    # 2. ดึง Base URL จาก Environment Variable
+    # - บน Mac/Local: http://localhost:11434 (หรือ http://host.docker.internal:11434 ใน Docker)
+    # - บน Cloud: http://<server-ip>:11434
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    
+    logger.warning(f"⚠️ Initializing LLM in {RAG_RUN_MODE} mode")
+    logger.info(f"📍 Target Model: {selected_model}")
+    logger.info(f"🔗 Ollama URL: {base_url}")
+    logger.info(f"🧠 Context Window: {selected_ctx}")
 
     try:
-        llm_instance = None
-        
-        # --- 1. CLOUD MODE ---
-        if RAG_RUN_MODE == "CLOUD":
-            if not OPENAI_API_KEY and not os.environ.get('OPENAI_API_KEY'):
-                logger.error("❌ CLOUD mode requires OPENAI_API_KEY to be set.")
-                return None
-            
-            llm_instance = CloudLLMPlaceholder(
-                model_name=selected_model,
-                temperature=temperature
-            )
-        
-        # --- 2. LOCAL_OLLAMA MODE ---
-        elif RAG_RUN_MODE == "LOCAL_OLLAMA":
-            if OllamaLLM is None:
-                raise ImportError("langchain-ollama is required for LOCAL_OLLAMA mode.")
+        if OllamaLLM is None:
+            raise ImportError("langchain-ollama is required for this project.")
 
-            llm_instance = OllamaLLM(
-                model=selected_model,
-                temperature=temperature,
-                context_window=context_window
-            )
-        
-        else:
-            raise ValueError(f"Unknown RAG_RUN_MODE: {RAG_RUN_MODE}. Must be 'LOCAL_OLLAMA' or 'CLOUD'.")
+        # 3. สร้าง Instance ของ OllamaLLM
+        # ตั้งค่า timeout ไว้สูงหน่อย (600s) เพราะ 70B บน Cloud อาจใช้เวลาคิดนานในบางคำถาม
+        llm_instance = OllamaLLM(
+            model=selected_model,
+            temperature=temperature,
+            num_ctx=selected_ctx,
+            base_url=base_url,
+            timeout=600,
+            # คืนค่าเป็นพารามิเตอร์อื่นๆ ที่ Ollama รองรับได้ที่นี่
+        )
 
-
-        logger.info(f"✅ LLM Instance created successfully: {selected_model} (Mode: {RAG_RUN_MODE})")
+        logger.info(f"✅ LLM Instance created successfully: {selected_model}")
         
-        # 3. กำหนดค่าให้ตัวแปร Global
+        # กำหนดค่าให้ตัวแปร Global หากยังไม่มีการกำหนด
         if llm is None:
             llm = llm_instance
-            logger.debug("Global 'llm' variable set for backward compatibility.")
             
         return llm_instance
 
     except Exception as e:
-        logger.error(f"❌ Failed to initialize LLM in {RAG_RUN_MODE} mode: {e}")
+        logger.error(f"❌ Failed to initialize Ollama LLM: {e}")
         return None
-    
+
+# -----------------------------------------------------
+# 🧪 Health Check (Optional)
+# -----------------------------------------------------
+def check_llm_connection() -> bool:
+    """ตรวจสอบเบื้องต้นว่าสามารถเชื่อมต่อกับ Ollama Server ได้หรือไม่"""
+    if llm:
+        try:
+            # ลองส่งคำขอด่วนๆ เพื่อเช็คสถานะ
+            # llm.invoke("Hi") 
+            return True
+        except:
+            return False
+    return False

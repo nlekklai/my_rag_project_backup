@@ -22,6 +22,7 @@ from .json_extractor import _robust_extract_json
 from filelock import FileLock  # ต้องติดตั้ง: pip install filelock
 import re
 import hashlib
+import copy
 
 
 # -------------------- PATH SETUP & IMPORTS --------------------
@@ -146,87 +147,151 @@ logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
-
-
-# -----------------------------------------------------------------
-# 🎯 FUNCTION: classify_by_keyword (Heuristic PDCA Classification)
-# -----------------------------------------------------------------
 def classify_by_keyword(
     text: str, 
     sub_id: str = None, 
     level: int = None,
     contextual_rules_map: dict = None
 ) -> str:
-    """Heuristic PDCA Classification v13 – Custom P>D>C>A priority + Fallback"""
-    if not text:
+    """
+    Heuristic PDCA Classification v18 (Supports Array/List from JSON)
+    --------------------------------------------------
+    - รองรับ Keywords ทั้งรูปแบบ String และ List
+    - แก้ไข Error: 'list' object has no attribute 'split'
+    - ปรับปรุงการเข้าถึง Defaults ให้แม่นยำขึ้น
+    """
+    if not text or not contextual_rules_map:
         return 'Other'
-    
+
     text_lower = text.lower()
-    
-    # === ขั้น 1: รวบรวม Custom Keywords จาก contextual_rules.json (ครบ 4 phase) ===
-    custom_keywords = defaultdict(list)
-    
-    if contextual_rules_map and sub_id:
-        rules = contextual_rules_map.get(sub_id, {})
+
+    def keyword_match(text_to_search: str, keywords_input) -> bool:
+        """
+        ฟังก์ชันช่วยเช็คการ Match คำ รองรับทั้ง String และ List
+        """
+        # แปลง input ให้เป็น list เสมอ
+        keywords_list = []
+        if isinstance(keywords_input, list):
+            keywords_list = keywords_input
+        elif isinstance(keywords_input, str):
+            keywords_list = [k.strip() for k in keywords_input.split(",") if k.strip()]
         
-        # รวบรวม keywords จากทุก Level ที่มี (L1-L5)
-        for l_key, l_rules in rules.items():
-            if l_key.startswith("L"):
-                # Plan Keywords (L1)
-                planning_kw = l_rules.get("plan_keywords", "")
-                if planning_kw:
-                    custom_keywords['Plan'].extend([kw.strip().lower() for kw in planning_kw.split(",")])
-                
-                # Do Keywords (L2, L3)
-                do_kw = l_rules.get("do_keywords", "")
-                if do_kw:
-                    custom_keywords['Do'].extend([kw.strip().lower() for kw in do_kw.split(",")])
-
-                # Check Keywords (L3, L4, L5)
-                check_kw = l_rules.get("check_keywords", "")
-                if check_kw:
-                    custom_keywords['Check'].extend([kw.strip().lower() for kw in check_kw.split(",")])
-                
-                # Act Keywords (L4, L5)
-                act_kw = l_rules.get("act_keywords", "")
-                if act_kw:
-                    custom_keywords['Act'].extend([kw.strip().lower() for kw in act_kw.split(",")])
-
-        # กรองให้เหลือ Keyword ที่ไม่ซ้ำกัน
-        for key in custom_keywords:
-            custom_keywords[key] = list(set(filter(None, custom_keywords[key])))
-
-    # === ขั้น 2: ตรวจสอบ Custom Keywords (ลำดับใหม่: Plan > Do > Check > Act) ===
-    
-    # 📌 FIX: ตรวจสอบ P ก่อน A เพื่อให้หลักฐาน L1 P/D (เช่น แผน) ไม่ถูก Tag เป็น A/C ง่ายเกินไป
-    
-    # Plan
-    if custom_keywords['Plan']:
-        if any(kw in text_lower for kw in custom_keywords['Plan'] if kw):
-            return 'Plan'
-    # Do
-    if custom_keywords['Do']:
-        if any(kw in text_lower for kw in custom_keywords['Do'] if kw):
-            return 'Do'
+        for kw in keywords_list:
+            kw_clean = str(kw).strip().lower()
+            if not kw_clean:
+                continue
             
-    # Check
-    if custom_keywords['Check']:
-        if any(kw in text_lower for kw in custom_keywords['Check'] if kw):
-            return 'Check'
-    # Act
-    if custom_keywords['Act']:
-        if any(kw in text_lower for kw in custom_keywords['Act'] if kw):
-            return 'Act'
+            # ตรวจสอบว่าเป็นภาษาไทยหรือไม่
+            is_thai = any("\u0e00" <= c <= "\u0e7f" for c in kw_clean)
+            
+            if is_thai:
+                pattern = re.escape(kw_clean)
+            else:
+                pattern = r'\b{}\b'.format(re.escape(kw_clean))
+                
+            if re.search(pattern, text_to_search, re.IGNORECASE):
+                return True
+        return False
 
-    
-    # === ขั้น 3: Fallback ด้วย BASE_PDCA_KEYWORDS (ใช้ Act ก่อน Check ก่อน Do ก่อน Plan ตาม PDCA_PRIORITY_ORDER) ===
-    # Fallback ยังคงใช้ลำดับที่เน้น A/C เพราะเป็น Logic ที่มาจาก BASE_PDCA_KEYWORDS
-    for tag in PDCA_PRIORITY_ORDER: 
-        for pattern in BASE_PDCA_KEYWORDS[tag]:
-            if re.search(pattern, text, re.IGNORECASE):
+    def check_level_keywords(l_rules: dict) -> str:
+        """ตรวจหา P, D, C, A จากชุดกฎ โดยรองรับทั้ง List และ String"""
+        mapping = {
+            "plan_keywords": "P",
+            "do_keywords": "D",
+            "check_keywords": "C",
+            "act_keywords": "A"
+        }
+        for json_key, tag in mapping.items():
+            kw_data = l_rules.get(json_key)
+            if kw_data:
+                # 🎯 จุดที่แก้ไข: ใช้ keyword_match ที่รองรับ List แทนการ split เอง
+                if keyword_match(text_lower, kw_data):
+                    return tag
+        return None
+
+    # --- Step 1: ตรวจสอบตาม Level ปัจจุบัน ---
+    if sub_id and level:
+        rules = contextual_rules_map.get(sub_id, {})
+        current_level_rules = rules.get(f"L{level}", {})
+        if isinstance(current_level_rules, dict):
+            tag = check_level_keywords(current_level_rules)
+            if tag:
+                # ตรวจสอบเงื่อนไขบังคับ
+                must_include = rules.get("must_include_keywords", [])
+                avoid_kw = rules.get("avoid_keywords", [])
+                if must_include and not keyword_match(text_lower, must_include):
+                    return 'Other'
+                if avoid_kw and keyword_match(text_lower, avoid_kw):
+                    return 'Other'
                 return tag
-    
+
+    # --- Step 2: วนหาจากทุก Level ใน Sub-ID ---
+    if sub_id:
+        rules = contextual_rules_map.get(sub_id, {})
+        for l_key, l_rules in rules.items():
+            if l_key.startswith("L") and isinstance(l_rules, dict):
+                tag = check_level_keywords(l_rules)
+                if tag:
+                    must_include = rules.get("must_include_keywords", [])
+                    avoid_kw = rules.get("avoid_keywords", [])
+                    if must_include and not keyword_match(text_lower, must_include):
+                        continue
+                    if avoid_kw and keyword_match(text_lower, avoid_kw):
+                        continue
+                    return tag
+
+    # --- Step 3: ตรวจสอบจากค่าเริ่มต้น (_enabler_defaults) ---
+    defaults = contextual_rules_map.get("_enabler_defaults", {})
+    mapping_defaults = {
+        "plan_keywords": "P", # แก้จาก plann_keywords
+        "do_keywords": "D", 
+        "check_keywords": "C", 
+        "act_keywords": "A"
+    }
+    for json_key, tag in mapping_defaults.items():
+        kw_data = defaults.get(json_key)
+        if kw_data:
+            if keyword_match(text_lower, kw_data):
+                return tag
+
+    # --- Step 4: Fallback สุดท้าย ---
+    try:
+        from config.global_vars import PDCA_PRIORITY_ORDER, BASE_PDCA_KEYWORDS
+        tag_map = {"Plan": "P", "Do": "D", "Check": "C", "Act": "A"}
+        for full_tag in PDCA_PRIORITY_ORDER: 
+            patterns = BASE_PDCA_KEYWORDS.get(full_tag, [])
+            if patterns and keyword_match(text_lower, patterns):
+                return tag_map.get(full_tag, 'Other')
+    except Exception as e:
+        if 'logger' in globals():
+            logger.error(f"Error in classify_by_keyword fallback: {e}")
+
     return 'Other'
+
+
+def get_actual_score(ev: dict) -> float:
+    """
+    Unified score resolver (ENGINE SOURCE OF TRUTH)
+    Priority:
+    1) relevance_score
+    2) rerank_score
+    3) score
+    (fallback to metadata)
+    """
+    if not ev:
+        return 0.0
+
+    score = ev.get("relevance_score") or ev.get("rerank_score") or ev.get("score")
+    if score is not None:
+        return float(score)
+
+    meta = ev.get("metadata", {}) or {}
+    return float(
+        meta.get("relevance_score")
+        or meta.get("rerank_score")
+        or meta.get("score")
+        or 0.0
+    )
 
 def get_correct_pdca_required_score(level: int) -> int:
     """กำหนดคะแนนรวมขั้นต่ำที่ต้องทำได้เพื่อถือว่าผ่าน Level นั้น ๆ"""
@@ -470,26 +535,23 @@ class AssessmentConfig:
 # SEAM Assessment Engine (PDCA Focused)
 # =================================================================
 class SEAMPDCAEngine:
-    
-    L1_INITIAL_TOP_K_RAG: int = 50 
-    MIN_RERANK_SCORE_TO_KEEP: Final[float] = MIN_RERANK_SCORE_TO_KEEP
-    
+        
     def __init__(
         self, 
         config: AssessmentConfig,
         llm_instance: Any = None, 
         logger_instance: logging.Logger = None,
         rag_retriever_instance: Any = None,
-        doc_type: str = EVIDENCE_DOC_TYPES, 
+        doc_type: str = None, 
         vectorstore_manager: Optional['VectorStoreManager'] = None,
         evidence_map_path: Optional[str] = None,
         document_map: Optional[Dict[str, str]] = None,
         is_parallel_all_mode: bool = False,
         sub_id: str = 'all',
-        **kwargs  # 🎯 FIX: เพิ่ม **kwargs เพื่อรองรับ ActionPlanActions และค่าอื่นๆ จาก Parallel Worker
+        **kwargs  
     ):
         # =======================================================
-        # 🎯 Logger Setup (อันดับแรกสุด)
+        # 1. Logger & ActionPlan Setup
         # =======================================================
         if logger_instance is not None:
             self.logger = logger_instance
@@ -498,51 +560,27 @@ class SEAMPDCAEngine:
                 f"Engine|{config.enabler}|{config.tenant}/{config.year}"
             )
         
-        # 🎯 แก้ไขส่วน ActionPlanActions ใน __init__
-        # ดึงจาก kwargs ก่อน (ถ้าส่งมาจาก Worker) ถ้าไม่มีให้ดึงจาก Global ถ้าไม่มีอีกให้เป็น None
         self.ActionPlanActions = kwargs.get('ActionPlanActions', globals().get('ActionPlanActions'))
-
         if self.ActionPlanActions is None:
-            self.logger.warning("ActionPlanActions not found in kwargs or globals. Action planning features may be limited.")
+            self.logger.warning("ActionPlanActions not found. Action planning features may be limited.")
         else:
             self.logger.info("ActionPlanActions successfully linked to Engine.")
 
         self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
 
         # =======================================================
-        # Core Configuration
+        # 2. Core Configuration (Fix: rubric & retry_policy)
         # =======================================================
         self.config = config
         self.enabler_id = config.enabler
         self.target_level = config.target_level
         self.sub_id = sub_id
-
-        # Load rubric
-        self.rubric = self._load_rubric()
-
-        # Vectorstore & Doc Type
-        self.vectorstore_manager = vectorstore_manager
-        self.doc_type = doc_type
-
-        # Constants
-        self.FINAL_K_RERANKED = FINAL_K_RERANKED
-        self.PRIORITY_CHUNK_LIMIT = PRIORITY_CHUNK_LIMIT
-
-        # LLM
         self.llm = llm_instance
+        self.vectorstore_manager = vectorstore_manager
 
-        # Mode flags
-        self.is_sequential = config.force_sequential
-        self.is_parallel_all_mode = is_parallel_all_mode
-        self.logger.info(
-            f"Engine mode: {'FULL PARALLEL (stateless)' if is_parallel_all_mode else 'SEQUENTIAL/MIXED (with hydration)'}"
-        )
-
-        self.required_pdca_map = REQUIRED_PDCA
-        self.base_pdca_keywords = BASE_PDCA_KEYWORDS
-
-        # Retry policy
-        self.retry_policy = RetryPolicy(
+        # --- [CRITICAL LOADING] ---
+        self.rubric = self._load_rubric()  # แก้ไข AttributeError: 'rubric'
+        self.retry_policy = RetryPolicy(   # แก้ไข AttributeError: 'retry_policy'
             max_attempts=3,
             base_delay=2.0,
             jitter=True,
@@ -550,107 +588,75 @@ class SEAMPDCAEngine:
             shorten_prompt_on_fail=True,
             exponential_backoff=True,
         )
+        # --------------------------
 
-        # Thresholds
+        self.is_sequential = getattr(config, 'force_sequential', True)
+        self.is_parallel_all_mode = is_parallel_all_mode
+        self.required_pdca_map = REQUIRED_PDCA
+        self.base_pdca_keywords = BASE_PDCA_KEYWORDS
         self.RERANK_THRESHOLD: float = RERANK_THRESHOLD
         self.MAX_EVI_STR_CAP: float = MAX_EVI_STR_CAP
 
         # =======================================================
-        # Persistent Evidence Mapping
+        # 3. Persistent Evidence Mapping
         # =======================================================
-        if evidence_map_path:
-            self.evidence_map_path = evidence_map_path
-        else:
-            self.evidence_map_path = get_evidence_mapping_file_path(
-                tenant=self.config.tenant,
-                year=self.config.year,
-                enabler=self.enabler_id
-            )
-
-        self.evidence_map: Dict[str, List[Dict]] = {}
-        self.temp_map_for_save: Dict[str, List[Dict]] = {}
-
-        # self.RERANK_THRESHOLD = 0.5
-        # self.MAX_EVI_STR_CAP = 3.0
-
-        # Load contextual rules and existing evidence map
-        self.contextual_rules_map: Dict[str, Dict[str, Any]] = self._load_contextual_rules_map()
+        self.evidence_map_path = evidence_map_path or get_evidence_mapping_file_path(
+            tenant=self.config.tenant, year=self.config.year, enabler=self.enabler_id
+        )
+        self.contextual_rules_map = self._load_contextual_rules_map()
         self.evidence_map = self._load_evidence_map()
+        self.temp_map_for_save = {}
 
-        self.logger.info(f"Persistent Map Path: {self.evidence_map_path}")
-        self.logger.info(f"Loaded {len(self.evidence_map)} existing evidence entries.")
+       
+        # =======================================================
+        # 4. Document Map Loading (Dynamic Logic)
+        # =======================================================
+        map_to_use: Dict[str, str] = document_map or {}
+
+        if not map_to_use:
+            self.doc_type = doc_type or getattr(config, 'doc_type', EVIDENCE_DOC_TYPES)
+            clean_dt = str(self.doc_type).strip().lower()
+            
+            if clean_dt == EVIDENCE_DOC_TYPES.lower():
+                mapping_path = get_mapping_file_path(self.doc_type, tenant=self.config.tenant, year=self.config.year, enabler=self.enabler_id)
+            else:
+                mapping_path = get_mapping_file_path(self.doc_type, tenant=self.config.tenant)
+
+            self.logger.info(f"🎯 Loading {clean_dt} mapping from: {mapping_path}")
+
+            try:
+                if os.path.exists(mapping_path):
+                    with open(mapping_path, 'r', encoding='utf-8') as f:
+                        doc_map_raw = json.load(f)
+                    map_to_use = {doc_id: data.get("file_name", doc_id) for doc_id, data in doc_map_raw.items()}
+                    self.logger.info(f"Loaded {len(map_to_use)} mappings.")
+                else:
+                    self.logger.warning(f"File not found: {mapping_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to load document map: {e}")
+
+        self.doc_id_to_filename_map = map_to_use
+        self.document_map = map_to_use
+
+         # =======================================================
+        # 5. Lazy Initialization (VSM & LLM)
+        # =======================================================
+        if self.llm is None: self._initialize_llm_if_none()
+        if self.vectorstore_manager is None: self._initialize_vsm_if_none()
+
+        if self.vectorstore_manager and not getattr(self.vectorstore_manager, '_doc_id_mapping', None):
+            self.vectorstore_manager._load_doc_id_mapping()
+
 
         # =======================================================
-        # Function Pointers (with mocking support)
+        # 6. Function Pointers
         # =======================================================
         self.llm_evaluator = evaluate_with_llm
         self.rag_retriever = retrieve_context_with_filter
         self.create_structured_action_plan = create_structured_action_plan
 
-        if config.mock_mode in ["random", "control"]:
-            self._set_mock_handlers(config.mock_mode)
+        self.logger.info(f"✅ Engine initialized: Enabler={self.enabler_id}, DocType={self.doc_type}")
 
-        if config.mock_mode == "control":
-            self.logger.info("Enabling global LLM data utils mock control mode.")
-            set_llm_data_mock_mode(True)
-        elif config.mock_mode == "random":
-            self.logger.warning("Mock mode 'random' not fully implemented. Using default behavior.")
-
-        # =======================================================
-        # Lazy Initialization
-        # =======================================================
-        if self.llm is None:
-            self._initialize_llm_if_none()
-        if self.vectorstore_manager is None:
-            self._initialize_vsm_if_none()
-
-        # Force reload doc mapping to prevent hydration issues in workers
-        if self.vectorstore_manager and not getattr(self.vectorstore_manager, '_doc_id_mapping', None):
-            self.vectorstore_manager._load_doc_id_mapping()
-            self.logger.info(
-                f"Forced reload Doc ID Mapping: {len(self.vectorstore_manager._doc_id_mapping)} docs, "
-                f"{len(self.vectorstore_manager._uuid_to_doc_id)} chunks"
-            )
-
-        # =======================================================
-        # Document Map Loading (Filename Resolution)
-        # =======================================================
-        map_to_use: Dict[str, str] = document_map or {}
-
-        if not map_to_use:
-            mapping_path = get_mapping_file_path(
-                self.doc_type,
-                tenant=self.config.tenant,
-                year=self.config.year,
-                enabler=self.enabler_id
-            )
-            self.logger.info(f"Loading document_map from: {mapping_path}")
-
-            try:
-                with open(mapping_path, 'r', encoding='utf-8') as f:
-                    doc_map_raw = json.load(f)
-                map_to_use = {
-                    doc_id: data.get("file_name", doc_id)
-                    for doc_id, data in doc_map_raw.items()
-                }
-                self.logger.info(f"Loaded {len(map_to_use)} document mappings.")
-            except FileNotFoundError:
-                self.logger.warning(f"Document mapping file not found: {mapping_path}")
-            except Exception as e:
-                self.logger.error(f"Failed to load document map: {e}")
-
-        self.doc_id_to_filename_map: Dict[str, str] = map_to_use
-        self.document_map: Dict[str, str] = self.doc_id_to_filename_map
-
-        if not self.doc_id_to_filename_map:
-            self.logger.warning("Document ID → Filename map is empty. Filename resolution limited.")
-
-        self.ActionPlanActions = ActionPlanActions  # เพิ่มบรรทัดนี้
-        if self.ActionPlanActions is None:
-            self.ActionPlanActions = ActionPlanActions
-            
-        self.logger.info(f"Engine initialized: Enabler={self.enabler_id}, Mock={config.mock_mode}")
-    
     def _initialize_llm_if_none(self):
         """Initializes LLM instance if self.llm is None."""
         if self.llm is None:
@@ -681,7 +687,7 @@ class SEAMPDCAEngine:
             try:
                 # 🎯 FIX: เปลี่ยน evidence_enabler เป็น enabler_filter ให้ถูกต้องตาม load_all_vectorstores
                 self.vectorstore_manager = load_all_vectorstores(
-                    doc_types=[EVIDENCE_DOC_TYPES], 
+                    doc_types=[self.doc_type], 
                     enabler_filter=self.enabler_id, # <--- **แก้ไขตรงนี้!**
                     tenant=self.config.tenant, 
                     year=self.config.year       
@@ -806,6 +812,7 @@ class SEAMPDCAEngine:
         """
         สร้าง Query ที่ฉลาด แม่นยำ และครอบคลุม PDCA ทุกด้าน
         โดยใช้ Contextual Map ที่ Engine ถือครอง (self.contextual_rules_map)
+        Revised: รองรับ Keyword แบบ Array (List) และแก้ไข Error sequence item 0
         """
         logger = logging.getLogger(__name__)
         logger.info(f"Generating queries for {self.enabler_id} - {sub_id} L{level}")
@@ -814,35 +821,47 @@ class SEAMPDCAEngine:
         current_synonyms = PDCA_LEVEL_SYNONYMS.get(level, "")
 
         # --- 2. ดึง Keyword จาก Contextual Map ที่ Engine ถือครอง ---
-        custom_keywords_list = []
+        raw_keywords_collector = []
         
         contextual_map = self.contextual_rules_map
         enabler_id = self.enabler_id
 
-        # เข้าถึง Map เฉพาะ Sub-Criteria ที่กำลังประเมิน
         if contextual_map and sub_id in contextual_map:
             sub_map = contextual_map[sub_id]
 
-            # Logic การดึง Keywords ที่เราปรับแก้สำหรับ L1-L5 (เน้น Cross-Phase Keyword)
-            if level == 1:
-                custom_keywords_list.append(sub_map.get('L1', {}).get('plan_keywords', ''))
-            elif level == 2:
-                custom_keywords_list.append(sub_map.get('L2', {}).get('do_keywords', ''))
-            elif level == 3: # L3: Check & Do
-                # ดึง Keywords ของ C และ D มารวมกันเพื่อช่วย RAG/Reranker
-                custom_keywords_list.append(sub_map.get('L3', {}).get('check_keywords', ''))
-                custom_keywords_list.append(sub_map.get('L3', {}).get('do_keywords', ''))
-            elif level == 4: # L4: Check & Act
-                custom_keywords_list.append(sub_map.get('L4', {}).get('act_keywords', ''))
-                custom_keywords_list.append(sub_map.get('L4', {}).get('check_keywords', ''))
-            elif level == 5: # L5: Act & Check
-                custom_keywords_list.append(sub_map.get('L5', {}).get('act_keywords', ''))
-                custom_keywords_list.append(sub_map.get('L5', {}).get('check_keywords', ''))
+            # ฟังก์ชันช่วยดึงและล้างข้อมูล (Internal Helper)
+            def collect_keys(level_key, phase_key):
+                data = sub_map.get(level_key, {}).get(phase_key, [])
+                if isinstance(data, list):
+                    raw_keywords_collector.extend(data)
+                elif isinstance(data, str) and data:
+                    raw_keywords_collector.extend([k.strip() for k in data.split(",") if k.strip()])
 
-        # รวม Custom Keywords เข้ากับ Synonyms
-        custom_keywords_str = ", ".join(filter(None, custom_keywords_list))
+            # Logic การดึง Keywords ตาม Level (Matching กับ JSON Structure ใหม่)
+            if level == 1:
+                collect_keys('L1', 'plan_keywords')
+            elif level == 2:
+                collect_keys('L2', 'do_keywords')
+            elif level == 3:
+                collect_keys('L3', 'check_keywords')
+                collect_keys('L3', 'do_keywords')
+            elif level == 4:
+                collect_keys('L4', 'act_keywords')
+                collect_keys('L4', 'check_keywords')
+            elif level == 5:
+                collect_keys('L5', 'act_keywords')
+                collect_keys('L5', 'check_keywords')
+
+        # 🎯 จุดสำคัญ: แก้ไข Error "expected str instance, list found"
+        # กรองเฉพาะค่าที่ไม่ว่างและแปลงเป็น string ที่สะอาด
+        clean_keywords = [str(k).strip() for k in raw_keywords_collector if k]
+        custom_keywords_str = ", ".join(clean_keywords)
+        
         if custom_keywords_str:
-            current_synonyms += f", {custom_keywords_str}"
+            if current_synonyms:
+                current_synonyms += f", {custom_keywords_str}"
+            else:
+                current_synonyms = custom_keywords_str
 
         # --- 3. Base Query (หลัก) ---
         base_query = f"**{statement_text}** {sub_id} L{level} {enabler_id} คำสำคัญ: {current_synonyms}"
@@ -869,13 +888,13 @@ class SEAMPDCAEngine:
             queries.append(
                 f"นวัตกรรม ความยั่งยืน Best Practice รางวัล {statement_text} {sub_id} {enabler_id}"
             )
-            # Query 5: เน้นบทบาทผู้บริหารในการทบทวน (สำคัญต่อ 1.1)
+            # Query 5: เน้นบทบาทผู้บริหารในการทบทวน
             queries.append(
                 f"ผู้บริหารระดับสูงติดตาม ดูแล และสนับสนุน {statement_text} การทบทวนวิสัยทัศน์"
             )
 
         # --- 6. จำกัดจำนวน + Log ---
-        queries = queries[:6]
+        queries = [q for q in queries if q.strip()][:6]
         logger.info(f"Generated {len(queries)} queries for {enabler_id} - {sub_id} L{level}")
         return queries
     
@@ -1139,7 +1158,10 @@ class SEAMPDCAEngine:
                 else:
                     sid_l1 = ev.get("stable_doc_uuid") or ev.get("doc_id")
                     self.logger.error(f"❌ CRITICAL MAPPING FAILURE: Could not restore chunk (Stable ID: {sid_l1[:8] if sid_l1 else 'N/A'}...) from {len(chunk_map)} retrieved chunks.")
-                    new_ev["is_baseline"] = False # กำหนดเป็น False หากล้มเหลวในการ hydrate
+                    # ถ้ามีเลขหน้าเดิมอยู่แล้ว ให้ถือว่ายังเป็นประโยชน์แม้ไม่มี Text เต็ม
+                    new_ev["is_baseline"] = False
+                    if "page" not in new_ev:
+                         new_ev["page"] = ev.get("page") # Fallback ไปที่ค่าเดิมใน evidence_map
                 
                 new_list.append(new_ev)
             hydrated[key] = new_list
@@ -1379,6 +1401,11 @@ class SEAMPDCAEngine:
                                 # Update ถ้า score สูงกว่า หรือถ้ามี raw_llm_pdca ที่ละเอียดกว่า
                                 old_entry = entry_map[entry_id]
                                 old_score = old_entry.get("relevance_score", 0.0)
+
+                                if "page" not in new_entry or new_entry["page"] in ["N/A", None]:
+                                    if "page" in old_entry:
+                                        new_entry["page"] = old_entry["page"]
+                                        
                                 if new_score > old_score:
                                     entry_map[entry_id] = new_entry
 
@@ -2399,6 +2426,7 @@ class SEAMPDCAEngine:
                 "chunk_uuid": chunk_uuid_key,           # <--- [FIXED] Unique Chunk ID (ใช้ในการ Hydration)
                 "source": chunk.get("source", "N/A"),
                 "source_filename": chunk.get("filename", "N/A"),
+                "page": chunk.get("page") or chunk.get("metadata", {}).get("page", "N/A"),
                 "pdca_tag": chunk.get("pdca_tag", "Other"), 
                 "status": "PASS", 
                 "timestamp": datetime.now().isoformat(),
@@ -2580,332 +2608,327 @@ class SEAMPDCAEngine:
             "max_score_source": max_score_source,
         }
         
-
     def _robust_hydrate_documents_for_priority_chunks(
-        self, 
-        chunks_to_hydrate: List[Dict], 
+        self,
+        chunks_to_hydrate: List[Dict],
         vsm: Optional['VectorStoreManager'],
-        current_sub_id: Optional[str] = None
+        current_sub_id: Optional[str] = None,
+        level: Optional[int] = None
     ) -> List[Dict]:
-        
-        """
-        Hydrates priority chunks using robust Stable ID fallback logic
-        and guarantees the 'text' key is present in all returned chunks.
-        Preserves and reinforces the 'is_baseline' flag.
-        """
-        
-        # 1. กำหนด active_sub_id (Fix 5)
-        # ใช้ current_sub_id ก่อน, ตามด้วย self.sub_id, และ Fallback ไปที่ config
-        active_sub_id = current_sub_id or getattr(self, 'sub_id', None)
-        if not active_sub_id:
-            self.logger.error("Hydration failed: Missing sub_id.")
-            active_sub_id = getattr(self, 'config', {}).get('sub_id') or 'unknown'
-            
-        if active_sub_id == 'unknown':
-            self.logger.error("FATAL: Hydration cannot proceed without sub_id. Returning unhydrated chunks.")
-            return chunks_to_hydrate 
-        
-        if not chunks_to_hydrate or not vsm:
-            return chunks_to_hydrate
 
-        # 1. Collect Stable/Chunk IDs
-        stable_ids = set()
-        for chunk in chunks_to_hydrate:
-            # ใช้ Stable ID หรือ Chunk UUID เป็น ID สำหรับการ Hydration
-            sid = chunk.get("stable_doc_uuid") or chunk.get("doc_id") or chunk.get("chunk_uuid") 
-            if sid and isinstance(sid, str) and len(sid.replace("-", "")) >= 32:
-                stable_ids.add(sid)
+        active_sub_id = current_sub_id or getattr(self, 'sub_id', 'unknown')
+        if not chunks_to_hydrate:
+            return []
 
-        hydrated_priority_docs = []
-        restored_count = 0
-        total_count = len(chunks_to_hydrate)
+        TAG_ABBREV = {
+            "PLAN": "P", "DO": "D", "CHECK": "C", "ACT": "A",
+            "P": "P", "D": "D", "C": "C", "A": "A"
+        }
 
-        # -------------------- FALLBACK LOGIC 1 (No Valid IDs) --------------------
-        if not stable_ids:
-            self.logger.info("No Stable IDs found for Priority Chunk hydration. Boosting existing chunks.")
-            for chunk in chunks_to_hydrate:
-                new_chunk = chunk.copy()
-                new_chunk["is_baseline"] = True # Fix 3
-                if "text" in new_chunk and new_chunk["text"].strip():
-                    # Re-tag PDCA (Fix 5: ใช้ active_sub_id)
-                    new_tag = classify_by_keyword(
-                        new_chunk["text"],
-                        sub_id=active_sub_id, 
-                        contextual_rules_map=self.contextual_rules_map
-                    )
-                    if new_tag != 'Other':
-                        new_chunk["pdca_tag"] = new_tag
-                    new_chunk["rerank_score"] = max(new_chunk.get("rerank_score", 0.0), 0.95)
-                    new_chunk["score"] = max(new_chunk.get("score", 0.0), 0.95)
-                hydrated_priority_docs.append(new_chunk)
-            
-            self.logger.info(f"PRIORITY HYDRATION → Fallback boost used. Final chunks: {len(hydrated_priority_docs)} (all baseline).")
-            
-            # 🟢 FIX 7: มั่นใจว่ามีคีย์ 'text' ก่อน return
-            return self._guarantee_text_key(hydrated_priority_docs)
+        def _safe_classify(text: str) -> str:
+            try:
+                raw = classify_by_keyword(
+                    text=text,
+                    sub_id=active_sub_id,
+                    level=level,
+                    contextual_rules_map=self.contextual_rules_map
+                )
+                if not raw:
+                    return "Other"
+                return TAG_ABBREV.get(str(raw).upper(), "Other")
+            except Exception as e:
+                self.logger.warning(f"PDCA classify failed → Other | {e}")
+                return "Other"
 
+        def _standardize_chunk(chunk: Dict, score: float):
+            chunk.setdefault("is_baseline", True)
 
-        # -------------------- HYDRATION LOGIC --------------------
-        self.logger.info(f"Attempting to hydrate {len(stable_ids)} documents...")
+            text = chunk.get("text", "").strip()
+            if text:
+                chunk["pdca_tag"] = _safe_classify(text)
+
+                # ป้องกัน baseline score inflate
+                chunk["rerank_score"] = max(chunk.get("rerank_score", 0.0), score)
+                chunk["score"] = max(chunk.get("score", 0.0), score)
+
+            return chunk
+
+        stable_ids = {
+            sid for c in chunks_to_hydrate
+            if (sid := (c.get("stable_doc_uuid") or c.get("doc_id") or c.get("chunk_uuid")))
+        }
+
+        if not stable_ids or not vsm:
+            boosted = [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            return self._guarantee_text_key(boosted)
+
         stable_id_map = defaultdict(list)
-        
+
         try:
-            # 🟢 FIX 6.1: แก้ชื่อฟังก์ชัน VSM
-            # get_documents_by_id ควรคืนค่าเป็น Map หรือ List[LcDocument] ที่เราสามารถแปลงเป็น Map ได้
-            retrieved_docs = vsm.get_documents_by_id(list(stable_ids), doc_type=self.doc_type, enabler=self.config.enabler)
-            
-            # แปลงผลลัพธ์จาก LcDocument เป็น Map เพื่อให้เข้ากับ Logic เดิม
-            # เราอาจจะต้องกำหนดวิธีการแปลง LcDocument เป็น Dict ที่นี่
+            retrieved_docs = vsm.get_documents_by_id(
+                list(stable_ids),
+                doc_type=self.doc_type,
+                enabler=self.config.enabler
+            )
+
             for doc in retrieved_docs:
                 sid = doc.metadata.get("stable_doc_uuid") or doc.metadata.get("doc_id")
                 if sid:
-                    # Store as Dict with 'text' key for consistency
                     stable_id_map[sid].append({
                         "text": doc.page_content,
                         "metadata": doc.metadata
                     })
-            
+
         except Exception as e:
-            self.logger.error(f"VSM failed to get documents by ID: {e}. Falling back to boosting only.")
-            
-            # 🟢 FIX 6.2: VSM Fallback Logic (ใช้โค้ด Fallback 1 ซ้ำ)
-            hydrated_priority_docs_fallback = []
-            self.logger.info("PRIORITY HYDRATION → VSM Fallback. Boosting existing chunks.")
-            for chunk in chunks_to_hydrate:
-                new_chunk = chunk.copy()
-                new_chunk["is_baseline"] = True
-                if "text" in new_chunk and new_chunk["text"].strip():
-                    new_tag = classify_by_keyword(
-                        new_chunk["text"],
-                        sub_id=active_sub_id, 
-                        contextual_rules_map=self.contextual_rules_map
-                    )
-                    if new_tag != 'Other':
-                        new_chunk["pdca_tag"] = new_tag
-                    new_chunk["rerank_score"] = max(new_chunk.get("rerank_score", 0.0), 0.95)
-                    new_chunk["score"] = max(new_chunk.get("score", 0.0), 0.95)
-                hydrated_priority_docs_fallback.append(new_chunk)
-            
-            self.logger.info(f"PRIORITY HYDRATION → Fallback boost used. Final chunks: {len(hydrated_priority_docs_fallback)} (all baseline).")
-            
-            # 🟢 FIX 7: มั่นใจว่ามีคีย์ 'text' ก่อน return
-            return self._guarantee_text_key(hydrated_priority_docs_fallback)
-        
-        
-        # 3. Hydrate + Boost + Re-tag PDCA 
+            self.logger.error(f"VSM Hydration failed: {e}")
+            fallback = [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            return self._guarantee_text_key(fallback)
+
+        hydrated_priority_docs = []
+        restored_count = 0
         seen_signatures = set()
+
+        SAFE_META_KEYS = {
+            "source", "file_name", "page", "page_label",
+            "page_number", "enabler", "tenant", "year"
+        }
+
         for chunk in chunks_to_hydrate:
             new_chunk = chunk.copy()
-            new_chunk["is_baseline"] = True # Fix 3
-            
             sid = new_chunk.get("stable_doc_uuid") or new_chunk.get("doc_id")
 
             hydrated = False
-            if sid and sid in stable_id_map and stable_id_map[sid]:
+            if sid and sid in stable_id_map:
                 best_match = stable_id_map[sid][0]
-                
-                # ดึง Text
-                new_chunk["text"] = best_match["text"] 
-                # อัปเดต Metadata
-                new_chunk.update({k: v for k, v in best_match["metadata"].items()
-                                if k not in ["text", "page_content"]})
-                
-                # รักษา chunk_uuid เดิมไว้ถ้ามี
-                original_uuid = new_chunk.get("chunk_uuid")
-                if original_uuid:
-                    new_chunk["chunk_uuid"] = original_uuid
+                new_chunk["text"] = best_match["text"]
 
-                restored_count += 1
+                meta = best_match.get("metadata", {})
+                new_chunk.update({k: v for k, v in meta.items() if k in SAFE_META_KEYS})
+
                 hydrated = True
-                new_chunk["rerank_score"] = 1.0
-                new_chunk["score"] = 1.0
+                restored_count += 1
 
-            # Re-tag PDCA from full text
-            if "text" in new_chunk and new_chunk["text"].strip():
-                new_tag = classify_by_keyword(
-                    new_chunk["text"], 
-                    sub_id=active_sub_id, # Fix 5
-                    contextual_rules_map=self.contextual_rules_map
-                )
-                if new_tag != 'Other':
-                    old_tag = new_chunk.get("pdca_tag", "Other")
-                    new_chunk["pdca_tag"] = new_tag
-                    if old_tag == 'Other':
-                        self.logger.debug(f"Re-tagged priority chunk as '{new_tag}' (from 'Other')")
+            new_chunk = _standardize_chunk(
+                new_chunk,
+                score=1.0 if hydrated else 0.85
+            )
 
-            # Dedup
-            signature = (sid, new_chunk.get("text", "")[:200])
+            signature = (
+                sid,
+                new_chunk.get("chunk_uuid"),
+                new_chunk.get("text", "")[:200]
+            )
+
             if signature in seen_signatures:
                 continue
+
             seen_signatures.add(signature)
-
-            # Boost ถ้าไม่ hydrated แต่มี text
-            if not hydrated and "text" in new_chunk:
-                new_chunk["rerank_score"] = max(new_chunk.get("rerank_score", 0.0), 0.95)
-                new_chunk["score"] = max(new_chunk.get("score", 0.0), 0.95)
-
-            # Boost น้อยถ้าไม่มี text (หรือ Hydration ล้มเหลว)
-            if "text" not in new_chunk:
-                self.logger.warning(f"Priority chunk (SID: {sid[:8] if sid else 'N/A'}...) has no text after hydration attempt.")
-                new_chunk["rerank_score"] = max(new_chunk.get("rerank_score", 0.0), 0.80)
-                new_chunk["score"] = max(new_chunk.get("score", 0.0), 0.80)
-
             hydrated_priority_docs.append(new_chunk)
 
-        # -------------------- FINAL GUARANTEE (Fix 7) --------------------
-        return self._guarantee_text_key(hydrated_priority_docs, total_count=total_count, restored_count=restored_count)
+        return self._guarantee_text_key(
+            hydrated_priority_docs,
+            total_count=len(chunks_to_hydrate),
+            restored_count=restored_count
+        )
 
-    def _guarantee_text_key(self, chunks: List[Dict], total_count: int = 0, restored_count: int = 0) -> List[Dict]:
-        """Ensures every chunk has a 'text' key to prevent downstream KeyError."""
-        final_chunks_guaranteed = []
-        guaranteed_count = 0
+
+    def _guarantee_text_key(
+        self,
+        chunks: List[Dict],
+        total_count: int = 0,
+        restored_count: int = 0
+    ) -> List[Dict]:
+
+        final_chunks = []
+
         for chunk in chunks:
-            if 'text' not in chunk:
-                chunk['text'] = ""
-                guaranteed_count += 1
-                self.logger.debug(f"Guaranteed 'text' key for chunk (ID: {chunk.get('chunk_uuid', 'N/A')[:8]})")
-            final_chunks_guaranteed.append(chunk)
+            if "text" not in chunk:
+                chunk["text"] = ""
+                cid = str(chunk.get("chunk_uuid", "N/A"))
+                self.logger.debug(f"Guaranteed 'text' key for chunk (ID: {cid[:8]})")
+            final_chunks.append(chunk)
 
-        baseline_count = len([d for d in final_chunks_guaranteed if d.get('is_baseline', False)])
-        
-        # ถ้าถูกเรียกจาก Hydration Loop จะแสดง Log สรุป
         if total_count > 0:
+            baseline_count = sum(1 for c in final_chunks if c.get("is_baseline"))
             self.logger.info(
-                f"PRIORITY HYDRATION SUMMARY → Restored {restored_count}/{total_count} chunks with full text. "
-                f"Final priority chunks: {len(final_chunks_guaranteed)} ({baseline_count} marked as baseline). Guaranteed 'text' key for {guaranteed_count} chunks."
+                f"HYDRATION SUMMARY: Restored {restored_count}/{total_count} "
+                f"(Baseline={baseline_count})"
             )
-        
-        return final_chunks_guaranteed
+
+        return final_chunks
+
     
     def _get_keywords_for_phase(self, sub_id: str, level: int, phase: str = "Plan") -> str:
         """
         ดึง keywords สำหรับ phase (Plan, Do, Check, Act) จาก contextual_rules.json
-        ลำดับความสำคัญ: level-specific → sub-specific → enabler default → fallback
-        """
-        keywords = []
-        sub_rules = self.contextual_rules_map.get(sub_id, {})
         
+        ความสามารถ:
+        1. รองรับทั้งรูปแบบ Array [..] และ String ".." จาก JSON
+        2. จัดการเรื่องช่องว่าง (Whitespace) ให้อัตโนมัติ
+        3. มีระบบ Fallback 4 ชั้น (Level -> Sub -> Enabler -> Global)
+        4. แก้ปัญหาการส่งค่า String แล้วโดน join แยกตัวอักษร
+        """
+        sub_rules = self.contextual_rules_map.get(sub_id, {})
         phase_key = f"{phase.lower()}_keywords"
         
+        raw_keywords = None
+
         # 1. Level-specific (L1, L2, ...)
         level_key = f"L{level}"
         level_rules = sub_rules.get(level_key, {})
         if phase_key in level_rules:
-            keywords = level_rules[phase_key]
+            raw_keywords = level_rules[phase_key]
         
-        # 2. Sub-specific fallback
+        # 2. Sub-specific fallback (ถ้าไม่มีใน Level นั้นๆ)
         elif phase_key in sub_rules:
-            keywords = sub_rules[phase_key]
+            raw_keywords = sub_rules[phase_key]
         
-        # 3. Enabler default
+        # 3. Enabler default (ใช้ค่ากลางของโครงการ)
         elif "_enabler_defaults" in self.contextual_rules_map:
-            default_keywords = self.contextual_rules_map["_enabler_defaults"].get(phase_key)
-            if default_keywords:
-                keywords = default_keywords
+            raw_keywords = self.contextual_rules_map["_enabler_defaults"].get(phase_key)
+
+        # ---------------------------------------------------------
+        # 🎯 จุดประมวลผล Keywords (Data Cleaning)
+        # ---------------------------------------------------------
+        keywords_list = []
+        if raw_keywords:
+            if isinstance(raw_keywords, list):
+                # กรณีเป็น Array: ล้างช่องว่างแต่ละคำ
+                keywords_list = [str(k).strip() for k in raw_keywords if k]
+            elif isinstance(raw_keywords, str):
+                # กรณีเป็น String: แยกด้วย comma และล้างช่องว่าง
+                keywords_list = [k.strip() for k in raw_keywords.split(",") if k.strip()]
         
-        # 4. Global fallback (ถ้าไม่มีเลย)
-        if not keywords:
+        # 4. Global fallback (กรณีสุดท้ายจริงๆ ถ้าในไฟล์ JSON ว่างเปล่า)
+        if not keywords_list:
             fallback_map = {
                 "plan": ["วิสัยทัศน์", "นโยบาย", "ทิศทาง", "เป้าหมาย", "ยุทธศาสตร์", "แผน"],
                 "do": ["ดำเนินการ", "ปฏิบัติ", "จัดกิจกรรม", "โครงการ", "ขับเคลื่อน"],
-                "check": ["ตรวจสอบ", "ประเมิน", "ติดตาม", "วัดผล", "ตรวจสอบ"],
-                "act": ["ปรับปรุง", "พัฒนา", "แก้ไข", "นำไปใช้", "ปรับเปลี่ยน"]
+                "check": ["ตรวจสอบ", "ประเมิน", "ติดตาม", "วัดผล"],
+                "act": ["ปรับปรุง", "พัฒนา", "แก้ไข", "นำไปใช้", "ทบทวน"]
             }
-            keywords = fallback_map.get(phase.lower(), [])
-        
-        return ", ".join(keywords)
+            keywords_list = fallback_map.get(phase.lower(), [])
 
-
+        # ---------------------------------------------------------
+        # ✅ จุดสุดท้าย: คืนค่าเป็น String ที่ปลอดภัย
+        # ---------------------------------------------------------
+        # ป้องกันกรณี keywords_list ไม่ใช่ list (ซึ่งไม่ควรเกิดขึ้นแต่เช็คไว้เพื่อความชัวร์)
+        if isinstance(keywords_list, str):
+            return keywords_list
+            
+        return ", ".join(keywords_list)
+    
     def _get_pdca_blocks_from_evidences(
-            self, 
-            evidences: List[Dict], 
-            baseline_evidences: Dict[str, List[Dict]], 
-            level: int,
-            sub_id: str,
-            contextual_rules_map: Dict[str, Any]
-        ) -> Tuple[str, str, str, str, str]:
-            """
-            Groups evidences by PDCA tags and formats them into context blocks
-            for the LLM prompt.
+        self,
+        evidences: List[Dict],
+        baseline_evidences: Dict[str, List[Dict]],
+        level: int,
+        sub_id: str,
+        contextual_rules_map: Dict[str, Any]
+    ) -> Tuple[str, str, str, str, str]:
+        """
+        Build PDCA context blocks from evidences.
+        Logic: Re-classify chunks, force L1 Plan, group, and render to text.
+        """
+        import copy
+        from collections import defaultdict
 
-            Args:
-                evidences: The list of all relevant evidence chunks (new and previous levels).
-                baseline_evidences: Dictionary of baseline evidences collected from previous levels.
-                level: The current assessment level (L1-L5).
-                sub_id: The ID of the sub-criteria being assessed.
-                contextual_rules_map: Rules for keyword classification.
+        # ------------------------------------------------------------------
+        # 1) เตรียม Chunks ทั้งหมด (รวม Baseline)
+        # ------------------------------------------------------------------
+        all_chunks: List[Dict] = []
+        evidences = self._guarantee_text_key(evidences or [])
+        for c in evidences:
+            all_chunks.append(copy.deepcopy(c))
 
-            Returns:
-                A tuple containing (plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks)
-                as formatted strings.
-            """
-            
-            # 🟢 FIX 9: รับประกันคีย์ 'text' ทันทีที่เข้าเมธอด 
-            # (สมมติว่า self._guarantee_text_key มีอยู่ในคลาสหลัก)
-            evidences = self._guarantee_text_key(evidences)
-            
-            # 🟢 NEW FIX 12: กรอง Chunk ที่ไม่มี Text ออกจากรายการ Evidences ทันที
-            original_count = len(evidences)
-            evidences = [
-                chunk for chunk in evidences 
-                if chunk.get("text", "").strip() # เก็บเฉพาะ chunk ที่ text ไม่ใช่ string ว่าง/space
-            ]
-            if len(evidences) < original_count:
-                # 💡 ใช้ self.logger.debug แทน self.logger.info
-                self.logger.debug(f"PDCA Pre-Filter: Removed {original_count - len(evidences)} chunks with empty text.")
+        level_baseline = baseline_evidences.get(str(level), []) or []
+        for b in level_baseline:
+            b_copy = copy.deepcopy(b)
+            b_copy["is_baseline"] = True
+            all_chunks.append(b_copy)
 
-            # ------------------ Local Helper Function: _create_block ------------------
-            def _create_block(tag: str, chunks: List[Dict]) -> str:
-                """Helper to format a list of chunks into a single text block."""
-                if not chunks:
-                    return ""
+        all_chunks = [c for c in all_chunks if isinstance(c, dict) and c.get("text", "").strip()]
+        if not all_chunks:
+            return "", "", "", "", ""
 
-                block_content = []
-                sorted_chunks = sorted(chunks, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
-                
-                for i, chunk in enumerate(sorted_chunks):
-                    # 🎯 รวม Header และ Content ใน Block เดียวกัน
-                    header = f"### [{tag} {i+1}/{len(sorted_chunks)}]"
-                    content = chunk['text'].strip() # ใช้ strip() เพื่อความสะอาด
-                    
-                    block_content.append(f"{header}\n{content}")
-                
-                # ใช้ \n---\n เป็นตัวแบ่ง Block
-                return "\n---\n".join(block_content)
-            # --------------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # 2) Re-classify PDCA Tags ตาม Keyword ปัจจุบัน
+        # ------------------------------------------------------------------
+        for chunk in all_chunks:
+            try:
+                new_tag = classify_by_keyword(
+                    text=chunk["text"],
+                    sub_id=sub_id,
+                    level=level,
+                    contextual_rules_map=contextual_rules_map
+                )
+                chunk["pdca_tag"] = new_tag if new_tag in {"P", "D", "C", "A"} else "Other"
+            except Exception as e:
+                self.logger.warning(f"PDCA classify failed → fallback Other | {e}")
+                chunk["pdca_tag"] = "Other"
 
-            # 1. Group evidences by PDCA tag (using the consolidated list)
-            pdca_groups = defaultdict(list)
-            
-            # 2. Tag/Re-tag and Group the evidences
-            for chunk in evidences:
-                # ใช้ classify_by_keyword เพื่อ re-tag หาก LLM ไม่ได้ให้ tag มา หรือต้องการยืนยัน
-                # (สมมติว่า classify_by_keyword ถูก Import หรือเป็น method ของ self)
-                if 'pdca_tag' not in chunk or not chunk['pdca_tag'].strip() or chunk['pdca_tag'] == 'Other':
-                    new_tag = classify_by_keyword(
-                        chunk.get("text", ""), 
-                        sub_id=sub_id, 
-                        contextual_rules_map=contextual_rules_map
-                    )
-                    chunk['pdca_tag'] = new_tag
-                
-                tag = chunk['pdca_tag']
-                
-                # ⭐ CRITICAL: รวม Baseline Evidences จาก level ก่อนหน้าเข้าไปในกลุ่ม PDCA 
-                # (พวกนี้ควรถูก re-tag แล้วใน _collect_previous_level_evidences)
-                
-                if tag in ["Plan", "Do", "Check", "Act", "Other"]:
-                    pdca_groups[tag].append(chunk)
+        # ------------------------------------------------------------------
+        # 3) 🔥 KM L1 Logic: ถ้าเป็น Level 1 ให้ถือว่าหลักฐานพื้นฐานคือ Plan (P)
+        # ------------------------------------------------------------------
+        if level == 1:
+            forced_count = 0
+            for chunk in all_chunks:
+                if chunk.get("pdca_tag") == "Other":
+                    chunk["pdca_tag"] = "P"
+                    forced_count += 1
+            if forced_count > 0:
+                self.logger.info(f"💡 [L1 Domain Logic] Forced {forced_count} 'Other' chunks to 'P' (Plan) for level 1")
 
-            # 3. Create blocks from grouped evidences
-            plan_blocks = _create_block("Plan", pdca_groups["Plan"])
-            do_blocks = _create_block("Do", pdca_groups["Do"])
-            check_blocks = _create_block("Check", pdca_groups["Check"])
-            act_blocks = _create_block("Act", pdca_groups["Act"])
-            other_blocks = _create_block("Other", pdca_groups["Other"])
+        # ------------------------------------------------------------------
+        # 4) จัดกลุ่มตาม Label เพื่อสร้าง Text Blocks
+        # ------------------------------------------------------------------
+        TAG_FULL = {"P": "Plan", "D": "Do", "C": "Check", "A": "Act", "Other": "Other"}
+        pdca_groups_full: Dict[str, List[Dict]] = defaultdict(list)
+        for c in all_chunks:
+            tag_abbr = c.get("pdca_tag", "Other")
+            full_label = TAG_FULL.get(tag_abbr, "Other")
+            pdca_groups_full[full_label].append(c)
 
-            return plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks
-                
+        # ------------------------------------------------------------------
+        # 5) Helpers สำหรับการสร้างข้อความ
+        # ------------------------------------------------------------------
+        def _normalize_meta(c: Dict) -> Tuple[str, str]:
+            meta = c.get("metadata", {}) or {}
+            source = c.get("filename") or meta.get("source") or meta.get("file_name") or "Unknown"
+            page = c.get("page") or meta.get("page_label") or meta.get("page_number") or "N/A"
+            return str(source), str(page)
+
+        def _create_block(tag: str, chunks: List[Dict]) -> str:
+            if not chunks: return ""
+            # เรียงตามคะแนน Re-rank จากมากไปน้อย
+            chunks = sorted(chunks, key=get_actual_score, reverse=True)
+            total = len(chunks)
+            blocks: List[str] = []
+            for i, c in enumerate(chunks, start=1):
+                source, page = _normalize_meta(c)
+                score = get_actual_score(c)
+                baseline_mark = " [📜 BASELINE/REFERENCE]" if c.get("is_baseline") else ""
+                header = f"### [{tag} Evidence {i}/{total}]{baseline_mark}"
+                body = c["text"].strip()
+                footer = f"\n[อ้างอิง: {source}, หน้า: {page}, Score: {score:.4f}]"
+                blocks.append(f"{header}\n{body}{footer}")
+            return "\n---\n".join(blocks)
+
+        # ------------------------------------------------------------------
+        # 6) สร้าง Output และบันทึก Log สรุป
+        # ------------------------------------------------------------------
+        plan_text = _create_block("Plan", pdca_groups_full.get("Plan", []))
+        do_text = _create_block("Do", pdca_groups_full.get("Do", []))
+        check_text = _create_block("Check", pdca_groups_full.get("Check", []))
+        act_text = _create_block("Act", pdca_groups_full.get("Act", []))
+        other_text = _create_block("Other", pdca_groups_full.get("Other", []))
+
+        # สรุปสถานะการมีอยู่ของข้อมูลแต่ละ Phase
+        pdca_status = [f"{t}:{'✅' if txt else '❌'}" for t, txt in [("P", plan_text), ("D", do_text), ("C", check_text), ("A", act_text)]]
+        self.logger.info(f"📊 [PDCA Block Output] {sub_id} L{level} | {' | '.join(pdca_status)} | Other:{'✅' if other_text else '❌'}")
+
+        return (plan_text, do_text, check_text, act_text, other_text)
+    
     def run_assessment(
         self,
         target_sub_id: str = "all",
@@ -2992,6 +3015,11 @@ class SEAMPDCAEngine:
 
                 if isinstance(temp_map_from_worker, dict):
                     for level_key, evidence_list in temp_map_from_worker.items():
+                        for ev in evidence_list:
+                            # ตรวจสอบว่ามีเลขหน้าหรือไม่ ถ้าไม่มีให้ดึงจาก metadata
+                            if "page" not in ev:
+                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
+                                
                         current_list = self.evidence_map.setdefault(level_key, [])
                         current_list.extend(evidence_list)
 
@@ -3006,7 +3034,7 @@ class SEAMPDCAEngine:
 
             local_vsm = vectorstore_manager or (
                 load_all_vectorstores(
-                    doc_types=[EVIDENCE_DOC_TYPES],
+                    doc_types=[self.doc_type],
                     enabler_filter=self.config.enabler,
                     tenant=self.config.tenant,
                     year=self.config.year,
@@ -3020,17 +3048,39 @@ class SEAMPDCAEngine:
 
             for sub_criteria in sub_criteria_list:
                 sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria)
+                
+                # เพิ่ม Log เพื่อตรวจสอบข้อมูลที่ได้จาก Worker
+                if final_temp_map:
+                    found_count = sum(len(v) for v in final_temp_map.values())
+                    self.logger.info(f"🔍 Found {found_count} evidence items for {sub_criteria.get('sub_id')}")
+                    
+                    for level_key, evidence_list in final_temp_map.items():
+                        # ตรวจสอบเลขหน้า (Page)
+                        for ev in evidence_list:
+                            if "page" not in ev:
+                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
+                        
+                        # ตรวจสอบว่ามีข้อมูลซ้ำหรือไม่ก่อน extend
+                        current_list = self.evidence_map.setdefault(level_key, [])
+                        current_list.extend(evidence_list)
+                else:
+                    # หากจุดนี้ทำงาน แสดงว่า Worker ไม่ได้ส่ง Map กลับมาเลย
+                    self.logger.warning(f"⚠️ No evidence data extracted for {sub_criteria.get('sub_id')}")
+
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
         # ============================== 3. บันทึก Evidence Map ==============================
-        if self.evidence_map:
+        self.logger.info(f"DEBUG: Evidence Map current keys: {list(self.evidence_map.keys())}")
+        if self.evidence_map and len(self.evidence_map) > 0:
             try:
                 self._save_evidence_map(map_to_save=self.evidence_map)
                 total_items = sum(len(v) for v in self.evidence_map.values() if isinstance(v, list))
-                self.logger.info(f"Evidence Map SAVED | Items: {total_items}")
+                self.logger.info(f"✅ Evidence Map SAVED | Items: {total_items} | Path: {self.evidence_map_path}")
             except Exception as e:
-                self.logger.error(f"Failed to save evidence map: {e}")
+                self.logger.error(f"❌ Failed to save evidence map: {e}")
+        else:
+            self.logger.warning("⚠️ Evidence Map is EMPTY. Skipping save process.")
 
         # ============================== 4. สรุปผล & Export ==============================
         self._calculate_overall_stats(target_sub_id)
@@ -3055,6 +3105,7 @@ class SEAMPDCAEngine:
             final_results["evidence_map_snapshot"] = deepcopy(self.evidence_map)
 
         return final_results
+    
 
     # -------------------- _run_single_assessment (FINAL REVISED VERSION) --------------------
     def _run_single_assessment(
@@ -3067,7 +3118,7 @@ class SEAMPDCAEngine:
     ) -> Dict[str, Any]:
         """
         รันการประเมิน Level เดียว (L1-L5) อย่างสมบูรณ์
-        *FIXED: Adaptive Filtering Fallback Logic, PDCA Gate & Weighted Strength*
+        *FINAL FIXES: Correct score calculation after filtering, remove duplicate re-tag, clean logs*
         """
     
         start_time = time.time()
@@ -3087,9 +3138,7 @@ class SEAMPDCAEngine:
         must_include_keywords = ", ".join(context_rules.get("must_include_keywords", []))
         avoid_keywords = ", ".join(context_rules.get("avoid_keywords", []))
 
-        planning_keywords = self._get_keywords_for_phase(sub_id, level, "Plan")
-        # 📌 NEW: ตรวจสอบ Contextual Rule ที่เกี่ยวข้อง
-        # ดึง Rule ที่มี level และ sub_id ตรงกัน (ถ้ามี)
+        plan_keywords = self._get_keywords_for_phase(sub_id, level, "Plan")
         contextual_rule = self._get_applicable_contextual_rule(sub_id, level)
 
         # ==================== 2. Hybrid Retrieval Setup ====================
@@ -3114,14 +3163,13 @@ class SEAMPDCAEngine:
             statement_id=statement_id,
             level=level,
             focus_hint=level_constraint,
-            # ไม่ต้องส่ง enabler_id และ contextual_map เพราะถูกเข้าถึงผ่าน self แล้ว
         )
         rag_query = rag_query_list[0] if rag_query_list else statement_text
 
         # ==================== 4. LLM Evaluator ====================
         llm_evaluator_to_use = evaluate_with_llm_low_level if level <= 2 else self.llm_evaluator
 
-        # ==================== 5. ADAPTIVE RAG LOOP (FIXED: Filter Score 0.0000) ====================
+        # ==================== 5. ADAPTIVE RAG LOOP (FINAL ROBUST VERSION) ====================
         highest_rerank_score = 0.0
         final_top_evidences = []
         retrieval_start = time.time()
@@ -3138,7 +3186,7 @@ class SEAMPDCAEngine:
             try:
                 retrieval_result = self.rag_retriever(
                     query=query_input,
-                    doc_type=EVIDENCE_DOC_TYPES,
+                    doc_type=self.doc_type,
                     enabler=self.config.enabler,
                     sub_id=sub_id,
                     level=level,
@@ -3151,30 +3199,21 @@ class SEAMPDCAEngine:
                 self.logger.error(f"RAG retrieval failed: {e}")
                 break
 
+            # ดึงหลักฐานที่ได้จากรอบนี้
             top_evidences_current = retrieval_result.get("top_evidences", [])
 
-            current_max_score = max(
-                (ev.get("rerank_score") or ev.get("score", 0.0) for ev in top_evidences_current),
-                default=0.0
-            )
+            # 🎯 Step 1: กรองและคำนวณคะแนนของ Chunks ใหม่ (ใช้ relevance_score เป็นหลัก)
+            if top_evidences_current:
+                # กรองพวกที่ไม่มีคะแนนออกไปเลย (ป้องกัน Noise)
+                top_evidences_current = [ev for ev in top_evidences_current if get_actual_score(ev) > 0.0001]
+                current_max_score = max((get_actual_score(ev) for ev in top_evidences_current), default=0.0)
+            else:
+                current_max_score = 0.0
+
+            # 🎯 Step 2: คำนวณคะแนนของ Priority Docs (Hydrated chunks) โดยใช้ Logic เดียวกัน
+            priority_max_score = max((get_actual_score(doc) for doc in priority_docs), default=0.0)
             
-            # 🟢 FIX: ถ้ามีการค้นพบ Rerank Score ที่ไม่ใช่ 0.0 ให้กรอง Chunks ที่ Score 0.0000 ออก (มาจาก Priority Chunks ที่ถูกรวมมา)
-            if current_max_score > 0.0001: 
-                original_count = len(top_evidences_current)
-                top_evidences_current = [
-                    ev for ev in top_evidences_current 
-                    if (ev.get("rerank_score") or ev.get("score", 0.0)) > 0.0001
-                ]
-                if len(top_evidences_current) < original_count:
-                    # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
-                    self.logger.debug(f"Filtered out {original_count - len(top_evidences_current)} chunks with Score 0.0000 (assumed Priority Chunks).")
-            # -----------------------------------------------------------------------------------------------------------------------------------
-
-
-            priority_max_score = max(
-                (doc.get("rerank_score") or doc.get("score", 0.0) for doc in priority_docs),
-                default=0.0
-            )
+            # 🎯 Step 3: หาคะแนนรวมที่ดีที่สุดในรอบนี้
             overall_max_score = max(current_max_score, priority_max_score)
 
             self.logger.info(
@@ -3182,49 +3221,51 @@ class SEAMPDCAEngine:
                 f"Overall: {overall_max_score:.4f}"
             )
 
+            # 🎯 Step 4: อัปเดตผลลัพธ์ที่ดีที่สุด
+            # ถ้าคะแนนรอบนี้ดีกว่ารอบก่อนๆ ให้บันทึกไว้
             if overall_max_score > highest_rerank_score:
                 highest_rerank_score = overall_max_score
-                final_top_evidences = top_evidences_current
+                # รวมหลักฐาน: เอาทั้งที่ดึงมาใหม่ และพวก Priority (Baseline) มารวมกัน
+                final_top_evidences = top_evidences_current + priority_docs
+                
                 if loop_attempt > 1:
                     self.logger.info(f"  > Retrieval improved: New overall best {highest_rerank_score:.4f}")
 
+            # 🎯 Step 5: Check Exit Condition (ถ้าได้คะแนนถึงเกณฑ์แล้ว ให้หยุด Loop ทันที)
             if highest_rerank_score >= MIN_RETRY_SCORE:
                 self.logger.info(f"  > Adaptive Retrieval L{level}: Score {highest_rerank_score:.4f} ≥ {MIN_RETRY_SCORE} → STOP")
                 break
 
+            # เตรียม Query สำหรับการลองครั้งถัดไป (ถ้ายังไม่ถึงรอบสุดท้าย)
             if loop_attempt < MAX_RETRIEVAL_ATTEMPTS:
                 rag_query = f"หลักฐานเพิ่มเติมสำหรับ {statement_text} ในบริบท {level_constraint}"
 
             loop_attempt += 1
 
         retrieval_duration = time.time() - retrieval_start
-        top_evidences = final_top_evidences 
+        # ส่งค่าหลักฐานที่ดีที่สุดออกไปให้ LLM วิเคราะห์
+        top_evidences = final_top_evidences
 
         # ==================== 6. Adaptive Filtering ====================
         filtered = []
         original_top_evidences = top_evidences 
 
         for doc in original_top_evidences:
-            score = doc.get('rerank_score', doc.get('score', 0.0))
-            is_baseline = doc.get('is_baseline', False)  # ⭐ Check Baseline Flag
+            score = get_actual_score(doc)
+            is_baseline = doc.get('is_baseline', False)
             doc_id = doc.get('chunk_uuid') or doc.get('doc_id') or 'UNKNOWN'
             
-            # 🟢 FIX 2: ถ้าเป็น Baseline Evidence → ผ่านทันที (ไม่เช็ค Threshold)
             if is_baseline:
                 filtered.append(doc)
                 self.logger.debug(f"✅ Baseline chunk kept (ID: {doc_id[:8]}...) | Score {score:.4f}")
                 continue
             
-            # ถ้าไม่ใช่ Baseline → เช็ค Score ตาม Threshold ปกติ
-            if score >= globals()['MIN_RERANK_SCORE_TO_KEEP']:
+            if score >= MIN_RERANK_SCORE_TO_KEEP:
                 filtered.append(doc)
             else:
-                # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
                 self.logger.debug(f"Filtering out chunk (ID: {doc_id[:8]}...) | Score {score:.4f}")
 
-        # Fallback Logic ถ้ากรองหมด
         if not filtered and original_top_evidences:
-            # 🟢 เก็บไว้เป็น WARNING เนื่องจากเป็นเหตุการณ์ที่ควรแจ้งเตือน
             self.logger.warning(
                 f"  > (L{level}) Adaptive Filtering removed all chunks. "
                 f"Using all {len(original_top_evidences)} original chunks for PDCA grouping (Fallback)."
@@ -3235,49 +3276,34 @@ class SEAMPDCAEngine:
         else:
             top_evidences = filtered 
 
-        # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
         self.logger.debug(f"Adaptive Filter L{level}: Kept {len(top_evidences)}/{len(original_top_evidences)} chunks "
                         f"({len([d for d in top_evidences if d.get('is_baseline')])} baseline)")
 
-        # ==================== 6.5. 🟢 FIX 4: Robust Hydration for Filtered Chunks ====================
+        # ==================== 6.5. Robust Hydration for Filtered Chunks ====================
         if top_evidences and vectorstore_manager:
-            # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
-            self.logger.debug(f"FIX 4: Running Robust Hydration for {len(top_evidences)} filtered chunks (New + Baseline)...")
-            
-            # **CRITICAL FIX**: ใช้ฟังก์ชันที่มีอยู่เพื่อ Hydrate
+            self.logger.debug(f"Running Robust Hydration for {len(top_evidences)} filtered chunks...")
             top_evidences = self._robust_hydrate_documents_for_priority_chunks(
                 chunks_to_hydrate=top_evidences,
                 vsm=vectorstore_manager
             )
-            
-            # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
-            self.logger.debug(f"FIX 4: Hydration complete. Final chunks with text: {len([c for c in top_evidences if 'text' in c and c['text'].strip()])}")
+            self.logger.debug(f"Hydration complete. Final chunks with text: {len([c for c in top_evidences if 'text' in c and c['text'].strip()])}")
 
         # ==================== 7. Baseline from Previous Levels ====================
-        # 🎯 FIX 1: Initial Value ต้องเป็น Dictionary เปล่า {} เสมอ
-        previous_levels_evidence_dict = {} 
-        # List สำหรับการส่งเข้า build_multichannel_context_for_level
-        previous_levels_evidence_list = [] 
+        previous_levels_evidence_dict = {}
+        previous_levels_evidence_list = []
 
         if level > 1 and not self.is_parallel_all_mode:
-            # _collect_previous_level_evidences คืนค่าเป็น Dict[str, List[Dict]]
             previous_levels_evidence_dict = self._collect_previous_level_evidences(sub_id, current_level=level)
         
-        # รวบรวมหลักฐานทั้งหมดจาก Dictionary เข้า List สำหรับ Summary Context
         for lst in previous_levels_evidence_dict.values():
             previous_levels_evidence_list.extend(lst)
 
         # ==================== 8. Build Context ====================
-        # 🟢 FIX 10.1: รวมหลักฐานใหม่ (top_evidences) กับหลักฐาน Level ก่อนหน้า
-        # NOTE: top_evidences มาจากผลลัพธ์ของ _robust_hydrate_documents_for_priority_chunks
         total_evidences = top_evidences + previous_levels_evidence_list 
-
-        # 🟢 FIX 10.2: รับประกันคีย์ 'text' สำหรับหลักฐานทั้งหมดที่ถูกรวม (รวมทั้งหลักฐานเก่า L1)
         total_evidences = self._guarantee_text_key(total_evidences) 
         
         plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
             total_evidences,
-            # 🎯 FIX 2: ส่ง Dictionary เข้าไปเพื่อให้ .values() ในฟังก์ชันถัดไปไม่เกิด Error
             baseline_evidences=previous_levels_evidence_dict, 
             level=level,
             sub_id=sub_id,
@@ -3292,7 +3318,6 @@ class SEAMPDCAEngine:
             other_blocks
         ]))
 
-        # กำหนด Context Length Limit สำหรับ L3 ขึ้นไป
         max_context_length = None
         if level >= 3:
             max_context_length = CONTEXT_CAP_L3_PLUS 
@@ -3301,11 +3326,9 @@ class SEAMPDCAEngine:
         # --- CRITICAL C/A EVIDENCE SUMMARY ---
         critical_evidence_summary = ""
         if level >= 2:
-            # CRITICAL_SCORE_THRESHOLD = globals()['CRITICAL_CA_THRESHOLD'] 
-            
             critical_chunks = [
                 doc for doc in top_evidences 
-                if doc.get('pdca_tag') in ['Check', 'Act'] and doc.get('rerank_score', 0.0) >= CRITICAL_CA_THRESHOLD
+                if doc.get('pdca_tag') in ['Check', 'Act'] and get_actual_score(doc) >= CRITICAL_CA_THRESHOLD
             ]
             
             if critical_chunks:
@@ -3318,11 +3341,9 @@ class SEAMPDCAEngine:
             else:
                 self.logger.info(f"No CRITICAL C/A chunks found (Score < {CRITICAL_CA_THRESHOLD}) for L{level}.")
                 
-        # 🟢 ตัวแปร aux_summary และ baseline_summary ถูกกำหนดที่นี่ 
         channels = build_multichannel_context_for_level(
             level=level,
             top_evidences=top_evidences,
-            # 🎯 FIX 3: ส่ง List เข้าไปใน build_multichannel_context_for_level
             previous_levels_evidence=previous_levels_evidence_list, 
             max_main_context_tokens=3000,
             max_summary_sentences=4,
@@ -3331,7 +3352,6 @@ class SEAMPDCAEngine:
         aux_summary = channels.get('aux_summary', 'ไม่มีหลักฐานรอง')
         baseline_summary = channels.get('baseline_summary', 'ไม่มี')
 
-        # 🟢 ตัวแปร final_llm_context ถูกกำหนดที่นี่
         final_llm_context = "\n\n".join(filter(None, [
             f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{direct_context}",
             critical_evidence_summary, 
@@ -3348,8 +3368,6 @@ class SEAMPDCAEngine:
         self.logger.debug(f"--- LLM CONTEXT (L{level}) --- \n{final_llm_context}")
 
         # ==================== 9. Evidence Strength Calculation & PDCA Gate ====================
-        
-        # --- PDCA Completeness Check --- (Patch 1: PDCA Gate)
         available_tags = set()
         if plan_blocks.strip(): available_tags.add("P")
         if do_blocks.strip(): available_tags.add("D")
@@ -3358,11 +3376,9 @@ class SEAMPDCAEngine:
 
         missing_tags = REQUIRED_PDCA.get(level, set()) - available_tags
         
-        # ตั้งค่าเริ่มต้น
         ai_confidence = "HIGH"
         is_hard_fail_pdca = False
         
-        # (เรียกใช้ Logic เดิม เพื่อให้ได้ max_evi_str_for_prompt เบื้องต้นจาก Rerank)
         evi_cap_data = self._calculate_evidence_strength_cap(
             top_evidences=top_evidences,
             level=level,
@@ -3370,75 +3386,45 @@ class SEAMPDCAEngine:
         )
         max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
 
-        # ----------------------------------------------------------------------------------------------------
-        # 🟢 NEW: CONTEXTUAL RULE HARD FAIL OVERRIDE CHECK
-        # ----------------------------------------------------------------------------------------------------
         is_contextual_override_active = False
         
-        # 🎯 Check 1: ตรวจสอบว่ามี Contextual Rule ที่เกี่ยวข้องหรือไม่
         if contextual_rule and globals().get('ENABLE_CONTEXTUAL_RULE_OVERRIDE', False):
-            # 🎯 Check 2: ตรวจสอบว่า Rule นี้เป็นประเภท OVERRIDE_ON_PDCA_GAP หรือไม่
             if contextual_rule['rule_type'] == 'SCORE_OVERRIDE_ON_PDCA_GAP':
-                
-                # 🎯 Check 3: ตรวจสอบเงื่อนไขของ Rule ด้วยหลักฐานปัจจุบัน
                 if self._check_contextual_rule_condition(contextual_rule['condition'], sub_id, level, previous_levels_evidence_dict, top_evidences):
-                    
                     self.logger.critical(f"  > CONTEXTUAL OVERRIDE L{level}: Rule '{contextual_rule['name']}' matched conditions (PDCA Gap Bypass).")
                     is_contextual_override_active = True
         
-        # ----------------------------------------------------------------------------------------------------
-
         if missing_tags:
             self.logger.warning(
                 f"  > PDCA INCOMPLETE for L{level} | Missing: {sorted(missing_tags)} | "
                 f"Forcing PARTIAL evidence strength & confidence"
             )
-            # Force partial strength cap
             max_evi_str_for_prompt = min(max_evi_str_for_prompt, 3.0)
             ai_confidence = "LOW"
             
-            # Hard rule for L3+ (strict SE-AM)
             if level >= 3 and (("C" in missing_tags) or ("A" in missing_tags)):
                 if not is_contextual_override_active:
-                    
-                    # 📌 NEW LOGIC: CHECK ENABLE_HARD_FAIL_LOGIC FLAG 
-                    # (สมมติว่า ENABLE_HARD_FAIL_LOGIC ถูก import มาจาก global_vars)
                     if ENABLE_HARD_FAIL_LOGIC: 
-                        # 🔴 HARD FAIL ทำงานตามปกติ
                         self.logger.critical(f"  > HARD FAIL L{level}: Missing critical closed-loop PDCA phase(s): {missing_tags} - Skipping LLM call.")
                         is_hard_fail_pdca = True
                     else:
-                        # 🟢 HARD FAIL BYPASS (Flag = False)
                         self.logger.warning(f"  > HARD FAIL BYPASS: ENABLE_HARD_FAIL_LOGIC is False. Allowing LLM to proceed despite PDCA Gap.")
-                        # is_hard_fail_pdca ถูกตั้งค่าเป็น False โดยค่าเริ่มต้น
                 else:
-                    # 🟢 Bypass Hard Fail ด้วย Contextual Rule (Logic เดิม)
                     self.logger.warning(f"  > HARD FAIL AVOIDED: Contextual Rule Bypassed PDCA Hard Fail Logic.")
                 
         else:
-            # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
             self.logger.debug(f"  > PDCA COMPLETE for L{level}: {sorted(available_tags)}")
 
-
-        # --- Weighted Evidence Strength --- (Patch 2: Weighted Strength)
         if level in REQUIRED_PDCA and available_tags:
             pdca_completeness_ratio = len(available_tags) / len(REQUIRED_PDCA.get(level))
-            
-            # น้ำหนักของ PDCA (0.6 สำหรับ L3+ และ 0.3 สำหรับ L1/L2)
             weight_pdca = 0.6 if level >= 3 else 0.3
-            
-            # highest_rerank_score ต้องเป็นตัวแปรที่มีค่า Rerank Score สูงสุด
             adjusted_score = (
                 (1 - weight_pdca) * highest_rerank_score 
                 + weight_pdca * pdca_completeness_ratio
             )
-            
-            # ใช้ adjusted_score ในการกำหนด Evidence Strength ขั้นสุดท้ายที่ส่งเข้า Prompt (ไม่เกิน 10.0)
-            # และใช้ min กับ max_evi_str_for_prompt ที่อาจถูก cap 3.0 จาก Hard Fail ก่อนหน้า
             final_strength_from_weighted = min(adjusted_score * 10.0, 10.0)
             max_evi_str_for_prompt = min(max_evi_str_for_prompt, final_strength_from_weighted)
             
-            # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
             self.logger.debug(
                 f"  > Weighted Evidence Score L{level}: Rerank={highest_rerank_score:.2f} "
                 f"| PDCA Ratio={pdca_completeness_ratio:.2f} | Final Strength={max_evi_str_for_prompt:.1f}"
@@ -3447,7 +3433,7 @@ class SEAMPDCAEngine:
         # ==================== 10. LLM Evaluation ====================
         llm_start = time.time()
         llm_result = {}
-        is_passed_llm = False # ตั้งค่าเริ่มต้น
+        is_passed_llm = False
 
         if not is_hard_fail_pdca:
             try:
@@ -3462,15 +3448,15 @@ class SEAMPDCAEngine:
                     "must_include_keywords": must_include_keywords,
                     "avoid_keywords": avoid_keywords,
                     "max_rerank_score": highest_rerank_score,
-                    "max_evidence_strength": max_evi_str_for_prompt, # ใช้ค่าที่ถูกปรับแล้ว
+                    "max_evidence_strength": max_evi_str_for_prompt,
                     "llm_executor": self.llm,
                     "contextual_rules_map": self.contextual_rules_map,
                     "enabler_id": self.config.enabler,
-                    "ai_confidence": ai_confidence # ใช้ค่าที่ถูกปรับแล้ว
+                    "ai_confidence": ai_confidence
                 }
 
                 if level <= 2:
-                    llm_kwargs["planning_keywords"] = planning_keywords
+                    llm_kwargs["planning_keywords"] = plan_keywords
 
                 llm_result = llm_evaluator_to_use(**llm_kwargs)
                 is_passed_llm = llm_result.get('is_passed', False)
@@ -3483,29 +3469,22 @@ class SEAMPDCAEngine:
 
         llm_duration = time.time() - llm_start
 
-        # ==================== 11. Post-Processing & Scoring (STRICT PDCA OVERRIDE APPLIED) ====================
+        # ==================== 11. Post-Processing & Scoring ====================
         if not isinstance(llm_result, dict):
             llm_result = {}
 
         llm_result = post_process_llm_result(llm_result, level)
 
-        # 📌 ปรับ Final Correction ให้รองรับ Hard Fail
         if is_hard_fail_pdca:
-            # ไม่มีการเรียก LLM, score ต้องเป็น 0 ทันที
             final_score = 0.0
             is_passed = False
             final_pdca_breakdown = {'P': 0.0, 'D': 0.0, 'C': 0.0, 'A': 0.0}
             self.logger.warning(f"  > L{level} Final Score is 0.0 due to PDCA HARD FAIL.")
         
-        # 🟢 NEW: CONTEXTUAL OVERRIDE SCORING
         elif is_contextual_override_active:
             action = contextual_rule['action']
             if action.get('bypass_hard_fail', False):
-                
-                # ใช้คะแนนที่ถูกกำหนดไว้ใน Rule แทน LLM
                 final_pdca_breakdown = action.get('force_llm_input_scores', {'P': 0.0, 'D': 0.0, 'C': 0.0, 'A': 0.0})
-                
-                # กำหนด Reason/Extraction จาก Rule Comment
                 llm_result['reason'] = action.get('comment', 'Bypassed by Contextual Rule due to PDCA Gap.')
                 llm_result['extraction_c'] = f"OVERRIDE: {final_pdca_breakdown.get('C', 0.0)}"
                 llm_result['extraction_a'] = f"OVERRIDE: {final_pdca_breakdown.get('A', 0.0)}"
@@ -3516,26 +3495,21 @@ class SEAMPDCAEngine:
 
                 self.logger.critical(f"  > L{level} Contextual Override Success. Score: {final_score:.1f} (Rule: {final_pdca_breakdown})")
 
-        # -------------------------------------------------------------------------------------------
-
         else:
-            # ใช้ Logic เดิม (Post-process และ Override C/A Score จาก LLM)
             final_pdca_breakdown = llm_result.get('pdca_breakdown', {})
             
             C_KEYWORDS = BASE_PDCA_KEYWORDS['Check']
             A_KEYWORDS = BASE_PDCA_KEYWORDS['Act']
             
-            # --- C/A SCORE OVERRIDE (FORCE UP) ---
-            
-            # 1. การตรวจสอบและบังคับคะแนน C (Check) สำหรับ L3, L4, L5
             if level >= 3 and final_pdca_breakdown.get('C', 0) < 2:
-                
                 is_c_evidence_found = any(
-                    chunk.get('pdca_tag') == 'Check' or 
-                    any(k in chunk.get('text', '') for k in C_KEYWORDS)
+                    get_actual_score(chunk) > 0.0001 and (
+                        chunk.get('pdca_tag') == 'Check' or
+                        any(k in chunk.get('text', '') for k in C_KEYWORDS)
+                    )
                     for chunk in top_evidences
                 )
-                
+
                 is_p_d_ok = final_pdca_breakdown.get('P', 0) >= 1 and final_pdca_breakdown.get('D', 0) >= 1
                 
                 if is_c_evidence_found and is_p_d_ok:
@@ -3545,10 +3519,7 @@ class SEAMPDCAEngine:
                     final_pdca_breakdown['C'] = 2.0
                     self.logger.warning(f"  > L3 C Score OVERRIDE: Forced to 2.0 (L3 Focus) due to evidence/keywords 'Check' found.")
 
-
-            # 2. การตรวจสอบและบังคับคะแนน A (Act) สำหรับ L4, L5
             if level >= 4 and final_pdca_breakdown.get('A', 0) < 2:
-                
                 is_a_evidence_found = any(
                     chunk.get('pdca_tag') == 'Act' or 
                     any(k in chunk.get('text', '') for k in A_KEYWORDS)
@@ -3559,29 +3530,19 @@ class SEAMPDCAEngine:
                     final_pdca_breakdown['A'] = 2.0
                     self.logger.warning(f"  > L{level} A Score OVERRIDE: Forced to 2.0 due to evidence/keywords 'Act' found and C is 2.0.")
 
-            # 3. Final Correction & Calculation after Override UP
-            
             if level == 3:
                 if final_pdca_breakdown.get('A', 0) > 0:
                     self.logger.warning(f"  > L3 PDCA Correction: A_Act_Score must be 0. Correcting.")
                     final_pdca_breakdown['A'] = 0.0
 
             final_score = sum(final_pdca_breakdown.values())
-            
             required_score_for_level = get_correct_pdca_required_score(level)
             is_passed = final_score >= required_score_for_level
 
-
-        # -------------------------------------------------------------
-        
         status = "PASS" if is_passed else "FAIL"
-        # 📌 Final Evidence Strength ต้องใช้ค่าที่ถูก Cap แล้ว (max_evi_str_for_prompt)
         evidence_strength = max_evi_str_for_prompt if is_passed else 0.0
         
-        # 📌 Final AI Confidence ต้องใช้ค่าที่ถูกปรับจาก Patch 1 หรือคำนวณจาก Strength ใหม่
         if is_passed:
-            # ใช้ Logic เดิมสำหรับ Confidence ถ้า PASS และไม่ Hard Fail
-            # 🔴 FIX: แก้ไข Syntax Error ตรงนี้
             ai_confidence = "HIGH" if evidence_strength >= 8 else "MEDIUM" if evidence_strength >= 5.5 else "LOW"
         elif is_hard_fail_pdca:
             ai_confidence = "LOW"
@@ -3593,29 +3554,19 @@ class SEAMPDCAEngine:
             f"(Score: {final_score:.1f} | Evi Str: {evidence_strength:.1f} | Conf: {ai_confidence})"
         )
 
-        # ✅ แก้ไข: เปลี่ยน INFO เป็น DEBUG
         self.logger.debug(
             f"  > Context Built L{level}: Direct chunks={len(top_evidences)}, "
             f"Aux={'มี' if aux_summary != 'ไม่มีหลักฐานรอง' else 'ไม่มี'}, "
             f"Baseline={'มี' if 'ไม่มีหลักฐานจาก Level ก่อนหน้า' not in baseline_summary else 'ไม่มี'}"
         )
 
-        # === แก้ pdca_tag ใน temp_map_for_level ให้ตรงกับที่ re-tag แล้ว ===
-        for chunk in top_evidences:
-            if "text" in chunk and chunk["text"].strip():
-                # 📌 ต้องแน่ใจว่า classify_by_keyword ถูก Import หรือเป็น method ของ class
-                new_tag = classify_by_keyword(chunk["text"], sub_id=sub_id, contextual_rules_map=self.contextual_rules_map)
-                if new_tag != 'Other':
-                    chunk["pdca_tag"] = new_tag
-
-        # ==================== 12. NEW: Generate Context Summary (Thai) ====================
-        # เรียกใช้ฟังก์ชันสรุปภาษาไทยเพื่อใช้ในเล่มรายงาน
+        # ==================== 12. Generate Context Summary (Thai) ====================
         thai_summary_data = create_context_summary_llm(
-            context=final_llm_context, # ส่ง Context ที่ผ่านการ Cap และจัดกลุ่มแล้ว
+            context=final_llm_context,
             sub_criteria_name=sub_criteria_name,
             level=level,
             sub_id=sub_id,
-            llm_executor=self.llm # ส่ง Executor ของ Class เข้าไป
+            llm_executor=self.llm
         )
 
         return {

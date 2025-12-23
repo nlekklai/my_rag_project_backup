@@ -3,6 +3,7 @@
 # รวมการแก้ไข: Path Isolation, get_vectorstore, ingest_all_files, list_documents, wipe_vectorstore
 
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import re
 import sys
 import logging
@@ -64,7 +65,8 @@ from config.global_vars import (
     DATA_STORE_ROOT,
     SUPPORTED_DOC_TYPES,
     MAX_PARALLEL_WORKERS,
-    PROJECT_NAMESPACE_UUID
+    PROJECT_NAMESPACE_UUID,
+    SEAM_SUBTOPIC_MAP
 )
 
 # -------------------- [NEW] Import Path Utilities --------------------
@@ -385,7 +387,8 @@ def normalize_loaded_documents(raw_docs: List[Any], source_path: Optional[str] =
 # 📌 Global Text Splitter Configuration (No Change)
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,              
-    chunk_overlap=CHUNK_OVERLAP,            
+    chunk_overlap=CHUNK_OVERLAP,   
+    add_start_index=True,  # 💡 เพิ่มตัวนี้เพื่อช่วยให้ Trace ตำแหน่งในหน้าได้แม่นขึ้น         
     separators=[
         "\n\n",                   
         "\n- ",                   
@@ -396,33 +399,6 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     length_function=len,
     is_separator_regex=False
 )
-
-# ------------------------------------------------------------------
-# SE-AM Sub-topic Mapping (จากหน้า 3-15 ของ SE-AM Manual Book 2566)
-# ------------------------------------------------------------------
-SEAM_SUBTOPIC_MAP = {
-    # CG
-    "1.1": "CG-1.1", "1-1": "CG-1.1",
-    # SP
-    "2.1": "SP-2.1", "2-1": "SP-2.1",
-    # RM&IC
-    "3.1": "RMIC-3.1", "3-1": "RMIC-3.1",
-    # SCM
-    "4.1": "SCM-4.1", "4-1": "SCM-4.1",
-    # DT
-    "5.1": "DT-5.1", "5-1": "DT-5.1",
-    # HCM
-    "6.1": "HCM-6.1", "6-1": "HCM-6.1", "6.2": "HCM-6.2", "6.3": "HCM-6.3", "6.4": "HCM-6.4",
-    "6.5": "HCM-6.5", "6.6": "HCM-6.6", "6.7": "HCM-6.7",
-    # KM & IM
-    "7.1": "KM-7.1", "7-1": "KM-7.1",
-    "7.20": "IM-7.20", "7-20": "IM-7.20",
-    # IA
-    "8.1": "IA-8.1", "8-1": "IA-8.1",
-}
-
-# Keywords ที่บ่งบอกว่าเป็นเกณฑ์ระดับต่าง ๆ
-LEVEL_KEYWORDS = ["ระดับ 1", "ระดับ 2", "ระดับ 3", "ระดับ 4", "ระดับ 5"]
 
 def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     """
@@ -542,124 +518,121 @@ def load_and_chunk_document(
     ocr_pages: Optional[Iterable[int]] = None
 ) -> List[Document]:
     """
-    Load + Clean + Chunk + ใส่ metadata อัตโนมัติ
-    ใช้ Deterministic UUID V5 (Stable Doc ID + Chunk Index) เพื่อสร้าง chunk_uuid 
-    ที่ deterministic และสอดคล้องกับการ Hydration 100% (รวมถึงรองรับ Stable Doc ID ที่เป็น Hash 64 ตัว)
+    Full Version: Load + Clean + Chunk + Metadata Normalization
+    รองรับการรักษาเลขหน้า (Page Label) ให้แสดงผลบน UI ได้ถูกต้อง ไม่เป็น N/A
     """
     
     file_extension = os.path.splitext(file_path)[1].lower()
-    loader_func = FILE_LOADER_MAP.get(file_extension) # สมมติว่ามี
+    loader_func = FILE_LOADER_MAP.get(file_extension)
     
     if not loader_func:
-        logger.error(f"No loader found for {file_extension}")
+        logger.error(f"❌ ไม่พบ Loader สำหรับไฟล์นามสกุล: {file_extension}")
         return []
 
-    # --- Load Document ---
+    # --- 1. Load Document ---
     try:
-        raw_docs = loader_func(file_path) # สมมติว่ามี
+        raw_docs = loader_func(file_path)
     except Exception as e:
-        logger.error(f"Load failed: {file_path} | {e}")
-        raw_docs = []
+        logger.error(f"❌ โหลดไฟล์ล้มเหลว: {file_path} | Error: {e}")
+        return []
         
     if not raw_docs:
-        logger.warning(f"No content loaded from {os.path.basename(file_path)}")
+        logger.warning(f"⚠️ ไม่พบเนื้อหาในไฟล์: {os.path.basename(file_path)}")
         return []
 
-    # --- Normalize to Document objects ---
-    docs = [doc for doc in raw_docs if isinstance(doc, Document)]
-    
-    # --- Inject Base Metadata ---
+    # --- 2. Base Metadata Setup ---
     base_metadata = {
         "doc_type": doc_type,
         "doc_id": stable_doc_uuid,
         "stable_doc_uuid": stable_doc_uuid,
-        "source_filename": os.path.basename(file_path),
         "source": os.path.basename(file_path),
+        "source_filename": os.path.basename(file_path),
         "version": version,
     }
     if enabler: base_metadata["enabler"] = enabler
     if subject: base_metadata["subject"] = subject.strip()
     if year: base_metadata["year"] = year
-    
-    if metadata: 
-        base_metadata.update(metadata) 
+    if metadata: base_metadata.update(metadata)
 
-    for d in docs:
+    # จัดการเรื่องเลขหน้าเบื้องต้นจาก Loader (เช่น PyPDFLoader)
+    for d in raw_docs:
         d.metadata.update(base_metadata)
-        d.metadata = _safe_filter_complex_metadata(d.metadata) # สมมติว่ามี
-
-    # --- Split into chunks ---
-    try:
-        chunks = TEXT_SPLITTER.split_documents(docs) # สมมติว่ามี
-    except Exception as e:
-        logger.error(f"Split failed: {e}")
-        chunks = docs
-
-    # --- Clean text & Inject per-chunk metadata ---
-    final_chunks = []
-
-    # 1. จัดการกับ Stable Doc ID ที่อาจเป็น Hash 64 ตัว ก่อนใช้เป็น Namespace
-    namespace_uuid: uuid.UUID
-    try:
-        # พยายามแปลง stable_doc_uuid ที่รับเข้ามา (หวังว่าจะเป็น UUID ที่ถูกต้อง)
-        namespace_uuid = uuid.UUID(stable_doc_uuid)
-    except ValueError:
-        # ถ้าเป็น Hash 64 ตัวอักษร (ไม่ใช่ UUID V4/V5)
-        logger.warning(f"Stable Doc ID '{stable_doc_uuid}' is not a valid UUID. Converting Hash to UUID V5 for Namespace.")
-        
-        # สร้าง UUID V5 Deterministic จาก Hash นั้น โดยใช้ NAMESPACE_DNS เป็น Root
-        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, stable_doc_uuid)
-    
-    
-    for idx, chunk in enumerate(chunks, start=1): 
-        if not isinstance(chunk, Document):
-            continue
-
-        chunk.page_content = clean_text(chunk.page_content) # สมมติว่ามี
-
-        # Logic การตรวจจับ page_number และ sub_topic (Logic เดิม)
-        page_from_meta = chunk.metadata.get("page")
-        if page_from_meta is not None:
+        raw_p = d.metadata.get("page")
+        if raw_p is not None:
             try:
-                page_val = int(page_from_meta) + 1
-                chunk.metadata["page_number"] = page_val
-                chunk.metadata["page"] = f"P{page_val}"
-            except ValueError:
+                # แปลงจาก 0-based index เป็นเลขหน้าจริง (เริ่มที่ 1)
+                p_num = int(raw_p) + 1 
+                d.metadata["page_number"] = p_num
+                d.metadata["page"] = str(p_num)
+            except (ValueError, TypeError):
                 pass
 
-        detected = _detect_sub_topic_and_page(chunk.page_content) # สมมติว่ามี
+    # --- 3. Split into Chunks ---
+    try:
+        # TEXT_SPLITTER ต้องถูกประกาศไว้ด้านนอกฟังก์ชันนี้
+        chunks = TEXT_SPLITTER.split_documents(raw_docs)
+    except Exception as e:
+        logger.error(f"❌ การ Split เนื้อหาล้มเหลว: {e}")
+        chunks = raw_docs
+
+    # --- 4. Final Processing & Metadata Normalization ---
+    final_chunks = []
+    
+    # สร้าง Namespace สำหรับ Deterministic UUID V5
+    try:
+        namespace_uuid = uuid.UUID(stable_doc_uuid)
+    except ValueError:
+        namespace_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, stable_doc_uuid)
+    
+    for idx, chunk in enumerate(chunks, start=1):
+        if not chunk.page_content.strip():
+            continue
+
+        # Clean text
+        chunk.page_content = clean_text(chunk.page_content)
+
+        # [NEW] ตรวจจับเลขหน้าและ Sub-topic จากเนื้อหา (Regex Fallback)
+        detected = _detect_sub_topic_and_page(chunk.page_content)
+        
+        # ลำดับความสำคัญ: 1. จาก Loader -> 2. จาก Regex
+        if not chunk.metadata.get("page_number") and detected["page_number"]:
+            chunk.metadata["page_number"] = detected["page_number"]
+        
         if detected["sub_topic"]:
             chunk.metadata["sub_topic"] = detected["sub_topic"]
-        if detected["page_number"]:
-            page_val = detected["page_number"]
-            chunk.metadata["page_number"] = page_val
-            chunk.metadata["page"] = f"P{page_val}"
 
-        # 🟢 ULTIMATE FINAL DETERMINISTIC CHUNK UUID (ใช้ Stable ID + Index)
-        # Seed สำหรับ Chunk ID: Doc ID + Chunk Index (รับประกันความคงที่)
-        combined_seed = f"{stable_doc_uuid}_chunk_{idx}" 
+        # --- 🟢 จุดสำคัญ: ทำ Metadata ให้รองรับการแสดงผลบน UI 🟢 ---
+        final_page = chunk.metadata.get("page_number") or chunk.metadata.get("page")
         
-        # ใช้ Namespace UUID ที่เราเตรียมไว้ (ไม่ว่าจะเป็น Doc ID แท้ หรือ UUID ที่แปลงมาจาก Hash)
-        chunk_uuid = str(uuid.uuid5(namespace_uuid, combined_seed)) 
-        # ----------------------------------------------------------------------
-        
-        chunk.metadata["chunk_uuid"] = chunk_uuid
-        chunk.metadata["stable_doc_uuid"] = stable_doc_uuid 
+        if final_page and str(final_page).strip().lower() != "n/a":
+            p_str = str(final_page).strip()
+            chunk.metadata["page"] = p_str        # สำหรับทั่วไป
+            chunk.metadata["page_label"] = p_str  # 📌 สำหรับ UI แสดงผล (แก้ปัญหา N/A)
+            chunk.metadata["page_number"] = p_str # สำหรับ Metadata filtering
+        else:
+            chunk.metadata["page"] = "N/A"
+            chunk.metadata["page_label"] = "N/A"
 
-        chunk.metadata["doc_id"] = stable_doc_uuid
+        # 🟢 GENERATE DETERMINISTIC CHUNK UUID
+        combined_seed = f"{stable_doc_uuid}_chunk_{idx}"
+        chunk_uuid = str(uuid.uuid5(namespace_uuid, combined_seed))
         
-        # ลบ chunk_id ถ้ามี (เพื่อความสะอาด)
-        if "chunk_id" in chunk.metadata:
-            del chunk.metadata["chunk_id"]
-            
-        chunk.metadata["chunk_index"] = idx
-        
-        chunk.metadata = _safe_filter_complex_metadata(chunk.metadata) # สมมติว่ามี
+        # Update Chunk Identifiers
+        chunk.metadata.update({
+            "chunk_uuid": chunk_uuid,
+            "chunk_index": idx,
+            "doc_id": stable_doc_uuid,
+            "stable_doc_uuid": stable_doc_uuid
+        })
 
+        # กรองข้อมูลที่ซับซ้อนเกินไปก่อนเก็บลง ChromaDB
+        chunk.metadata = _safe_filter_complex_metadata(chunk.metadata)
         final_chunks.append(chunk)
 
-    logger.info(f"Loaded {os.path.basename(file_path)} → {len(final_chunks)} chunks | "
-                 f"sub_topic detected: {len([c for c in final_chunks if c.metadata.get('sub_topic')])}")
+    # สรุปผลการ Trace เลขหน้า
+    pages_found = len([c for c in final_chunks if c.metadata.get('page') != 'N/A'])
+    logger.info(f"✅ ประมวลผลสำเร็จ: {os.path.basename(file_path)} "
+                f"| {len(final_chunks)} chunks | Page traces: {pages_found}")
     
     return final_chunks
 

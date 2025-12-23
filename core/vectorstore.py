@@ -3,6 +3,7 @@ import os
 import platform
 import logging
 import threading
+from threading import Lock
 import multiprocessing
 import json
 import shutil
@@ -10,8 +11,6 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
 from pathlib import Path
 import hashlib
-from threading import Lock
-import threading # <-- ต้องมีบรรทัดนี้
 import uuid
 
 # system utils
@@ -20,20 +19,18 @@ try:
 except ImportError:
     psutil = None
 
-# LangChain-ish imports (adjust to your project's versions)
-from langchain_core.documents import Document as LcDocument # Document (LangChain Core)
-from langchain_core.retrievers import BaseRetriever # BaseRetriever
+# LangChain-ish imports
+from langchain_core.documents import Document as LcDocument
+from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import BaseDocumentCompressor
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
-from langchain_core.runnables import Runnable 
-# 💡 NEW/FIX: Imports สำหรับ Hybrid Search
-from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
+from langchain_core.runnables import Runnable
+from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 
-# ...
-# 💡 NEW/FIX: Import สำหรับ Thai Tokenizer
-from pythainlp.tokenize import word_tokenize # ต้องติดตั้ง: pip install pythainlp
+# Thai Tokenizer
+from pythainlp.tokenize import word_tokenize
 
 # Pydantic helpers
 from pydantic import PrivateAttr, ConfigDict, BaseModel, Field
@@ -43,54 +40,27 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import CrossEncoder
 
-# 💡 NEW: Import Path Utilities (อัปเดตชื่อฟังก์ชันให้ตรงกับ utils/path_utils.py ใหม่)
-from utils.path_utils import (
-    get_doc_type_collection_key, # ใช้แทน _get_collection_name
-    get_vectorstore_collection_path, 
-    get_vectorstore_tenant_root_path,
-    get_mapping_file_path, # ใช้แทนทั้ง year_specific และ tenant_root
-    # ไม่ต้องใช้ get_vectorstore_collection_parent_dir แล้ว
-)
-
-
-# Logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
-# Try import CrossEncoder (sentence-transformers)
+# CrossEncoder
 try:
     from sentence_transformers import CrossEncoder
     _HAS_SENT_TRANS = True
 except Exception:
     CrossEncoder = None
     _HAS_SENT_TRANS = False
-    logger.warning("⚠️ sentence-transformers CrossEncoder not available. Reranker will be disabled.")
+    logging.warning("⚠️ sentence-transformers CrossEncoder not available. Reranker will be disabled.")
 
-# Configure chromadb telemetry if available
-try:
-    chromadb.configure(anonymized_telemetry=False)
-except Exception:
-    try:
-        chromadb.settings = Settings(anonymized_telemetry=False)
-    except Exception:
-        pass
+# Path utils
+from utils.path_utils import (
+    get_doc_type_collection_key,
+    get_vectorstore_collection_path,
+    get_vectorstore_tenant_root_path,
+    get_mapping_file_path,
+    _n
+)
 
-
-# *****************************************************************
-# [NEW FUNCTION] Thai Tokenizer (วางไว้ตรงนี้, ด้านนอกคลาส)
-# *****************************************************************
-def thai_tokenizer_for_bm25(text: str) -> List[str]:
-    """ใช้ PyThaiNLP เพื่อแบ่งคำภาษาไทยสำหรับ BM25Retriever"""
-    return word_tokenize(text.lower().strip())
-# *****************************************************************
-
-
-# -------------------- Global Config (Path Vars Removed) --------------------
+# Global config
 from config.global_vars import (
-    # 💥 ลบ VECTORSTORE_DIR, MAPPING_BASE_DIR
     FINAL_K_RERANKED,
     INITIAL_TOP_K,
     EVIDENCE_DOC_TYPES,
@@ -103,14 +73,26 @@ from config.global_vars import (
     USE_HYBRID_SEARCH,
     HYBRID_BM25_WEIGHT,
     HYBRID_VECTOR_WEIGHT
-
 )
 
+# Logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Chroma telemetry
+try:
+    chromadb.configure(anonymized_telemetry=False)
+except Exception:
+    try:
+        chromadb.settings = Settings(anonymized_telemetry=False)
+    except Exception:
+        pass
+
 # -------------------- Vectorstore Constants --------------------
-ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()  # "thread", "process", or ""
+ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()
 ENV_DISABLE_ACCEL = os.getenv("VECTOR_DISABLE_ACCEL", "").lower() in ("1", "true", "yes")
 
-# Global caches (per process)
+# Global caches
 _CACHED_EMBEDDINGS = None
 _EMBED_LOCK = threading.Lock()
 _MPS_WARNING_SHOWN = False
@@ -136,58 +118,46 @@ def _detect_torch_device():
         if torch.cuda.is_available():
             return "cuda"
         if platform.system().lower() == "darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            # MPS can be fragile for multiprocessing; we'll warn and possibly force cpu later
             return "mps"
     except Exception:
         pass
     return "cpu"
 
+# -------------------- HuggingFace Embeddings --------------------
 def get_hf_embeddings(device_hint: Optional[str] = None):
-    global _CACHED_EMBEDDINGS, _MPS_WARNING_SHOWN
+    global _CACHED_EMBEDDINGS
     device = device_hint or _detect_torch_device()
 
     if _CACHED_EMBEDDINGS is None:
-        # สมมติว่ามีการใช้ _EMBED_LOCK เพื่อจัดการ thread safe
-        # with _EMBED_LOCK: 
-        if _CACHED_EMBEDDINGS is None:
-            
-            # 🟢 เปลี่ยนมาใช้ Global Variable ที่กำหนดไว้ใน global_vars.py
-            model_name = EMBEDDING_MODEL_NAME 
-
-            logger.info(f"Loading BEST Thai RAG embedding 2025: {model_name} on {device}")
-            logger.info("This model will be used to build ALL PEA 2568 vectorstores (evidence_km, document, etc.)")
-            
-            try:
-                # 
-                _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
-                    model_name=model_name,
-                    model_kwargs={
-                        "device": device,
-                        # BGE-M3 ไม่จำเป็นต้องมี prefix!
-                    },
-                    encode_kwargs={
-                        "normalize_embeddings": True,
-                        # การลบ 'prompt': 'query:' ออก สำหรับ BGE-M3 นั้น ถูกต้องแล้วครับ!
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to load {model_name}: {e}")
-                logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
-                # ใช้ Fallback model ตัวเดิม
-                _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                    model_kwargs={"device": "cpu"}
-                )
+        with _EMBED_LOCK:
+            if _CACHED_EMBEDDINGS is None:
+                model_name = EMBEDDING_MODEL_NAME
+                logger.info(f"Loading HF Embedding: {model_name} on {device}")
+                try:
+                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                        model_name=model_name,
+                        model_kwargs={"device": device},
+                        encode_kwargs={"normalize_embeddings": True}
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to load {model_name}: {e}")
+                    logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
+                    _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
+                        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        model_kwargs={"device": "cpu"}
+                    )
     return _CACHED_EMBEDDINGS
 
-# =================================================================
-# HuggingFace Cross-Encoder Reranker wrapper (singleton)
-# =================================================================
+# -------------------- Thai Tokenizer --------------------
+def thai_tokenizer_for_bm25(text: str) -> List[str]:
+    return word_tokenize(text.lower().strip())
+
+# -------------------- HuggingFace CrossEncoder Reranker --------------------
 class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     rerank_model: str = RERANKER_MODEL_NAME
-    rerank_device: str = "cpu"
+    rerank_device: str = Field(default_factory=lambda: _detect_torch_device())
     rerank_max_length: int = 512
     top_n: int = FINAL_K_RERANKED
     
@@ -195,81 +165,53 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
 
     def __init__(self, **data):
         super().__init__(**data)
-        self.rerank_device = "cpu"  # Force CPU
+        detected_device = _detect_torch_device()
+        object.__setattr__(self, 'rerank_device', detected_device)
 
         try:
-            logger.info(f"Loading CrossEncoder: {self.rerank_model} on CPU")
+            if not _HAS_SENT_TRANS:
+                raise ImportError("sentence-transformers not installed")
             encoder = CrossEncoder(
-                model_name_or_path=self.rerank_model,  # แก้ deprecated warning
+                model_name_or_path=self.rerank_model,
                 device=self.rerank_device,
-                max_length=self.rerank_max_length,
+                max_length=self.rerank_max_length
             )
-            # 🎯 ใช้ object.__setattr__ เพื่อบายพาส Pydantic validation
             object.__setattr__(self, '_cross_encoder', encoder)
-            logger.info(f"✅ CrossEncoder loaded successfully: {self.rerank_model}")
         except Exception as e:
-            logger.error(f"❌ Failed to load CrossEncoder {self.rerank_model}: {e}", exc_info=True)
+            logger.error(f"❌ Error loading Reranker: {e}", exc_info=True)
             object.__setattr__(self, '_cross_encoder', None)
 
     def compress_documents(
         self,
         documents: Sequence[LcDocument],
         query: str,
-        top_n: int = FINAL_K_RERANKED,  # <--- เพิ่ม parameter นี้เพื่อรับจาก caller (LangChain ส่งมา)
         callbacks: Optional[Any] = None,
-    ) -> List[LcDocument]:
-        if not documents:
-            return []
+        top_n: Optional[int] = None  # <- เพิ่มบรรทัดนี้
+    ) -> Sequence[LcDocument]:
+        if not self._cross_encoder or not documents:
+            return documents
 
-        # ใช้ top_n ที่ส่งมาจาก caller (LangChain) หรือ fallback ไป FINAL_K_RERANKED
-        effective_top_n = top_n if top_n is not None else FINAL_K_RERANKED
+        # ใช้ top_n ที่ส่งเข้ามา ถ้าไม่มีให้ fallback เป็น self.top_n
+        current_top_n = min(len(documents), top_n or self.top_n)
 
-        # ดึง global instance ที่โหลด model สำเร็จใน main thread
-        global_reranker_instance = get_global_reranker()
-
-        # ดึง CrossEncoder model จริง
-        reranker_to_use = None
-        if global_reranker_instance is not None:
-            reranker_to_use = global_reranker_instance._cross_encoder
-
-        # Fallback ถ้า model ไม่พร้อม
-        if reranker_to_use is None:
-            logger.error("HuggingFace Cross-Encoder is not available in this thread. Returning truncated documents.")
-            return list(documents)[:effective_top_n]
-
-        # เตรียมคู่ query-document
         pairs = [[query, doc.page_content] for doc in documents]
+        scores = self._cross_encoder.predict(pairs)
 
-        # Reranking จริง
-        try:
-            scores = reranker_to_use.predict(
-                pairs,
-                batch_size=32,
-                show_progress_bar=False,
-            )
-        except Exception as e:
-            logger.error(f"Reranking failed: {e}", exc_info=True)
-            return list(documents)[:effective_top_n]
-
-        # เพิ่ม relevance_score เข้า metadata และจัดเรียง
-        scored_docs = []
+        ranked_docs = []
         for doc, score in zip(documents, scores):
-            if doc.metadata is None:
-                doc.metadata = {}
-            doc.metadata["relevance_score"] = float(score)
-            scored_docs.append((score, doc))
+            doc.metadata["rerank_score"] = float(score)
+            ranked_docs.append(doc)
 
-        scored_docs.sort(key=lambda x: x[0], reverse=True)
-        final_docs = [doc for _, doc in scored_docs[:effective_top_n]]
+        ranked_docs.sort(key=lambda x: x.metadata["rerank_score"], reverse=True)
+        final_docs = ranked_docs[:current_top_n]
 
-        # Log ผลลัพธ์ reranking
         if final_docs:
-            top_score = scored_docs[0][0]
-            logger.info(f"✅ Reranking completed | Top score: {top_score:.4f} | Model: {RERANKER_MODEL_NAME} | Returned: {len(final_docs)} docs")
+            logger.info(f"📊 Reranking Stats | Top Score: {final_docs[0].metadata['rerank_score']:.4f} | Selected: {len(final_docs)} docs")
 
         return final_docs
 
-# -------------------- Reranker Cache (GLOBAL SINGLETON - FIXED) --------------------
+
+# -------------------- Global Reranker Singleton --------------------
 _global_reranker_instance = None
 _global_reranker_lock = threading.Lock()
 
@@ -278,34 +220,13 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
     with _global_reranker_lock:
         if _global_reranker_instance is None:
             try:
-                # 1. สร้าง instance ก่อน (Pydantic จะ validate fields ธรรมดา)
                 _global_reranker_instance = HuggingFaceCrossEncoderCompressor(
                     rerank_model=RERANKER_MODEL_NAME,
                     top_n=FINAL_K_RERANKED
                 )
-                logger.info("Created HuggingFaceCrossEncoderCompressor instance for global reranker")
             except Exception as e:
-                logger.error(f"Failed to create HuggingFaceCrossEncoderCompressor instance: {e}")
+                logger.error(f"Failed to create global reranker: {e}")
                 _global_reranker_instance = None
-                return None
-
-            # 2. โหลด CrossEncoder และ set ด้วย object.__setattr__
-            try:
-                encoder_instance = CrossEncoder(
-                    model_name_or_path=RERANKER_MODEL_NAME,  # แก้ deprecated warning
-                    device="cpu",  # Force CPU เพื่อความเสถียร
-                    max_length=512
-                )
-                
-                # บายพาส Pydantic
-                object.__setattr__(_global_reranker_instance, '_cross_encoder', encoder_instance)
-                
-                logger.info(f"✅ Global CrossEncoder loaded successfully: {RERANKER_MODEL_NAME} on CPU")
-            except Exception as e:
-                logger.error(f"❌ Failed to load global CrossEncoder: {e}", exc_info=True)
-                object.__setattr__(_global_reranker_instance, '_cross_encoder', None)
-                # ไม่ return None ที่นี่ เพื่อให้ instance ยังมีอยู่ (compress_documents จะ fallback)
-
         return _global_reranker_instance
 
 # -------------------- Path Helper Function (REVISED to use Path Utility) --------------------
@@ -561,109 +482,82 @@ class VectorStoreManager:
 
     def _load_doc_id_mapping(self):
         """
-        โหลดและรวม Document ID Mapping จาก 2 Path (Global + Year/Enabler Specific) แบบ thread-safe
+        โหลด Document ID Mapping โดยเลือก Path ที่ถูกต้องที่สุดเพียงหนึ่งเดียว (Simplified Version)
+        - Evidence: บังคับใช้ Path รายปี/ราย Enabler
+        - อื่นๆ: ใช้ Path กลางระดับ Tenant Root
         """
+        from threading import Lock
 
-        # Lock สำหรับ thread-safe update
+        # 1. เตรียม Lock และโครงสร้างข้อมูลภายใน (Internal State)
         if not hasattr(self, "_mapping_lock") or self._mapping_lock is None:
             self._mapping_lock = Lock()
 
         self._doc_id_mapping = {}
         self._uuid_to_doc_id = {}
 
-        # 🎯 CRITICAL: ดึงค่า attributes ปลอดภัยใน Worker Context
+        # 2. ดึงค่า Attributes จาก Instance
         current_tenant = getattr(self, 'tenant', 'default_tenant')
         current_year = getattr(self, 'year', None)
         current_enabler = getattr(self, 'enabler', None)
-        # 🎯 FIX: ใช้ self.doc_type ที่ถูกกำหนดใน __init__ 
         current_doc_type = getattr(self, 'doc_type', EVIDENCE_DOC_TYPES) 
 
-        logger.info(f"🔍 VSM MAP LOAD PARAMS: Tenant={current_tenant}, Year={current_year}, "
-                     f"Enabler={current_enabler}, DocType={current_doc_type}")
+        # 3. ตัดสินใจเลือก Path เดียว (Single Path Decision)
+        target_path = None
         
-        path_A = None # Specific Map
-        path_B = None # Global Map
-
-        # 1. PATH A: Year-Specific/Enabler Mapping
-        try:
-            path_A = get_mapping_file_path(
-                doc_type=current_doc_type,
-                tenant=current_tenant, 
-                year=current_year, 
-                enabler=current_enabler
-            )
-        except ValueError as e:
-            logger.warning(f"⚠️ VSM MAP PATH A (Specific) failed generation: {e}. Skipping specific map.")
-            path_A = None
-        
-        # 2. PATH B: Global/Tenant Root Mapping
-        try:
-             path_B = get_mapping_file_path(
-                doc_type=current_doc_type,
-                tenant=current_tenant,
-                year=None, # บังคับเป็น None เพื่อให้ Path Logic ไปใช้แบบ Global
-                enabler=None 
-            )
-        except ValueError as e:
-            logger.warning(f"⚠️ VSM MAP PATH B (Global) failed generation: {e}. Skipping global map.")
-            path_B = None
-            
-        # 🎯 FIX: ตรวจสอบความมีอยู่ของไฟล์และจัดลำดับการโหลด (Specific ก่อน Global, ถ้า Path ต่างกัน)
-        paths_to_load = []
-        # A ก่อน B เพื่อให้ Specific ทับ Global
-        if path_A and os.path.exists(path_A):
-            paths_to_load.append(path_A)
-        # B ต้องไม่ซ้ำกับ A
-        if path_B and path_B != path_A and os.path.exists(path_B):
-            paths_to_load.append(path_B)
-
-
-        # Log Path details
-        logger.info(f"🔍 VSM MAP PATH A (Specific): {path_A} (Exists: {os.path.exists(path_A) if path_A else 'N/A'})")
-        logger.info(f"🔍 VSM MAP PATH B (Global): {path_B} (Exists: {os.path.exists(path_B) if path_B else 'N/A'})")
-        logger.info(f"🔍 VSM MAP Loading from {len(paths_to_load)} path(s): {paths_to_load}")
-        
-        total_loaded_docs = 0
-        total_loaded_uuids = 0
-
-        # เริ่มต้นการโหลด
-        for path in paths_to_load:
-            
+        # ใช้ _n() เพื่อป้องกันปัญหา NFD/NFC บน macOS และความแตกต่างของตัวพิมพ์
+        if _n(current_doc_type) == EVIDENCE_DOC_TYPES.lower():
+            # สาย Evidence: กฎใน path_utils บังคับว่าต้องมี year และ enabler
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    mapping_data: Dict[str, Dict[str, Any]] = json.load(f)
-                    
-                # Thread-safe update
-                with self._mapping_lock:
-                    for doc_id, doc_entry in mapping_data.items():
-                        doc_id_clean = doc_id.strip()
-                        
-                        self._doc_id_mapping[doc_id_clean] = doc_entry
-                        
-                        # สร้าง uuid to doc_id mapping
-                        if isinstance(doc_entry, dict) and isinstance(doc_entry.get("chunk_uuids"), list):
-                            for uid in doc_entry["chunk_uuids"]:
-                                uid_clean = uid.replace("-", "")
-                                
-                                # 🎯 FIX: จัดการ UUID ซ้ำ (ตามคำแนะนำ)
-                                if uid in self._uuid_to_doc_id and self._uuid_to_doc_id[uid] != doc_id_clean:
-                                    logger.warning(f"⚠️ Duplicate UUID {uid} detected. Existing: {self._uuid_to_doc_id[uid]}, New: {doc_id_clean}")
-                                    
-                                self._uuid_to_doc_id[uid] = doc_id_clean
-                                self._uuid_to_doc_id[uid_clean] = doc_id_clean
-                                
-                    current_total_docs = len(self._doc_id_mapping)
-                    current_total_uuids = len(self._uuid_to_doc_id)
+                target_path = get_mapping_file_path(
+                    doc_type=current_doc_type,
+                    tenant=current_tenant, 
+                    year=current_year, 
+                    enabler=current_enabler
+                )
+            except ValueError:
+                # กรณี year/enabler เป็น None จะไม่พ่น Warning แต่จะปล่อยให้ target_path เป็น None
+                target_path = None
+        else:
+            # สาย Global (seam, faq, policy, etc.): ใช้ Path กลาง ไม่ต้องระบุปี
+            try:
+                target_path = get_mapping_file_path(
+                    doc_type=current_doc_type,
+                    tenant=current_tenant,
+                    year=None,
+                    enabler=None 
+                )
+            except ValueError:
+                target_path = None
+
+        # 4. Validation: ตรวจสอบความมีอยู่ของไฟล์ก่อนอ่าน
+        if not target_path or not os.path.exists(target_path):
+            logger.warning(f"⚠️ No mapping file found for type '{current_doc_type}' at: {target_path}")
+            return
+
+        # 5. กระบวนการโหลดและสร้างดัชนี (Indexing)
+        logger.info(f"📂 Loading mapping from: {target_path}")
+
+        try:
+            with open(target_path, "r", encoding="utf-8") as f:
+                mapping_data = json.load(f)
                 
-                logger.info(f"✅ Loaded {len(mapping_data)} documents from MAPPING: {path} (Current Total Docs: {current_total_docs}, Chunks: {current_total_uuids})")
-                total_loaded_docs = current_total_docs
-                total_loaded_uuids = current_total_uuids
+            with self._mapping_lock:
+                for doc_id, doc_entry in mapping_data.items():
+                    doc_id_clean = doc_id.strip()
+                    self._doc_id_mapping[doc_id_clean] = doc_entry
                     
-            except Exception as e:
-                logger.error(f"❌ Failed to load Doc ID Mapping from {path}: {e}", exc_info=True)
-
-
-        logger.info(f"Initialized Doc ID Mapping. Total documents loaded: {total_loaded_docs}, Total chunks mapped: {total_loaded_uuids}.")
+                    # สร้าง UUID Lookup Table เพื่อให้ RAG ทราบชื่อไฟล์ต้นทางจากก้อนเนื้อหา (Chunk)
+                    if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry:
+                        for uid in doc_entry["chunk_uuids"]:
+                            uid_clean = uid.replace("-", "")
+                            # เก็บทั้งแบบมีขีดและไม่มีขีดเพื่อความแม่นยำในการค้นหา
+                            self._uuid_to_doc_id[uid] = doc_id_clean
+                            self._uuid_to_doc_id[uid_clean] = doc_id_clean
+            
+            logger.info(f"✅ Success: Loaded {len(self._doc_id_mapping)} documents into Memory.")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to load mapping: {e}")
 
     def _re_parse_collection_name(self, collection_name: str) -> Tuple[str, Optional[str]]:
         collection_name_lower = collection_name.strip().lower()
@@ -830,7 +724,11 @@ class VectorStoreManager:
                 meta = metas_raw[i].copy() if metas_raw and metas_raw[i] else {}
                 current_id = ids_raw[i]
                 
-                # ฝัง ID ที่แท้จริงกลับเข้าไป
+                p_val = meta.get("page_label") or meta.get("page_number") or meta.get("page") or "N/A"
+                meta["page"] = str(p_val)
+                meta["page_label"] = str(p_val) # UI มักเรียกใช้ตัวนี้
+                
+                            # ฝัง ID ที่แท้จริงกลับเข้าไป
                 meta["chunk_uuid"] = current_id
                 
                 # พยายาม Map กลับหา Stable ID ที่ถูกต้องที่สุด
@@ -969,6 +867,10 @@ class VectorStoreManager:
             stable = self._uuid_to_doc_id.get(id_clean) or meta.get("stable_doc_uuid")
             if stable:
                 meta["stable_doc_uuid"] = stable
+
+            p_val = meta.get("page_label") or meta.get("page_number") or meta.get("page") or "N/A"
+            meta["page"] = str(p_val)
+            meta["page_label"] = str(p_val)
 
             docs.append(LcDocument(page_content=text.strip(), metadata=meta))
 
@@ -1150,37 +1052,19 @@ class VectorStoreManager:
         return all_limited_documents
 
     def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, use_rerank: bool = USE_HYBRID_SEARCH, use_hybrid: bool = True) -> Any:
-        # NOTE: Imports ภายในฟังก์ชันถูกนำมาไว้ตรงนี้ตามโครงสร้างที่คุณใช
+        """
+        สร้าง Retriever ที่รองรับ Hybrid Search (Vector + BM25) และ Reranking 
+        โดยมีการจัดการ Scope ของฟังก์ชันภายในให้ถูกต้อง
+        """
+        
         # โหลด Chroma Instance
         chroma_instance = self._load_chroma_instance(collection_name)
         if not chroma_instance:
             logger.warning(f"Retriever creation failed: Collection '{collection_name}' not loaded.")
             return None
 
-        # 1. Raw Vector Retrieve Function (เหมือนเดิม)
-        def raw_vector_retrieve(query: str, filter_dict: Optional[dict] = None, k: int = top_k) -> List[LcDocument]:
-            try:
-                bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
-                query_with_prefix = f"{bge_prefix}{query.strip()}"
-                logger.info(f"[BGE-M3 PREFIX ADDED] Using prefixed query: '{query_with_prefix[:100]}...'")
-
-                search_kwargs = {"k": k}
-                if filter_dict:
-                    search_kwargs["filter"] = filter_dict
-                
-                docs = chroma_instance.similarity_search(
-                    query=query_with_prefix,
-                    k=k,
-                    filter=filter_dict
-                )
-                logger.info(f"Raw vector retrieval: {len(docs)} docs")
-                return docs
-            except Exception as e:
-                logger.error(f"Vector retrieval failed: {e}")
-                return []
-
-
-        # 2. Reranker Wrapper (เหมือนเดิม)
+        # --- [INTERNAL HELPER 1]: Reranker Wrapper ---
+        # ประกาศไว้บนสุดเพื่อให้ทั้ง Hybrid และ Fallback เรียกใช้ได้
         def retrieve_with_rerank(docs: List[LcDocument], query: str) -> List[LcDocument]:
             reranker = get_global_reranker()
             if not (use_rerank and reranker and hasattr(reranker, "compress_documents")):
@@ -1188,17 +1072,18 @@ class VectorStoreManager:
 
             try:
                 reranked = reranker.compress_documents(documents=docs, query=query, top_n=final_k)
-                # Inject score (เหมือนเดิม)
+                # Inject score กลับเข้าไปใน metadata เพื่อแสดงผลหรือ debug
                 scores = getattr(reranker, "scores", None)
                 if scores and len(scores) >= len(reranked):
+                    # เรียงลำดับตาม score
                     doc_scores = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
                     for i, (doc, score) in enumerate(doc_scores[:len(reranked)]):
                         for r_doc in reranked:
                             if r_doc.page_content == doc.page_content:
-                                score = float(score) if score is not None else 0.0
-                                r_doc.metadata["_rerank_score_force"] = score
+                                score_val = float(score) if score is not None else 0.0
+                                r_doc.metadata["_rerank_score_force"] = score_val
                                 orig = r_doc.metadata.get("source_filename", "UNKNOWN")
-                                r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score:.4f}"
+                                r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score_val:.4f}"
                                 break
                 logger.info(f"Reranking success → kept {len(reranked)} docs")
                 return reranked
@@ -1206,160 +1091,200 @@ class VectorStoreManager:
                 logger.warning(f"Rerank failed: {e}, fallback to raw")
                 return docs[:final_k]
 
+        # --- [INTERNAL HELPER 2]: Raw Vector Retrieve ---
+        def raw_vector_retrieve(query: str, filter_dict: Optional[dict] = None, k: int = top_k) -> List[LcDocument]:
+            try:
+                # เพิ่ม Prefix สำหรับ BGE-M3 (ถ้ามี)
+                bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
+                query_with_prefix = f"{bge_prefix}{query.strip()}"
+                
+                docs = chroma_instance.similarity_search(
+                    query=query_with_prefix,
+                    k=k,
+                    filter=filter_dict
+                )
+                return docs
+            except Exception as e:
+                logger.error(f"Vector retrieval failed: {e}")
+                return []
 
-        # 3. สร้าง Vector Retriever (เหมือนเดิม)
+        # 1. สร้าง Vector Retriever พื้นฐาน
         vector_retriever = chroma_instance.as_retriever(search_kwargs={"k": top_k})
 
-        # 4. สร้าง BM25 Retriever (Hybrid)
+        # 2. กรณีใช้ Hybrid (BM25 + Vector)
         if use_hybrid:
             try:
-                # 🔴 FIX CRITICAL (Chroma Access): ใช้ chroma_instance._collection 
-                #    แทนการเรียก self.client.get_collection(collection_name)
+                # 🟢 FIX CRITICAL: ใช้ _collection โดยตรง
+                if not hasattr(chroma_instance, "_collection"):
+                    raise ValueError("chroma_instance has no _collection attribute.")
                 
-                if chroma_instance is None or not hasattr(chroma_instance, "_collection"):
-                    # Logic นี้ควรไม่เกิดขึ้นหาก _load_chroma_instance สำเร็จ
-                    logger.warning(f"Chroma Instance for '{collection_name}' is invalid. Skipping Hybrid setup.")
-                    raise ValueError("Invalid chroma_instance object for Hybrid setup.")
+                collection = chroma_instance._collection
                 
-                collection = chroma_instance._collection # 🟢 แก้ไขตรงนี้
-                
-                # ดึงเอกสารทั้งหมดจาก collection
+                # 🟢 FIX: ดึงข้อมูลเพื่อทำ BM25 Index (ลบ "ids" ออกจาก include)
                 result = collection.get(include=["documents", "metadatas"])
-                texts = result["documents"]
-                metadatas = result["metadatas"]
+                texts = result.get("documents", [])
+                metadatas = result.get("metadatas", [])
 
-                langchain_docs = [
-                    LcDocument(page_content=text, metadata=meta or {})
-                    for text, meta in zip(texts, metadatas)
-                ]
+                if texts:
+                    langchain_docs = [
+                        LcDocument(page_content=text, metadata=meta or {})
+                        for text, meta in zip(texts, metadatas)
+                    ]
 
-                # *** KEY FIX: เพิ่ม tokenizer สำหรับภาษาไทย ***
-                bm25_retriever = BM25Retriever.from_documents(
-                    langchain_docs,
-                    tokenizer=thai_tokenizer_for_bm25 # <-- ใช้ Tokenizer ภาษาไทย
-                )
-                bm25_retriever.k = top_k
+                    # 🟢 KEY FIX: ใส่ Tokenizer ภาษาไทย (pythainlp)
+                    from pythainlp.tokenize import word_tokenize as thai_tokenizer
+                    bm25_retriever = BM25Retriever.from_documents(
+                        langchain_docs,
+                        preprocess_func=thai_tokenizer # หรือใช้ชื่อ tokenizer ตามที่คุณตั้งไว้
+                    )
+                    bm25_retriever.k = top_k
 
-                # 5. Ensemble (Hybrid) Retriever
-                ensemble_retriever = EnsembleRetriever(
-                    retrievers=[vector_retriever, bm25_retriever],
-                    weights=[HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT]  # ปรับได้: Vector 70%, BM25 30%
-                )
+                    # รวมร่าง Ensemble
+                    ensemble_retriever = EnsembleRetriever(
+                        retrievers=[vector_retriever, bm25_retriever],
+                        weights=[HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT]
+                    )
 
-                # 6. Ultimate Hybrid Retriever with Rerank
-                class UltimateHybridRetriever(BaseRetriever):
-                    def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
-                        docs = ensemble_retriever.get_relevant_documents(query)
-                        return retrieve_with_rerank(docs, query)
+                    # คลาสสำหรับ Hybrid + Rerank
+                    class UltimateHybridRetriever(BaseRetriever):
+                        def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+                            # ดึงผลลัพธ์ผ่าน Ensemble
+                            docs = ensemble_retriever.invoke(query)
+                            # ส่งไป Rerank ผ่านฟังก์ชัน Helper ที่ประกาศไว้ด้านบน
+                            return retrieve_with_rerank(docs, query)
 
-                    def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
-                        # NOTE: เราไม่ใช้ kwargs ใน body แต่ต้องรับใน signature
-                        return self._get_relevant_documents(query)
-                
-                # 7. Return the UltimateHybridRetriever instance
-                return UltimateHybridRetriever()
-
+                        def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
+                            return self._get_relevant_documents(query)
+                    
+                    return UltimateHybridRetriever()
 
             except Exception as e:
-                # 🎯 FIX 2: ปรับ Log level และ message เมื่อเกิด Hybrid setup failed
-                logger.error(f"Hybrid/BM25/Ensemble Retriever setup failed for '{collection_name}': {e}", exc_info=False)
-                # Fallback ไปใช้ Vector Retriever ธรรมดา (โดยการ "pass" ไปยังโค้ดส่วนล่าง)
+                logger.error(f"Hybrid setup failed for '{collection_name}': {e}", exc_info=False)
+                # หาก Hybrid มีปัญหา ให้ไหลลงไปใช้ Fallback ด้านล่าง
                 pass
 
-        # Fallback (ถ้า Hybrid ถูกปิด หรือการตั้งค่า Hybrid ล้มเหลว)
+        # 3. Fallback: กรณี Rerank อย่างเดียว หรือ Hybrid พัง
         if use_rerank and get_global_reranker():
             class SimpleVectorRerankRetriever(BaseRetriever):
                 def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
+                    # ดึงผลลัพธ์ผ่าน Vector Search
                     docs = raw_vector_retrieve(query, filter_dict=None, k=top_k)
+                    # ส่งไป Rerank
                     return retrieve_with_rerank(docs, query)
             
-                # 🔴 FIX CRITICAL (TypeError): เพิ่ม **kwargs เพื่อรองรับ Argument 'k'
                 def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
                     return self._get_relevant_documents(query)
             
             return SimpleVectorRerankRetriever()
         
-        # Fallback to simple Chroma vector retriever
+        # 4. สุดท้าย: คืนค่า Vector Retriever ธรรมดา
         return vector_retriever
 
     def get_all_collection_names(self) -> List[str]:
         # 🎯 FIX: ลบ base_path ออกจากการเรียก list_vectorstore_folders
         return list_vectorstore_folders(tenant=self.tenant, year=self.year)
 
-
     def get_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None) -> List[LcDocument]:
-        import chromadb # Import locally if not already imported
+        """
+        ดึง Chunk ของเอกสารทั้งหมดจาก ChromaDB โดยใช้ Stable Document IDs
+        ผ่านการ Mapping จาก doc_id_mapping.json
+        """
+        import chromadb
         from langchain_core.documents import Document as LcDocument
 
+        # 1. เตรียม input ให้เป็น List และจัดการค่าว่าง
         if isinstance(stable_doc_ids, str):
             stable_doc_ids = [stable_doc_ids]
-        stable_doc_ids = [uid for uid in stable_doc_ids if uid]
+        stable_doc_ids = [uid.strip() for uid in stable_doc_ids if uid and isinstance(uid, str)]
+        
         if not stable_doc_ids:
+            logger.warning("No valid Stable Document IDs provided.")
             return []
         
-        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
+        # 2. ระบุชื่อ Collection
+        # 🎯 FIX: ใช้ get_doc_type_collection_key เพื่อความถูกต้องของชื่อตามโครงสร้างระบบ
         collection_name = get_doc_type_collection_key(doc_type, enabler)
+        
         all_chunk_uuids = []
         skipped_docs = []
         found_stable_ids = []
         
+        # 3. ค้นหา Chunk UUIDs จาก Mapping
         for stable_id in stable_doc_ids:
-            stable_id_clean = stable_id.strip()
-            if stable_id_clean in self._doc_id_mapping:
-                doc_entry = self._doc_id_mapping[stable_id_clean]
-                if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry and isinstance(doc_entry.get("chunk_uuids"), list):
+            if stable_id in self._doc_id_mapping:
+                doc_entry = self._doc_id_mapping[stable_id]
+                
+                # ตรวจสอบโครงสร้างข้อมูลใน Mapping
+                if isinstance(doc_entry, dict) and "chunk_uuids" in doc_entry:
                     chunk_uuids = doc_entry["chunk_uuids"]
-                    if chunk_uuids:
+                    if isinstance(chunk_uuids, list) and chunk_uuids:
                         all_chunk_uuids.extend(chunk_uuids)
-                        found_stable_ids.append(stable_id_clean)
+                        found_stable_ids.append(stable_id)
                     else:
-                        logger.warning(f"Mapping found for Stable ID '{stable_id_clean}' but 'chunk_uuids' list is empty.")
+                        logger.warning(f"Stable ID '{stable_id}' has an empty or invalid chunk_uuids list.")
                 else:
-                    # [Minor Fix] แก้ไขตัวแปรจาก stable_doc_clean เป็น stable_id_clean
-                    logger.warning(f"Mapping entry for Stable ID '{stable_id_clean}' is malformed or missing 'chunk_uuids'.") 
+                    logger.warning(f"Mapping for Stable ID '{stable_id}' is malformed or missing 'chunk_uuids'.")
             else:
-                skipped_docs.append(stable_id_clean)
+                skipped_docs.append(stable_id)
                 
         if skipped_docs:
             logger.warning(f"Skipping Stable IDs not found in mapping: {skipped_docs}")
+            
         if not all_chunk_uuids:
-            logger.warning(f"No valid chunk UUIDs found for provided Stable Document IDs: {skipped_docs}. Check doc_id_mapping.json.")
+            logger.warning(f"No valid chunk UUIDs found in collection '{collection_name}' for provided IDs.")
             return []
             
+        # 4. โหลด Chroma Instance
         chroma_instance = self._load_chroma_instance(collection_name)
         if not chroma_instance:
-            logger.error(f"Collection '{collection_name}' is not loaded.")
+            logger.error(f"Collection '{collection_name}' could not be loaded.")
             return []
             
         try:
+            # 🟢 FIX CRITICAL: เข้าถึง _collection โดยตรง และลบ "ids" ออกจาก include 
+            # เพื่อป้องกัน TypeError ใน ChromaDB version ใหม่
             collection = chroma_instance._collection
-            
-            # 🎯 FINAL FIX 16.0: ลบ "ids" ออกจาก include เพื่อแก้ ChromaDB API Error
-            result = collection.get(ids=all_chunk_uuids, include=["documents", "metadatas"]) 
+            result = collection.get(
+                ids=all_chunk_uuids, 
+                include=["documents", "metadatas"]
+            ) 
             
             documents: List[LcDocument] = []
-            if not result.get("documents"):
-                logger.warning(f"Chroma DB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in collection '{collection_name}'.")
+            retrieved_texts = result.get("documents", [])
+            retrieved_metas = result.get("metadatas", [])
+            retrieved_ids = result.get("ids", []) # IDs จะถูกคืนมาให้โดยอัตโนมัติ
+            
+            if not retrieved_texts:
+                logger.warning(f"Chroma DB returned 0 documents for {len(all_chunk_uuids)} chunk UUIDs in '{collection_name}'.")
                 return []
                 
-            for i, text in enumerate(result.get("documents", [])):
+            # 5. ประกอบร่าง LangChain Documents
+            for i, text in enumerate(retrieved_texts):
                 if text:
-                    metadata = result.get("metadatas", [{}])[i]
-                    # IDs ถูกคืนมาโดยอัตโนมัติ ไม่ต้อง include
-                    chunk_uuid_from_result = result.get("ids", [""])[i] 
+                    metadata = retrieved_metas[i] if i < len(retrieved_metas) else {}
+                    chunk_uuid = retrieved_ids[i]
                     
-                    # NOTE: ใช้ self._uuid_to_doc_id
-                    doc_id = self._uuid_to_doc_id.get(chunk_uuid_from_result, "UNKNOWN") 
+                    # ค้นหา doc_id ดั้งเดิมจาก uuid_to_doc_id mapping
+                    doc_id = self._uuid_to_doc_id.get(chunk_uuid, "UNKNOWN") 
                     
-                    metadata["chunk_uuid"] = chunk_uuid_from_result
+                    # ฉีด Metadata เพิ่มเติมสำหรับการแสดงผลและ Traceability
+                    metadata["chunk_uuid"] = chunk_uuid
                     metadata["doc_id"] = doc_id
                     metadata["doc_type"] = doc_type
-                    documents.append(LcDocument(page_content=text, metadata=metadata))
                     
-            logger.info(f"✅ Retrieved {len(documents)} chunks for {len(found_stable_ids)} Stable IDs from '{collection_name}'.")
+                    documents.append(LcDocument(page_content=text, metadata=metadata))
+            
+            # เรียงลำดับเอกสารตาม Chunk Order (ถ้ามีข้อมูล index ใน metadata) เพื่อความต่อเนื่อง
+            try:
+                documents.sort(key=lambda x: (x.metadata.get("doc_id", ""), x.metadata.get("chunk_index", 0)))
+            except:
+                pass
+
+            logger.info(f"✅ Successfully retrieved {len(documents)} chunks from '{collection_name}'.")
             return documents
+
         except Exception as e:
-            logger.error(f"❌ Error retrieving documents by Chunk UUIDs from collection '{collection_name}': {e}")
+            logger.error(f"❌ Error retrieving chunks from collection '{collection_name}': {e}", exc_info=True)
             return []
     
     @property

@@ -17,7 +17,6 @@ from config.global_vars import (
     DOCUMENT_ID_MAPPING_FILENAME_SUFFIX,
     EVIDENCE_MAPPING_FILENAME_SUFFIX,
     RUBRIC_FILENAME_PATTERN,
-    EXPORTS_DIR,
     DEFAULT_TENANT,
     DEFAULT_YEAR,
     DEFAULT_ENABLER,
@@ -150,15 +149,36 @@ def load_doc_id_mapping(doc_type: str, tenant: str, year: Optional[Union[int, st
         logger.error(f"Load mapping failed {path}: {e}")
         return {}
 
-def save_doc_id_mapping(data: Dict, doc_type: str, tenant: str, year: Optional[Union[int, str]], enabler: Optional[str] = None):
+def save_doc_id_mapping(
+    data: Dict,
+    doc_type: str,
+    tenant: str,
+    year: Optional[Union[int, str]],
+    enabler: Optional[str] = None
+) -> None:
     path = get_mapping_file_path(doc_type, tenant, year, enabler)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Save mapping failed {path}: {e}")
 
+    # Normalize path (macOS-safe)
+    path = unicodedata.normalize("NFKC", path)
+    tmp_path = f"{path}.tmp"
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        # Atomic replace
+        os.replace(tmp_path, path)
+
+    except Exception as e:
+        logger.error(f"Failed to save doc_id_mapping: {path} | {e}")
+
+        # Cleanup temp file if exists
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+        # IMPORTANT: propagate error to caller
+        raise
 
 # ==================== 6. PARSE COLLECTION NAME ====================
 def parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
@@ -246,14 +266,45 @@ def resolve_filepath_to_absolute(path: str) -> str:
     return unicodedata.normalize('NFKC', abs_path)
 
 # ==================== 9. EVIDENCE MAPPING ====================
-def load_evidence_mapping(tenant=DEFAULT_TENANT, year=DEFAULT_YEAR, enabler=DEFAULT_ENABLER):
+def load_evidence_mapping(
+    tenant=DEFAULT_TENANT,
+    year=DEFAULT_YEAR,
+    enabler=DEFAULT_ENABLER
+):
     path = get_evidence_mapping_file_path(tenant, year, enabler)
-    return json.load(open(path, "r", encoding="utf-8")) if os.path.exists(path) else {}
 
-def save_evidence_mapping(data, tenant=DEFAULT_TENANT, year=DEFAULT_YEAR, enabler=DEFAULT_ENABLER):
+    if not os.path.exists(path):
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load evidence mapping: {path} | {e}")
+        return {}
+
+
+def save_evidence_mapping(
+    data,
+    tenant=DEFAULT_TENANT,
+    year=DEFAULT_YEAR,
+    enabler=DEFAULT_ENABLER
+):
     path = get_evidence_mapping_file_path(tenant, year, enabler)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
+
+    tmp_path = f"{path}.tmp"
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        os.replace(tmp_path, path)  # ✅ atomic write
+    except Exception as e:
+        logger.error(f"Failed to save evidence mapping: {path} | {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
 
 # ==================== 10. UPDATE MAPPINGS ====================
 def _update_doc_id_mapping(
@@ -263,15 +314,39 @@ def _update_doc_id_mapping(
     year: Optional[Union[str, int]],
     enabler: Optional[str]
 ) -> None:
+    if not new_entries:
+        logger.debug("No new entries to update in doc_id_mapping.")
+        return
+
     try:
-        existing_map = load_doc_id_mapping(doc_type, tenant, year, enabler)
-    except FileNotFoundError:
+        existing_map = load_doc_id_mapping(doc_type, tenant, year, enabler) or {}
+    except Exception as e:
+        logger.error(
+            f"Failed to load doc_id_mapping for "
+            f"{doc_type} / {enabler or 'None'} / Year {year or 'None'} | {e}"
+        )
         existing_map = {}
-        
+
+    before_count = len(existing_map)
+    overwrite_keys = set(existing_map) & set(new_entries)
+
+    if overwrite_keys:
+        logger.warning(
+            f"Overwriting {len(overwrite_keys)} existing doc_id keys "
+            f"for {doc_type} / {enabler or 'None'} / Year {year or 'None'}"
+        )
+
     existing_map.update(new_entries)
+
     save_doc_id_mapping(existing_map, doc_type, tenant, year, enabler)
-    
-    logger.info(f"Updated {len(new_entries)} entries in mapping for {doc_type} / {enabler or 'None'} / Year {year or 'None'}.")
+
+    logger.info(
+        f"Updated doc_id_mapping: +{len(new_entries)} entries "
+        f"(overwrite {len(overwrite_keys)}) | "
+        f"{doc_type} / {enabler or 'None'} / Year {year or 'None'} | "
+        f"Total={before_count}→{len(existing_map)}"
+    )
+
 
 def _update_evidence_mapping(
     new_entries: Dict[str, Any],
@@ -335,20 +410,40 @@ def get_tenant_year_export_root(tenant: str, year: Union[int, str]) -> str:
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year))
 # ==================== จบ utils/path_utils.py ====================
 
-# utils/path_utils.py (เพิ่มเติม)
-
-def get_tenant_year_report_root(tenant: str, year: Union[int, str], enabler: str = None) -> str:
+def get_tenant_year_report_root(
+    tenant: str,
+    year: Union[int, str],
+    enabler: Optional[str] = None
+) -> str:
     """
     สร้างและส่งคืน Path สำหรับเก็บไฟล์รายงาน (Reports)
-    โครงสร้าง: data_store/<tenant>/reports/<year>/<enabler>
+
+    โครงสร้าง:
+        <DATA_STORE_ROOT>/<tenant>/reports/<year>/<enabler?>
     """
-    base_dir = os.path.join("data_store", _n(tenant), "reports", str(year))
+    if not tenant:
+        raise ValueError("tenant is required")
+    if year is None:
+        raise ValueError("year is required")
+
+    parts = [
+        DATA_STORE_ROOT,
+        _n(tenant),
+        "reports",
+        str(year),
+    ]
+
     if enabler:
-        base_dir = os.path.join(base_dir, _n(enabler))
-    
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir, exist_ok=True)
+        parts.append(_n(enabler))
+
+    base_dir = os.path.join(*parts)
+
+    # Normalize + ensure directory exists (safe & idempotent)
+    base_dir = unicodedata.normalize("NFKC", base_dir)
+    os.makedirs(base_dir, exist_ok=True)
+
     return base_dir
+
 
 # ==================== 12. STABLE UUID V5 GENERATOR (Production Final) ====================
 
@@ -370,6 +465,7 @@ def create_stable_uuid_from_path(
 
     # Stat-based (preferred)
     try:
+        filepath = resolve_filepath_to_absolute(filepath)
         st = os.stat(filepath)
         filename_norm = _n(os.path.basename(filepath))
         key_seed = f"{filename_norm}:{st.st_size}:{int(st.st_mtime)}:{tenant_clean}:{year_str}:{enabler_clean}"
@@ -396,3 +492,33 @@ def create_stable_uuid_from_path(
         namespace = uuid.NAMESPACE_DNS
 
     return str(uuid.uuid5(namespace, key_seed))
+
+__all__ = [
+    "_n",
+    "get_document_source_dir",
+    "get_evidence_base_dir",
+    "get_doc_type_collection_key",
+    "get_vectorstore_collection_path",
+    "get_vectorstore_tenant_root_path",
+    "get_mapping_file_path",
+    "get_evidence_mapping_file_path",
+    "get_mapping_tenant_root_path",
+    "load_doc_id_mapping",
+    "save_doc_id_mapping",
+    "load_evidence_mapping",      # ✅ เพิ่ม
+    "save_evidence_mapping",      # ✅ เพิ่ม
+    "_update_doc_id_mapping",     # ✅ เพิ่ม
+    "_update_evidence_mapping",   # ✅ เพิ่ม
+    "parse_collection_name",
+    "get_document_file_path",
+    "get_config_tenant_root_path",
+    "get_rubric_file_path",
+    "get_contextual_rules_file_path",
+    "get_export_dir",
+    "get_assessment_export_file_path",
+    "get_tenant_year_export_root",
+    "get_tenant_year_report_root",
+    "get_mapping_key_from_physical_path",
+    "create_stable_uuid_from_path",
+    "resolve_filepath_to_absolute" # ✅ เพิ่ม
+]

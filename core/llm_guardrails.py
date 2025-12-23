@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# core/llm_guardrails.py (Ultimate Revised Version - 21 ธันวาคม 2568)
+# core/llm_guardrails.py (Ultimate Final Version - 21 ธันวาคม 2568)
 
 import re
+from typing import Dict, Any, List
 import logging
-from typing import Dict, Any, List, Optional
 
 from config.global_vars import (
     SUPPORTED_ENABLERS,
@@ -15,24 +15,7 @@ from config.global_vars import (
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# Intent Detection (Smart Logic for Multi-Path Routing)
-# ======================================================================
-
-# -*- coding: utf-8 -*-
-# core/llm_guardrails.py (Ultimate Final Version - 21 ธันวาคม 2568)
-
-import re
-from typing import Dict, Any, List
-
-from config.global_vars import (
-    SUPPORTED_ENABLERS,
-    DEFAULT_ENABLER,
-    PDCA_ANALYSIS_SIGNALS,
-    ANALYSIS_FRAMEWORK
-)
-
-# ======================================================================
-# Intent Detection (Full Production Version with Greeting Support)
+# Intent Detection (Full Production Version with Greeting + Capabilities)
 # ======================================================================
 
 def detect_intent(
@@ -45,7 +28,8 @@ def detect_intent(
     """
     q = question.strip().lower()
     intent = {
-        "is_greeting": False,        # NEW: ทักทาย
+        "is_greeting": False,
+        "is_capabilities": False,    # NEW: ถามความสามารถของระบบ
         "is_faq": False,
         "is_summary": False,
         "is_comparison": False,
@@ -84,19 +68,33 @@ def detect_intent(
         intent["is_greeting"] = True
         return intent
 
-    # --- 3. Comparison Intent ---
+    # --- 3. Capabilities / Self-Introduction Intent ---
+    capabilities_signals = [
+        "ทำอะไรได้บ้าง", "ช่วยอะไรได้", "ทำอะไรได้", "ช่วยได้ไหม",
+        "capabilities", "features", "function", "ช่วยเหลืออะไร",
+        "คุณทำอะไร", "คุณช่วยอะไร", "คุณคือใคร", "แนะนำตัว"
+    ]
+    if any(sig in q for sig in capabilities_signals):
+        intent["is_capabilities"] = True
+        return intent
+
+    # --- 4. Comparison Intent ---
     comparison_signals = ["เปรียบเทียบ", "ความแตกต่าง", "ต่างจาก", "เทียบ", "vs", "compare"]
     if any(sig in q for sig in comparison_signals):
         intent["is_comparison"] = True
         return intent
 
-    # --- 4. Summary Intent ---
-    summary_signals = ["สรุป", "ภาพรวม", "ทั้งหมด", "executive summary", "overview", "สาระสำคัญ", "key points"]
+    # --- 5. Summary Intent ---
+    summary_signals = [
+        "สรุป", "ภาพรวม", "ทั้งหมด", "executive summary", "overview", "สาระสำคัญ", "key points",
+        "summary", "summarize", "summarise", "comprehensive summary", 
+        "provide a summary", "give me a summary", "summarize all", "summary of all"
+    ]
     if any(sig in q for sig in summary_signals):
         intent["is_summary"] = True
         return intent
 
-    # --- 5. SE-AM Criteria / Evidence Analysis Intent ---
+    # --- 6. SE-AM Criteria / Evidence Analysis Intent ---
     criteria_signals = [
         "ผ่านเกณฑ์", "sub criteria", "ผ่าน level", "สนับสนุนเกณฑ์", "evidence ผ่าน",
         "เกณฑ์อะไรบ้าง", "level เท่าไหร่", "ครบ level", "ขาดเกณฑ์", "criteria"
@@ -106,7 +104,7 @@ def detect_intent(
         intent["is_criteria_query"] = True
         return intent
 
-    # --- 6. PDCA / Deep Analysis Intent ---
+    # --- 7. PDCA / Deep Analysis Intent ---
     analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
     analysis_keywords.update([
         "pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "ตรวจสอบ",
@@ -116,7 +114,7 @@ def detect_intent(
         intent["is_analysis"] = True
         return intent
 
-    # --- 7. Default: FAQ / General Evidence ---
+    # --- 8. Default: FAQ / General Evidence ---
     if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง", "definition"]):
         intent["is_faq"] = True
 
@@ -227,8 +225,6 @@ def enforce_thai_primary_language(response_text: str) -> str:
     # ถ้ามีตัวอักษรไทยน้อยเกินไป → เตือนแต่ไม่บล็อก (เพื่อความยืดหยุ่น)
     if thai_count < 10 and len(narrative_text) > 100:
         logger.warning("Detected low Thai content in narrative response - consider re-prompting for Thai output")
-        # สามารถ return response_text หรือข้อความเตือนได้ตามนโยบาย
-        # ที่นี่เลือกปล่อยผ่านเพื่อไม่ให้ระบบหยุดชะงัก
         return response_text
 
     return response_text

@@ -61,7 +61,11 @@ from config.global_vars import (
 # ===================================================================
 # 🎯 FIX 1: เปลี่ยน Import จาก _get_collection_name ไปเป็น get_doc_type_collection_key
 from core.vectorstore import get_hf_embeddings
-from utils.path_utils import get_doc_type_collection_key, _n, get_mapping_file_path # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
+from utils.path_utils import (
+    get_doc_type_collection_key, 
+    _n, get_mapping_file_path, # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
+    get_vectorstore_collection_path
+)
 from core.json_extractor import (
     _robust_extract_json,
     _normalize_keys,
@@ -115,26 +119,40 @@ def set_mock_control_mode(enable: bool):
 def _create_where_filter(
     stable_doc_ids: Optional[Union[Set[str], List[str]]] = None,
     subject: Optional[str] = None,
-    sub_topic: Optional[str] = None
+    sub_topic: Optional[str] = None,
+    year: Optional[Union[int, str]] = None
 ) -> Dict[str, Any]:
     """
-    สร้าง Filter สำหรับ ChromaDB โดยเน้นความแม่นยำของ stable_doc_uuid
+    สร้าง Filter สำหรับ ChromaDB ที่ฉลาดขึ้น:
+    - ถ้าเลือก stable_doc_ids จะไม่กรองด้วย year เพื่อให้สามารถนำไฟล์เก่ามาวิเคราะห์ได้
+    - รองรับการแปลง Type ของ Year ให้ตรงกับฐานข้อมูล
     """
     filters: List[Dict[str, Any]] = []
 
+    # 1. จัดการ stable_doc_uuid (ลำดับความสำคัญสูงสุด)
     if stable_doc_ids:
-        # กำจัดค่าว่างและแปลงเป็น list of strings
         ids_list = [str(i) for i in stable_doc_ids if i]
         if ids_list:
-            # 🎯 ปรับให้ใช้ stable_doc_uuid เป็นหลักตามโครงสร้าง ingest.py
             if len(ids_list) == 1:
                 filters.append({"stable_doc_uuid": {"$eq": ids_list[0]}})
             else:
                 filters.append({"stable_doc_uuid": {"$in": ids_list}})
+        
+        # 🎯 หัวใจ: เมื่อระบุ ID เจาะจง เราจะไม่ใส่ Filter Year 
+        # เพื่อป้องกันกรณีไฟล์ปี 2567 ถูกเรียกใช้ในโปรเจกต์ปี 2568
+    
+    # 2. จัดการ Year (เฉพาะกรณี "ไม่ได้" ระบุ ID เจาะจง)
+    elif year:
+        try:
+            filters.append({"year": {"$eq": int(year)}})
+        except (ValueError, TypeError):
+            filters.append({"year": {"$eq": str(year)}})
 
+    # 3. จัดการ Subject (ถ้ามี)
     if subject and subject.strip():
         filters.append({"subject": {"$eq": subject.strip()}})
 
+    # 4. จัดการ Sub Topic (ถ้ามี)
     if sub_topic and sub_topic.strip():
         filters.append({"sub_topic": {"$eq": sub_topic.strip()}})
 
@@ -144,7 +162,6 @@ def _create_where_filter(
     if len(filters) == 1:
         return filters[0]
 
-    # กรณีมีหลายเงื่อนไขให้ใช้ $and
     return {"$and": filters}
 
 
@@ -158,13 +175,15 @@ def retrieve_context_for_endpoint(
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    k_to_retrieve: int = 25,  # เพิ่มจำนวนเบื้องต้นเพื่อให้ Reranker มีตัวเลือก
+    k_to_retrieve: int = 25,
     k_to_rerank: int = 12,
     strict_filter: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    ดึง Context พร้อมระบบป้องกันการดึงไฟล์ผิด (Metadata Guardrail)
+    ดึง Context พร้อมระบบ Metadata Guardrail เวอร์ชันปรับปรุง
+    - แก้ไขปัญหา Fallback ไปดึงไฟล์อื่นเมื่อหาไฟล์ที่เลือกไม่เจอ
+    - แยกความเข้มงวดระหว่าง Search ทั่วไป กับการเลือกไฟล์วิเคราะห์
     """
     start_time = time.time()
     vsm = vectorstore_manager
@@ -172,110 +191,261 @@ def retrieve_context_for_endpoint(
     # 1. Normalize doc_type & Resolve collection
     clean_doc_type = str(doc_type or "document").strip().lower()
     collection_name = get_doc_type_collection_key(doc_type=clean_doc_type, enabler=enabler)
+
+    logger.info(f"Retrieval params: doc_type={clean_doc_type}, year={year}, enabler={enabler}, IDs={stable_doc_ids}")
     
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
         logger.error(f"❌ Collection not found: {collection_name}")
         return {"top_evidences": [], "aggregated_context": "ไม่พบฐานข้อมูล", "retrieval_time": 0}
 
-    # 2. Create where_filter
-    where_filter = _create_where_filter(stable_doc_ids=stable_doc_ids, subject=subject, sub_topic=sub_topic)
-    logger.info(f"🔍 Retrieval Start | Collection: {collection_name} | Target IDs: {stable_doc_ids}")
+    # 2. Create where_filter (ใช้ Logic ใหม่ที่แยก ID ออกจาก Year)
+    where_filter = _create_where_filter(
+        stable_doc_ids=stable_doc_ids, 
+        subject=subject, 
+        sub_topic=sub_topic,
+        year=year
+    )
+    logger.info(f"🔍 Filter Applied: {where_filter}")
 
     final_chunks: List[LcDocument] = []
 
     # =====================================================
-    # CASE A: STRICT FILTER / COMPARE MODE
+    # CASE A: STRICT VECTOR SEARCH (FAST TRACK)
     # =====================================================
-    if stable_doc_ids and (strict_filter or clean_doc_type == "document"):
-        # หากมีการระบุ ID ชัดเจน ให้ใช้ similarity_search ของ Chroma โดยตรง (เลี่ยงปัญหา BM25 Filter รั่ว)
-        logger.info(f"🎯 Using Strict Vector Search for stable_doc_ids")
+    if stable_doc_ids:
+        logger.info(f"🎯 Using Strict Vector Search (Fast Track)")
+        # ใช้ query="*" หรือ query ว่างเพื่อให้ดึงเนื้อหาจาก ID ที่ระบุได้ครบถ้วน
+        search_query = query if (query and query != "*" and len(query) > 2) else ""
         docs = chroma.similarity_search(
-            query if query and query != "*" else "", 
+            search_query, 
             k=k_to_retrieve, 
             filter=where_filter
         )
         final_chunks = [d for d in docs if d.page_content.strip()]
 
     # =====================================================
-    # CASE B: NORMAL HYBRID RETRIEVAL (Fallback or General Query)
+    # CASE B: HYBRID RETRIEVAL (ใช้เมื่อไม่ได้ระบุ ID หรือ Case พิเศษ)
     # =====================================================
-    if not final_chunks:
+    if not final_chunks and not stable_doc_ids:
         retriever = None
         if USE_HYBRID_SEARCH:
             try:
                 retriever = vsm.create_hybrid_retriever(collection_name=collection_name)
-                logger.info("✅ Hybrid Retriever activated")
+                logger.info("🏗️ Hybrid Retriever activated")
             except Exception as e:
-                logger.warning(f"⚠️ Hybrid failed: {e}")
+                logger.warning(f"⚠️ Hybrid initialization failed: {e}")
 
         if not retriever:
             retriever = vsm.get_retriever(collection_name)
 
-        # ดึงข้อมูลผ่าน Retriever
         docs = retriever.invoke(query, config={"search_kwargs": {"k": k_to_retrieve, "filter": where_filter}})
-        
-        # 🎯 Metadata Guardrail: กรองซ้ำด้วยมือเพื่อให้ชัวร์ว่าไม่มีไฟล์อื่นหลุดมาจาก BM25
-        if stable_doc_ids:
-            target_ids = {str(i) for i in stable_doc_ids}
-            final_chunks = [
-                d for d in docs 
-                if str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")) in target_ids
-            ]
-            logger.info(f"🛡️ Guardrail filtered: {len(docs)} -> {len(final_chunks)} chunks")
-        else:
-            final_chunks = docs
+        final_chunks = docs
+
+    # 🎯 Double Check Guardrail (ป้องกันกรณี Hybrid หลุด Filter)
+    if stable_doc_ids and final_chunks:
+        target_ids = {str(i).lower() for i in stable_doc_ids}
+        final_chunks = [
+            d for d in final_chunks 
+            if str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")).lower() in target_ids
+        ]
+        # 🚩 หมายเหตุ: หากตรงนี้เป็น 0 chunks ระบบจะตอบว่าไม่พบข้อมูล 
+        # ซึ่งถูกต้องแล้ว เพราะดีกว่าไปเอาไฟล์อื่นมาตอบมั่วๆ
 
     # =====================================================
-    # 3. RERANKING PROCESS
+    # 3. RERANKING
     # =====================================================
     reranker = get_global_reranker()
-    if reranker and final_chunks and query:
+    if reranker and final_chunks and query and query != "*":
         try:
             top_n = min(len(final_chunks), k_to_rerank)
             reranked = reranker.compress_documents(documents=final_chunks, query=query, top_n=top_n)
             final_chunks = [r.document if hasattr(r, "document") else r for r in reranked]
-            # แปะ score กลับเข้าไปใน metadata
             for i, res in enumerate(reranked):
                 final_chunks[i].metadata["rerank_score"] = getattr(res, "relevance_score", 0)
         except Exception as e:
             logger.error(f"⚠️ Rerank failed: {e}")
             final_chunks = final_chunks[:k_to_rerank]
 
-    # 4. Build Response Model
+    # 4. Response Build
     top_evidences = []
     aggregated_parts = []
     
     for doc in final_chunks:
         md = doc.metadata or {}
         text = doc.page_content.strip()
-        # ใช้ Key ที่ ingest.py สร้างไว้
         s_uuid = md.get("stable_doc_uuid") or md.get("doc_id")
+        page_val = md.get("page_label") or md.get("page_number") or md.get("page") or "N/A"
         
         top_evidences.append({
             "doc_id": s_uuid,
             "chunk_uuid": md.get("chunk_uuid"),
             "source": md.get("source") or md.get("file_name") or "Unknown",
             "text": text,
+            "page": str(page_val), # 🟢 เพิ่มบรรทัดนี้เพื่อให้ส่งเลขหน้าไปที่ Router ได้
             "score": md.get("rerank_score") or md.get("score") or 0.0,
-            "pdca_tag": md.get("pdca_tag", "Other"),
-            "sub_topic": md.get("sub_topic"),
-            "page_number": md.get("page_number")
+            "pdca_tag": md.get("pdca_tag", "Other")
         })
-        aggregated_parts.append(f"[ไฟล์: {md.get('source', 'Unknown')}] {text}")
+        source_name = md.get('source') or md.get('file_name') or 'Unknown'
+        aggregated_parts.append(f"[ไฟล์: {source_name}] {text}")
 
     retrieval_time = round(time.time() - start_time, 3)
     logger.info(f"🏁 Finished: {len(top_evidences)} chunks in {retrieval_time}s")
 
     return {
         "top_evidences": top_evidences,
-        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง",
+        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้องในไฟล์ที่เลือก",
         "retrieval_time": retrieval_time,
-        "used_chunk_uuids": [e["chunk_uuid"] for e in top_evidences if e["chunk_uuid"]]
+        "used_chunk_uuids": [e["chunk_uuid"] for e in top_evidences if e.get("chunk_uuid")]
     }
 
+# ------------------------
+# Retrieval: retrieve_context_with_filter (Revised)
+# ------------------------
+def retrieve_context_with_filter(
+    query: Union[str, List[str]],
+    doc_type: str,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None,
+    subject: Optional[str] = None,
+    vectorstore_manager: Optional[Any] = None, 
+    mapped_uuids: Optional[List[str]] = None,
+    stable_doc_ids: Optional[List[str]] = None,
+    priority_docs_input: Optional[List[Any]] = None,
+    sequential_chunk_uuids: Optional[List[str]] = None,
+    sub_id: Optional[str] = None,
+    level: Optional[int] = None,
+    get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,
+    top_k: int = 12,
+) -> Dict[str, Any]:
+    """
+    Retrieval + Dedup + Score Fix for Assessment
+    """
+    start_time = time.time()
+    
+    manager = vectorstore_manager or VectorStoreManager(tenant=tenant, year=year)
+    queries_to_run = [query] if isinstance(query, str) else list(query or [""])
+    collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
+    
+    # Aggregate target IDs
+    target_ids = set()
+    if stable_doc_ids: target_ids.update([str(i) for i in stable_doc_ids])
+    if mapped_uuids: target_ids.update([str(i) for i in mapped_uuids])
+    if sequential_chunk_uuids: target_ids.update([str(i) for i in sequential_chunk_uuids])
+    
+    where_filter = _create_where_filter(
+        stable_doc_ids=list(target_ids) if target_ids else None,
+        subject=subject,
+        year=year
+    )
+
+    # L3 fallback
+    fallback_chunks = []
+    if level == 3 and callable(get_previous_level_docs):
+        try:
+            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
+            logger.info(f"L3 Fallback: Received {len(fallback_chunks)} chunks from L2")
+        except Exception as e:
+            logger.warning(f"L3 Fallback failed: {e}")
+
+    # Priority chunks
+    guaranteed_priority_chunks = []
+    if priority_docs_input:
+        for doc in priority_docs_input:
+            if not doc: continue
+            if isinstance(doc, dict):
+                pc = doc.get('page_content') or doc.get('text') or ''
+                meta = doc.get('metadata') or {}
+                meta['chunk_uuid'] = doc.get('chunk_uuid') or meta.get('chunk_uuid')
+                meta['stable_doc_uuid'] = doc.get('doc_id') or meta.get('stable_doc_uuid')
+                if pc.strip():
+                    guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
+            elif hasattr(doc, 'page_content'):
+                guaranteed_priority_chunks.append(doc)
+
+    # Retrieval
+    retrieved_chunks = []
+    try:
+        retriever = manager.get_retriever(collection_name=collection_name)
+        search_kwargs = {"k": top_k}
+        if where_filter: search_kwargs["where"] = where_filter
+
+        for q in queries_to_run:
+            if not q: continue
+            docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
+            retrieved_chunks.extend(docs or [])
+    except Exception as e:
+        logger.error(f"Retrieval error for {collection_name}: {e}")
+
+    # Deduplicate + fix score
+    unique_map: Dict[str, LcDocument] = {}
+    all_source_chunks = guaranteed_priority_chunks + retrieved_chunks + fallback_chunks
+
+    for doc in all_source_chunks:
+        if not doc or not doc.page_content.strip(): continue
+        md = doc.metadata or {}
+        uid = str(md.get("chunk_uuid") or md.get("stable_doc_uuid") or hash(doc.page_content))
+
+        # 🔥 Fix: Pull score from all possible sources
+        raw_score = (
+            md.get("_rerank_score_force") or
+            md.get("relevance_score") or
+            md.get("rerank_score") or
+            getattr(doc, "relevance_score", 0.0)
+        )
+        md["_rerank_score_force"] = float(raw_score)
+        doc.metadata = md
+
+        if uid not in unique_map:
+            if level == 3:
+                doc.page_content = doc.page_content[:1000]  # Truncate for L3 if needed
+            unique_map[uid] = doc
+
+    final_candidates = list(unique_map.values())
+
+    # Format output
+    top_evidences = []
+    aggregated_parts = []
+    used_uuids = []
+    VALID_ID = re.compile(r"^[0-9a-f\-]{36}$|^[0-9a-f]{64}$", re.IGNORECASE)
+
+    for doc in final_candidates[:top_k]:
+        md = doc.metadata or {}
+        text = doc.page_content.strip()
+        c_uuid = str(md.get("chunk_uuid", ""))
+        s_uuid = str(md.get("stable_doc_uuid") or md.get("doc_id") or "")
+        best_id = s_uuid if VALID_ID.match(s_uuid) else (c_uuid if VALID_ID.match(c_uuid) else f"temp-{uuid.uuid4().hex[:8]}")
+        if not best_id.startswith("temp-"): used_uuids.append(best_id)
+        source = md.get("source") or md.get("source_filename") or "Unknown"
+        pdca = md.get("pdca_tag", "Other")
+        page = str(md.get("page_label") or md.get("page_number") or md.get("page") or "N/A")
+        score = float(md.get("_rerank_score_force", 0.0))
+
+        # Debug log
+        logger.debug(f"[Debug] Candidate: {best_id} | Score: {score:.4f} | PDCA: {pdca} | Source: {source} | Page: {page}")
+
+        top_evidences.append({
+            "doc_id": s_uuid or best_id,
+            "chunk_uuid": c_uuid or best_id,
+            "source": source,
+            "text": text,
+            "page": page,
+            "pdca_tag": pdca,
+            "score": score
+        })
+        aggregated_parts.append(f"[{pdca}] [ไฟล์: {source} หน้า: {page}] {text}")
+
+    return {
+        "top_evidences": top_evidences,
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบหลักฐาน",
+        "retrieval_time": round(time.time() - start_time, 3),
+        "used_chunk_uuids": list(set(used_uuids))
+    }
+
+
 # ========================
-# 2. retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
+#  retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
 # ========================
 def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
@@ -283,21 +453,17 @@ def retrieve_context_by_doc_ids(
     enabler: Optional[str] = None,
     vectorstore_manager = None,
     limit: int = 50,
-    tenant: Optional[str] = None, # <-- ต้องมี
-    year: Optional[Union[int, str]] = None, # <-- ต้องมี (แก้ไขล่าสุด)
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
 ) -> Dict[str, Any]:
     """
     ดึง chunks จาก stable_doc_uuid หลายตัว (ใช้ตอน hydration sources)
+    รองรับการระบุปีเพื่อหา Collection ที่ถูกต้อง
     """
     start_time = time.time()
     vsm = vectorstore_manager or VectorStoreManager()
     
-    # 🎯 FIX: แทนที่การสร้าง collection_name ด้วยตนเอง
-    # collection_name = f"{doc_type}"
-    # if enabler and enabler != DEFAULT_ENABLER:
-    #     collection_name = f"{doc_type}_{enabler.lower()}"
-    
-    # 🟢 ใช้ get_doc_type_collection_key เพื่อความสม่ำเสมอและถูกต้อง
+    # 🟢 Resolve collection name ให้ถูกต้องตามโครงสร้างปีและ enabler
     collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
 
     chroma = vsm._load_chroma_instance(collection_name)
@@ -311,9 +477,9 @@ def retrieve_context_by_doc_ids(
     logger.info(f"Hydration → {len(doc_uuids)} doc IDs from {collection_name}")
 
     try:
-        # การดึงข้อมูลด้วย stable_doc_uuid สำหรับ hydration นั้นถูกต้องแล้ว
+        # ใช้ Metadata filter ดึง chunks ทั้งหมดที่อยู่ในลิสต์ ID ที่เลือก
         results = chroma._collection.get(
-            where={"stable_doc_uuid": {"$in": doc_uuids}},
+            where={"stable_doc_uuid": {"$in": [str(u) for u in doc_uuids]}},
             limit=limit,
             include=["documents", "metadatas"]
         )
@@ -322,13 +488,16 @@ def retrieve_context_by_doc_ids(
         return {"top_evidences": []}
 
     evidences = []
-    for doc, meta in zip(results["documents"], results["metadatas"]):
+    for doc, meta in zip(results.get("documents", []), results.get("metadatas", [])):
         if not doc.strip():
             continue
+
+        p_val = meta.get("page_label") or meta.get("page_number") or meta.get("page") or "N/A"
         evidences.append({
-            "doc_id": meta.get("stable_doc_uuid"),
+            "doc_id": meta.get("stable_doc_uuid") or meta.get("doc_id"),
             "chunk_uuid": meta.get("chunk_uuid"),
-            "source": meta.get("source") or meta.get("filename") or "Unknown",
+            "source": meta.get("source") or meta.get("source_filename") or "Unknown",
+            "page": str(p_val), # 🟢 เพิ่มบรรทัดนี้
             "text": doc,
             "pdca_tag": meta.get("pdca_tag", "Other"),
         })
@@ -336,275 +505,6 @@ def retrieve_context_by_doc_ids(
     logger.info(f"Hydration success: {len(evidences)} chunks from {len(doc_uuids)} docs")
     return {"top_evidences": evidences}
 
-# ------------------------
-# Retrieval: retrieve_context_with_filter (แก้ไขประสิทธิภาพ + Logger Fix)
-# ------------------------
-def retrieve_context_with_filter(
-    query: Union[str, List[str]],
-    doc_type: str,
-    tenant: Optional[str] = None,
-    year: Optional[Union[int, str]] = None,
-    enabler: Optional[str] = None,
-    subject: Optional[str] = None,
-    # ต้องเป็น Instance ของ Manager ที่มี create_hybrid_retriever
-    vectorstore_manager: Optional['VectorStoreManager'] = None, 
-    mapped_uuids: Optional[List[str]] = None,
-    stable_doc_ids: Optional[List[str]] = None,
-    priority_docs_input: Optional[List[Any]] = None,
-    sequential_chunk_uuids: Optional[List[str]] = None,
-    sub_id: Optional[str] = None,
-    level: Optional[int] = None,
-    get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,
-) -> Dict[str, Any]:
-    """
-    ดึง context ด้วย semantic search + priority + fallback + rerank
-    เวอร์ชันแก้ไขแล้ว: ใช้ Hybrid Search (BM25 + Vector) ที่สร้างและ Cache ไว้ใน Manager
-    """
-    start_time = time.time()
-    all_retrieved_chunks: List[Any] = []
-    used_chunk_uuids: List[str] = []
-
-    # 1. ใช้ VectorStoreManager เดียวกันทั้งหมด
-    # สมมติว่า VectorStoreManager() มี Logic ในการ Initialise Chroma Client (self._client)
-    manager = vectorstore_manager or VectorStoreManager() 
-    if manager is None or not hasattr(manager, '_client') or manager._client is None:
-        logger.error("VectorStoreManager not initialized or _client is missing!")
-        return {"top_evidences": [], "aggregated_context": "", "retrieval_time": 0.0, "used_chunk_uuids": []}
-
-    # 🟢 NEW FIX: ตรวจสอบและกำหนด Logger ให้กับ VSM Instance
-    # เพื่อให้เมธอดภายใน (เช่น create_hybrid_retriever) สามารถใช้ self.logger ได้
-    if not hasattr(manager, 'logger') or manager.logger is None:
-        try:
-            manager.logger = logger # กำหนด logger ของ module นี้ให้ VSM
-            logger.info("Assigned module logger to VectorStoreManager instance (Worker/Fallback Fix).")
-        except NameError:
-            # กรณีที่ logger ไม่ถูก import ใน module นี้ (ซึ่งไม่ควรเกิดขึ้น)
-            pass
-
-    queries_to_run = [query] if isinstance(query, str) else list(query or [])
-    if not queries_to_run:
-        queries_to_run = [""]
-
-    # รวม chunk ที่ต้องบังคับโผล่ (sequential)
-    if sequential_chunk_uuids:
-        mapped_uuids = (mapped_uuids or []) + sequential_chunk_uuids
-
-    # 2. Fallback จาก level ก่อนหน้า (สำหรับ Level 3)
-    fallback_chunks = []
-    if level == 3 and callable(get_previous_level_docs):
-        try:
-            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
-            logger.info(f"Fallback from previous level: {len(fallback_chunks)} chunks")
-        except Exception as e:
-            logger.warning(f"Fallback failed: {e}")
-
-    # 3. Priority chunks (จาก evidence mapping)
-    guaranteed_priority_chunks = []
-    if priority_docs_input:
-        for doc in priority_docs_input:
-            if doc is None:
-                continue
-            if isinstance(doc, dict):
-                pc = doc.get('page_content') or doc.get('text') or ''
-                meta = doc.get('metadata') or {}
-                if 'chunk_uuid' in doc:
-                    meta['chunk_uuid'] = doc['chunk_uuid']
-                if 'doc_id' in doc:
-                    meta['stable_doc_uuid'] = doc['doc_id']
-                if 'pdca_tag' in doc:
-                    meta['pdca_tag'] = doc['pdca_tag']
-                if pc.strip():
-                    guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
-            elif hasattr(doc, 'page_content'):
-                guaranteed_priority_chunks.append(doc)
-
-    # 4. Collection name
-    collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
-    logger.info(f"Requesting retriever → collection='{collection_name}' (doc_type={doc_type}, enabler={enabler})")
-
-    # 5. สร้าง Filter
-    where_filter: Dict[str, Any] = {}
-    if stable_doc_ids:
-        logger.info(f"Applying Stable Doc ID filter: {len(stable_doc_ids)} IDs")
-        where_filter = {"stable_doc_uuid": {"$in": stable_doc_ids}}
-
-    if subject:
-        subject_filter = {"subject": {"$eq": subject}}
-        if where_filter:
-            where_filter = {"$and": [where_filter, subject_filter]}
-            logger.info(f"Adding Subject filter (AND logic): {subject}")
-        else:
-            where_filter = subject_filter
-
-    # === HYBRID SEARCH MODE (BM25 + Vector) ===
-    hybrid_retriever = None
-
-    if USE_HYBRID_SEARCH:
-        try:
-            # 🎯 FIX: เรียกใช้ Manager ที่ Cache Hybrid Retriever ไว้แล้ว
-            logger.info(f"Requesting Hybrid Retriever from Manager for {collection_name} (Cached)...")
-            hybrid_retriever = manager.create_hybrid_retriever(collection_name=collection_name)
-            logger.info(f"HYBRID mode activated: Vector 70% + BM25 30% for {collection_name} (Cached)")
-
-        except Exception as e:
-            # Fallback หาก Manager ไม่สามารถสร้าง Hybrid Retriever ได้ (เช่น ไม่มี BM25 Index)
-            # 🚨 BUG: บันทึก Error จาก VSM ที่ไม่มี Logger (แต่ตอนนี้แก้ไขแล้ว)
-            logger.warning(f"Hybrid mode failed (Error calling manager.create_hybrid_retriever: {e}), falling back to vector only")
-            use_hybrid = False
-
-    # 6. เลือก Retriever ที่จะใช้
-    if USE_HYBRID_SEARCH and hybrid_retriever:
-        retriever = hybrid_retriever
-    else:
-        # ใช้ Vector Retriever อย่างเดียว
-        retriever = manager.get_retriever(collection_name)
-        logger.info("Using VECTOR ONLY mode.")
-
-    # 7. ดึงข้อมูลจาก VectorStore
-    retrieved_chunks = []
-    if retriever:
-        for q in queries_to_run:
-            q_log = q[:120] + "..." if len(q) > 120 else q
-            logger.critical(f"[QUERY] Running: '{q_log}' → collection='{collection_name}'")
-
-            try:
-                search_kwargs = {"k": INITIAL_TOP_K}  # INITIAL_TOP_K
-                if where_filter:
-                    search_kwargs["where"] = where_filter
-                
-                # 🎯 FIX: ใช้ get_relevant_documents ที่รับ **search_kwargs โดยตรงจะเสถียรกว่า
-                if hasattr(retriever, "get_relevant_documents"):
-                    # EnsembleRetriever และ ChromaRetriever มักจะรับ kwargs โดยตรง
-                    # docs = retriever.get_relevant_documents(q, **search_kwargs)
-                    docs = retriever.invoke(q, config={"search_kwargs": search_kwargs})
-                elif hasattr(retriever, "invoke"):
-                    # Fallback สำหรับ LangChain Runnable API 
-                    docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
-                else:
-                    docs = []
-                    
-                retrieved_chunks.extend(docs or [])
-            except Exception as e:
-                logger.error(f"Retriever invoke failed: {e}", exc_info=True)
-    else:
-        logger.error(f"Retriever NOT FOUND for collection: {collection_name}")
-
-    logger.critical(f"[RETRIEVAL] Raw chunks from ChromaDB: {len(retrieved_chunks)} documents")
-
-    # 8. รวม + deduplicate
-    all_chunks = retrieved_chunks + fallback_chunks + guaranteed_priority_chunks
-    unique_map: Dict[str, LcDocument] = {}
-
-    for doc in all_chunks:
-        if not doc or not hasattr(doc, "page_content"):
-            continue
-        md = getattr(doc, "metadata", {}) or {}
-        pc = str(getattr(doc, "page_content", "") or "").strip()
-        if not pc:
-            continue
-
-        if level == 3:
-            pc = pc[:500]
-            doc.page_content = pc
-
-        chunk_uuid = md.get("chunk_uuid") or md.get("stable_doc_uuid") or f"TEMP-{uuid.uuid4().hex[:12]}"
-        if chunk_uuid not in unique_map:
-            md["dedup_chunk_uuid"] = chunk_uuid
-            unique_map[chunk_uuid] = doc
-
-    dedup_chunks = list(unique_map.values())
-    logger.info(f"After dedup: {len(dedup_chunks)} chunks")
-
-    # 9. Rerank
-    final_docs = list(guaranteed_priority_chunks)
-    slots_left = max(0, 12 - len(final_docs))  # FINAL_K_RERANKED
-    candidates = [d for d in dedup_chunks if d not in final_docs]
-
-    # Patch metadata ที่หายไปหลัง rerank
-    candidate_metadata_map = {
-        doc.page_content: getattr(doc, 'metadata', {})
-        for doc in candidates if hasattr(doc, 'page_content') and doc.page_content.strip()
-    }
-
-    if slots_left > 0 and candidates:
-        reranker = get_global_reranker()
-        if reranker and hasattr(reranker, "compress_documents"):
-            try:
-                reranked_results = reranker.compress_documents(
-                    documents=candidates,
-                    query=queries_to_run[0],
-                    top_n=slots_left
-                )
-                for result in reranked_results:
-                    doc_to_add = getattr(result, 'document', result)
-                    if doc_to_add and hasattr(doc_to_add, 'page_content') and doc_to_add.page_content.strip():
-                        current_md = getattr(doc_to_add, 'metadata', {})
-                        if not current_md.get("chunk_uuid") and doc_to_add.page_content in candidate_metadata_map:
-                            doc_to_add.metadata = candidate_metadata_map[doc_to_add.page_content]
-                        final_docs.append(doc_to_add)
-                logger.info(f"Reranker returned {len(reranked_results)} docs")
-            except Exception as e:
-                logger.warning(f"Reranker failed ({e}), using raw candidates")
-                final_docs.extend(candidates[:slots_left])
-        else:
-            final_docs.extend(candidates[:slots_left])
-    else:
-        logger.info("No slots left or no candidates → priority only")
-
-    # 10. สร้างผลลัพธ์สุดท้าย
-    top_evidences = []
-    aggregated_parts = []
-    used_chunk_uuids = []
-
-    VALID_CHUNK_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}(-[0-9]+)?$", re.IGNORECASE)
-    VALID_STABLE_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{64}$", re.IGNORECASE)
-
-    for doc in final_docs[:12]:
-        md = getattr(doc, "metadata", {}) or {}
-        pc = str(getattr(doc, "page_content", "") or "").strip()
-        if not pc:
-            continue
-
-        chunk_uuid = md.get("chunk_uuid") or md.get("dedup_chunk_uuid") or md.get("id")
-        stable_doc_uuid = md.get("stable_doc_uuid") or md.get("source_doc_id")
-
-        primary_id = None
-        if stable_doc_uuid and VALID_STABLE_ID.match(str(stable_doc_uuid)):
-            primary_id = stable_doc_uuid
-        elif chunk_uuid and VALID_CHUNK_ID.match(str(chunk_uuid)):
-            primary_id = chunk_uuid
-        else:
-            logger.warning(f"Chunk has no valid ID! Stable: {stable_doc_uuid}, Chunk: {chunk_uuid}")
-            primary_id = f"TEMP-{uuid.uuid4().hex[:8]}"
-
-        if not str(primary_id).startswith("TEMP-"):
-            used_chunk_uuids.append(str(primary_id))
-
-        source = md.get("source_filename") or md.get("source") or md.get("filename") or "Unknown File"
-        pdca = md.get("pdca_tag", "Other")
-        rerank_score = float(md.get("_rerank_score_force") or md.get("relevance_score") or 0.0)
-
-        top_evidences.append({
-            "doc_id": stable_doc_uuid or primary_id,
-            "chunk_uuid": chunk_uuid or primary_id,
-            "stable_doc_uuid": stable_doc_uuid,
-            "source": source,
-            "source_filename": source,
-            "text": pc,
-            "pdca_tag": pdca,
-            "rerank_score": rerank_score,
-        })
-        aggregated_parts.append(f"[{pdca}] [SOURCE: {source}] {pc}")
-
-    result = {
-        "top_evidences": top_evidences,
-        "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่มีหลักฐานที่เกี่ยวข้อง",
-        "retrieval_time": round(time.time() - start_time, 3),
-        "used_chunk_uuids": used_chunk_uuids
-    }
-
-    logger.info(f"Final retrieval L{level or '?'} {sub_id or ''}: {len(top_evidences)} chunks in {result['retrieval_time']:.2f}s")
-    return result
 
 def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
                                  vectorstore_manager: Optional['VectorStoreManager']=None,
@@ -1031,7 +931,7 @@ def evaluate_with_llm_low_level(
 ) -> Dict[str, Any]:
     """
     Standard Evaluation for L1/L2 using LOW_LEVEL_PROMPT (Dynamic Multi-Enabler)
-    - ดึง planning_keywords จาก contextual_rules_map (จาก pea_km_contextual_rules.json)
+    - ดึง plan_keywords จาก contextual_rules_map (จาก pea_km_contextual_rules.json)
     - ไม่ hardcode อีกต่อไป
     - ส่งค่า P/D/C/A ดิบจาก LLM → ให้ _run_single_assessment บังคับกฎ L1/L2 ขั้นสุดท้าย
     """
@@ -1043,30 +943,32 @@ def evaluate_with_llm_low_level(
     if failure_result:
         return failure_result
 
-    # -------------------- 2. ดึง planning_keywords จาก pea_km_contextual_rules.json --------------------
-    planning_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย"  # fallback พื้นฐาน
+    # -------------------- 2. ดึง plan_keywords จาก pea_km_contextual_rules.json --------------------
+    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย"  # fallback พื้นฐาน
 
     if contextual_rules_map:
         # 2.1 ดึงจาก sub-criteria เฉพาะก่อน (เช่น 1.1 → L1)
         sub_rules = contextual_rules_map.get(sub_id, {})
         l1_rules = sub_rules.get("L1", {})
-        if l1_rules and "planning_keywords" in l1_rules:
-            planning_keywords = l1_rules["planning_keywords"]
+        if l1_rules and "plan_keywords" in l1_rules:
+            plan_keywords = l1_rules["plan_keywords"]
         else:
             # 2.2 Fallback ไปใช้ _enabler_defaults (เช่น KM, DX)
             default_rules = contextual_rules_map.get("_enabler_defaults", {})
-            if "planning_keywords" in default_rules:
-                planning_keywords = default_rules["planning_keywords"]
+            if "plan_keywords" in default_rules:
+                plan_keywords = default_rules["plan_keywords"]
 
-    logger.debug(f"[L{level}] Using planning_keywords: {planning_keywords}")
+    logger.debug(f"[L{level}] Using plan_keywords: {plan_keywords}")
 
     # -------------------- 3. Prompt Building --------------------
     try:
-        # System Prompt: ใส่ planning_keywords ด้วย .format()
-        system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(planning_keywords=planning_keywords)
+        # ส่งทั้ง plan_keywords และ avoid_keywords ให้ครบตามที่ Template ต้องการ
+        system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(
+            plan_keywords=plan_keywords,
+            avoid_keywords=avoid_keywords or "ไม่มี"
+        )
         system_prompt += "\n\nIMPORTANT: Respond only with valid JSON."
 
-        # User Prompt: ไม่ต้องส่ง planning_keywords (เพราะอยู่ใน system แล้ว)
         user_prompt = USER_LOW_LEVEL_PROMPT_TEMPLATE.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
@@ -1077,6 +979,7 @@ def evaluate_with_llm_low_level(
             avoid_keywords=avoid_keywords or "ไม่มี",
             context=context_to_send_eval
         )
+
     except Exception as e:
         logger.error(f"Error formatting LOW_LEVEL_PROMPT: {e}. Using fallback prompt.")
         system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\nIMPORTANT: Respond only with valid JSON."
