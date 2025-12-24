@@ -66,7 +66,10 @@ from config.global_vars import (
     SUPPORTED_DOC_TYPES,
     MAX_PARALLEL_WORKERS,
     PROJECT_NAMESPACE_UUID,
-    SEAM_SUBTOPIC_MAP
+    SEAM_SUBTOPIC_MAP,
+    TARGET_DEVICE,           # 🟢 เพิ่มใหม่
+    EMBEDDING_MODEL_KWARGS,    # 🟢 เพิ่มใหม่
+    EMBEDDING_ENCODE_KWARGS,   # 🟢 เพิ่มใหม่
 )
 
 # -------------------- [NEW] Import Path Utilities --------------------
@@ -706,81 +709,82 @@ def get_vectorstore(
     year: int = 2568,
 ) -> Chroma:
     """
-    เวอร์ชัน Multi-Tenant/Multi-Year ที่ใช้ Path Utility ในการสร้าง Path
+    เวอร์ชัน Multi-Tenant/Multi-Year ที่รองรับ Hybrid Hardware (Mac MPS / Server CUDA)
+    พร้อมแก้ไขบั๊ก Meta Tensor และจัดการ Path ผ่าน Path Utility
     """
 
-    # === 1. ใช้ชื่อตรง ๆ ไม่ต้องเติม prefix อัตโนมัติ ===
+    # === 1. ตรวจสอบความยาวชื่อ Collection ===
     if len(collection_name) < 3:
         logger.warning(
             f"Collection name '{collection_name}' ค่อนข้างสั้น แนะนำให้ใช้ชื่ออย่างน้อย 6 ตัวอักษร "
-            f"(เช่น evidence_km, km42l103) เพื่อป้องกันการชนกันของชื่อ"
+            f"(เช่น evidence_km) เพื่อป้องกันการชนกันของข้อมูล"
         )
 
-    # === 2. สร้าง path ที่ถูกต้องตามโครงสร้าง PEA โดยใช้ Path Utility ===
+    # === 2. สร้าง path โดยใช้ Path Utility ===
     try:
-        # 🎯 REVISED: ใช้ parse_collection_name จาก path_utils.py
         doc_type_for_path, enabler_for_path = parse_collection_name(collection_name)
-        
-        # 🎯 FIX: ใช้ get_vectorstore_collection_path จาก path_utils.py
         persist_directory = get_vectorstore_collection_path(
             tenant=tenant,
-            # Path Utility จะตัดสินใจใช้ year/enabler ก็ต่อเมื่อ doc_type เป็น Evidence
             year=year, 
             doc_type=doc_type_for_path,
             enabler=enabler_for_path
         )
-        
     except Exception as e:
-        logger.error(f"❌ Failed to generate vectorstore path using path_utils: {e}. Using simple fallback path.")
-        # Fallback Path ที่ไม่มี Dependency กับ Global Constant เดิม
-        persist_directory = os.path.join(tenant, str(year), collection_name)
-        logger.warning(f"⚠️ Warning: Fallback path used. Result: {persist_directory}")
+        logger.error(f"❌ Failed to generate vectorstore path: {e}. Using simple fallback.")
+        persist_directory = os.path.join(DATA_STORE_ROOT, tenant, str(year), collection_name)
 
     cache_key = persist_directory
 
-    # === 3. Cache HIT ===
+    # === 3. Cache HIT (ไม่ต้องโหลดใหม่ถ้ามีอยู่แล้ว) ===
     if cache_key in _VECTORSTORE_SERVICE_CACHE:
         logger.debug(f"Cache HIT → Reusing vectorstore: {persist_directory}")
         return _VECTORSTORE_SERVICE_CACHE[cache_key]
 
-    # === 4. Embedding model (แชร์ตัวเดียวตลอด process) ===
+    # === 4. Embedding model (ดึงค่าจาก global_vars.py) ===
     embeddings = _VECTORSTORE_SERVICE_CACHE.get("embeddings_model")
 
     if not embeddings:
-        # 📌 ASSUME: EMBEDDING_MODEL_NAME ถูก Import จาก config/global_vars
-        logger.info(f"กำลังโหลด {EMBEDDING_MODEL_NAME} (SOTA Multilingual 2024) เพื่อปรับปรุง Retrieval")
+        # ใช้ TARGET_DEVICE ที่เราเช็คไว้ใน global_vars (cuda/mps/cpu)
+        logger.info(f"กำลังโหลด {EMBEDDING_MODEL_NAME} บน Device: {TARGET_DEVICE} เพื่อปรับปรุง Retrieval")
 
         try:
+            # 🎯 ใช้ค่า Kwargs ที่ตั้งไว้ใน global_vars ทั้งหมด
+            from langchain_huggingface import HuggingFaceEmbeddings
+            
             embeddings = HuggingFaceEmbeddings(
-                model_name= EMBEDDING_MODEL_NAME,
-                model_kwargs={
-                    "device": "cpu", # เปลี่ยนเป็น "cuda" ถ้ามี GPU 
-                },  
-                encode_kwargs={
-                    "normalize_embeddings": True, 
-                    "batch_size": 32,
-                }
+                model_name=EMBEDDING_MODEL_NAME,
+                model_kwargs=EMBEDDING_MODEL_KWARGS,
+                encode_kwargs=EMBEDDING_ENCODE_KWARGS
             )
+            
+            # 🔥 CRITICAL FIX: "Warm up" เพื่อแก้ Meta Tensor Error 
+            # บังคับให้โหลดน้ำหนักโมเดลจากพื้นที่เสมือนลงหน่วยความจำจริง 1 รอบ
+            embeddings.embed_query("Warm up embedding engine")
+            
             _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-            logger.info(f"{EMBEDDING_MODEL_NAME} โหลดสำเร็จและแชร์ตลอด process")
+            logger.info(f"✅ {EMBEDDING_MODEL_NAME} โหลดสำเร็จบน {TARGET_DEVICE}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load {EMBEDDING_MODEL_NAME}: {e}")
-            logger.warning("⚠️ Falling back to paraphrase-multilingual-MiniLM-L12-v2")
-            # ใช้ Fallback model ตัวเดิม
-            embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                model_kwargs={"device": "cpu"}
-            )
-            _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-
+            logger.error(f"❌ Failed to load {EMBEDDING_MODEL_NAME} on {TARGET_DEVICE}: {e}")
+            logger.warning("⚠️ Falling back to CPU mode...")
+            
+            # Fallback ไปใช้ CPU (ใส่ trust_remote_code ไว้ด้วย)
+            try:
+                embeddings = HuggingFaceEmbeddings(
+                    model_name=EMBEDDING_MODEL_NAME,
+                    model_kwargs={"device": "cpu", "trust_remote_code": True},
+                    encode_kwargs={"normalize_embeddings": True, "batch_size": 4}
+                )
+                _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
+            except Exception as e_inner:
+                logger.critical(f"❌ ไม่สามารถโหลด Embedding ได้เลยแม้แต่บน CPU: {e_inner}")
+                raise e_inner
 
     # === 5. สร้างหรือโหลด Chroma ===
-    # สร้าง directory ตาม Path ที่คำนวณจาก Path Utility (รวมถึง DATA_STORE_ROOT)
     os.makedirs(persist_directory, exist_ok=True) 
 
     vectorstore = Chroma(
-        collection_name=collection_name,           # ใช้ชื่อเดิมตรง ๆ
+        collection_name=collection_name,
         persist_directory=persist_directory,
         embedding_function=embeddings
     )
@@ -789,6 +793,7 @@ def get_vectorstore(
 
     logger.info(
         f"Vectorstore พร้อมใช้งาน!\n"
+        f"   Device      : {TARGET_DEVICE}\n"
         f"   Collection  : {collection_name}\n"
         f"   Path        : {persist_directory}"
     )

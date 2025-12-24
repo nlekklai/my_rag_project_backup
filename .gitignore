@@ -5,12 +5,12 @@ __pycache__/
 env/
 venv/
 .venv/
-venv_old_clean/
-venv_old/
 uploads/
 *.env
 *.log
 .DS_Store
+.hf_cache
+.vscode
 *.sqlite3
 # Ignore folders
 vectorstore/

@@ -2,6 +2,7 @@
 import os
 import uuid
 from typing import List, Dict, Set, Final
+import torch
 
 # ================================================================
 # Project & Namespace
@@ -23,6 +24,27 @@ DEFAULT_TENANT: Final[str] = "pea"
 DEFAULT_YEAR: Final[int] = 2568
 DEFAULT_ENABLER: Final[str] = "KM"
 
+
+# ================================================================
+# Device & Hardware Acceleration
+# ================================================================
+# ระบบจะเลือก cuda (Server), mps (Mac M1/M2), หรือ cpu (ทั่วไป) เอง
+if torch.cuda.is_available():
+    TARGET_DEVICE: Final[str] = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    TARGET_DEVICE: Final[str] = "mps"
+else:
+    TARGET_DEVICE: Final[str] = "cpu"
+
+# กำหนด Batch Size ตามความแรงของ Device
+# L40S (cuda) ใช้ 32, Mac (mps) ใช้ 8, CPU ใช้ 4
+if TARGET_DEVICE == "cuda":
+    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 32
+elif TARGET_DEVICE == "mps":
+    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 8
+else:
+    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 4
+
 # ================================================================
 # Ollama / LLM Request Control
 # ================================================================
@@ -32,15 +54,19 @@ OLLAMA_MAX_RETRIES: Final[int] = 3
 # ================================================================
 # Run Mode & LLM Configuration
 # ================================================================
+# อ่านโหมด (ซึ่งของคุณจะเป็น LOCAL_OLLAMA เสมอ)
 RAG_RUN_MODE: Final[str] = os.environ.get("RAG_RUN_MODE", "LOCAL_OLLAMA")
 
-# เลือก Model Name ตามโหมด
-if RAG_RUN_MODE == "CLOUD":
-    DEFAULT_LLM_MODEL_NAME: Final[str] = os.environ.get("NVIDIA_MODEL_NAME", "meta/llama-3.1-70b-instruct")
-    LLM_CONTEXT_WINDOW: Final[int] = int(os.environ.get("LLM_CONTEXT_WINDOW", "32768"))
-else:
-    DEFAULT_LLM_MODEL_NAME: Final[str] = "llama3:8b"
-    LLM_CONTEXT_WINDOW: Final[int] = 8192
+# ดึงชื่อ Model และ Context จาก .env
+# ถ้าไม่มีใน .env ให้ใช้ 8b เป็นค่าเริ่มต้นสำหรับ Mac
+DEFAULT_LLM_MODEL_NAME: Final[str] = os.environ.get("OLLAMA_MODEL_NAME", "llama3:8b")
+LLM_CONTEXT_WINDOW: Final[int] = int(os.environ.get("LLM_CONTEXT_WINDOW", "8192"))
+
+# ดึง URL ของ Ollama (เผื่อในอนาคต Mac อยากชี้ไปหา Server)
+OLLAMA_BASE_URL: Final[str] = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# จำนวน Workers (Mac อาจใช้ 2, Server L40S อาจใช้ 8)
+MAX_PARALLEL_WORKERS: Final[int] = int(os.environ.get("MAX_PARALLEL_WORKERS", "2"))
 
 LLM_TEMPERATURE: Final[float] = 0.0
 
@@ -49,6 +75,17 @@ LLM_TEMPERATURE: Final[float] = 0.0
 # ================================================================
 EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-m3"
 RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base"
+
+# 🎯 เพิ่มส่วนนี้เข้าไปครับ
+EMBEDDING_MODEL_KWARGS: Final[Dict] = {
+    "device": TARGET_DEVICE,
+    "trust_remote_code": True  # แก้ปัญหาเรื่องความปลอดภัยและ Meta Tensor
+}
+
+EMBEDDING_ENCODE_KWARGS: Final[Dict] = {
+    "normalize_embeddings": True,
+    "batch_size": DEFAULT_EMBED_BATCH_SIZE # ใช้ค่าที่คำนวณตาม Device ด้านบน
+}
 
 # ================================================================
 # Hybrid Search Configuration
