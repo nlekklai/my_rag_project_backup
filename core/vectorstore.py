@@ -26,11 +26,15 @@ from langchain_core.documents import BaseDocumentCompressor
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.runnables import Runnable
 from langchain_community.retrievers import BM25Retriever
-# from langchain.retrievers import EnsembleRetriever
-# from langchain_community.retrievers import EnsembleRetriever
-from langchain.retrievers.ensemble import EnsembleRetriever
-
 from langchain_core.documents import Document
+# from langchain.retrievers import EnsembleRetriever
+
+try:
+    # สำหรับ Mac (เวอร์ชันเก่า) หรือ Server (ถ้าลงตัวหลักไว้)
+    from langchain.retrievers import EnsembleRetriever
+except ImportError:
+    # สำหรับ Server (เวอร์ชันใหม่ v0.2+)
+    from langchain_community.retrievers import EnsembleRetriever
 
 # Thai Tokenizer
 from pythainlp.tokenize import word_tokenize
