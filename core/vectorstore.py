@@ -283,70 +283,66 @@ def vectorstore_exists(
     logger.error(f"❌ V-Exists Check: FAILED to find file chroma.sqlite3 at {file_path} in {path}")
     return False
 
-# ⚠️ ลบฟังก์ชัน _get_collection_parent_dir ออก (Logic ถูกยุบรวมและถูกใช้งานโดยตรงใน list_vectorstore_folders)
 
 def list_vectorstore_folders(
     tenant: str, 
-    year: int, # NOTE: ใช้ปีปัจจุบันที่รัน (int)
+    year: int, 
     doc_type: Optional[str] = None, 
     enabler: Optional[str] = None, 
-    base_path: str = "" # base_path ถูกละเลย
+    base_path: str = "" 
 ) -> List[str]:
     """
-    Lists the actual collection folder names (e.g., 'evidence_km', 'document')
-    that exist under the specified tenant and year context.
+    Lists the actual collection names that exist under the specified tenant and year context.
+    Fixed: Checks for chroma.sqlite3 at the DB Root level instead of inside collection folders.
     """
-    # 🎯 FIX: ใช้ get_vectorstore_tenant_root_path แทน
-    tenant_root = get_vectorstore_tenant_root_path(tenant) # VECTORSTORE_DIR / tenant
+    tenant_root = get_vectorstore_tenant_root_path(tenant) 
     
-    # Scenario 1: Specific doc_type/enabler is requested
+    # Scenario 1: Specific doc_type/enabler requested
     if doc_type:
         doc_type_norm = doc_type.lower().strip()
-        # 🎯 FIX: ใช้ get_doc_type_collection_key แทน _get_collection_name
         collection_name = get_doc_type_collection_key(doc_type_norm, enabler)
         
-        # ต้องคำนวณ target_year ที่ถูกต้องก่อน (None สำหรับ General Docs)
-        target_year = year
-        if doc_type_norm != EVIDENCE_DOC_TYPES.lower():
-            target_year = None
-            
-        # 🎯 FIX: ใช้ get_vectorstore_collection_path
-        full_collection_path = get_vectorstore_collection_path(tenant, target_year, doc_type_norm, enabler)
+        target_year = year if doc_type_norm == EVIDENCE_DOC_TYPES.lower() else None
         
-        if os.path.isdir(full_collection_path) and os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
+        # Path ไปยังโฟลเดอร์ที่เก็บ Collection (e.g., .../2568/evidence_km)
+        full_collection_path = get_vectorstore_collection_path(tenant, target_year, doc_type_norm, enabler)
+        # Path ไปยัง DB Root (e.g., .../2568/)
+        db_root_path = os.path.dirname(full_collection_path.rstrip('/'))
+        
+        # ✅ FIX: เช็คว่ามีโฟลเดอร์ collection และมี chroma.sqlite3 อยู่ใน DB Root
+        if os.path.isdir(full_collection_path) and os.path.isfile(os.path.join(db_root_path, "chroma.sqlite3")):
             return [collection_name] 
         return []
 
-    # Scenario 2: List ALL collections for the given tenant/year context (List All)
-    
+    # Scenario 2: List ALL collections
     collections: Set[str] = set()
     
-    # 1. Scan the Year Root (สำหรับ Doc Type: evidence) - Path: V_ROOT/tenant/year
-    root_year_evidence = os.path.join(tenant_root, str(year)) 
-    if os.path.isdir(root_year_evidence):
-        # ค้นหา evidence_... collections ภายในโฟลเดอร์ปี
-        for sub_dir in os.listdir(root_year_evidence):
-             sub_dir_lower = sub_dir.lower()
-             if sub_dir_lower.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"): 
-                 full_collection_path = os.path.join(root_year_evidence, sub_dir)
-                 if os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
-                    collections.add(sub_dir_lower) 
+    # 1. Scan the Year Root (สำหรับ evidence) - Path: V_ROOT/tenant/year
+    root_year = os.path.join(tenant_root, str(year)) 
+    if os.path.isdir(root_year):
+        # ✅ FIX: เช็คว่าในโฟลเดอร์ปีมีไฟล์ DB หลักไหม
+        has_db_file = os.path.isfile(os.path.join(root_year, "chroma.sqlite3"))
+        
+        if has_db_file:
+            for sub_dir in os.listdir(root_year):
+                 sub_dir_lower = sub_dir.lower()
+                 # ถ้าเป็นโฟลเดอร์ และขึ้นต้นด้วย evidence_ (เช่น evidence_km)
+                 if sub_dir_lower.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"): 
+                     if os.path.isdir(os.path.join(root_year, sub_dir)):
+                        collections.add(sub_dir_lower) 
 
-    # 2. Scan the Common Root (สำหรับ Doc Type: document, faq, ฯลฯ) - Path: V_ROOT/tenant
-    root_common = tenant_root 
-    if os.path.isdir(root_common):
-        # ค้นหาโฟลเดอร์ Doc Type
-        for sub_dir in os.listdir(root_common):
+    # 2. Scan the Common Root (สำหรับ document, faq) - Path: V_ROOT/tenant
+    if os.path.isdir(tenant_root):
+        has_common_db = os.path.isfile(os.path.join(tenant_root, "chroma.sqlite3"))
+        
+        for sub_dir in os.listdir(tenant_root):
+            if sub_dir.isdigit(): continue # ข้ามโฟลเดอร์ปี
+            
             sub_dir_lower = sub_dir.lower()
+            full_path = os.path.join(tenant_root, sub_dir)
             
-            # ข้ามโฟลเดอร์ที่เป็นตัวเลข (ปี) เพราะถูกสแกนในขั้นตอนที่ 1 แล้ว
-            if sub_dir.isdigit():
-                 continue 
-            
-            # ตรวจสอบว่าโฟลเดอร์นั้นเป็น Collection จริง (มีไฟล์ Chroma)
-            full_collection_path = os.path.join(root_common, sub_dir)
-            
-            if os.path.isfile(os.path.join(full_collection_path, "chroma.sqlite3")):
+            # ✅ FIX: ถ้าเป็นโฟลเดอร์ และมีไฟล์ DB อยู่ที่ระดับ tenant root
+            if os.path.isdir(full_path) and has_common_db:
                  collections.add(sub_dir_lower) 
     
     return sorted(list(collections))
@@ -1785,11 +1781,6 @@ class MultiDocRetriever(BaseRetriever): # FIX: ไม่มี BaseModel เพ�
 
 # -------------------- END OF MultiDocRetriever --------------------
 # -------------------- load_all_vectorstores --------------------
-# NOTE: ต้องมั่นใจว่ามีการ import constants และ classes ที่จำเป็นทั้งหมด
-# เช่น DEFAULT_TENANT, DEFAULT_YEAR, INITIAL_TOP_K, FINAL_K_RERANKED,
-# EVIDENCE_DOC_TYPES, VectorStoreManager, MultiDocRetriever, NamedRetriever, 
-# get_global_reranker, list_vectorstore_folders, get_doc_type_collection_key
-
 def load_all_vectorstores(
     tenant: str = DEFAULT_TENANT, 
     year: int = DEFAULT_YEAR, 
@@ -1798,11 +1789,12 @@ def load_all_vectorstores(
     enabler_filter: Optional[str] = None,
     top_k: int = INITIAL_TOP_K,
     final_k: int = FINAL_K_RERANKED
-) -> 'VectorStoreManager': # ใช้ 'VectorStoreManager' เพื่อเลี่ยง Circular Dependency
+) -> 'VectorStoreManager':
     """
     Initializes the VSM and the main MultiDocRetriever for the current assessment context.
+    Improved with Case-Insensitive matching for Mac/Linux environments.
     """
-    # 1. Initialize VSM (Singleton) - This is where the VSM object is created/reused
+    # 1. Initialize VSM (Singleton)
     manager = VectorStoreManager(
         tenant=tenant, 
         year=year, 
@@ -1810,8 +1802,13 @@ def load_all_vectorstores(
     
     # 2. Prepare the list of target collection keys
     target_collection_keys: Set[str] = set()
-    # list_vectorstore_folders() จะสแกนหา collections ที่มีอยู่จริงใน Tenant/Year
+    
+    # สแกนหา collections ที่มีอยู่จริงใน Tenant/Year
     existing_collections = list_vectorstore_folders(tenant, year, doc_type=None, enabler=None) 
+    
+    # 🎯 [FIX] สร้าง Mapping แบบ Case-Insensitive (key=ตัวเล็ก, value=ชื่อจริงในเครื่อง)
+    # เพื่อรองรับกรณีในเครื่องเป็น 'evidence_km' แต่ระบบส่ง 'evidence_KM'
+    existing_map = {c.lower(): c for c in existing_collections}
     
     # Filtering Logic
     if doc_types:
@@ -1820,31 +1817,39 @@ def load_all_vectorstores(
         
         for dt in doc_types:
             dt_norm = dt.lower().strip()
+            
             if dt_norm == EVIDENCE_DOC_TYPES.lower():
                 # ถ้าเป็น doc_type 'evidence' และมีการกรอง enabler
                 if enabler_filter:
-                    enabler_list = [e.strip().upper() for e in enabler_filter.split(',')]
+                    # แปลง enabler เป็น list และล้างค่าช่องว่าง
+                    enabler_list = [e.strip() for e in enabler_filter.split(',')]
                     for enabler in enabler_list:
-                        key = get_doc_type_collection_key(dt_norm, enabler)
-                        if key in existing_collections:
-                            target_collection_keys.add(key)
+                        # สร้าง key ที่คาดหวัง (มักจะได้ evidence_KM หรือ evidence_km)
+                        key_expected = get_doc_type_collection_key(dt_norm, enabler).lower()
+                        
+                        if key_expected in existing_map:
+                            # ✅ ใช้ชื่อจริงที่เจอใน Folder (เช่น 'evidence_km')
+                            target_collection_keys.add(existing_map[key_expected])
                         else:
-                            logger.warning(f"🔍 DEBUG: Skipping collection '{key}' (Not found in existing collections).")
+                            logger.warning(
+                                f"🔍 DEBUG: Skipping collection '{key_expected}' "
+                                f"(Not found in existing: {list(existing_map.keys())})."
+                            )
                 else:
-                    # ถ้าเป็น doc_type 'evidence' แต่ไม่มีการกรอง enabler ให้เอา evidence ทั้งหมด
-                    for collection in existing_collections:
-                        if collection.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"):
-                            target_collection_keys.add(collection)
+                    # ถ้าไม่ระบุ enabler ให้เอา evidence ทั้งหมดที่ขึ้นต้นด้วย evidence_
+                    for c_low, c_orig in existing_map.items():
+                        if c_low.startswith(f"{EVIDENCE_DOC_TYPES.lower()}_"):
+                            target_collection_keys.add(c_orig)
             else: 
-                # สำหรับ doc_type อื่นๆ ที่ไม่ได้แยกตามปี (document, faq)
-                key = get_doc_type_collection_key(dt_norm, None) 
-                if key in existing_collections:
-                     target_collection_keys.add(key)
+                # สำหรับ doc_type อื่นๆ ที่ไม่ได้แยกตามปี (เช่น document, faq)
+                key_gen = get_doc_type_collection_key(dt_norm, None).lower()
+                if key_gen in existing_map:
+                     target_collection_keys.add(existing_map[key_gen])
                 
-                # รองรับกรณี collection ชื่อ doc_type_ALL
-                key_all = get_doc_type_collection_key(dt_norm, "ALL") 
-                if key_all in existing_collections:
-                     target_collection_keys.add(key_all)
+                # รองรับกรณี collection ชื่อ doc_type_all
+                key_all = get_doc_type_collection_key(dt_norm, "ALL").lower()
+                if key_all in existing_map:
+                     target_collection_keys.add(existing_map[key_all])
     
     else:
         # หากไม่ระบุ doc_types เลย ให้โหลดทั้งหมดที่สแกนเจอ
@@ -1856,12 +1861,13 @@ def load_all_vectorstores(
     all_retrievers: List[NamedRetriever] = []
     
     for collection_name in target_collection_keys:
-        # แยกชื่อ collection เพื่อหา doc_type และ enabler
+        # แยกชื่อ collection เพื่อหา doc_type และ enabler (e.g., 'evidence_km' -> ['evidence', 'km'])
         parts = collection_name.split('_')
         doc_type_for_check = parts[0]
+        # รักษา Case ของ enabler ตามที่ระบบต้องการ (มักจะเป็นตัวใหญ่)
         enabler_for_check = parts[1].upper() if len(parts) > 1 else None
         
-        # กำหนดปีที่ถูกต้อง: evidence ใช้ปี, อื่นๆ ไม่ใช้ปี
+        # 🎯 กำหนดปีที่ถูกต้อง: evidence ใช้ปีจาก config, อื่นๆ (Global) ไม่ใช้ปี
         target_year = year
         if doc_type_for_check.lower() != EVIDENCE_DOC_TYPES.lower():
             target_year = None
@@ -1873,18 +1879,21 @@ def load_all_vectorstores(
             top_k=top_k, 
             final_k=final_k, 
             tenant=tenant, 
-            year=target_year # ส่งค่าปีที่ถูกต้อง
+            year=target_year
         )
         all_retrievers.append(nr)
-        logger.info(f"🔍 DEBUG: Successfully added retriever for collection '{collection_name}' (Year={target_year}).")
-
-    final_filter_ids = doc_ids
-    if doc_ids:
-        logger.info(f"✅ Hard Filter Enabled: Using {len(doc_ids)} original 64-char UUIDs for filtering.")
-    logger.info(f"🔍 DEBUG: Final count of all_retrievers = {len(all_retrievers)}")
+        logger.info(f"🔍 DEBUG: Added retriever for '{collection_name}' (Year={target_year}, Enabler={enabler_for_check}).")
 
     if not all_retrievers:
-        raise ValueError(f"No vectorstore collections found matching tenant={tenant}, year={year}, doc_types={doc_types}, enabler={enabler_filter}. Please check your configuration and ensure data exists.")
+        # พ่น Error ที่ระบุ Path ชัดเจนเพื่อช่วยในการ Debug หน้างาน
+        debug_vstore_path = f"data_store/{tenant}/vectorstore/{year}"
+        raise ValueError(
+            f"No vectorstore collections found matching:\n"
+            f" - Path: {debug_vstore_path}\n"
+            f" - DocTypes: {doc_types}\n"
+            f" - Enabler: {enabler_filter}\n"
+            f"Please check if ChromaDB folders exist in the path above."
+        )
         
     # 4. Initialize MultiDocRetriever (MDR)
     
@@ -1893,28 +1902,24 @@ def load_all_vectorstores(
     if final_k > 0:
         reranker = get_global_reranker()
         if reranker is None:
-             # WARNING นี้ปรากฏใน traceback ดังนั้นการแจ้งเตือนนี้จึงมีความสำคัญ
-             logger.warning("❌ WARNING: Reranker requested but failed to initialize. Reranking disabled.")
+             logger.warning("❌ Reranker failed to initialize. Reranking disabled.")
              final_k = top_k 
         else:
-             logger.info(f"✅ Reranker initialized ({reranker.rerank_model}). Will return top {final_k} documents.")
+             logger.info(f"✅ Reranker initialized ({reranker.rerank_model}).")
              
 
     # 4.2 Create MDR instance
-    # 💡 ใช้ชื่อ Argument ที่ถูกต้องตามที่กำหนดใน MultiDocRetriever Pydantic Fields
     mdr = MultiDocRetriever( 
         retrievers_list=all_retrievers, 
         k_per_doc=top_k, 
-        doc_ids_filter=final_filter_ids,
+        doc_ids_filter=doc_ids,
         compressor=reranker, 
         final_k=final_k
     )
     
     # 5. Set MDR in VSM (Singleton)
-    # 📌 FIX: แก้ไข AttributeError โดยการกำหนดค่าให้กับ Internal Field โดยตรง
     manager._multi_doc_retriever = mdr
     
-    # 6. Return the manager
     return manager
 
 

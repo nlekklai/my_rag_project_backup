@@ -174,7 +174,6 @@ SEAM_SUBTOPIC_MAP = {
 # Paths & Export Configuration
 # ================================================================
 RUBRIC_FILENAME_PATTERN: Final[str] = "{tenant}_{enabler}_rubric.json"
-RUBRIC_CONFIG_DIR: Final[str] = os.path.join(PROJECT_ROOT, "config", "mapping")
 EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 
 DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"

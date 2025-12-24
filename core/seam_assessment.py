@@ -26,15 +26,17 @@ import copy
 
 
 # -------------------- PATH SETUP & IMPORTS --------------------
+# 🟢 แก้ไขส่วน IMPORTS ใน core/seam_assessment.py
+
 try:
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if PROJECT_ROOT not in sys.path:
-        sys.path.append(PROJECT_ROOT)
+        sys.path.insert(0, PROJECT_ROOT)
 
+    # 1. Import Constants จาก global_vars
     from config.global_vars import (
-        # เดิมที่มีอยู่แล้ว
         EXPORTS_DIR, MAX_LEVEL, INITIAL_LEVEL, FINAL_K_RERANKED,
-        RUBRIC_FILENAME_PATTERN, RUBRIC_CONFIG_DIR, DEFAULT_ENABLER,
+        RUBRIC_FILENAME_PATTERN, DEFAULT_ENABLER,
         EVIDENCE_DOC_TYPES, INITIAL_TOP_K,
         EVIDENCE_MAPPING_FILENAME_SUFFIX,
         LIMIT_CHUNKS_PER_PRIORITY_DOC,
@@ -51,25 +53,24 @@ try:
         MIN_RETRY_SCORE,
         MIN_RELEVANCE_THRESHOLD,
         OLLAMA_MAX_RETRIES,
-
-        # === เพิ่มเหล่านี้ ===
-        CONTEXT_CAP_L3_PLUS,                 # ใช้ใน _run_single_assessment สำหรับ cap context L3+
-        CRITICAL_CA_THRESHOLD,               # ใช้ใน critical C/A evidence summary และ override logic
-        MAX_RETRIEVAL_ATTEMPTS,              # ใช้ใน adaptive RAG loop
-        HYBRID_VECTOR_WEIGHT,                # ถ้าใช้ใน rag_retriever หรือ hybrid setup
-        HYBRID_BM25_WEIGHT,                  # เช่นเดียวกัน
-        CHUNK_SIZE,                          # ถ้าใช้ใน hydration หรือ chunking
-        CHUNK_OVERLAP,                       # เช่นเดียวกัน
-        REQUIRED_PDCA,                 # <--- เพิ่ม
-        CORRECT_PDCA_SCORES_MAP,       # <--- เพิ่ม
-        PDCA_PRIORITY_ORDER,           # <--- เพิ่ม
-        BASE_PDCA_KEYWORDS,            # <--- เพิ่ม
+        CONTEXT_CAP_L3_PLUS,
+        CRITICAL_CA_THRESHOLD,
+        MAX_RETRIEVAL_ATTEMPTS,
+        HYBRID_VECTOR_WEIGHT,
+        HYBRID_BM25_WEIGHT,
+        CHUNK_SIZE,
+        CHUNK_OVERLAP,
+        REQUIRED_PDCA,
+        CORRECT_PDCA_SCORES_MAP,
+        PDCA_PHASE_MAP,        # ✅ ย้ายมาไว้ที่นี่ตามที่มีใน global_vars.py
+        PDCA_PRIORITY_ORDER,
+        BASE_PDCA_KEYWORDS,
         PDCA_LEVEL_SYNONYMS,
         ENABLE_HARD_FAIL_LOGIC,
         ENABLE_CONTEXTUAL_RULE_OVERRIDE
     )
     
-    
+    # 2. Import Logic Functions
     from core.llm_data_utils import ( 
         create_structured_action_plan, evaluate_with_llm,
         retrieve_context_with_filter, retrieve_context_for_low_levels,
@@ -81,10 +82,13 @@ try:
         build_multichannel_context_for_level
     )
     from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
-    from core.seam_prompts import PDCA_PHASE_MAP 
-    from core.action_plan_schema import ActionPlanActions  # เพิ่มด้านบน
+    
+    # ❌ ลบบรรทัดเดิมที่เป็นสาเหตุของ ImportError ออก:
+    # from core.seam_prompts import PDCA_PHASE_MAP 
+    
+    from core.action_plan_schema import ActionPlanActions
 
-    # 🎯 FIX: Import ฟังก์ชัน Path Utility ทั้งหมดที่จำเป็น
+    # 3. 🎯 Import Path Utilities
     from utils.path_utils import (
         get_mapping_file_path, 
         get_evidence_mapping_file_path, 
@@ -92,56 +96,77 @@ try:
         get_doc_type_collection_key,
         get_assessment_export_file_path,
         get_export_dir,
-        get_rubric_file_path # <--- ต้อง Import ฟังก์ชันนี้ด้วย
+        get_rubric_file_path,
+        load_evidence_mapping,
+        _n
     )
 
     import assessments.seam_mocking as seam_mocking 
     
 except ImportError as e:
-    # -------------------- Fallback Code (Same as previous) --------------------
-    print(f"FATAL ERROR: Failed to import required modules. Error: {e}", file=sys.stderr)
+    # -------------------- Modernized Fallback Code --------------------
+    print(f"⚠️ WARNING: Import failed, using dynamic fallback for Mac. Error: {e}", file=sys.stderr)
     
-    # Define placeholder variables if imports fail
+    # Fallback Constants
     EXPORTS_DIR = "exports"
     MAX_LEVEL = 5
     INITIAL_LEVEL = 1
     FINAL_K_RERANKED = 3
     RUBRIC_FILENAME_PATTERN = "{tenant}_{enabler}_rubric.json"
-    RUBRIC_CONFIG_DIR = "config/rubrics"
     DEFAULT_ENABLER = "KM"
     EVIDENCE_DOC_TYPES = "evidence"
     INITIAL_TOP_K = 10
-    
-    def create_structured_action_plan(*args, **kwargs): return [{"Phase": "Mock Plan", "Goal": "Resolve issue"}]
-    def evaluate_with_llm(*args, **kwargs): return {"score": 1, "reason": "Mock pass", "is_passed": True}
-    def retrieve_context_with_filter(*args, **kwargs): return {"top_evidences": [], "aggregated_context": "Mock Context"}
-    def retrieve_context_for_low_levels(*args, **kwargs): return {"top_evidences": [], "aggregated_context": "Mock Low Context"}
-    def evaluate_with_llm_low_level(*args, **kwargs): return {"score": 1, "reason": "Mock pass L1/L2", "is_passed": True}
-    LOW_LEVEL_K = 2
+
+    # 📌 Placeholder functions for path_utils (ชี้เข้า data_store ตรงๆ)
+    def _n(s): return str(s).lower().strip()
+
+    def get_mapping_file_path(doc_type, tenant, year=None, enabler=None):
+        t = _n(tenant)
+        if _n(doc_type) == "evidence":
+            return f"data_store/{t}/mapping/{year}/{t}_{year}_{_n(enabler)}_doc_id_mapping.json"
+        return f"data_store/{t}/mapping/{t}_{_n(doc_type)}_doc_id_mapping.json"
+
+    def get_evidence_mapping_file_path(tenant, year, enabler):
+        t = _n(tenant)
+        return f"data_store/{t}/mapping/{year}/{t}_{year}_{_n(enabler)}_evidence_mapping.json"
+
+    def get_contextual_rules_file_path(tenant, enabler):
+        t = _n(tenant)
+        return f"data_store/{t}/config/{t}_{_n(enabler)}_contextual_rules.json"
+
+    def get_rubric_file_path(tenant, enabler):
+        t = _n(tenant)
+        return f"data_store/{t}/config/{t}_{_n(enabler)}_rubric.json"
+
+    def load_evidence_mapping(tenant="pea", year=2568, enabler="KM"):
+        path = get_evidence_mapping_file_path(tenant, year, enabler)
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f: return json.load(f)
+            except: return {}
+        return {}
+
+    # Mock Logic Functions
+    def create_structured_action_plan(*args, **kwargs): return []
+    def evaluate_with_llm(*args, **kwargs): return {"score": 0, "reason": "Import Error Fallback", "is_passed": False}
+    def retrieve_context_with_filter(*args, **kwargs): return {"top_evidences": [], "aggregated_context": ""}
+    def retrieve_context_for_low_levels(*args, **kwargs): return {"top_evidences": [], "aggregated_context": ""}
+    def evaluate_with_llm_low_level(*args, **kwargs): return {"score": 0, "is_passed": False}
     def set_llm_data_mock_mode(mode): pass
+    def build_multichannel_context_for_level(*args, **kwargs): return ""
+    
     class VectorStoreManager: pass
-    def load_all_vectorstores(*args, **kwargs): return VectorStoreManager()
-    PDCA_PHASE_MAP = {1: "Plan", 2: "Do", 3: "Check", 4: "Act", 5: "Innovate"}
+    def load_all_vectorstores(*args, **kwargs): return None
+    
+    PDCA_PHASE_MAP = {1: "Plan", 2: "Do", 3: "Check", 4: "Act", 5: "Sustainability"}
+
     class seam_mocking:
         @staticmethod
-        def evaluate_with_llm_CONTROLLED_MOCK(*args, **kwargs): return {"score": 0, "reason": "Mock fail", "is_passed": False}
-        @staticmethod
-        def retrieve_context_with_filter_MOCK(*args, **kwargs): return {"top_evidences": [], "aggregated_context": "Mock Context"}
-        @staticmethod
-        def create_structured_action_plan_MOCK(*args, **kwargs): return [{"Phase": "Mock Plan", "Goal": "Resolve issue"}]
-        @staticmethod
         def set_mock_control_mode(mode): pass
-    
-    # 📌 Placeholder functions for path_utils if the main import fails
-    def get_mapping_file_path(*args, **kwargs): return "config/mapping/default/mapping.json"
-    def get_evidence_mapping_file_path(*args, **kwargs): return "config/mapping/default/evidence_mapping.json"
-    def get_contextual_rules_file_path(*args, **kwargs): return "config/rubrics/default/contextual_rules.json"
-    def get_rubric_file_path(*args, **kwargs): return "config/rubrics/default/rubric.json"
-    
+
     if "FATAL ERROR" in str(e):
         pass 
-    # ---------------------------------------------------------------------- 
-
+# ----------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -680,52 +705,65 @@ class SEAMPDCAEngine:
     def _initialize_vsm_if_none(self):
         """
         Initializes VectorStoreManager if self.vectorstore_manager is None.
-        Handles multi-tenant/multi-year vector store loading.
+        Handles multi-tenant/multi-year vector store loading with robust case handling.
         """
-        # 1. ถ้ามีอยู่แล้วให้ return ออกไปเลย
+        # 1. ถ้ามีการ Initialize ไปแล้วไม่ต้องทำซ้ำ
         if self.vectorstore_manager is not None:
             return
 
-        # 2. Safety Net: ตรวจสอบ doc_type ก่อนเริ่มงาน
+        # 2. Safety Net: ตรวจสอบความพร้อมของ doc_type
         if not hasattr(self, 'doc_type') or self.doc_type is None:
-             self.logger.warning("doc_type was missing during VSM init, falling back to default.")
-             from config.global_vars import EVIDENCE_DOC_TYPES # Ensure import
+             self.logger.warning("doc_type was missing during VSM init, using default: evidence")
              self.doc_type = EVIDENCE_DOC_TYPES
 
-        self.logger.info("Loading central evidence vectorstore(s)...")
+        self.logger.info(f"🚀 Loading central vectorstore(s) for DocType: '{self.doc_type}'")
 
         try:
-            # 3. เรียกใช้ load_all_vectorstores (แก้ไข enabler_filter แล้ว)
+            # 🎯 [CRITICAL FIX] Normalize Enabler ให้เป็นตัวพิมพ์เล็กเสมอ
+            # เพื่อให้ตรงกับชื่อโฟลเดอร์ในเครื่อง (เช่น 'evidence_km')
+            target_enabler = str(self.enabler_id).lower() if self.enabler_id else None
+
+            # 3. เรียกใช้ load_all_vectorstores (ตัวที่แก้ให้เป็น Case-Insensitive แล้ว)
             self.vectorstore_manager = load_all_vectorstores(
                 doc_types=[self.doc_type], 
-                enabler_filter=self.enabler_id, 
+                enabler_filter=target_enabler, 
                 tenant=self.config.tenant, 
                 year=self.config.year       
             )
             
-            # 4. บังคับโหลด Doc ID Map ซ้ำเพื่อป้องกัน Map หายใน Worker (Critical for Parallel Mode)
-            if self.vectorstore_manager:
-                self.vectorstore_manager._load_doc_id_mapping() 
-
-            # 5. ตรวจสอบความสำเร็จของการโหลด Collections
+            # 4. ตรวจสอบเบื้องต้นว่าโหลดขึ้นมาได้กี่ Collection
             len_retrievers = 0
             if (self.vectorstore_manager and 
                 hasattr(self.vectorstore_manager, '_multi_doc_retriever') and 
                 self.vectorstore_manager._multi_doc_retriever):
                 
-                # เข้าถึง _all_retrievers ผ่าน MultiDocRetriever
                 len_retrievers = len(self.vectorstore_manager._multi_doc_retriever._all_retrievers)
-                self.logger.info("✅ MultiDocRetriever loaded with %s collections.", len_retrievers) 
-            else:
-                self.logger.warning("VectorStoreManager loaded but MultiDocRetriever is missing.")
             
+            # 5. [OPTIMAL FALLBACK] หากระบุปีแล้วไม่เจอ ให้ลองถอยไปหาที่ Root ของ Tenant (ปี=None)
+            if len_retrievers == 0 and self.config.year:
+                self.logger.info(f"⚠️ No collections found in year {self.config.year}, searching in tenant root...")
+                self.vectorstore_manager = load_all_vectorstores(
+                    doc_types=[self.doc_type], 
+                    enabler_filter=target_enabler, 
+                    tenant=self.config.tenant, 
+                    year=None       
+                )
+                if (self.vectorstore_manager and self.vectorstore_manager._multi_doc_retriever):
+                    len_retrievers = len(self.vectorstore_manager._multi_doc_retriever._all_retrievers)
+
+            # 6. บังคับโหลด Doc ID Map หลังจากโหลด Vectorstore สำเร็จ
+            if self.vectorstore_manager:
+                self.vectorstore_manager._load_doc_id_mapping() 
+                self.logger.info("✅ MultiDocRetriever loaded with %s collections.", len_retrievers) 
+            
+            # 7. Final Hard Check
             if len_retrievers == 0:
-                self.logger.error("FATAL: 0 vector store collections loaded. Check data path: %s", 
-                                  f"data_store/{self.config.tenant}/vectorstore/{self.config.year}")
-                raise ValueError("0 vector store collections loaded. Cannot proceed.")
+                expected_path = f"data_store/{self.config.tenant}/vectorstore/{self.config.year}"
+                self.logger.error(f"❌ FATAL: 0 vector store collections loaded. Please check folder: {expected_path}")
+                raise ValueError(f"No vector collections found for '{target_enabler}' in {expected_path}")
 
         except Exception as e:
-            self.logger.error(f"FATAL: Could not initialize VectorStoreManager: {e}")
+            self.logger.error(f"❌ FATAL: Could not initialize VectorStoreManager: {str(e)}")
             raise
 
     def _get_applicable_contextual_rule(self, sub_id: str, level: int) -> Optional[Dict[str, Any]]:
