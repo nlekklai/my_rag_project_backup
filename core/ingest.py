@@ -710,18 +710,13 @@ def get_vectorstore(
 ) -> Chroma:
     """
     เวอร์ชัน Multi-Tenant/Multi-Year ที่รองรับ Hybrid Hardware (Mac MPS / Server CUDA)
-    พร้อมแก้ไขบั๊ก Meta Tensor และจัดการ Path ผ่าน Path Utility
+    แก้ไขบั๊ก 'no such table: tenants' ใน ChromaDB v0.5.3+
     """
 
-    # === 1. ตรวจสอบความยาวชื่อ Collection ===
-    if len(collection_name) < 3:
-        logger.warning(
-            f"Collection name '{collection_name}' ค่อนข้างสั้น แนะนำให้ใช้ชื่ออย่างน้อย 6 ตัวอักษร "
-            f"(เช่น evidence_km) เพื่อป้องกันการชนกันของข้อมูล"
-        )
-
-    # === 2. สร้าง path โดยใช้ Path Utility ===
+    # === 1. จัดการ Path ===
     try:
+        # สมมติว่ามี parse_collection_name และ get_vectorstore_collection_path อยู่ใน utils
+        from core.path_utils import parse_collection_name, get_vectorstore_collection_path
         doc_type_for_path, enabler_for_path = parse_collection_name(collection_name)
         persist_directory = get_vectorstore_collection_path(
             tenant=tenant,
@@ -730,75 +725,71 @@ def get_vectorstore(
             enabler=enabler_for_path
         )
     except Exception as e:
-        logger.error(f"❌ Failed to generate vectorstore path: {e}. Using simple fallback.")
-        persist_directory = os.path.join(DATA_STORE_ROOT, tenant, str(year), collection_name)
+        logger.warning(f"⚠️ Path Utility failed: {e}. Using fallback path.")
+        persist_directory = f"/app/data_store/{tenant}/vectorstore/{year}/{collection_name}"
 
     cache_key = persist_directory
 
-    # === 3. Cache HIT (ไม่ต้องโหลดใหม่ถ้ามีอยู่แล้ว) ===
+    # === 2. Cache Check ===
     if cache_key in _VECTORSTORE_SERVICE_CACHE:
         logger.debug(f"Cache HIT → Reusing vectorstore: {persist_directory}")
         return _VECTORSTORE_SERVICE_CACHE[cache_key]
 
-    # === 4. Embedding model (ดึงค่าจาก global_vars.py) ===
+    # === 3. Embedding Model Setup (รองรับ Mac/CUDA) ===
     embeddings = _VECTORSTORE_SERVICE_CACHE.get("embeddings_model")
-
     if not embeddings:
-        # ใช้ TARGET_DEVICE ที่เราเช็คไว้ใน global_vars (cuda/mps/cpu)
-        logger.info(f"กำลังโหลด {EMBEDDING_MODEL_NAME} บน Device: {TARGET_DEVICE} เพื่อปรับปรุง Retrieval")
-
+        logger.info(f"กำลังโหลด Embedding บน Device: {TARGET_DEVICE}")
         try:
-            # 🎯 ใช้ค่า Kwargs ที่ตั้งไว้ใน global_vars ทั้งหมด
             from langchain_huggingface import HuggingFaceEmbeddings
-            
             embeddings = HuggingFaceEmbeddings(
                 model_name=EMBEDDING_MODEL_NAME,
-                model_kwargs=EMBEDDING_MODEL_KWARGS,
+                model_kwargs=EMBEDDING_MODEL_KWARGS, # จะเป็น {'device': 'mps'} บน Mac อัตโนมัติ
                 encode_kwargs=EMBEDDING_ENCODE_KWARGS
             )
-            
-            # 🔥 CRITICAL FIX: "Warm up" เพื่อแก้ Meta Tensor Error 
-            # บังคับให้โหลดน้ำหนักโมเดลจากพื้นที่เสมือนลงหน่วยความจำจริง 1 รอบ
-            embeddings.embed_query("Warm up embedding engine")
-            
+            # Warm up
+            embeddings.embed_query("Warm up")
             _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-            logger.info(f"✅ {EMBEDDING_MODEL_NAME} โหลดสำเร็จบน {TARGET_DEVICE}")
-            
         except Exception as e:
-            logger.error(f"❌ Failed to load {EMBEDDING_MODEL_NAME} on {TARGET_DEVICE}: {e}")
-            logger.warning("⚠️ Falling back to CPU mode...")
-            
-            # Fallback ไปใช้ CPU (ใส่ trust_remote_code ไว้ด้วย)
-            try:
-                embeddings = HuggingFaceEmbeddings(
-                    model_name=EMBEDDING_MODEL_NAME,
-                    model_kwargs={"device": "cpu", "trust_remote_code": True},
-                    encode_kwargs={"normalize_embeddings": True, "batch_size": 4}
-                )
-                _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
-            except Exception as e_inner:
-                logger.critical(f"❌ ไม่สามารถโหลด Embedding ได้เลยแม้แต่บน CPU: {e_inner}")
-                raise e_inner
+            logger.error(f"❌ Load Embedding Error: {e}. Falling back to CPU.")
+            from langchain_huggingface import HuggingFaceEmbeddings
+            embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME, model_kwargs={"device": "cpu"})
+            _VECTORSTORE_SERVICE_CACHE["embeddings_model"] = embeddings
 
-    # === 5. สร้างหรือโหลด Chroma ===
+    # === 4. สร้างหรือโหลด Chroma (CRITICAL FIX) ===
     os.makedirs(persist_directory, exist_ok=True) 
 
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        persist_directory=persist_directory,
-        embedding_function=embeddings
-    )
+    try:
+        # 🟢 สร้าง PersistentClient เองเพื่อบังคับ Initialize โครงสร้าง Database ใหม่
+        # วิธีนี้รันบน Mac ได้ปกติ เพราะ SQLite เป็น Cross-platform
+        client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=chromadb.Settings(
+                allow_reset=True,
+                anonymized_telemetry=False,
+                is_persistent=True,
+                # บังคับใช้ SegmentAPI เพื่อความเสถียรบน Linux/Mac
+                default_api_impl="chromadb.api.segment.SegmentAPI" 
+            )
+        )
 
-    _VECTORSTORE_SERVICE_CACHE[cache_key] = vectorstore
+        vectorstore = Chroma(
+            client=client, 
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            # ไม่ต้องใส่ persist_directory ซ้ำในนี้เพราะส่ง client เข้าไปแล้ว
+        )
+        
+        _VECTORSTORE_SERVICE_CACHE[cache_key] = vectorstore
+        
+        logger.info(
+            f"✅ Vectorstore พร้อมใช้งาน ({TARGET_DEVICE})\n"
+            f"   Path: {persist_directory}"
+        )
+        return vectorstore
 
-    logger.info(
-        f"Vectorstore พร้อมใช้งาน!\n"
-        f"   Device      : {TARGET_DEVICE}\n"
-        f"   Collection  : {collection_name}\n"
-        f"   Path        : {persist_directory}"
-    )
-
-    return vectorstore
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Chroma: {e}")
+        raise e
 
 # -------------------- [REVISED] Ingest all files --------------------
 def ingest_all_files(
