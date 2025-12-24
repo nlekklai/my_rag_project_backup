@@ -39,6 +39,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter 
 
 # 💡 แก้ไข: ใช้ langchain_chroma และ langchain_huggingface แทน
+import chromadb  # <--- เพิ่มบรรทัดนี้ครับ!
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -716,7 +717,6 @@ def get_vectorstore(
     # === 1. จัดการ Path ===
     try:
         # สมมติว่ามี parse_collection_name และ get_vectorstore_collection_path อยู่ใน utils
-        from core.path_utils import parse_collection_name, get_vectorstore_collection_path
         doc_type_for_path, enabler_for_path = parse_collection_name(collection_name)
         persist_directory = get_vectorstore_collection_path(
             tenant=tenant,
