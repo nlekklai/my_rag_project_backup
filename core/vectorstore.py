@@ -26,7 +26,8 @@ from langchain_core.documents import BaseDocumentCompressor
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.runnables import Runnable
 from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
+# from langchain.retrievers import EnsembleRetriever
+from langchain_community.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 
 # Thai Tokenizer
