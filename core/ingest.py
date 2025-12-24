@@ -768,7 +768,7 @@ def get_vectorstore(
                 anonymized_telemetry=False,
                 is_persistent=True,
                 # บังคับใช้ SegmentAPI เพื่อความเสถียรบน Linux/Mac
-                default_api_impl="chromadb.api.segment.SegmentAPI" 
+                # default_api_impl="chromadb.api.segment.SegmentAPI" 
             )
         )
 
