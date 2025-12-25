@@ -74,7 +74,9 @@ app.add_middleware(
 # -----------------------------
 # Routers 
 # -----------------------------
-app.include_router(upload_router)
+# app.include_router(upload_router)
+app.include_router(upload_router, prefix="/api/upload")  # ดักพวก POST upload
+app.include_router(upload_router, prefix="/api/uploads") # ดักพวก GET list
 app.include_router(llm_router)
 # ✅ รวม assessment_router และ auth_router เข้าสู่แอปพลิเคชัน
 app.include_router(assessment_router)   

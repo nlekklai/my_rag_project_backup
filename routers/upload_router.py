@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from core.vectorstore import get_vectorstore_manager
+from core.ingest import process_document, get_vectorstore, _n
 import asyncio
 
 # --- Import Auth, Path Utils & Global Vars ---
@@ -22,7 +23,9 @@ from utils.path_utils import (
     get_document_file_path,
     get_mapping_tenant_root_path,
     get_mapping_key_from_physical_path,
-    _n
+    _n,
+    create_stable_uuid_from_path,
+    get_doc_type_collection_key
 )
 from config.global_vars import (
     DEFAULT_YEAR,
@@ -31,8 +34,12 @@ from config.global_vars import (
     DOCUMENT_ID_MAPPING_FILENAME_SUFFIX
 )
 
+import aiofiles
+from datetime import timezone
+
 logger = logging.getLogger(__name__)
-upload_router = APIRouter(prefix="/api/uploads", tags=["Knowledge Management"])
+# upload_router = APIRouter(prefix="/api/uploads", tags=["Knowledge Management"])
+upload_router = APIRouter(tags=["Knowledge Management"])
 
 
 # =========================
@@ -48,6 +55,7 @@ class UploadResponse(BaseModel):
     tenant: str
     year: int
     size: int
+    upload_date: str # <--- ต้องมีฟิลด์นี้เพื่อให้ FastAPI ส่งออกไปใน JSON
 
 
 class IngestRequest(BaseModel):
@@ -75,19 +83,30 @@ def map_entries(
     enabler: str
 ) -> List[UploadResponse]:
     """Map mapping_data entries to UploadResponse"""
-    return [
-        UploadResponse(
+    results = []
+    
+    # ใช้เวลาปัจจุบันเป็น fallback แบบ ISO สากล
+    default_now = datetime.now(timezone.utc).isoformat()
+
+    for uid, info in mapping_data.items():
+        # 1. พยายามดึงวันที่ ถ้าไม่มีจริงๆ ให้ใช้ตอนนี้ (เพื่อไม่ให้หน้าจอ Invalid)
+        raw_date = info.get("upload_date") or info.get("uploadDate") or default_now
+        
+        # 2. ตรวจสอบสถานะ (เพื่อให้แสดง Badge สีสวยๆ ใน UI)
+        status = info.get("status", "Pending")
+
+        results.append(UploadResponse(
             doc_id=uid,
-            status=info.get("status", "Pending"),
+            status=status,
             filename=info.get("file_name", "Unknown"),
             doc_type=doc_type,
             enabler=enabler.upper() if enabler else "-",
             tenant=tenant,
             year=year,
-            size=info.get("file_size", 0)
-        )
-        for uid, info in mapping_data.items()
-    ]
+            size=info.get("file_size", 0),
+            upload_date=raw_date  # ส่งค่านี้ไปให้ Frontend mappedFiles
+        ))
+    return results
 
 
 # =========================
@@ -163,56 +182,71 @@ async def list_files(
 # 2. POST: Upload (ฉบับปรับปรุง ID ให้ตรงกับ VectorStore)
 # =========================
 
-@upload_router.post("/assessment")
+@upload_router.post("")              # รองรับ: POST /api/upload
+@upload_router.post("/{doc_type}")   # รองรับ: POST /api/upload/evidence
+@upload_router.post("/{doc_type}")
 async def upload_file(
     file: UploadFile = File(...),
-    type: str = Form(...),
+    doc_type: Optional[str] = None,
     enabler: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
     try:
-        tenant = current_user.tenant
-        target_year = year or getattr(current_user, "year", DEFAULT_YEAR)
-        target_enabler = enabler or DEFAULT_ENABLER
+        actual_type = doc_type or "document"
+        tenant = _n(current_user.tenant)
+        target_year = year or getattr(current_user, "year", 2568)
+        target_enabler = enabler or "KM"
 
         # 1. บันทึกไฟล์ลง Disk
-        save_dir = get_document_source_dir(tenant, target_year, target_enabler, type)
+        save_dir = get_document_source_dir(tenant, target_year, target_enabler, actual_type)
         os.makedirs(save_dir, exist_ok=True)
         file_path = os.path.join(save_dir, file.filename)
         
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. ⚡️ แก้ไขจุดสำคัญ: สร้าง Stable Doc ID (UUID v5) 
-        # ต้องใช้ชื่อไฟล์ (หรือ path) เป็น Seed เพื่อให้รันกี่ครั้งก็ได้ ID เดิม
-        doc_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, file.filename))
+        # 2. สร้าง Stable UUID (Deterministic)
+        doc_id = create_stable_uuid_from_path(file_path, tenant, target_year, target_enabler)
         
-        relative_key = get_mapping_key_from_physical_path(file_path)
+        # 3. ⚡️ เรียกใช้ Logic จาก core/ingest.py โดยตรง
+        # ใช้ asyncio.to_thread เพื่อไม่ให้งานหนัก (OCR/Embedding) ไปค้าง Web Server
+        chunks, _, _ = await asyncio.to_thread(
+            process_document,
+            file_path=file_path,
+            file_name=file.filename,
+            stable_doc_uuid=doc_id,
+            doc_type=actual_type,
+            enabler=target_enabler,
+            year=target_year,
+            tenant=tenant
+        )
 
-        new_entry = {
-            "file_name": file.filename,
-            "filepath": relative_key,
-            "status": "Pending",  # รอการ Ingest
-            "enabler": target_enabler,
-            "year": target_year,
-            "file_size": os.path.getsize(file_path),
-            "upload_date": datetime.now().isoformat(),
-            "stable_doc_uuid": doc_id # เก็บอ้างอิงไว้
-        }
+        if chunks:
+            # 4. บันทึกลง ChromaDB (ใช้ฟังก์ชัน get_vectorstore จาก ingest.py)
+            col_name = get_doc_type_collection_key(actual_type, target_enabler)
+            vectorstore = get_vectorstore(col_name, tenant, target_year)
+            
+            chunk_ids = [c.metadata["chunk_uuid"] for c in chunks]
+            vectorstore.add_documents(documents=chunks, ids=chunk_ids)
 
-        # 3. อัปเดต Mapping JSON
-        mapping = load_doc_id_mapping(type, tenant, target_year, target_enabler)
-        mapping[doc_id] = new_entry
-        save_doc_id_mapping(mapping, type, tenant, target_year, target_enabler)
+            # 5. อัปเดต Mapping เป็น Ingested
+            mapping = load_doc_id_mapping(actual_type, tenant, target_year, target_enabler)
+            mapping[doc_id] = {
+                "file_name": file.filename,
+                "filepath": get_mapping_key_from_physical_path(file_path),
+                "status": "Ingested",
+                "chunk_count": len(chunks),
+                "chunk_uuids": chunk_ids,
+                "stable_doc_uuid": doc_id
+            }
+            save_doc_id_mapping(mapping, actual_type, tenant, target_year, target_enabler)
 
-        logger.info(f"✅ File uploaded & Mapped: {file.filename} with Stable ID: {doc_id}")
-        return {"message": "Upload successful", "doc_id": doc_id}
+        return {"message": "Upload and Ingest complete", "doc_id": doc_id}
 
     except Exception as e:
-        logger.exception("Upload error")
+        logger.exception("Upload failed")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # =========================
 # 3. GET: View / Download
