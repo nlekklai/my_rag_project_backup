@@ -2936,11 +2936,43 @@ class SEAMPDCAEngine:
         # ------------------------------------------------------------------
         # 5) Helpers สำหรับการสร้างข้อความ
         # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # 5) Helpers สำหรับการสร้างข้อความ
+        # ------------------------------------------------------------------
         def _normalize_meta(c: Dict) -> Tuple[str, str]:
+            """
+            ดึงชื่อไฟล์และเลขหน้าจาก Chunk โดยใช้ Fallback Logic 
+            เพื่อให้ตรงกับระบบ Ingest ใหม่ (source_filename, page_label)
+            """
+            # 1. พยายามดึงจาก Root ของ Dictionary ก่อน (เผื่อถูก Flatten มาแล้ว)
+            # 2. ถ้าไม่เจอ ให้ไปดึงจาก 'metadata' ภายใน
             meta = c.get("metadata", {}) or {}
-            source = c.get("filename") or meta.get("source") or meta.get("file_name") or "Unknown"
-            page = c.get("page") or meta.get("page_label") or meta.get("page_number") or "N/A"
-            return str(source), str(page)
+            
+            # 🟢 ลำดับการหาชื่อไฟล์: source_filename -> filename -> source
+            source = (
+                c.get("source_filename") or 
+                c.get("filename") or 
+                meta.get("source_filename") or 
+                meta.get("source") or 
+                meta.get("file_name") or 
+                "Unknown"
+            )
+            
+            # 🟢 ลำดับการหาเลขหน้า: page_label -> page_number -> page
+            page = (
+                c.get("page_label") or 
+                c.get("page") or 
+                meta.get("page_label") or 
+                meta.get("page_number") or 
+                meta.get("page") or 
+                "N/A"
+            )
+            
+            # ทำความสะอาดข้อมูลก่อนส่งออก
+            clean_source = str(source).strip()
+            clean_page = str(page).strip() if str(page).lower() != 'n/a' else "N/A"
+            
+            return clean_source, clean_page
 
         def _create_block(tag: str, chunks: List[Dict]) -> str:
             if not chunks: return ""

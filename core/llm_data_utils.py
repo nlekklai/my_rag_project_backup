@@ -64,7 +64,9 @@ from core.vectorstore import get_hf_embeddings
 from utils.path_utils import (
     get_doc_type_collection_key, 
     _n, get_mapping_file_path, # <--- นำเข้าฟังก์ชันใหม่จาก utils/path_utils
-    get_vectorstore_collection_path
+    get_vectorstore_collection_path,
+    get_vectorstore_tenant_root_path,
+    get_rubric_file_path
 )
 from core.json_extractor import (
     _robust_extract_json,
@@ -120,48 +122,57 @@ def _create_where_filter(
     stable_doc_ids: Optional[Union[Set[str], List[str]]] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    year: Optional[Union[int, str]] = None
+    year: Optional[Union[int, str]] = None,
+    enabler: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    สร้าง Filter สำหรับ ChromaDB ที่ฉลาดขึ้น:
-    - ถ้าเลือก stable_doc_ids จะไม่กรองด้วย year เพื่อให้สามารถนำไฟล์เก่ามาวิเคราะห์ได้
-    - รองรับการแปลง Type ของ Year ให้ตรงกับฐานข้อมูล
+    สร้าง Filter สำหรับ ChromaDB ที่ยืดหยุ่นสูง:
+    1. Analysis Mode: ถ้าส่ง IDs มา จะเน้นดึงไฟล์นั้นๆ โดยไม่สนปี (เพื่อให้ดึงไฟล์เก่าข้ามปีได้)
+    2. Search Mode: ถ้าไม่มี IDs จะกรองตาม Year และ Enabler (สิทธิ์ User)
+    3. Global Mode: ถ้าเป็นเอกสารกลาง (เช่น seam) จะค้นหาได้กว้างตาม Metadata ที่มี
     """
     filters: List[Dict[str, Any]] = []
 
-    # 1. จัดการ stable_doc_uuid (ลำดับความสำคัญสูงสุด)
+    # --- 1. การจัดการ Stable Doc IDs (ลำดับความสำคัญสูงสุด) ---
     if stable_doc_ids:
-        ids_list = [str(i) for i in stable_doc_ids if i]
+        # ทำให้มั่นใจว่าเป็น List ของ String
+        ids_list = [str(i).strip() for i in (stable_doc_ids if isinstance(stable_doc_ids, (list, set)) else [stable_doc_ids]) if i]
+        
         if ids_list:
             if len(ids_list) == 1:
-                filters.append({"stable_doc_uuid": {"$eq": ids_list[0]}})
+                filters.append({"stable_doc_uuid": ids_list[0]})
             else:
                 filters.append({"stable_doc_uuid": {"$in": ids_list}})
+        # 💡 NOTE: เมื่อระบุ IDs เจาะจง เราจะไม่ใส่ Filter Year/Enabler 
+        # เพื่ออนุญาตให้ AI วิเคราะห์ไฟล์ของปี 2567 ในโปรเจกต์ปี 2568 ได้
+
+    # --- 2. การจัดการ Year & Enabler (ใช้เมื่อไม่ได้ระบุ IDs หรือต้องการกรองเพิ่ม) ---
+    else:
+        # กรองตามปีงบประมาณ (สำหรับ Evidence)
+        if year and str(year).strip():
+            filters.append({"year": str(year).strip()})
         
-        # 🎯 หัวใจ: เมื่อระบุ ID เจาะจง เราจะไม่ใส่ Filter Year 
-        # เพื่อป้องกันกรณีไฟล์ปี 2567 ถูกเรียกใช้ในโปรเจกต์ปี 2568
-    
-    # 2. จัดการ Year (เฉพาะกรณี "ไม่ได้" ระบุ ID เจาะจง)
-    elif year:
-        try:
-            filters.append({"year": {"$eq": int(year)}})
-        except (ValueError, TypeError):
-            filters.append({"year": {"$eq": str(year)}})
+        # กรองตามหมวดหมู่ KM, IM, etc. (ตามสิทธิ์สิทธิ์ที่ User มี)
+        if enabler and str(enabler).strip():
+            filters.append({"enabler": str(enabler).strip().lower()})
 
-    # 3. จัดการ Subject (ถ้ามี)
-    if subject and subject.strip():
-        filters.append({"subject": {"$eq": subject.strip()}})
+    # --- 3. การจัดการ Metadata อื่นๆ (Criteria/Subject) ---
+    if subject and str(subject).strip():
+        # รองรับทั้งรหัสหัวข้อ เช่น "1.1"
+        filters.append({"subject": str(subject).strip()})
 
-    # 4. จัดการ Sub Topic (ถ้ามี)
-    if sub_topic and sub_topic.strip():
-        filters.append({"sub_topic": {"$eq": sub_topic.strip()}})
+    if sub_topic and str(sub_topic).strip():
+        filters.append({"sub_topic": str(sub_topic).strip()})
 
+    # --- 4. การประกอบร่าง Filter (ChromaDB Format) ---
     if not filters:
         return {}
 
+    # ถ้ามี Filter เดียว ส่งออกไปตรงๆ
     if len(filters) == 1:
         return filters[0]
 
+    # ถ้ามีหลายอัน ให้ใช้ $and (Logical Intersection)
     return {"$and": filters}
 
 
@@ -443,6 +454,146 @@ def retrieve_context_with_filter(
         "used_chunk_uuids": list(set(used_uuids))
     }
 
+
+# =====================================================================
+# 🛠 Helper: check_rubric_readiness (ปรับปรุงให้เงียบลง)
+# =====================================================================
+def is_rubric_ready(tenant: str) -> bool:
+    """ ตรวจสอบการมีอยู่ของ seam collection โดยไม่พ่น Warning กวนใจ """
+    if not tenant:
+        return False
+    
+    tenant_vs_root = get_vectorstore_tenant_root_path(tenant)
+    chroma_path = os.path.join(tenant_vs_root, "seam")
+    
+    # ส่งคืนค่า True/False เงียบๆ เพื่อให้ระบบตัดสินใจว่าจะดึง Rubric หรือไม่
+    return os.path.exists(chroma_path)
+
+
+# =====================================================================
+# 🚀 Ultimate Version: retrieve_context_with_rubric (FIXED: Anti-400 Bad Request)
+# =====================================================================
+def retrieve_context_with_rubric(
+    vectorstore_manager,
+    query: str,
+    doc_type: str,
+    enabler: Optional[str] = None,
+    stable_doc_ids: Optional[Set[str]] = None,
+    tenant: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    subject: Optional[str] = None,
+    rubric_vectorstore_name: str = "seam",
+    top_k: int = 25, 
+    rubric_top_k: int = 15,
+    strict_filter: bool = True
+) -> Dict[str, Any]:
+    
+    start_time = time.time()
+    vsm = vectorstore_manager
+
+    # 1. Resolve Evidence Collection Name
+    actual_doc_type = "evidence" if enabler and doc_type == "document" else doc_type
+    evidence_collection = get_doc_type_collection_key(actual_doc_type, enabler)
+    
+    # 🎯 STEP 1: สร้าง Where Filter แบบเดียวกับฟังก์ชันที่ทำงานได้ดี (Original)
+    # วิธีนี้จะทำให้ ChromaDB กรองให้เราตั้งแต่ระดับฐานข้อมูล ไม่ต้องมาลุ้นตอนกรอง Python
+    from core.llm_data_utils import _create_where_filter # สมมติว่าอยู่ในไฟล์เดียวกัน
+    where_filter = _create_where_filter(
+        stable_doc_ids=stable_doc_ids if strict_filter else None, 
+        subject=subject, 
+        year=year
+    )
+
+    # --- Phase 1: Evidence Retrieval (ใช้ Where Filter) ---
+    # เปลี่ยนจากการดึงกว้างๆ มาเป็นการใช้ Filter ตั้งแต่ต้น
+    try:
+        chroma = vsm._load_chroma_instance(evidence_collection)
+        if not chroma:
+            return {"top_evidences": [], "retrieval_time": 0}
+            
+        # ถ้า query เป็นค่าว่างหรือ "*" ให้ใช้ similarity_search แบบไม่มี query
+        search_query = query if (query and query != "*" and len(query) > 2) else ""
+        unique_docs_list = chroma.similarity_search(
+            search_query, 
+            k=top_k * 2, 
+            filter=where_filter
+        )
+    except Exception as e:
+        logger.error(f"Error in Evidence Retrieval: {e}")
+        unique_docs_list = []
+
+    # --- Phase 2: Rubric Retrieval (เหมือนเดิม) ---
+    rubric_docs = []
+    if is_rubric_ready(tenant):
+        try:
+            rubric_docs = vsm.retrieve(
+                query=query,
+                collection_name=rubric_vectorstore_name,
+                top_k=rubric_top_k
+            )
+        except Exception: pass 
+
+    # --- Phase 3: Reranking (เหมือนเดิม) ---
+    reranker = get_global_reranker()
+    if reranker and unique_docs_list and query and query != "*":
+        try:
+            # Rerank เฉพาะสิ่งที่ผ่าน Filter มาแล้ว
+            reranked = reranker.compress_documents(documents=unique_docs_list, query=query, top_n=top_k)
+            unique_docs_list = [r.document if hasattr(r, "document") else r for r in reranked]
+            for i, res in enumerate(reranked):
+                unique_docs_list[i].metadata["rerank_score"] = getattr(res, "relevance_score", 0)
+        except Exception: pass
+
+    # --- Phase 4: Construction (ใช้ Metadata Key จากฟังก์ชันที่ทำงานได้ดี) ---
+    results = []
+    enabler_clean = _n(enabler)
+
+    for d in unique_docs_list:
+        m = d.metadata or {}
+        
+        # ดึง ID โดยใช้ทุกลำดับ Key ที่เป็นไปได้ตาม Original
+        m_id = str(m.get("stable_doc_uuid") or m.get("doc_id") or m.get("id") or "unknown").lower().strip()
+        
+        # ดึงเลขหน้าโดยใช้ทุกลำดับ Key ที่เป็นไปได้ตาม Original
+        page_val = m.get("page_label") or m.get("page_number") or m.get("page") or "N/A"
+
+        relevant_scores = [0.0]
+        suggested_sub_id = "N/A"
+        
+        if rubric_docs:
+            for r in rubric_docs:
+                rm = r.metadata or {}
+                if _n(rm.get("enabler")) == enabler_clean:
+                    relevant_scores.append(float(rm.get("score") or 0.1))
+                    if suggested_sub_id == "N/A":
+                        suggested_sub_id = rm.get("sub_id") or rm.get("subject") or "N/A"
+
+        results.append({
+            "text": d.page_content,
+            "source": m.get("source") or m.get("file_name") or "Unknown Document",
+            "page": str(page_val),
+            "doc_id": m_id,
+            "chunk_uuid": m.get("chunk_uuid", "n/a"),
+            "rerank_score": float(m.get("rerank_score") or m.get("score") or 0.1),
+            "pdca_tag": m.get("pdca_tag") or "Content",
+            "matched_rubric_score": max(relevant_scores),
+            "suggested_sub_id": suggested_sub_id
+        })
+
+    # --- Fallback Strategy ---
+    if not results and strict_filter:
+        logger.warning("⚠️ No docs found with strict filter, retrying without filter...")
+        return retrieve_context_with_rubric(
+            vectorstore_manager, query, doc_type, enabler, 
+            stable_doc_ids, tenant, year, subject, 
+            strict_filter=False
+        )
+
+    results.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
+    return {
+        "top_evidences": results[:top_k],
+        "retrieval_time": round(time.time() - start_time, 3)
+    }
 
 # ========================
 #  retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
@@ -1425,181 +1576,3 @@ def create_structured_action_plan(
             ]
         }]
     }]
-
-
-def get_rubric_collection_name(enabler: Optional[str] = None) -> str:
-    """
-    คืนค่าชื่อ Collection สำหรับ Rubric (ปัจจุบันใช้ 'seam' เป็นศูนย์กลาง)
-    """
-    return "seam"
-
-def get_rubric_filter(enabler: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """
-    สร้าง Metadata Filter เพื่อค้นหาเฉพาะไฟล์เกณฑ์ที่ตรงกับ Enabler
-    เพื่อให้ retrieve_context_with_rubric ทำงานได้แม่นยำขึ้น
-    """
-    if not enabler:
-        return None
-    
-    # กรองตาม enabler (เช่น KM, CG, HR) ที่ถูกฝังไว้ใน Metadata ตอน Ingest
-    return {"enabler": enabler.upper()}
-
-# =====================================================================
-# 🚀 Full Revised: retrieve_context_with_rubric
-# =====================================================================
-def retrieve_context_with_rubric(
-    vectorstore_manager,
-    query: str,
-    doc_type: str,
-    enabler: Optional[str] = None,
-    stable_doc_ids: Optional[Set[str]] = None,
-    tenant: Optional[str] = None,
-    year: Optional[int] = None,
-    subject: Optional[str] = None,
-    rubric_vectorstore_name: str = "seam",
-    top_k: int = 20, 
-    rubric_top_k: int = 15,
-) -> List[dict]:
-    """
-    เวอร์ชันอัปเกรด: มีระบบเช็ค Rubric อัตโนมัติ และผ่อนปรน Guardrail กรณี Broad Search
-    """
-    
-    # --- 🎯 Step 0: Ensure Rubric Readiness ---
-    # ตั้งค่า Path สำหรับ Rubric ตามโครงสร้างโฟลเดอร์ที่ตกลงกัน
-    # ตัวอย่าง: data_store/pea/data/seam/km_rubric.pdf
-    rubric_file_path = f"/Users/oddnaphat/my_rag_project/data_store/{tenant}/data/seam/{enabler.lower()}_rubric.pdf"
-    
-    # ตรวจสอบและ Auto-Ingest ถ้ายังไม่มี Collection 'seam'
-    vectorstore_manager.ensure_rubric_is_ready(
-        enabler=enabler, 
-        rubric_file_path=rubric_file_path
-    )
-
-    # 1. ปรับชื่อ Collection ให้ตรงตามมาตรฐาน
-    actual_doc_type = "evidence" if enabler and doc_type == "document" else doc_type
-    evidence_collection = get_doc_type_collection_key(actual_doc_type, enabler)
-    
-    logger.info(f"🔍 [Retrieval] Adjusted Collection: {evidence_collection} | Target IDs: {stable_doc_ids}")
-
-    # --- Phase 1: Context Retrieval ---
-    # พยายามดึงแบบ Strict Filter ก่อน
-    unique_docs_list = vectorstore_manager.retrieve(
-        query=query,
-        collection_name=evidence_collection,
-        top_k=60, 
-        filter_doc_ids=stable_doc_ids
-    )
-
-    is_broad_search = False
-    if not unique_docs_list and stable_doc_ids:
-        logger.warning(f"⚠️ ID Filter ({stable_doc_ids}) returned 0. Switching to BROAD search...")
-        unique_docs_list = vectorstore_manager.retrieve(
-            query=query,
-            collection_name=evidence_collection,
-            top_k=30 
-        )
-        is_broad_search = True
-
-    if not unique_docs_list:
-        logger.error(f"❌ No content found in {evidence_collection}")
-        return []
-
-    # --- Phase 2: Rubric Retrieval ---
-    rubric_docs = []
-    try:
-        rubric_docs = vectorstore_manager.retrieve(
-            query=query,
-            collection_name=rubric_vectorstore_name,
-            top_k=rubric_top_k
-        )
-    except Exception as e:
-        logger.error(f"❌ Rubric retrieval failed: {e}")
-
-    # --- Phase 3: Matching & Relaxed Guardrail ---
-    results = []
-    target_ids_clean = {str(i).lower().strip() for i in stable_doc_ids} if stable_doc_ids else set()
-
-    for idx, d in enumerate(unique_docs_list):
-        m = d.metadata or {}
-        m_stable_id = str(m.get("stable_doc_uuid", "")).lower().strip()
-        m_doc_id = str(m.get("doc_id", "")).lower().strip()
-        m_source = str(m.get("source", "")).lower().strip()
-
-        # Relaxed Matching Logic
-        is_match = False
-        if not target_ids_clean:
-            is_match = True
-        else:
-            if m_stable_id in target_ids_clean or m_doc_id in target_ids_clean:
-                is_match = True
-            elif any(tid in m_source for tid in target_ids_clean):
-                is_match = True
-            elif is_broad_search and len(results) < 10: 
-                # ถ้าหาแบบกว้าง ให้ยอมรับ 10 อันดับแรกที่ Semantic ตรงที่สุด
-                is_match = True
-
-        if not is_match:
-            continue
-
-        # Matching Rubric Score (เชื่อมโยงเกณฑ์)
-        relevant_scores = [0.1]
-        enabler_clean = _n(enabler)
-        for r in rubric_docs:
-            rm = r.metadata or {}
-            if _n(rm.get("enabler")) == enabler_clean:
-                relevant_scores.append(float(rm.get("score") or 0.1))
-
-        results.append({
-            "text": d.page_content,
-            "source": m.get("source") or m.get("file_name") or "Unknown Document",
-            "page": m.get("page") or m.get("page_label") or "N/A",
-            "doc_id": m.get("stable_doc_uuid") or m.get("doc_id") or "unknown",
-            "chunk_uuid": m.get("chunk_uuid", "n/a"),
-            "rerank_score": float(m.get("score") or 0.1),
-            "pdca_tag": m.get("pdca_tag") or "Content",
-            "matched_rubric_score": max(relevant_scores)
-        })
-
-    results.sort(key=lambda x: x['rerank_score'], reverse=True)
-    final_results = results[:top_k]
-    
-    logger.info(f"✅ Finished: Returning {len(final_results)} chunks (Broad Search: {is_broad_search})")
-    return final_results
-
-def ensure_rubric_is_ready(self, enabler: str, rubric_file_path: Optional[str] = None):
-    """
-    ตรวจสอบความพร้อมของคอลเลกชัน 'seam' (Rubric)
-    หากไม่พบ จะทำการ Ingest ให้อัตโนมัติถ้าระบุ path ไว้
-    """
-    collection_name = "seam"
-    
-    # 1. ตรวจสอบว่ามี Collection อยู่ในระบบแล้วหรือยัง
-    chroma_path = os.path.join(self.tenant_root_path, collection_name)
-    
-    if os.path.exists(chroma_path):
-        logger.info(f"✅ Rubric collection '{collection_name}' exists.")
-        return True
-
-    # 2. ถ้าไม่พบ และไม่มี path ไฟล์ให้โหลด -> แจ้งเตือน
-    if not rubric_file_path or not os.path.exists(rubric_file_path):
-        logger.error(f"❌ Rubric Source NOT FOUND at: {rubric_file_path}. Cannot assess SE-AM!")
-        return False
-
-    # 3. เริ่มกระบวนการ Auto-Ingest
-    try:
-        logger.info(f"🏗️ Auto-ingesting Rubric for {enabler} from: {rubric_file_path}")
-        
-        # ใช้ Logic การ Ingest เดิมของคุณที่มีอยู่
-        # โดยระบุ doc_type ให้เป็น 'seam' เพื่อให้ระบบแยกแยะได้
-        self.ingest_documents(
-            file_path=rubric_file_path,
-            doc_type="seam",
-            collection_name=collection_name,
-            enabler=enabler
-        )
-        
-        logger.info(f"✅ Rubric for {enabler} is now ready in 'seam' collection.")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to auto-ingest rubric: {e}")
-        return False
