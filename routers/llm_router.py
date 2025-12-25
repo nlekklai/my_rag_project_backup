@@ -48,6 +48,7 @@ llm_router = APIRouter(prefix="/api", tags=["LLM"])
 # =====================================================================
 # Response Models
 # =====================================================================
+
 class QuerySource(BaseModel):
     source_id: str
     file_name: str
@@ -102,8 +103,8 @@ def load_all_chunks_by_doc_ids(
 async def query_llm(
     question: str = Form(...),
     conversation_id: Optional[str] = Form(None),
-    doc_types: Optional[List[str]] = Form(None),
-    doc_ids: Optional[List[str]] = Form(None),
+    doc_types: List[str] = Form(default=[]),  # เปลี่ยนเป็น List + default=[]
+    doc_ids: List[str] = Form(default=[]),     # เช่นกัน — ว่าง = [] ไม่ใช่ None
     enabler: Optional[str] = Form(None),
     subject: Optional[str] = Form(None),
     year: Optional[str] = Form(None),
