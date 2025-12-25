@@ -114,12 +114,19 @@ async def query_llm(
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
     effective_year = year or str(current_user.year)
+    
+    logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
     # 🎯 1. ตรวจสอบประวัติและเจตนา (Intent Detection)
     history = await get_recent_history(current_user.id, conv_id, limit=6)
     intent = detect_intent(question, user_context=history)
 
-    # --- [BRANCH 1] Greeting & Capabilities (Static Response) ---
+    # 🔍 [SMART ROUTE OVERRIDE] 
+    # ตรวจสอบ Keyword พิเศษเพิ่มเติม เพื่อบังคับไป /analysis หาก Intent Detection ปกติพลาด
+    analysis_keywords = ["pdca", "comply", "compliance", "เกณฑ์", "ผ่านระดับ", "level", "จุดแข็ง", "ช่องว่าง", "ประเมิน", "สอดคล้อง"]
+    is_forcing_analysis = any(kw in question.lower() for kw in analysis_keywords)
+
+    # --- [BRANCH 1] Greeting & Capabilities ---
     if intent.get("is_greeting") or intent.get("is_capabilities"):
         if intent.get("is_greeting"):
             answer = "สวัสดีครับ! 😊 ผมคือ Digital Knowledge Assistant ของ PEA พร้อมช่วยตอบคำถามเกี่ยวกับเอกสาร KM หรือวิเคราะห์ SE-AM ให้ครับ มีอะไรให้ช่วยไหมครับ?"
@@ -137,35 +144,38 @@ async def query_llm(
 
     # --- [BRANCH 2] Comparison (Redirect to compare_llm) ---
     if intent.get("is_comparison"):
+        logger.info("🔀 Route -> Comparison")
         return await compare_llm(
             question=question, doc_ids=doc_ids or [],
             doc_types=doc_types, enabler=enabler, current_user=current_user
         )
 
     # --- [BRANCH 3] SE-AM Analysis (Redirect to analysis_llm) ---
-    if intent.get("is_analysis") or intent.get("is_criteria_query"):
+    # บังคับ Route ถ้าเจอ Keyword หรือ Intent บอกว่าเป็น Analysis
+    if intent.get("is_analysis") or intent.get("is_criteria_query") or is_forcing_analysis:
         if doc_ids:
+            logger.info(f"🚀 Route -> Analysis (Forced: {is_forcing_analysis})")
             return await analysis_llm(
                 question=question, doc_ids=doc_ids, doc_types=doc_types,
                 enabler=enabler, subject=subject, conversation_id=conv_id,
-                current_user=current_user, year=year,
+                current_user=current_user, year=effective_year,
             )
         else:
-            answer = "🔍 กรุณาเลือกเอกสารที่ต้องการวิเคราะห์ก่อน แล้วผมจะบอกได้ทันทีว่าผ่าน Level ไหน พร้อมจุดแข็งและข้อเสนอแนะครับ"
-            await async_save_message(current_user.id, conv_id, "user", question)
-            await async_save_message(current_user.id, conv_id, "ai", answer)
-            return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
+            # กรณีถามแนววิเคราะห์แต่ลืมเลือกไฟล์
+            if is_forcing_analysis:
+                answer = "🔍 ผมเห็นว่าคุณต้องการให้วิเคราะห์เกณฑ์ SE-AM/PDCA รบกวนช่วยเลือกไฟล์เอกสารที่ต้องการให้ผมตรวจสอบที่ด้านข้างก่อนนะครับ"
+                await async_save_message(current_user.id, conv_id, "user", question)
+                await async_save_message(current_user.id, conv_id, "ai", answer)
+                return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # --- [BRANCH 4] RAG Flow (Summary & General QA) ---
+    # --- [BRANCH 4] RAG Flow (General QA & Summary) ---
+    logger.info("📖 Executing: General RAG Flow")
     used_doc_types = doc_types or DEFAULT_DOC_TYPES
     used_enabler = enabler or DEFAULT_ENABLER
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
-    
-    # จัดการ doc_ids ให้เป็น format ที่ถูกต้อง (Set ของ String)
     stable_doc_ids = {str(idx).strip() for idx in doc_ids if str(idx).strip()} if doc_ids else None
 
     all_chunks = []
-    # วนลูปดึงข้อมูลตาม doc_types
     for dt in used_doc_types:
         res = await asyncio.to_thread(
             retrieve_context_for_endpoint,
@@ -175,11 +185,12 @@ async def query_llm(
         )
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
-                # 🟢 Fallback Logic สำหรับชื่อไฟล์และเลขหน้า
+                # Robust Metadata Extraction
                 f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
                 p_val = ev.get('page_label') or ev.get('page_number') or ev.get('page')
                 p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
 
+                from langchain.schema import Document as LcDocument
                 all_chunks.append(
                     LcDocument(
                         page_content=ev["text"],
@@ -193,7 +204,6 @@ async def query_llm(
                     )
                 )
 
-    # จัดลำดับตามความเกี่ยวข้อง
     all_chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
     final_chunks = all_chunks[:QUERY_FINAL_K]
 
@@ -201,34 +211,34 @@ async def query_llm(
         answer = "ขออภัยครับ ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกครับ"
         return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # สร้างบริบท (Context) พร้อมกำกับเลขหน้าในเนื้อหา
+    # Context with Metadata for AI
     context_text = "\n\n".join([
-        f"[เอกสาร: {c.metadata['source']}, หน้า: {c.metadata['page']}]\n{c.page_content}" 
+        f"[ไฟล์: {c.metadata['source']}, หน้า: {c.metadata['page']}]\n{c.page_content}" 
         for c in final_chunks
     ])
 
-    # เลือก Prompt ตาม Intent
+    # Intent-based Message Selection
     if intent.get("is_summary"):
-        sys_msg = (
-            "คุณคือที่ปรึกษาอาวุโสด้าน KM ของ PEA ตอบเป็นภาษาไทยเท่านั้น "
-            "ห้ามใช้คำว่า Executive Summary ให้ใช้ 'สรุปสาระสำคัญสำหรับผู้บริหาร' แทน "
-            "และต้องระบุเลขหน้าอ้างอิงทุกครั้ง"
-        )
+        sys_msg = "คุณคือผู้เชี่ยวชาญด้าน KM ของ PEA ตอบเป็นภาษาไทย สรุปสาระสำคัญสำหรับผู้บริหาร และระบุเลขหน้าอ้างอิงเสมอ"
         prompt_text = SUMMARY_PROMPT_TEMPLATE.format(context=context_text)
     else:
         sys_msg = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_QA_INSTRUCTION
         prompt_text = QA_PROMPT_TEMPLATE.format(context=context_text, question=question)
 
-    # เรียก LLM
-    messages = [SystemMessage(content=sys_msg), HumanMessage(content=prompt_text)]
+    messages = [
+        {"role": "system", "content": sys_msg},
+        {"role": "user", "content": prompt_text}
+    ]
+    
+    # Invoke LLM (ใช้ wrapper ที่รองรับ invoke)
     raw = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # บันทึกประวัติ
+    # Save conversation
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    # 🎯 สร้าง Source Mapping สำหรับ UI
+    # Prepare Sources for Frontend
     sources = [
         QuerySource(
             source_id=str(c.metadata["doc_id"]),

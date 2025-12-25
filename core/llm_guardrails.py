@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-# core/llm_guardrails.py (Ultimate Final Version - 21 ธันวาคม 2568)
+# core/llm_guardrails.py (Ultimate Final Version - Revised for PDCA Routing)
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 
 from config.global_vars import (
@@ -15,12 +15,12 @@ from config.global_vars import (
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# Intent Detection (Full Production Version with Greeting + Capabilities)
+# Intent Detection (Full Production Version with Enhanced Analysis Routing)
 # ======================================================================
 
 def detect_intent(
     question: str,
-    user_context: List[Dict[str, Any]] | None = None  # conversation history
+    user_context: Optional[List[Dict[str, Any]]] = None  # conversation history
 ) -> Dict[str, Any]:
     """
     วิเคราะห์ความตั้งใจของผู้ใช้ (Intent) พร้อมสกัด Metadata สำคัญ
@@ -29,7 +29,7 @@ def detect_intent(
     q = question.strip().lower()
     intent = {
         "is_greeting": False,
-        "is_capabilities": False,    # NEW: ถามความสามารถของระบบ
+        "is_capabilities": False,    
         "is_faq": False,
         "is_summary": False,
         "is_comparison": False,
@@ -94,17 +94,19 @@ def detect_intent(
         intent["is_summary"] = True
         return intent
 
-    # --- 6. SE-AM Criteria / Evidence Analysis Intent ---
+    # --- 6. SE-AM Criteria / Evidence Analysis Intent (Enhanced) ---
+    # เพิ่มคำว่า comply และ keywords ที่เกี่ยวกับเกณฑ์เพื่อให้ Route ไป analysis_llm ได้แม่นยำ
     criteria_signals = [
         "ผ่านเกณฑ์", "sub criteria", "ผ่าน level", "สนับสนุนเกณฑ์", "evidence ผ่าน",
-        "เกณฑ์อะไรบ้าง", "level เท่าไหร่", "ครบ level", "ขาดเกณฑ์", "criteria"
+        "เกณฑ์อะไรบ้าง", "level เท่าไหร่", "ครบ level", "ขาดเกณฑ์", "criteria",
+        "comply", "compliance", "ตามเกณฑ์", "สอดคล้อง", "ข้อกำหนด", "เกณฑ์ไหน"
     ]
     if any(sig in q for sig in criteria_signals):
         intent["is_analysis"] = True
         intent["is_criteria_query"] = True
         return intent
 
-    # --- 7. PDCA / Deep Analysis Intent ---
+    # --- 7. PDCA / Deep Analysis Intent (Enhanced) ---
     analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
     analysis_keywords.update([
         "pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "ตรวจสอบ",
@@ -129,7 +131,7 @@ def build_prompt(
     context: str,
     question: str,
     intent: Dict[str, Any],
-    user_context: List[Dict[str, Any]] | None = None
+    user_context: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
     สร้าง system-style instruction แบบ dynamic ตาม intent และประวัติการสนทนา
@@ -190,6 +192,7 @@ def build_prompt(
     return "\n\n".join(sections)
 
 
+
 # ======================================================================
 # Post-response Validation (Enhanced Thai Safety Net)
 # ======================================================================
@@ -199,7 +202,7 @@ def enforce_thai_primary_language(response_text: str) -> str:
     ป้องกันการตอบเป็นภาษาอังกฤษทั้งหมด
     แต่ยอมรับกรณีที่มีตาราง Markdown, JSON, หรือชื่อไฟล์ภาษาอังกฤษ
     """
-    if not response_text.strip():
+    if not response_text or not response_text.strip():
         return response_text
 
     lines = [line.strip() for line in response_text.splitlines() if line.strip()]
@@ -207,24 +210,21 @@ def enforce_thai_primary_language(response_text: str) -> str:
     # คัดกรองเฉพาะบรรทัดที่เป็น narrative จริง ๆ
     narrative_lines = []
     for line in lines:
-        # ข้ามโครงสร้างที่ไม่ใช่ narrative
         if any(line.startswith(prefix) for prefix in ["#", "##", "###", "|", "-", "*", ">", "```", "<", "["]):
             continue
-        # ข้ามบรรทัดสั้น ๆ (ชื่อไฟล์, JSON key)
         if len(line.split()) <= 5:
             continue
         narrative_lines.append(line)
 
-    # ถ้าไม่มี narrative เลย (เช่น ตอบแต่ตารางหรือ JSON) → ปล่อยผ่าน
     if not narrative_lines:
         return response_text
 
     narrative_text = " ".join(narrative_lines)
     thai_count = len(re.findall(r"[ก-๙]", narrative_text))
 
-    # ถ้ามีตัวอักษรไทยน้อยเกินไป → เตือนแต่ไม่บล็อก (เพื่อความยืดหยุ่น)
+    # ถ้ามีตัวอักษรไทยน้อยเกินไปแต่ narrative ยาวเกินไป → เตือน (Logged)
     if thai_count < 10 and len(narrative_text) > 100:
-        logger.warning("Detected low Thai content in narrative response - consider re-prompting for Thai output")
+        logger.warning("Detected low Thai content in response narrative.")
         return response_text
 
     return response_text
