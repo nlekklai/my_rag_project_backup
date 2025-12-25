@@ -26,7 +26,10 @@ from config.global_vars import (
     DEFAULT_LLM_MODEL_NAME,
     LLM_TEMPERATURE,
     QUERY_FINAL_K,
-    DEFAULT_DOC_TYPES  # เช่น ["document"]
+    DEFAULT_DOC_TYPES,  # เช่น ["document"]
+    RETRIEVAL_TOP_K,      # 🎯 ดึงจาก .env (Mac: 150, Server: 500)
+    ANALYSIS_FINAL_K,     # 🎯 ดึงจาก .env (Mac: 12, Server: 30)
+    QA_FINAL_K
 )
 from models.llm import create_llm_instance
 from routers.auth_router import UserMe, get_current_user
@@ -34,9 +37,11 @@ from core.rag_prompts import (
     SYSTEM_QA_INSTRUCTION,
     SYSTEM_ANALYSIS_INSTRUCTION,
     SYSTEM_COMPARE_INSTRUCTION,
+    SYSTEM_CONSULTANT_INSTRUCTION,      # <--- เพิ่มอันนี้
     QA_PROMPT_TEMPLATE,
     COMPARE_PROMPT_TEMPLATE,
     ANALYSIS_PROMPT_TEMPLATE,
+    REVERSE_MAPPING_PROMPT_TEMPLATE,     # <--- เพิ่มอันนี้
     SUMMARY_PROMPT_TEMPLATE
 )
 from utils.path_utils import get_rubric_file_path, get_doc_type_collection_key
@@ -99,6 +104,9 @@ def load_all_chunks_by_doc_ids(
 # =====================================================================
 # 1. /query — Smart General RAG with Intent Detection & Auto-Routing
 # =====================================================================
+# =====================================================================
+# 1. /query — Smart General RAG with Intent Detection & Auto-Routing
+# =====================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
     question: str = Form(...),
@@ -115,6 +123,9 @@ async def query_llm(
     conv_id = conversation_id or str(uuid.uuid4())
     effective_year = year or str(current_user.year)
     
+    # ดึงค่า Config จาก .env (Mac=8, Server=20)
+    from config.global_vars import QA_FINAL_K, DEFAULT_DOC_TYPES, DEFAULT_ENABLER
+
     logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
     # 🎯 1. ตรวจสอบประวัติและเจตนา (Intent Detection)
@@ -122,7 +133,7 @@ async def query_llm(
     intent = detect_intent(question, user_context=history)
 
     # 🔍 [SMART ROUTE OVERRIDE] 
-    # ตรวจสอบ Keyword พิเศษเพิ่มเติม เพื่อบังคับไป /analysis หาก Intent Detection ปกติพลาด
+    # บังคับไป /analysis หากเจอ Keyword เกี่ยวกับเกณฑ์ประเมิน
     analysis_keywords = ["pdca", "comply", "compliance", "เกณฑ์", "ผ่านระดับ", "level", "จุดแข็ง", "ช่องว่าง", "ประเมิน", "สอดคล้อง"]
     is_forcing_analysis = any(kw in question.lower() for kw in analysis_keywords)
 
@@ -142,7 +153,7 @@ async def query_llm(
         await async_save_message(current_user.id, conv_id, "ai", answer)
         return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # --- [BRANCH 2] Comparison (Redirect to compare_llm) ---
+    # --- [BRANCH 2] Comparison (Redirect) ---
     if intent.get("is_comparison"):
         logger.info("🔀 Route -> Comparison")
         return await compare_llm(
@@ -150,8 +161,7 @@ async def query_llm(
             doc_types=doc_types, enabler=enabler, current_user=current_user
         )
 
-    # --- [BRANCH 3] SE-AM Analysis (Redirect to analysis_llm) ---
-    # บังคับ Route ถ้าเจอ Keyword หรือ Intent บอกว่าเป็น Analysis
+    # --- [BRANCH 3] SE-AM Analysis (Redirect) ---
     if intent.get("is_analysis") or intent.get("is_criteria_query") or is_forcing_analysis:
         if doc_ids:
             logger.info(f"🚀 Route -> Analysis (Forced: {is_forcing_analysis})")
@@ -161,7 +171,6 @@ async def query_llm(
                 current_user=current_user, year=effective_year,
             )
         else:
-            # กรณีถามแนววิเคราะห์แต่ลืมเลือกไฟล์
             if is_forcing_analysis:
                 answer = "🔍 ผมเห็นว่าคุณต้องการให้วิเคราะห์เกณฑ์ SE-AM/PDCA รบกวนช่วยเลือกไฟล์เอกสารที่ต้องการให้ผมตรวจสอบที่ด้านข้างก่อนนะครับ"
                 await async_save_message(current_user.id, conv_id, "user", question)
@@ -169,7 +178,7 @@ async def query_llm(
                 return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
     # --- [BRANCH 4] RAG Flow (General QA & Summary) ---
-    logger.info("📖 Executing: General RAG Flow")
+    logger.info(f"📖 Executing: General RAG Flow (K={QA_FINAL_K})")
     used_doc_types = doc_types or DEFAULT_DOC_TYPES
     used_enabler = enabler or DEFAULT_ENABLER
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
@@ -185,12 +194,13 @@ async def query_llm(
         )
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
-                # Robust Metadata Extraction
+                # 🟢 Robust Metadata Extraction (Sync กับ ingest.py และ _normalize_meta)
                 f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
+                
+                # ลำดับความสำคัญ: page_label (จาก UI) -> page_number -> page
                 p_val = ev.get('page_label') or ev.get('page_number') or ev.get('page')
                 p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
 
-                from langchain.schema import Document as LcDocument
                 all_chunks.append(
                     LcDocument(
                         page_content=ev["text"],
@@ -204,8 +214,9 @@ async def query_llm(
                     )
                 )
 
+    # 🎯 คัดเลือก "หัวกะทิ" ตามจำนวนที่ตั้งไว้ใน .env
     all_chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
-    final_chunks = all_chunks[:QUERY_FINAL_K]
+    final_chunks = all_chunks[:QA_FINAL_K]
 
     if not final_chunks:
         answer = "ขออภัยครับ ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกครับ"
@@ -217,7 +228,7 @@ async def query_llm(
         for c in final_chunks
     ])
 
-    # Intent-based Message Selection
+    # 🎯 Intent-based Prompting
     if intent.get("is_summary"):
         sys_msg = "คุณคือผู้เชี่ยวชาญด้าน KM ของ PEA ตอบเป็นภาษาไทย สรุปสาระสำคัญสำหรับผู้บริหาร และระบุเลขหน้าอ้างอิงเสมอ"
         prompt_text = SUMMARY_PROMPT_TEMPLATE.format(context=context_text)
@@ -230,15 +241,15 @@ async def query_llm(
         {"role": "user", "content": prompt_text}
     ]
     
-    # Invoke LLM (ใช้ wrapper ที่รองรับ invoke)
+    # Inference
     raw = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # Save conversation
+    # บันทึกประวัติการสนทนา
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    # Prepare Sources for Frontend
+    # 🎯 เตรียม Sources สำหรับ UI (แสดงชื่อไฟล์ + เลขหน้า)
     sources = [
         QuerySource(
             source_id=str(c.metadata["doc_id"]),
@@ -332,13 +343,16 @@ def enhance_analysis_query(question: str, subject_id: str, rubric_data: dict) ->
 # =====================================================================
 # 3. /analysis — PDCA-focused SE-AM analysis (Mac & Server Standard)
 # =====================================================================
+# =====================================================================
+# 3. /analysis — PDCA-focused SE-AM analysis (Revise Standard)
+# =====================================================================
 @llm_router.post("/analysis", response_model=QueryResponse)
 async def analysis_llm(
     question: str = Form(...),
-    doc_ids: Any = Form(None),      # รองรับทั้ง List จาก Frontend หรือ String คั่นด้วย comma
+    doc_ids: Any = Form(None),      
     doc_types: Any = Form(None),    
     enabler: Optional[str] = Form(None),
-    subject: Optional[str] = Form(None), # subject คือ sub_id เช่น '1.1'
+    subject: Optional[str] = Form(None), 
     conversation_id: Optional[str] = Form(None),
     year: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
@@ -347,13 +361,13 @@ async def analysis_llm(
     conv_id = conversation_id or str(uuid.uuid4())
     effective_year = year or str(current_user.year)
 
-    # 🛠️ 1. Data Type Normalization (ป้องกัน AttributeError กรณีข้อมูลมาคนละ Format)
-    stable_doc_ids = None
+    # 🛠️ 1. Data Type Normalization (IDs & Types)
+    stable_doc_ids = []
     if doc_ids:
         if isinstance(doc_ids, list):
-            stable_doc_ids = {str(idx).strip() for idx in doc_ids if str(idx).strip()}
+            stable_doc_ids = [str(idx).strip() for idx in doc_ids if str(idx).strip()]
         elif isinstance(doc_ids, str):
-            stable_doc_ids = {idx.strip() for idx in doc_ids.split(",") if idx.strip()}
+            stable_doc_ids = [idx.strip() for idx in doc_ids.split(",") if idx.strip()]
 
     if not doc_types:
         used_doc_types = [EVIDENCE_DOC_TYPES]
@@ -364,17 +378,17 @@ async def analysis_llm(
     else:
         used_doc_types = [EVIDENCE_DOC_TYPES]
 
-    # ตรวจสอบ Enabler สำหรับ Evidence
     is_evidence = any(dt.lower() == EVIDENCE_DOC_TYPES.lower() for dt in used_doc_types)
     used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
 
     if is_evidence and not used_enabler:
         raise HTTPException(400, "สำหรับ analysis เอกสาร evidence ต้องระบุ enabler")
 
+    # Initialize Engine & LLM
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
 
-    # 🎯 2. Load Rubric JSON สำหรับใช้ใน Prompt และ Enhancement
+    # 🎯 2. Load Rubric JSON (for logic & prompts)
     rubric_data = {}
     rubric_json_str = "{}"
     try:
@@ -386,14 +400,19 @@ async def analysis_llm(
     except Exception as e:
         logger.error(f"Failed to load rubric JSON: {e}")
 
-    # 🎯 3. Query Enhancement (ขยายความคำถามตามเกณฑ์ SE-AM PDCA)
+    # 🎯 3. Determine Analysis Mode
+    consultant_keywords = ["เหมาะ", "หลักฐาน", "ประเมินหรือไม่", "สอดคล้อง", "หัวข้อไหน", "เกณฑ์ไหน", "ระดับไหน"]
+    is_consultant_mode = any(kw in question.lower() for kw in consultant_keywords) or (not subject and len(stable_doc_ids) <= 2)
+
     search_query = question
     if subject:
         search_query = enhance_analysis_query(question, subject, rubric_data)
+    elif is_consultant_mode:
+        # ปรับ Query ให้ค้นหาเชิง "ความพึงพอใจ" หรือ "ผลการดำเนินงาน" เมื่อมีคำใบ้เรื่องหน้า/ข้อมูลสรุป
+        search_query = f"ผลการดำเนินงาน ตัวชี้วัด เป้าหมาย KM PDCA สรุปผู้บริหาร {question}"
 
-    # 🎯 4. Retrieval (ดึงข้อมูลพร้อม Filter ที่คุณปรับปรุง)
+    # 🎯 4. Smart Retrieval (Environment Sensitive)
     from core.llm_data_utils import retrieve_context_with_rubric
-    
     all_evidences = []
     for dt in used_doc_types:
         retrieval_res = await asyncio.to_thread(
@@ -406,69 +425,67 @@ async def analysis_llm(
             tenant=current_user.tenant,
             year=effective_year,
             subject=subject,
-            strict_filter=True # บังคับใช้ Filter ที่คุณแก้ใน _create_where_filter
+            strict_filter=True,
+            top_k=RETRIEVAL_TOP_K  # 🚀 ดึงจาก .env (Mac: 150, Server: 500)
         )
         if retrieval_res and "top_evidences" in retrieval_res:
             all_evidences.extend(retrieval_res["top_evidences"])
 
-    # เรียงลำดับตามคะแนนความเกี่ยวข้อง
+    # Reranking & Context Selection
     all_evidences.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
-    final_evidences = all_evidences[:QUERY_FINAL_K]
+    final_evidences = all_evidences[:ANALYSIS_FINAL_K]  # 🚀 คัดตามความจุ LLM (.env)
 
     if not final_evidences:
         answer = "ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกเพื่อนำมาวิเคราะห์ครับ"
         return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # 🎯 5. SE-AM Assessment Engine (จัดกลุ่มข้อมูลตาม PDCA)
+    # 🎯 5. PDCA Assessment Engine
     engine_config = AssessmentConfig(
         tenant=current_user.tenant,
         year=int(effective_year) if effective_year.isdigit() else current_user.year,
         enabler=used_enabler,
         target_level=5
     )
-    
-    engine = SEAMPDCAEngine(
-        config=engine_config, 
-        llm_instance=llm, 
-        vectorstore_manager=vsm, 
-        doc_type=used_doc_types[0]
-    )
+    engine = SEAMPDCAEngine(config=engine_config, llm_instance=llm, vectorstore_manager=vsm, doc_type=used_doc_types[0])
 
-    # ดึง Blocks ข้อมูลแยกตาม P D C A
+    # แยก Blocks ข้อมูลเข้าโครงสร้าง PDCA
     plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = engine._get_pdca_blocks_from_evidences(
-        evidences=final_evidences,
-        baseline_evidences={},
-        level=5,
-        sub_id=subject or "all",
-        contextual_rules_map=engine.contextual_rules_map
+        evidences=final_evidences, baseline_evidences={}, level=5, sub_id=subject or "all", contextual_rules_map=engine.contextual_rules_map
     )
     pdca_context = "\n\n".join(filter(None, [plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks]))
 
-    # 🎯 6. Inference (ส่งข้อมูลให้ LLM วิเคราะห์)
-    prompt_text = ANALYSIS_PROMPT_TEMPLATE.format(
-        rubric_json=rubric_json_str,
-        documents_content=pdca_context,
-        question=question 
-    )
+    # 🎯 6. Inference Flow
+    if is_consultant_mode:
+        sys_msg_content = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_CONSULTANT_INSTRUCTION
+        prompt_text = REVERSE_MAPPING_PROMPT_TEMPLATE.format(
+            rubric_json=rubric_json_str,
+            documents_content=pdca_context
+        )
+        mode_label = "Consultant"
+    else:
+        sys_msg_content = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_ANALYSIS_INSTRUCTION
+        prompt_text = ANALYSIS_PROMPT_TEMPLATE.format(
+            rubric_json=rubric_json_str,
+            documents_content=pdca_context,
+            question=question 
+        )
+        mode_label = "Auditor"
+
+    logger.info(f"🚀 Analysis Mode: {mode_label} | Retrieval K: {RETRIEVAL_TOP_K} | Final K: {ANALYSIS_FINAL_K}")
 
     messages = [
-        SystemMessage(content="ALWAYS ANSWER IN THAI.\n" + SYSTEM_ANALYSIS_INSTRUCTION),
+        SystemMessage(content=sys_msg_content),
         HumanMessage(content=prompt_text),
     ]
 
     raw_response = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw_response.content if hasattr(raw_response, "content") else str(raw_response))
 
-    # 🎯 7. Source Mapping (แก้ไขให้ดึง Metadata ใหม่ที่ Ingest มา)
+    # 🎯 7. Map Sources for UI
     sources = []
-    for ev in final_evidences[:10]:
-        # 🟢 ลำดับความสำคัญของชื่อไฟล์: source_filename (ใหม่) -> source (เดิม)
+    for ev in final_evidences[:10]: # แสดงแหล่งที่มา 10 อันดับแรก
         f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
-        
-        # 🟢 ลำดับความสำคัญของหน้า: page_label (UI-Ready) -> page_number -> page
         p_val = ev.get('page_label') or ev.get('page_number') or ev.get('page')
-        
-        # ตรวจสอบความสะอาดของข้อมูลหน้า
         p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
 
         sources.append(
@@ -477,12 +494,10 @@ async def analysis_llm(
                 file_name=f"{f_name} (หน้า {p_display})",
                 chunk_text=ev.get("text", "")[:500],
                 chunk_id=ev.get("chunk_uuid"),
-                # ใช้ rerank_score (จาก Mac/GPU) ถ้าไม่มีให้ใช้ score ปกติ
                 score=float(ev.get("rerank_score") or ev.get("score") or 0.0),
             )
         )
 
-    # บันทึกประวัติสนทนา
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
@@ -490,5 +505,9 @@ async def analysis_llm(
         answer=answer.strip(), 
         sources=sources, 
         conversation_id=conv_id,
-        result={"process_time": round(time.time() - start_time, 2)}
+        result={
+            "process_time": round(time.time() - start_time, 2), 
+            "mode": mode_label.lower(),
+            "config": {"retrieval_k": RETRIEVAL_TOP_K, "final_k": ANALYSIS_FINAL_K}
+        }
     )
