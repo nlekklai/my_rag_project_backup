@@ -845,6 +845,60 @@ class SEAMPDCAEngine:
         
         return result is not None and result.get('is_passed', False)
 
+    def _expand_context_with_neighbor_pages(self, top_evidences: List[Any], collection_name: str) -> List[Any]:
+        """
+        [NEW] ตรวจสอบหลักฐาน หากพบ Keyword ของ 'Check' 
+        จะทำการดึงหน้าถัดไป (Act) มาเสริมให้อัตโนมัติ
+        """
+        if not self.vectorstore_manager or not top_evidences:
+            return top_evidences
+
+        expanded_evidences = list(top_evidences)
+        seen_pages = set()
+        
+        # Keywords สำหรับ Trigger (ถ้าเจอคำพวกนี้ ให้ไปดึงหน้าถัดไปทันที)
+        check_triggers = ["ความพึงพอใจ", "คะแนน", "สรุปผล", "ผลการดำเนินงาน", "score", "kpi", "3.41"]
+
+        for doc in top_evidences:
+            # ดึงเนื้อหา (Engine นี้ใช้ dict ที่มี key 'text' หลังผ่าน Hydration)
+            text = (doc.get('text') or doc.get('page_content') or "").lower()
+            
+            # ดึง Metadata
+            meta = doc.metadata if hasattr(doc, 'metadata') else doc.get('metadata', {})
+            page_label = meta.get("page_label")
+            doc_uuid = meta.get("stable_doc_uuid")
+
+            # เงื่อนไข: เจอ Keyword + มีเลขหน้า + ยังไม่เคยดึงหน้านี้มาเสริมในรอบนี้
+            if any(k in text for k in check_triggers) and str(page_label).isdigit():
+                next_page = str(int(page_label) + 1)
+                cache_key = f"{doc_uuid}_{next_page}"
+
+                if cache_key not in seen_pages:
+                    self.logger.info(f"🔍 Act-Hook: พบข้อมูล Check ที่หน้า {page_label}, กำลังดึงหน้า {next_page}...")
+                    
+                    # เรียก Method จาก Step 1 (ใน vectorstore.py)
+                    neighbor_chunks = self.vectorstore_manager.get_chunks_by_page(
+                        collection_name=collection_name,
+                        stable_doc_uuid=doc_uuid,
+                        page_label=next_page
+                    )
+
+                    if neighbor_chunks:
+                        for nc in neighbor_chunks:
+                            # สร้าง dict ใหม่ให้โครงสร้างเหมือนกับ top_evidences เดิม
+                            new_doc = {
+                                "text": f"[Supplemental Context - Next Page {next_page} for Act analysis]:\n{nc.page_content}",
+                                "page_content": nc.page_content,
+                                "metadata": nc.metadata,
+                                "pdca_tag": "Act", # บังคับเป็น Act เพื่อให้ถูกจัดกลุ่มลงใน act_blocks
+                                "is_supplemental": True,
+                                "rerank_score": doc.get('rerank_score', 0.0) # ใช้ score เดิมเพื่อให้ผ่าน Filter
+                            }
+                            expanded_evidences.append(new_doc)
+                        seen_pages.add(cache_key)
+
+        return expanded_evidences
+    
     def enhance_query_for_statement(
         self,
         statement_text: str,
@@ -3370,14 +3424,27 @@ class SEAMPDCAEngine:
         self.logger.debug(f"Adaptive Filter L{level}: Kept {len(top_evidences)}/{len(original_top_evidences)} chunks "
                         f"({len([d for d in top_evidences if d.get('is_baseline')])} baseline)")
 
-        # ==================== 6.5. Robust Hydration for Filtered Chunks ====================
+        # ==================== 6.5. Robust Hydration ====================
+        # เติม Text ให้สมบูรณ์สำหรับ Chunks ที่ Reranker เลือกมา
         if top_evidences and vectorstore_manager:
             self.logger.debug(f"Running Robust Hydration for {len(top_evidences)} filtered chunks...")
             top_evidences = self._robust_hydrate_documents_for_priority_chunks(
                 chunks_to_hydrate=top_evidences,
                 vsm=vectorstore_manager
             )
-            self.logger.debug(f"Hydration complete. Final chunks with text: {len([c for c in top_evidences if 'text' in c and c['text'].strip()])}")
+
+        # ==================== 6.6. Act-Hook Expansion (STRICT ENFORCED) ====================
+        # [MOVE OUTSIDE] ตรวจสอบการขยายหน้าถัดไปเสมอ ไม่ว่าจะต้องทำ Hydration หรือไม่
+        # เพื่อดึงข้อมูล Act (หน้า N+1) มาต่อท้ายข้อมูล Check (หน้า N)
+        if top_evidences and vectorstore_manager:
+            current_col = f"evidence_{self.enabler_id.lower()}"
+            top_evidences = self._expand_context_with_neighbor_pages(
+                top_evidences=top_evidences,
+                collection_name=current_col
+            )
+            
+            self.logger.debug(f"Hydration/Expansion complete. Final chunks: {len(top_evidences)}")
+            self.logger.info(f"Context Build Result: Direct:{len(top_evidences)} | TargetCol:{current_col}")
 
         # ==================== 7. Baseline from Previous Levels ====================
         previous_levels_evidence_dict = {}

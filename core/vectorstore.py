@@ -753,7 +753,60 @@ class VectorStoreManager:
             logger.error(f"❌ Error in get_documents_by_id: {str(e)}", exc_info=True)
             return []
 
+    def get_chunks_by_page(self, collection_name: str, stable_doc_uuid: str, page_label: str) -> List[LcDocument]:
+        """
+        [NEW] ดึง Chunks ทั้งหมดของเลขหน้าที่ระบุ (Exact Metadata Match)
+        ใช้สำหรับดึงบริบทข้างเคียง (Neighbor Context) เพื่อแก้ปัญหาข้อมูล Act (A) ขาดหาย
+        """
+        try:
+            # 1. โหลด Chroma Instance ผ่าน Cache/Logic เดิมของ VSM
+            self._ensure_chroma_client_is_valid()
+            chroma_instance = self._load_chroma_instance(collection_name)
+            
+            if not chroma_instance:
+                self.logger.error(f"❌ Neighbor Fetch: ไม่พบ Collection {collection_name}")
+                return []
 
+            # 2. เข้าถึง Collection ระดับต่ำ (Chroma native collection) เพื่อใช้ filter
+            collection = chroma_instance._collection
+
+            # 🎯 สร้าง Filter เจาะจงไฟล์และหน้า
+            # หมายเหตุ: page_label ต้องเป็น String ตามมาตรฐานการ Ingest ของเรา
+            where_filter = {
+                "$and": [
+                    {"stable_doc_uuid": {"$eq": str(stable_doc_uuid)}},
+                    {"page_label": {"$eq": str(page_label)}}
+                ]
+            }
+
+            # 3. ดึงข้อมูล (ตั้ง limit=10 เพื่อให้ครอบคลุมกรณี 1 หน้ามีหลาย chunks)
+            results = collection.get(
+                where=where_filter,
+                limit=10, 
+                include=["documents", "metadatas", "ids"]
+            )
+
+            extra_docs = []
+            if results and results['documents']:
+                for idx, text in enumerate(results['documents']):
+                    meta = results['metadatas'][idx].copy() if results['metadatas'] else {}
+                    
+                    # ทำความสะอาด Metadata ให้พร้อมใช้งานเหมือนฟังก์ชันหลักอื่นๆ
+                    p_val = meta.get("page_label") or meta.get("page_number") or "N/A"
+                    meta["page_label"] = str(p_val)
+                    meta["chunk_uuid"] = results['ids'][idx].replace("-", "")
+                    
+                    extra_docs.append(LcDocument(page_content=text, metadata=meta))
+            
+            if extra_docs:
+                self.logger.info(f"➕ Neighbor Fetch: พบข้อมูลหน้า {page_label} ในไฟล์ {stable_doc_uuid} ({len(extra_docs)} chunks)")
+            
+            return extra_docs
+
+        except Exception as e:
+            self.logger.error(f"❌ Error ใน get_chunks_by_page: {str(e)}", exc_info=True)
+            return []
+        
     def _ensure_chroma_client_is_valid(self):
         """
         Re-initializes the Chroma client if it is None or lost during serialization (Worker Process).

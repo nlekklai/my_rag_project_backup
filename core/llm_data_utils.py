@@ -1143,34 +1143,25 @@ def create_context_summary_llm(
     sub_id: str, 
     llm_executor: Any 
 ) -> Dict[str, Any]:
-    """
-    ใช้ LLM เพื่อสรุปเนื้อหาหลักฐานเป็นภาษาไทย และให้คำแนะนำราย Level
-    รองรับการจัดการผลลัพธ์ทั้งแบบ String และ Object (LLMResult/AIMessage)
-    """
     logger = logging.getLogger("AssessmentApp")
 
-    # 0. ตรวจสอบความพร้อมของ LLM
     if llm_executor is None: 
-        logger.error("LLM instance is None. Cannot summarize context.")
         return {
             "summary": "ไม่สามารถสรุปได้เนื่องจากระบบ LLM ไม่พร้อมใช้งาน",
             "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ LLM"
         }
 
-    # 1. ตรวจสอบ Context และเตรียมข้อมูล
-    # ป้องกันกรณี context เป็น None
     context_safe = context or ""
     context_limited = context_safe.strip()
     
     if not context_limited or len(context_limited) < 50:
-        logger.info(f"Context too short for summarization L{level} {sub_id}. Skipping LLM call.")
         return {
-            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้องชัดเจนในระดับนี้",
-            "suggestion_for_next_level": "ตรวจสอบความครบถ้วนของหลักฐานในฐานข้อมูล KM"
+            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้องชัดเจน",
+            "suggestion_for_next_level": "ตรวจสอบความครบถ้วนของหลักฐานในฐานข้อมูล"
         }
 
-    # Cap context เพื่อไม่ให้เกิน Token Limit (ประมาณ 4000 ตัวอักษร)
-    context_to_send = context_limited[:4000] 
+    # Cap context ให้เหมาะสมกับสถาปัตยกรรม Model (4000-8000 chars)
+    context_to_send = context_limited[:6000] 
     next_level = min(level + 1, 5)
 
     try:
@@ -1181,57 +1172,60 @@ def create_context_summary_llm(
             context=context_to_send
         )
     except Exception as e:
-        logger.error(f"Error formatting prompt template: {e}")
-        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "Check template variables"}
+        logger.error(f"Error formatting prompt: {e}")
+        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "Check template"}
 
-    system_instruction = SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + "\nIMPORTANT: ตอบเป็น JSON ภาษาไทยเท่านั้น ห้ามมีคำอธิบายอื่นนอก JSON."
+    # ปรับ System Instruction ให้ดุดันขึ้นเพื่อลด Invalid Format
+    system_instruction = (
+        f"{SYSTEM_EVIDENCE_DESCRIPTION_PROMPT}\n"
+        "STRICT RULE: ตอบในรูปแบบ JSON เท่านั้น ห้ามมี Markdown หรือคำเกริ่นนำ\n"
+        "EXPECTED FORMAT: {\"summary\": \"...\", \"suggestion_for_next_level\": \"...\"}"
+    )
 
-    # 3. เรียกใช้ LLM พร้อมจัดการ Retries และ Object Parsing
     max_retries = 2
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"Generating Thai Summary for {sub_id} L{level} (Attempt {attempt})")
             
-            # เรียกใช้ LLM
             raw_response_obj = llm_executor.generate(
                 system=system_instruction, 
                 prompts=[human_prompt]
             )
 
-            # --- CRITICAL FIX START: ดึง String ออกจาก Object ---
+            # ดึง Text ออกจาก Response Object
             raw_response_str = ""
-            if hasattr(raw_response_obj, 'generations'): # LLMResult
+            if hasattr(raw_response_obj, 'generations'): 
                 raw_response_str = raw_response_obj.generations[0][0].text
-            elif hasattr(raw_response_obj, 'content'):   # AIMessage
+            elif hasattr(raw_response_obj, 'content'):   
                 raw_response_str = raw_response_obj.content
             else:
                 raw_response_str = str(raw_response_obj)
-            # --- CRITICAL FIX END ---
 
-            # 4. Extract และ Normalize JSON
-            # เรียกใช้ _extract_normalized_dict จาก core/json_extractor.py
+            # ใช้ Regex Extract JSON (เผื่อ LLM ใส่ข้อความแถมมา)
             parsed = _extract_normalized_dict(raw_response_str)
             
-            if parsed and isinstance(parsed, dict) and "summary" in parsed:
-                # ทำความสะอาดข้อมูล String ขั้นสุดท้าย
-                summary_val = str(parsed.get("summary", "")).strip()
-                suggestion_val = str(parsed.get("suggestion_for_next_level", "")).strip()
-                
-                return {
-                    "summary": summary_val if summary_val else "ไม่พบข้อมูลสรุป",
-                    "suggestion_for_next_level": suggestion_val if suggestion_val else "ไม่พบคำแนะนำ"
-                }
+            if parsed and isinstance(parsed, dict):
+                # ใช้ .get() พร้อม Default Value เพื่อป้องกัน KeyMissingError
+                sum_text = parsed.get("summary") or parsed.get("สรุป") or ""
+                sug_text = parsed.get("suggestion_for_next_level") or parsed.get("คำแนะนำ") or ""
+
+                if sum_text:
+                    return {
+                        "summary": str(sum_text).strip(),
+                        "suggestion_for_next_level": str(sug_text).strip() if sug_text else "พัฒนาตามเกณฑ์ถัดไป"
+                    }
             
             logger.warning(f"Attempt {attempt}: LLM returned invalid summary format.")
+            # ถ้าเป็นรอบแรกแล้วพัง รอบสองเราจะย้ำ Force JSON เข้าไปอีกใน prompt
+            human_prompt += "\nReminder: Return ONLY JSON."
             
         except Exception as e:
-            logger.error(f"Attempt {attempt}: create_context_summary_llm failed: {str(e)}")
-            time.sleep(1)
+            logger.error(f"Attempt {attempt} failed: {str(e)}")
+            time.sleep(0.5)
 
-    # 5. Fallback สุดท้ายหากรันไม่สำเร็จ
     return {
-        "summary": f"ระบบประเมินพบหลักฐานในระดับ {level} แต่ไม่สามารถสรุปเนื้อหาได้โดยอัตโนมัติ (LLM Parse Error)",
-        "suggestion_for_next_level": f"ตรวจสอบข้อกำหนดเป้าหมายของ Level {next_level} ในคู่มือ SE-AM"
+        "summary": f"พบหลักฐานระดับ {level} แต่ระบบสรุปขัดข้อง (Parse Error)",
+        "suggestion_for_next_level": f"ตรวจสอบเกณฑ์ของ Level {next_level} ในคู่มือ"
     }
 
 
