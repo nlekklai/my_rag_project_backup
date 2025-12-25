@@ -466,10 +466,12 @@ async def analysis_llm(
     sources = [
         QuerySource(
             source_id=str(c.get("doc_id", "unknown")),
-            file_name=f"{c.metadata['source']} (หน้า {c.metadata.get('page_label') or c.metadata.get('page_number') or c.metadata.get('page') or 'N/A'})",
+            # เปลี่ยนจาก c.metadata['source'] เป็น c.get('source')
+            # และใช้ c.get('page') ที่เราดึงมารอไว้แล้ว
+            file_name=f"{c.get('source', 'Unknown')} (หน้า {c.get('page', 'N/A')})",
             chunk_text=c.get("text", "")[:500],
             chunk_id=c.get("chunk_uuid"),
-            score=float(c.get("rerank_score", 0)),
+            score=float(c.get("rerank_score", 0.0)),
         )
         for c in evidences[:10]
     ]
