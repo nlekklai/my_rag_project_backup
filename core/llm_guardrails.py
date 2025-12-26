@@ -23,7 +23,8 @@ def detect_intent(
     user_context: Optional[List[Dict[str, Any]]] = None  # conversation history
 ) -> Dict[str, Any]:
     """
-    วิเคราะห์ความตั้งใจของผู้ใช้ (Intent) - ฉบับปรับปรุงเพื่อแยก Summary ออกจาก Analysis
+    [Ultimate Version] วิเคราะห์ความตั้งใจของผู้ใช้ (Intent) 
+    โดยเน้นการแยกแยะ Comparison และ Summary ออกจาก Greeting และ Analysis อย่างเด็ดขาด
     """
     q = question.strip().lower()
     intent = {
@@ -38,19 +39,7 @@ def detect_intent(
         "enabler_hint": None,
     }
 
-    # --- 1. ตรวจจับ Summary ก่อน (Priority High) ---
-    # ถ้ามีคำกลุ่มนี้ ให้ถือว่าเป็น Summary และจะไม่เอาไปปนกับเกณฑ์ SE-AM
-    summary_signals = [
-        "สรุป", "ภาพรวม", "ทั้งหมด", "executive summary", "overview", "สาระสำคัญ", "key points",
-        "summary", "summarize", "summarise", "comprehensive summary", 
-        "provide a summary", "give me a summary", "summarize all", "summary of all"
-    ]
-    if any(sig in q for sig in summary_signals):
-        intent["is_summary"] = True
-        # ไม่ต้องสกัด sub_topic เพื่อป้องกัน Router หลงทางไปหา Engine ประเมิน
-        return intent
-
-    # --- 2. สกัด Enabler/Sub-topic (สำหรับโหมดวิเคราะห์ปกติ) ---
+    # --- 1. สกัด Enabler/Sub-topic จาก Question หรือ History (ทำล่วงหน้าเพื่อใช้ประกอบการตัดสินใจ) ---
     enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
     match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
     
@@ -69,45 +58,57 @@ def detect_intent(
                 intent["sub_topic"] = m.group(2) or m.group(3)
                 break
 
-    # --- 3. Greeting Intent ---
-    greeting_signals = ["สวัสดี", "ดีครับ", "ดีค่ะ", "hello", "hi", "hey"]
-    if any(sig in q for sig in greeting_signals):
-        intent["is_greeting"] = True
+    # --- 2. Summary Intent (Priority 1: สรุปภาพรวม) ---
+    summary_signals = [
+        "สรุป", "ภาพรวม", "ทั้งหมด", "executive summary", "overview", "สาระสำคัญ", "key points",
+        "summary", "summarize", "summarise", "comprehensive summary", 
+        "provide a summary", "give me a summary", "summarize all", "summary of all"
+    ]
+    if any(sig in q for sig in summary_signals):
+        intent["is_summary"] = True
         return intent
 
-    # --- 4. Capabilities ---
-    capabilities_signals = ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "capabilities", "features"]
-    if any(sig in q for sig in capabilities_signals):
-        intent["is_capabilities"] = True
-        return intent
-
-    # --- 5. Comparison Intent ---
-    comparison_signals = ["เปรียบเทียบ", "ความแตกต่าง", "ต่างจาก", "vs", "compare"]
+    # --- 3. Comparison Intent (Priority 2: เปรียบเทียบ) ---
+    # ย้ายขึ้นมาสูงกว่า Greeting เพื่อป้องกันปัญหาคำภาษาอังกฤษชนกับคำทักทาย
+    comparison_signals = ["เปรียบเทียบ", "ความแตกต่าง", "ต่างจาก", "vs", "compare", "difference", "highlight key differences"]
     if any(sig in q for sig in comparison_signals):
         intent["is_comparison"] = True
         return intent
 
-    # --- 6. SE-AM Criteria / Analysis Intent ---
-    # ถ้ามีคำที่บ่งบอกถึงการประเมิน หรือมีรหัสเกณฑ์ (sub_topic) ติดมา ให้เข้าโหมด Analysis
+    # --- 4. Greeting Intent (Priority 3: ทักทาย) ---
+    # ใช้ Regex \b เพื่อป้องกันคำสั้นๆ เช่น 'hi' ไป match กับ 'highlight' หรือ 'history'
+    greeting_signals = ["สวัสดี", "ดีครับ", "ดีค่ะ", "hello", "hi", "hey", "สบายดีไหม"]
+    if any(re.search(rf"\b{re.escape(sig)}\b", q) for sig in greeting_signals):
+        intent["is_greeting"] = True
+        return intent
+
+    # --- 5. Capabilities Intent (Priority 4: แนะนำตัว) ---
+    capabilities_signals = ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "capabilities", "features", "ทำอะไรได้", "แนะนำตัว"]
+    if any(sig in q for sig in capabilities_signals):
+        intent["is_capabilities"] = True
+        return intent
+
+    # --- 6. SE-AM Criteria / Analysis Intent (Priority 5: วิเคราะห์เกณฑ์) ---
+    # ถ้ามีคำกลุ่มประเมิน หรือมีรหัสเกณฑ์ติดมาใน intent["sub_topic"] ให้เข้าโหมดนี้
     criteria_signals = [
         "ผ่านเกณฑ์", "sub criteria", "ผ่าน level", "สนับสนุนเกณฑ์", "criteria",
-        "comply", "compliance", "ตามเกณฑ์", "สอดคล้อง", "ข้อกำหนด", "แนะนำหน่อย", 
-        "ควรทำยังไง", "ปรับปรุงยังไง", "ช่วยเขียนหน่อย", "ร่างเนื้อหา" 
+        "comply", "compliance", "ตามเกณฑ์", "สอดคล้อง", "ข้อกำหนด", "เกณฑ์ไหน",
+        "แนะนำหน่อย", "ควรทำยังไง", "ปรับปรุงยังไง", "ช่วยเขียนหน่อย", "ร่างเนื้อหา" 
     ]
     if any(sig in q for sig in criteria_signals) or intent["sub_topic"]:
         intent["is_analysis"] = True
         intent["is_criteria_query"] = True if any(sig in q for sig in criteria_signals) else False
         return intent
     
-    # --- 7. PDCA / Deep Analysis ---
+    # --- 7. PDCA / Deep Analysis Intent (Priority 6) ---
     analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
-    analysis_keywords.update(["pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "gap"])
+    analysis_keywords.update(["pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "gap", "strength", "weakness"])
     if any(sig in q for sig in analysis_keywords):
         intent["is_analysis"] = True
         return intent
 
-    # --- 8. Default: FAQ ---
-    if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง"]):
+    # --- 8. Default: FAQ / General Query ---
+    if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง", "definition"]):
         intent["is_faq"] = True
 
     return intent
