@@ -262,7 +262,7 @@ async def query_llm(
     return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)
 
 # =====================================================================
-# 2. /compare — Document Comparison
+# 2. /compare — Document Comparison (Revised for Llama 3:70B)
 # =====================================================================
 @llm_router.post("/compare", response_model=QueryResponse)
 async def compare_llm(
@@ -284,7 +284,9 @@ async def compare_llm(
 
     collection_name = get_doc_type_collection_key(used_doc_types[0], used_enabler)
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
-    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
+    
+    # สำหรับ Comparison แนะนำ Temperature ต่ำ (0.1) เพื่อลดอาการหลุดภาษาอังกฤษของ Llama 3
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.1)
 
     all_chunks = load_all_chunks_by_doc_ids(vsm, collection_name, set(doc_ids))
     if not all_chunks:
@@ -302,25 +304,44 @@ async def compare_llm(
             block = f"### เอกสารที่ {idx}\n(ไม่พบข้อมูลในเอกสารนี้)"
         else:
             fname = chunks[0].metadata.get("source", f"ID:{doc_id}")
-            # เลือกเฉพาะ 15 chunks แรก หรือใช้การตัดคำเพื่อประหยัด Token
+            # Llama 3:70B รับ context ได้เยอะ แต่จำกัด 15 chunks เพื่อความคมของเนื้อหา
             body = "\n".join(f"- {c.page_content}" for c in chunks[:15]) 
             block = f"### เอกสารที่ {idx}: {fname}\n{body}"
         doc_blocks.append(block)
 
-    prompt_text = COMPARE_PROMPT_TEMPLATE.format(documents_content="\n\n".join(doc_blocks), query=question)
+    # --- [Llama 3 Language Enforcement Strategy] ---
+    # บังคับ Prompt ให้ดุขึ้นและระบุภาษาชัดเจนในระดับ Message
+    thai_enforcement = "\n\n(IMPORTANT: สรุปเป็นภาษาไทยสละสลวยเท่านั้น ห้ามตอบเป็นภาษาอังกฤษเด็ดขาด)"
+    full_query = f"{question}{thai_enforcement}"
+    
+    prompt_text = COMPARE_PROMPT_TEMPLATE.format(
+        documents_content="\n\n".join(doc_blocks), 
+        query=full_query
+    )
+
     messages = [
         SystemMessage(content=SYSTEM_COMPARE_INSTRUCTION),
+        # เพิ่ม HumanMessage ตัวที่สองเพื่อย้ำคำสั่ง (Llama 3 จะให้ความสำคัญกับข้อความท้ายๆ)
         HumanMessage(content=prompt_text),
+        HumanMessage(content="จงเปรียบเทียบข้อมูลด้านบนและตอบกลับในรูปแบบตารางภาษาไทยเท่านั้น")
     ]
 
+    # เรียกใช้งาน LLM
     raw = await asyncio.to_thread(llm.invoke, messages)
-    answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
+    raw_content = raw.content if hasattr(raw, "content") else str(raw)
+    
+    # ตรวจสอบความเรียบร้อยของภาษาผ่าน Guardrails
+    answer = enforce_thai_primary_language(raw_content)
 
     conv_id = str(uuid.uuid4())
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    return QueryResponse(answer=answer.strip(), sources=_map_sources(all_chunks[:10]), conversation_id=conv_id)
+    return QueryResponse(
+        answer=answer.strip(), 
+        sources=_map_sources(all_chunks[:10]), 
+        conversation_id=conv_id
+    )
 
 
 def enhance_analysis_query(question: str, subject_id: str, rubric_data: dict) -> str:
