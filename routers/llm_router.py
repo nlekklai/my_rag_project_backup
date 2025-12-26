@@ -302,7 +302,8 @@ async def compare_llm(
             block = f"### เอกสารที่ {idx}\n(ไม่พบข้อมูลในเอกสารนี้)"
         else:
             fname = chunks[0].metadata.get("source", f"ID:{doc_id}")
-            body = "\n".join(f"- {c.page_content}" for c in chunks)
+            # เลือกเฉพาะ 15 chunks แรก หรือใช้การตัดคำเพื่อประหยัด Token
+            body = "\n".join(f"- {c.page_content}" for c in chunks[:15]) 
             block = f"### เอกสารที่ {idx}: {fname}\n{body}"
         doc_blocks.append(block)
 
