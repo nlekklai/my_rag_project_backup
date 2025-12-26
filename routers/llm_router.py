@@ -120,8 +120,9 @@ async def query_llm(
     conv_id = conversation_id or str(uuid.uuid4())
     effective_year = year or str(current_user.year)
     
-    # ดึงค่า Config จาก .env (Mac=8, Server=20)
+    # ดึงค่า Config จาก .env
     from config.global_vars import QA_FINAL_K, DEFAULT_DOC_TYPES, DEFAULT_ENABLER
+    from core.llm_guardrails import build_prompt # นำเข้า Prompt Builder
 
     logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
@@ -129,33 +130,33 @@ async def query_llm(
     history = await get_recent_history(current_user.id, conv_id, limit=6)
     intent = detect_intent(question, user_context=history)
 
-    # 🧠 [NEW LOGIC] ดึงบริบทจาก History (Guardrails) มาใช้หากผู้ใช้ไม่ได้ระบุมาใน Form
+    # 🧠 ดึงบริบทจาก History มาใช้หากไม่ได้ระบุมาใน Form
     if intent.get("sub_topic") and not subject:
         subject = intent["sub_topic"]
-        logger.info(f"🧠 Auto-detected Subject: {subject} from History context")
+        logger.info(f"🧠 Auto-detected Subject: {subject}")
 
     if intent.get("enabler_hint") and not enabler:
         enabler = intent["enabler_hint"]
-        logger.info(f"🧠 Auto-detected Enabler: {enabler} from History context")
+        logger.info(f"🧠 Auto-detected Enabler: {enabler}")
 
-    # 🔍 [SMART ROUTE OVERRIDE] 
-    # บังคับไป /analysis หากเจอ Keyword เกี่ยวกับเกณฑ์ประเมิน
+    # 🔍 SMART ROUTE OVERRIDE
     analysis_keywords = ["pdca", "comply", "compliance", "เกณฑ์", "ผ่านระดับ", "level", "จุดแข็ง", "ช่องว่าง", "ประเมิน", "สอดคล้อง"]
-    # ปรับ Logic: ถ้ามี subject (เช่น 1.1) ให้ถือเป็น Analysis Intent ด้วย
     is_forcing_analysis = any(kw in question.lower() for kw in analysis_keywords) or subject is not None
     
-    # --- [BRANCH 1] Greeting & Capabilities ---
+    # --- [BRANCH 1] Greeting & Capabilities (Revised: Bypass Retrieval) ---
     if intent.get("is_greeting") or intent.get("is_capabilities"):
-        if intent.get("is_greeting"):
-            answer = "สวัสดีครับ! 😊 ผมคือ Digital Knowledge Assistant ของ PEA พร้อมช่วยตอบคำถามเกี่ยวกับเอกสาร KM หรือวิเคราะห์ SE-AM ให้ครับ มีอะไรให้ช่วยไหมครับ?"
-        else:
-            answer = (
-                "ผมช่วยคุณได้ดังนี้ครับ:\n"
-                "1. **ค้นหาและตอบคำถาม** จากเอกสาร/นโยบาย/ระเบียบ\n"
-                "2. **สรุปเอกสาร** สาระสำคัญสำหรับผู้บริหาร\n"
-                "3. **เปรียบเทียบเอกสาร** 2 ฉบับขึ้นไป\n"
-                "4. **วิเคราะห์ตามเกณฑ์ SE-AM** (PDCA, จุดแข็ง, ช่องว่าง)"
-            )
+        logger.info(f"🎭 Route -> Self-Introduction (Bypass Retrieval)")
+        
+        # ใช้ build_prompt โดยส่ง context เป็นค่าว่าง เพื่อให้ AI แนะนำตัวจากบทบาท
+        full_prompt = build_prompt(context="", question=question, intent=intent, user_context=history)
+        
+        messages = [
+            {"role": "user", "content": full_prompt}
+        ]
+        
+        raw = await asyncio.to_thread(llm.invoke, messages)
+        answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
+        
         await async_save_message(current_user.id, conv_id, "user", question)
         await async_save_message(current_user.id, conv_id, "ai", answer)
         return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
@@ -171,7 +172,7 @@ async def query_llm(
     # --- [BRANCH 3] SE-AM Analysis (Redirect) ---
     if intent.get("is_analysis") or intent.get("is_criteria_query") or is_forcing_analysis:
         if doc_ids:
-            logger.info(f"🚀 Route -> Analysis (Forced: {is_forcing_analysis})")
+            logger.info(f"🚀 Route -> Analysis")
             return await analysis_llm(
                 question=question, doc_ids=doc_ids, doc_types=doc_types,
                 enabler=enabler, subject=subject, conversation_id=conv_id,
@@ -201,10 +202,7 @@ async def query_llm(
         )
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
-                # 🟢 Robust Metadata Extraction (Sync กับ ingest.py และ _normalize_meta)
                 f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
-                
-                # ลำดับความสำคัญ: page_label (จาก UI) -> page_number -> page
                 p_val = ev.get('page_label') or ev.get('page_number') or ev.get('page')
                 p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
 
@@ -221,7 +219,6 @@ async def query_llm(
                     )
                 )
 
-    # 🎯 คัดเลือก "หัวกะทิ" ตามจำนวนที่ตั้งไว้ใน .env
     all_chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
     final_chunks = all_chunks[:QA_FINAL_K]
 
@@ -235,17 +232,11 @@ async def query_llm(
         for c in final_chunks
     ])
 
-    # 🎯 Intent-based Prompting
-    if intent.get("is_summary"):
-        sys_msg = "คุณคือผู้เชี่ยวชาญด้าน KM ของ PEA ตอบเป็นภาษาไทย สรุปสาระสำคัญสำหรับผู้บริหาร และระบุเลขหน้าอ้างอิงเสมอ"
-        prompt_text = SUMMARY_PROMPT_TEMPLATE.format(context=context_text)
-    else:
-        sys_msg = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_QA_INSTRUCTION
-        prompt_text = QA_PROMPT_TEMPLATE.format(context=context_text, question=question)
+    # 🎯 ใช้ build_prompt จาก Guardrails เพื่อคุมคุณภาพคำตอบ
+    full_prompt = build_prompt(context=context_text, question=question, intent=intent, user_context=history)
 
     messages = [
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": prompt_text}
+        {"role": "user", "content": full_prompt}
     ]
     
     # Inference
@@ -256,7 +247,7 @@ async def query_llm(
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    # 🎯 เตรียม Sources สำหรับ UI (แสดงชื่อไฟล์ + เลขหน้า)
+    # เตรียม Sources สำหรับ UI
     sources = [
         QuerySource(
             source_id=str(c.metadata["doc_id"]),

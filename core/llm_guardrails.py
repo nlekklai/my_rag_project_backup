@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # core/llm_guardrails.py
-
 import re
 from typing import Dict, Any, List, Optional
 import logging
@@ -8,15 +7,14 @@ import logging
 from config.global_vars import (
     SUPPORTED_ENABLERS,
     SEAM_ENABLER_MAP,
-    SEAM_SUBTOPIC_MAP,
-    PDCA_ANALYSIS_SIGNALS,
-    ANALYSIS_FRAMEWORK
+    ANALYSIS_FRAMEWORK,
+    PDCA_ANALYSIS_SIGNALS
 )
 
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# 1. Intent Detection (Multi-Enabler Support)
+# 1. Intent Detection (Revised Priority for Capabilities)
 # ======================================================================
 
 def detect_intent(
@@ -37,19 +35,15 @@ def detect_intent(
         "enabler_full_name": None
     }
 
-    # --- 1. สกัด Enabler & Sub-topic (Dynamic Lookup) ---
+    # --- Step 1: Extract Enabler/Sub-topic First (For Role Identity) ---
     enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
-    # ค้นหา Enabler หรือรหัสเกณฑ์ (เช่น 6.1, 7.1)
     match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
     
-    found_key = None
     if match:
         found_enabler = (match.group(1) or "").upper()
         intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else None
         intent["sub_topic"] = match.group(2) or match.group(3)
-        found_key = intent["sub_topic"]
     
-    # ถ้าไม่เจอในคำถาม ให้ดูจาก History
     if not intent["sub_topic"] and user_context:
         for msg in reversed(user_context):
             text = msg.get("content", "").lower()
@@ -57,35 +51,45 @@ def detect_intent(
             if m:
                 intent["enabler_hint"] = (m.group(1) or "").upper()
                 intent["sub_topic"] = m.group(2) or m.group(3)
-                found_key = intent["sub_topic"]
                 break
 
-    # แมพชื่อเต็มของ Enabler จาก SEAM_ENABLER_MAP
     if intent["enabler_hint"] in SEAM_ENABLER_MAP:
         intent["enabler_full_name"] = SEAM_ENABLER_MAP[intent["enabler_hint"]]
 
-    # --- 2. Route Intent (Priority Check) ---
-    if any(sig in q for sig in ["สรุป", "ภาพรวม", "summary", "overview"]):
-        intent["is_summary"] = True
-        return intent
+    # --- Step 2: Route Intent by Priority ---
 
-    if any(sig in q for sig in ["เปรียบเทียบ", "ความแตกต่าง", "vs", "compare", "difference"]):
-        intent["is_comparison"] = True
-        return intent
-
-    if any(re.search(rf"\b{re.escape(sig)}\b", q) for sig in ["สวัสดี", "hello", "hi", "hey"]):
-        intent["is_greeting"] = True
-        return intent
-
-    if any(sig in q for sig in ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "capabilities", "features"]):
+    # [Priority 1] Capabilities & Intro (ต้องดักก่อนเพื่อให้ AI ตอบบทบาทตัวเอง)
+    cap_signals = ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "แนะนำตัว", "what can you do", "who are you", "capabilities", "features", "how to use"]
+    if any(sig in q for sig in cap_signals):
         intent["is_capabilities"] = True
         return intent
 
-    # Analysis Intent: ถ้ามีคำกลุ่มประเมิน หรือมีรหัสเกณฑ์ SE-AM
-    analysis_signals = ["ผ่านเกณฑ์", "criteria", "สอดคล้อง", "วิเคราะห์", "ประเมิน", "pdca", "gap"]
-    if any(sig in q for sig in analysis_signals) or intent["sub_topic"]:
+    # [Priority 2] Greeting
+    if any(re.search(rf"\b{re.escape(sig)}\b", q) for sig in ["สวัสดี", "hello", "hi", "hey", "ดีครับ", "ดีค่ะ"]):
+        intent["is_greeting"] = True
+        return intent
+
+    # [Priority 3] Comparison (ดัก vs, compare ก่อน summary)
+    comp_signals = ["เปรียบเทียบ", "ความแตกต่าง", "vs", "compare", "difference", "contrast"]
+    if any(sig in q for sig in comp_signals):
+        intent["is_comparison"] = True
+        return intent
+
+    # [Priority 4] Summary
+    sum_signals = ["สรุป", "ภาพรวม", "summary", "overview", "executive summary", "summarize"]
+    if any(sig in q for sig in sum_signals):
+        intent["is_summary"] = True
+        return intent
+
+    # [Priority 5] SE-AM Analysis
+    crit_signals = ["ผ่านเกณฑ์", "criteria", "สอดคล้อง", "วิเคราะห์", "ประเมิน", "pdca", "gap", "strength"]
+    if any(sig in q for sig in crit_signals) or intent["sub_topic"]:
         intent["is_analysis"] = True
         return intent
+
+    # [Default] FAQ
+    if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง"]):
+        intent["is_faq"] = True
 
     return intent
 
@@ -126,7 +130,13 @@ def build_prompt(
             "3. ประเมินระดับ Maturity (L1-L5) ตามหลักฐานที่มี"
         )
     elif intent.get("is_comparison"):
-        sections.append("คำสั่ง: เปรียบเทียบข้อมูลในรูปแบบตาราง Markdown ภาษาไทย พร้อมสรุปประเด็นสำคัญ")
+        sections.append(
+            "### คำสั่งบังคับเด็ดขาด (STRICT THAI ONLY) ###\n"
+            "1. ห้ามตอบเป็นภาษาอังกฤษแม้แต่คำเดียว (ยกเว้นชื่อไฟล์)\n"
+            "2. หากตอบเป็นภาษาอังกฤษ ระบบจะถือว่าการทำงานล้มเหลว\n"
+            "3. แปลทุกอย่างในตารางเป็นภาษาไทยสละสลวย\n"
+            "| หัวข้อเปรียบเทียบ | เอกสาร 1 | เอกสาร 2 | สรุปความแตกต่าง |"
+        )
 
     sections.append(f"### คำถาม: {question}")
     sections.append("### กฎการตอบ: ตอบเป็นภาษาไทยสละสลวย หากถามภาษาอังกฤษมาให้แปลและสรุปเป็นไทยเสมอ")
