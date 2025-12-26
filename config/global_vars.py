@@ -94,7 +94,6 @@ USE_HYBRID_SEARCH: Final[bool] = True
 HYBRID_VECTOR_WEIGHT: Final[float] = 0.7
 HYBRID_BM25_WEIGHT: Final[float] = 0.3
 
-# ... (ส่วนบนคงเดิมจนถึงกลุ่ม Retrieval) ...
 
 # ================================================================
 # Retrieval & Ranking Parameters

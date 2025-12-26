@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# core/llm_guardrails.py (Ultimate Final Version - Revised for PDCA Routing)
+# core/llm_guardrails.py
 
 import re
 from typing import Dict, Any, List, Optional
@@ -7,7 +7,8 @@ import logging
 
 from config.global_vars import (
     SUPPORTED_ENABLERS,
-    DEFAULT_ENABLER,
+    SEAM_ENABLER_MAP,
+    SEAM_SUBTOPIC_MAP,
     PDCA_ANALYSIS_SIGNALS,
     ANALYSIS_FRAMEWORK
 )
@@ -15,17 +16,13 @@ from config.global_vars import (
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# Intent Detection (Full Production Version with Enhanced Analysis Routing)
+# 1. Intent Detection (Multi-Enabler Support)
 # ======================================================================
 
 def detect_intent(
     question: str,
-    user_context: Optional[List[Dict[str, Any]]] = None  # conversation history
+    user_context: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
-    """
-    [Ultimate Version] วิเคราะห์ความตั้งใจของผู้ใช้ (Intent) 
-    โดยเน้นการแยกแยะ Comparison และ Summary ออกจาก Greeting และ Analysis อย่างเด็ดขาด
-    """
     q = question.strip().lower()
     intent = {
         "is_greeting": False,
@@ -37,85 +34,63 @@ def detect_intent(
         "is_criteria_query": False,
         "sub_topic": None,
         "enabler_hint": None,
+        "enabler_full_name": None
     }
 
-    # --- 1. สกัด Enabler/Sub-topic จาก Question หรือ History (ทำล่วงหน้าเพื่อใช้ประกอบการตัดสินใจ) ---
+    # --- 1. สกัด Enabler & Sub-topic (Dynamic Lookup) ---
     enabler_pattern = "|".join([e.lower() for e in SUPPORTED_ENABLERS])
+    # ค้นหา Enabler หรือรหัสเกณฑ์ (เช่น 6.1, 7.1)
     match = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", q)
     
+    found_key = None
     if match:
         found_enabler = (match.group(1) or "").upper()
         intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else None
         intent["sub_topic"] = match.group(2) or match.group(3)
+        found_key = intent["sub_topic"]
     
+    # ถ้าไม่เจอในคำถาม ให้ดูจาก History
     if not intent["sub_topic"] and user_context:
         for msg in reversed(user_context):
             text = msg.get("content", "").lower()
             m = re.search(rf"(?:^|\s)({enabler_pattern})\s*[:\-]?\s*(\d+\.\d+)|(\d+\.\d+)", text)
             if m:
-                found_enabler = (m.group(1) or "").upper()
-                intent["enabler_hint"] = found_enabler if found_enabler in SUPPORTED_ENABLERS else None
+                intent["enabler_hint"] = (m.group(1) or "").upper()
                 intent["sub_topic"] = m.group(2) or m.group(3)
+                found_key = intent["sub_topic"]
                 break
 
-    # --- 2. Summary Intent (Priority 1: สรุปภาพรวม) ---
-    summary_signals = [
-        "สรุป", "ภาพรวม", "ทั้งหมด", "executive summary", "overview", "สาระสำคัญ", "key points",
-        "summary", "summarize", "summarise", "comprehensive summary", 
-        "provide a summary", "give me a summary", "summarize all", "summary of all"
-    ]
-    if any(sig in q for sig in summary_signals):
+    # แมพชื่อเต็มของ Enabler จาก SEAM_ENABLER_MAP
+    if intent["enabler_hint"] in SEAM_ENABLER_MAP:
+        intent["enabler_full_name"] = SEAM_ENABLER_MAP[intent["enabler_hint"]]
+
+    # --- 2. Route Intent (Priority Check) ---
+    if any(sig in q for sig in ["สรุป", "ภาพรวม", "summary", "overview"]):
         intent["is_summary"] = True
         return intent
 
-    # --- 3. Comparison Intent (Priority 2: เปรียบเทียบ) ---
-    # ย้ายขึ้นมาสูงกว่า Greeting เพื่อป้องกันปัญหาคำภาษาอังกฤษชนกับคำทักทาย
-    comparison_signals = ["เปรียบเทียบ", "ความแตกต่าง", "ต่างจาก", "vs", "compare", "difference", "highlight key differences"]
-    if any(sig in q for sig in comparison_signals):
+    if any(sig in q for sig in ["เปรียบเทียบ", "ความแตกต่าง", "vs", "compare", "difference"]):
         intent["is_comparison"] = True
         return intent
 
-    # --- 4. Greeting Intent (Priority 3: ทักทาย) ---
-    # ใช้ Regex \b เพื่อป้องกันคำสั้นๆ เช่น 'hi' ไป match กับ 'highlight' หรือ 'history'
-    greeting_signals = ["สวัสดี", "ดีครับ", "ดีค่ะ", "hello", "hi", "hey", "สบายดีไหม"]
-    if any(re.search(rf"\b{re.escape(sig)}\b", q) for sig in greeting_signals):
+    if any(re.search(rf"\b{re.escape(sig)}\b", q) for sig in ["สวัสดี", "hello", "hi", "hey"]):
         intent["is_greeting"] = True
         return intent
 
-    # --- 5. Capabilities Intent (Priority 4: แนะนำตัว) ---
-    capabilities_signals = ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "capabilities", "features", "ทำอะไรได้", "แนะนำตัว"]
-    if any(sig in q for sig in capabilities_signals):
+    if any(sig in q for sig in ["ทำอะไรได้บ้าง", "ช่วยอะไรได้", "capabilities", "features"]):
         intent["is_capabilities"] = True
         return intent
 
-    # --- 6. SE-AM Criteria / Analysis Intent (Priority 5: วิเคราะห์เกณฑ์) ---
-    # ถ้ามีคำกลุ่มประเมิน หรือมีรหัสเกณฑ์ติดมาใน intent["sub_topic"] ให้เข้าโหมดนี้
-    criteria_signals = [
-        "ผ่านเกณฑ์", "sub criteria", "ผ่าน level", "สนับสนุนเกณฑ์", "criteria",
-        "comply", "compliance", "ตามเกณฑ์", "สอดคล้อง", "ข้อกำหนด", "เกณฑ์ไหน",
-        "แนะนำหน่อย", "ควรทำยังไง", "ปรับปรุงยังไง", "ช่วยเขียนหน่อย", "ร่างเนื้อหา" 
-    ]
-    if any(sig in q for sig in criteria_signals) or intent["sub_topic"]:
-        intent["is_analysis"] = True
-        intent["is_criteria_query"] = True if any(sig in q for sig in criteria_signals) else False
-        return intent
-    
-    # --- 7. PDCA / Deep Analysis Intent (Priority 6) ---
-    analysis_keywords = set(PDCA_ANALYSIS_SIGNALS or [])
-    analysis_keywords.update(["pdca", "plan", "do", "check", "act", "วิเคราะห์", "ประเมิน", "gap", "strength", "weakness"])
-    if any(sig in q for sig in analysis_keywords):
+    # Analysis Intent: ถ้ามีคำกลุ่มประเมิน หรือมีรหัสเกณฑ์ SE-AM
+    analysis_signals = ["ผ่านเกณฑ์", "criteria", "สอดคล้อง", "วิเคราะห์", "ประเมิน", "pdca", "gap"]
+    if any(sig in q for sig in analysis_signals) or intent["sub_topic"]:
         intent["is_analysis"] = True
         return intent
-
-    # --- 8. Default: FAQ / General Query ---
-    if any(sig in q for sig in ["คืออะไร", "คือ", "หมายถึง", "definition"]):
-        intent["is_faq"] = True
 
     return intent
 
-
 # ======================================================================
-# Prompt Guardrails Builder (Conversation-aware + Intent-specific)
+# 2. Prompt Builder (Dynamic Role & Instruction)
 # ======================================================================
 
 def build_prompt(
@@ -124,87 +99,37 @@ def build_prompt(
     intent: Dict[str, Any],
     user_context: Optional[List[Dict[str, Any]]] = None
 ) -> str:
-    """
-    สร้าง system-style instruction แบบ dynamic ตาม intent และประวัติการสนทนา
-    เวอร์ชันแก้ไข: แยก Summary ออกจาก Analysis อย่างเด็ดขาด
-    """
     sections = []
+    sections.append("### กฎเหล็ก: ตอบเป็นภาษาไทยเท่านั้น ###")
 
-    # 1. กฎพื้นฐานและการบังคับภาษา
-    sections.append("### กฎเหล็ก: ตอบเป็นภาษาไทยเท่านั้น (ยกเว้นชื่อไฟล์หรือคำเทคนิคในเอกสาร) ###")
-
-    # 2. กำหนดบทบาท (Role) ตาม Intent
-    # Priority: Summary > Comparison > Analysis
+    # กำหนดบทบาทแบบ Dynamic ตาม Enabler ที่ตรวจพบ
+    enabler_name = intent.get("enabler_full_name") or "องค์ความรู้และมาตรฐานองค์กร"
+    
     if intent.get("is_summary"):
-        role = "ผู้เชี่ยวชาญด้านการสรุปสาระสำคัญเชิงผู้บริหาร (Executive Summary)"
-        sections.append("### MODE: SUMMARY ONLY ###")
-        sections.append("คำเตือน: ห้ามทำการประเมินคะแนน หรือใช้เกณฑ์ SE-AM/PDCA ในคำตอบนี้เด็ดขาด ให้สรุปเนื้อหาจากเอกสารเท่านั้น")
+        role = f"ผู้เชี่ยวชาญด้านการสรุปสาระสำคัญ ({enabler_name})"
     elif intent.get("is_comparison"):
-        role = "ผู้เชี่ยวชาญด้านการเปรียบเทียบเอกสารและวิเคราะห์ความแตกต่างเชิงนโยบาย"
-    elif intent.get("is_analysis") or intent.get("is_criteria_query"):
-        role = f"ผู้ประเมินคุณภาพหลักฐานตามกรอบ {ANALYSIS_FRAMEWORK} และเกณฑ์ SE-AM"
+        role = f"ผู้เชี่ยวชาญด้านการวิเคราะห์ความแตกต่างเอกสาร ({enabler_name})"
+    elif intent.get("is_analysis"):
+        role = f"ผู้ประเมินคุณภาพหลักฐานตามเกณฑ์ SE-AM ด้าน {enabler_name}"
     else:
-        role = "ผู้เชี่ยวชาญด้านองค์ความรู้และเอกสารองค์กร"
+        role = "ผู้ช่วยอัจฉริยะด้านการจัดการข้อมูลองค์กร"
 
     sections.append(f"บทบาทของคุณ: {role}")
+    sections.append(f"--- ข้อมูลอ้างอิง ({intent.get('enabler_hint', 'General')}) ---\n{context}\n---")
 
-    # 3. ข้อมูลอ้างอิงจากคลังความรู้ (RAG Context)
-    sections.append("--- ข้อมูลอ้างอิงจากระบบคลังความรู้ ---")
-    sections.append(context)
-    sections.append("-----------------------------------")
-
-    # 4. บริบทการสนทนาก่อนหน้า (History)
-    if user_context:
-        snapshot = "\n".join([f"- {m.get('content')}" for m in user_context[-6:]])
-        sections.append("### บริบทการสนทนาก่อนหน้า:")
-        sections.append(snapshot)
-
-    # 5. คำถามปัจจุบัน
-    sections.append(f"### คำถามปัจจุบันของผู้ใช้: {question}")
-
-    # 6. คำสั่งเฉพาะ (Detailed Instructions) ตาม Intent
-    if intent.get("is_summary"):
+    # เพิ่ม Instruction เฉพาะทาง
+    if intent.get("is_analysis"):
         sections.append(
-            "คำสั่งสำหรับการสรุป:\n"
-            "1. สรุปเอกสารทั้งหมดที่เลือกอย่างละเอียดในรูปแบบ Executive Summary\n"
-            "2. ห้ามพูดถึง 'เกณฑ์', 'คะแนน', หรือ 'การผ่านระดับ Level' ใดๆ ทั้งสิ้น\n"
-            "3. ห้ามใช้โครงสร้างตาราง PDCA\n"
-            "4. ห้ามใช้ภาษาอังกฤษในการเล่าเรื่อง (Narrative) ให้ใช้การทับศัพท์เฉพาะคำที่จำเป็นเท่านั้น\n\n"
-            "ตัวอย่างรูปแบบการตอบ:\n"
-            "**บทสรุปผู้บริหาร**\n"
-            "- **หัวข้อหลัก:** [ระบุชื่อเรื่องจากเอกสาร]\n"
-            "- **สาระสำคัญ:** [เนื้อหาโดยสรุป...]\n"
-            "- **ประเด็นสำคัญ:** [1..., 2...]\n"
-            "- **อ้างอิง:** [ชื่อไฟล์ หน้าที่...]\n"
+            f"คำสั่ง: วิเคราะห์หลักฐานตามกรอบ {ANALYSIS_FRAMEWORK}\n"
+            "1. ตรวจสอบความครบถ้วนตามวงจร Plan, Do, Check, Act\n"
+            "2. ระบุจุดแข็งและสิ่งที่ควรปรับปรุง (Gaps)\n"
+            "3. ประเมินระดับ Maturity (L1-L5) ตามหลักฐานที่มี"
         )
     elif intent.get("is_comparison"):
-        sections.append(
-            "คำสั่งสำหรับการเปรียบเทียบ (บังคับภาษาไทยเท่านั้น):\n"
-            "- เปรียบเทียบจุดเหมือนและจุดต่างระหว่างเอกสารที่เลือก\n"
-            "- นำเสนอผลลัพธ์ในรูปแบบตาราง Markdown และบรรยายสรุปเป็นภาษาไทยอย่างสละสลวย\n"
-            "- **ห้ามเขียนภาษาอังกฤษในส่วนบทบรรยายหรือสรุปเด็ดขาด**\n"
-            "- หากข้อมูลไม่ปรากฏในบางเอกสาร ให้ระบุ 'ไม่ปรากฏข้อมูล'"
-        )
-    elif intent.get("is_analysis") or intent.get("is_criteria_query"):
-        sections.append(
-            f"คำสั่งสำหรับการวิเคราะห์ (กรอบ {ANALYSIS_FRAMEWORK}):\n"
-            "1. วิเคราะห์คุณภาพของหลักฐานตามเกณฑ์ SE-AM\n"
-            "2. ระบุจุดแข็ง (Strengths) และช่องว่าง (Gaps) ตามกรอบ PDCA\n"
-            "3. ระบุระดับ Maturity Level (L1-L5) ที่สอดคล้องกับหลักฐาน"
-        )
-    else:
-        sections.append(
-            "คำสั่ง: ตอบคำถามให้ตรงประเด็นโดยอ้างอิงจากเอกสารอ้างอิงที่ให้มาเท่านั้น "
-            "หากไม่พบคำตอบในเอกสาร ให้แจ้งผู้ใช้ตามตรงว่าไม่พบข้อมูล"
-        )
+        sections.append("คำสั่ง: เปรียบเทียบข้อมูลในรูปแบบตาราง Markdown ภาษาไทย พร้อมสรุปประเด็นสำคัญ")
 
-    # 7. กฎการใช้ภาษา (ปิดท้ายเพื่อให้ Model ให้ความสำคัญสูงสุด)
-    sections.append(
-        "### กฎการใช้ภาษาเพิ่มเติม ###\n"
-        "1. บรรยายสรุปและเล่าเรื่องด้วยภาษาไทยที่สละสลวย\n"
-        "2. คงชื่อภาษาอังกฤษของโครงการ, รหัสเอกสาร, หรือชื่อเฉพาะไว้ตามต้นฉบับ\n"
-        "3. หากผู้ใช้ถามมาเป็นภาษาอังกฤษ ให้ทำการสรุปและตอบกลับเป็น 'ภาษาไทย' เสมอ"
-    )
+    sections.append(f"### คำถาม: {question}")
+    sections.append("### กฎการตอบ: ตอบเป็นภาษาไทยสละสลวย หากถามภาษาอังกฤษมาให้แปลและสรุปเป็นไทยเสมอ")
 
     return "\n\n".join(sections)
 
