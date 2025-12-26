@@ -19,7 +19,8 @@ from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mappin
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
-from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_LLM_MODEL_NAME
+from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_LLM_MODEL_NAME, DEFAULT_YEAR
+
 
 logger = logging.getLogger(__name__)
 assessment_router = APIRouter(prefix="/api/assess", tags=["Assessment"])
@@ -255,27 +256,36 @@ async def get_assessment_history(tenant: str, year: Union[int, str], current_use
 
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
+
 @assessment_router.post("/start")
 async def start_assessment(request: StartAssessmentRequest, background_tasks: BackgroundTasks, current_user: UserMe = Depends(get_current_user)):
     check_user_permission(current_user, request.tenant, request.enabler)
+
+    # 🟢 จัดการกรณี Year ไม่ถูกเลือกหรือส่งมาว่างๆ
+    # ถ้าไม่มีค่าส่งมา ให้ใช้ปีจาก Profile ของ User หรือใช้ค่า Default ของระบบ (เช่น 2568)
+    raw_year = request.year
+    target_year = str(raw_year).strip() if (raw_year and str(raw_year).strip()) else str(current_user.year or DEFAULT_YEAR)
+
+    # จัดการ sub_criteria (เหมือนเดิม)
+    target_sub = request.sub_criteria.strip() if (request.sub_criteria and request.sub_criteria.strip()) else "all"
 
     record_id = uuid.uuid4().hex[:12]
     ACTIVE_TASKS[record_id] = {
         "status": "RUNNING",
         "record_id": record_id,
         "tenant": request.tenant,
-        "year": str(request.year),
+        "year": target_year, # ใช้ปีที่ผ่านการตรวจสอบแล้ว
         "enabler": request.enabler.upper(),
-        "progress_message": f"กำลังวิเคราะห์ {request.sub_criteria or 'ทุกเกณฑ์'}..."
+        "progress_message": f"กำลังเริ่มการประเมินปี {target_year}..."
     }
 
     background_tasks.add_task(
         run_assessment_engine_task,
         record_id,
         request.tenant,
-        int(request.year),
+        int(target_year), # ส่งปีที่ชัวร์แล้วเข้าไป
         request.enabler,
-        request.sub_criteria,
+        target_sub,
         request.sequential_mode
     )
 
@@ -283,6 +293,7 @@ async def start_assessment(request: StartAssessmentRequest, background_tasks: Ba
 
 async def run_assessment_engine_task(record_id: str, tenant: str, year: int, enabler: str, sub_id: str, sequential: bool):
     try:
+        # --- 1. เตรียม Resource (เหมือนเดิม) ---
         vsm = await asyncio.to_thread(
             load_all_vectorstores,
             doc_types=EVIDENCE_DOC_TYPES,
@@ -298,7 +309,6 @@ async def run_assessment_engine_task(record_id: str, tenant: str, year: int, ena
             str(year), 
             enabler
         )
-        
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
         llm = await asyncio.to_thread(create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
@@ -310,23 +320,33 @@ async def run_assessment_engine_task(record_id: str, tenant: str, year: int, ena
             force_sequential=sequential
         )
 
-        # แก้ตรงนี้: ส่ง parameter ถูกต้องตาม constructor
+        # 🟢 แก้จุดที่ 2: Initialize Engine (ลำดับเหมือน CLI)
         engine = SEAMPDCAEngine(
             config=config,
             llm_instance=llm,
             logger_instance=logger,
             doc_type=EVIDENCE_DOC_TYPES,
-            vectorstore_manager=vsm,        # object จริง
-            document_map=doc_map            # dict แยก
+            vectorstore_manager=vsm,
+            document_map=doc_map
         )
 
-        await asyncio.to_thread(engine.run_assessment, sub_id, True, vsm, sequential, record_id)
+        # 🟢 แก้จุดที่ 3: เรียก run_assessment แบบระบุชื่อตัวแปร (Explicit) เพื่อความชัวร์
+        # ใช้ sub_id ที่ส่งมาจากจุดที่ 1 (มั่นใจว่าเป็น 'all' หรือ '3.1')
+        await asyncio.to_thread(
+            engine.run_assessment, 
+            target_sub_id=sub_id, 
+            export=True, 
+            vectorstore_manager=vsm, 
+            sequential=sequential, 
+            record_id=record_id,
+            document_map=doc_map
+        )
 
         if record_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[record_id]
             
     except Exception as e:
-        logger.error(f"Engine Failed: {e}", exc_info=True)
+        logger.error(f"❌ Engine Failed for Record {record_id}: {e}", exc_info=True)
         if record_id in ACTIVE_TASKS:
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = str(e)
