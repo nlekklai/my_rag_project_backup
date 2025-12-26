@@ -74,7 +74,7 @@ LLM_TEMPERATURE: Final[float] = 0.0
 # Embedding & Reranker Models
 # ================================================================
 EMBEDDING_MODEL_NAME: Final[str] = "BAAI/bge-m3"
-RERANKER_MODEL_NAME: Final[str] = "BAAI/bge-reranker-base"
+RERANKER_MODEL_NAME: Final[str] = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-base")
 
 # 🎯 เพิ่มส่วนนี้เข้าไปครับ
 EMBEDDING_MODEL_KWARGS: Final[Dict] = {

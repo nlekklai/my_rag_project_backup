@@ -434,22 +434,25 @@ class VectorStoreManager:
     def _get_chroma_client_base_path(self, tenant: str, year: Optional[int]) -> str:
         """
         Determines the base path for the Chroma PersistentClient.
-        
-        For year-specific document types (like 'evidence'), the base path
-        must point to the YEAR folder, not just the root 'vectorstore'.
+        - Global Docs (document, seam): ชี้ไปที่ root ของ vectorstore
+        - Evidence Docs (KM): ชี้ไปที่โฟลเดอร์ปี (เช่น vectorstore/2568)
         """
-        # ใช้ Path ที่ใหญ่ที่สุดคือ Root Path
+        # ดึง root path ของ tenant (เช่น .../data_store/pea/vectorstore)
         root_path = get_vectorstore_tenant_root_path(tenant) 
         
-        # NOTE: Logic นี้อาจต้องปรับเปลี่ยนเล็กน้อยขึ้นอยู่กับว่า VSM ถูกใช้สำหรับอะไรบ้าง
-        # แต่เพื่อแก้ไขปัญหา KM/2568: ถ้ามีการระบุปี ให้ชี้ไปที่โฟลเดอร์ปีนั้นๆ
+        # ดึงค่า doc_type มา normalize เพื่อเปรียบเทียบ
+        current_dt = _n(getattr(self, 'doc_type', EVIDENCE_DOC_TYPES))
+        evidence_type = _n(EVIDENCE_DOC_TYPES)
+
+        # 🎯 FIX LOGIC:
+        # เฉพาะกรณีที่เป็น Evidence และมีการระบุปีเท่านั้น ถึงจะชี้เข้าโฟลเดอร์ปี
+        if current_dt == evidence_type and year is not None:
+            target_path = os.path.join(root_path, str(year))
+            self.logger.info(f"📂 VSM Path Mode: YEARLY -> {target_path}")
+            return target_path
         
-        if year is not None:
-             # สำหรับ Evidence (ซึ่งเป็น doc_type หลักที่ใช้ปี)
-             # เราจะชี้ Path Client ไปที่ .../vectorstore/2568
-             return os.path.join(root_path, str(year))
-        
-        # สำหรับ Collection ทั่วไป (Global Docs) ที่ไม่ได้ขึ้นกับปี
+        # นอกเหนือจากนั้น (เช่น document, seam) ให้ใช้ Root Path เสมอ
+        self.logger.info(f"📂 VSM Path Mode: GLOBAL -> {root_path}")
         return root_path
     
     # -------------------- START FIXES (3 Functions) --------------------

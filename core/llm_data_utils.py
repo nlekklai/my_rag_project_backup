@@ -458,6 +458,12 @@ def is_rubric_ready(tenant: str) -> bool:
 # =====================================================================
 # 🚀 Ultimate Version: retrieve_context_with_rubric (FIXED & REVISED)
 # =====================================================================
+import time
+import logging
+from typing import Dict, Any, Optional, Set, Union, List
+
+logger = logging.getLogger(__name__)
+
 def retrieve_context_with_rubric(
     vectorstore_manager,
     query: str,
@@ -467,89 +473,95 @@ def retrieve_context_with_rubric(
     tenant: Optional[str] = None,
     year: Optional[Union[int, str]] = None,
     subject: Optional[str] = None,
-    rubric_vectorstore_name: str = "seam",
-    top_k: int = 25, 
-    rubric_top_k: int = 15,
+    rubric_vectorstore_name: str = "seam", 
+    top_k: int = 50,         # จำนวน Chunk ที่ต้องการนำไปวิเคราะห์
+    rubric_top_k: int = 15,  
     strict_filter: bool = True
 ) -> Dict[str, Any]:
     """
-    Full Version: ค้นหา Context โดยบังคับกรองเฉพาะไฟล์ที่ผู้ใช้เลือก (Precision Filtering)
+    Revised Retrieval Logic (Direct vs Global Mode):
+    - Direct Mode: หากระบุ stable_doc_ids จะค้นหา 'เฉพาะ' ภายในไฟล์เหล่านั้น (Strict Filter)
+    - Global Mode: หากไม่ระบุ จะค้นหาจากคลังทั้งหมด (Similarity Search)
     """
     start_time = time.time()
     vsm = vectorstore_manager
     from utils.path_utils import get_doc_type_collection_key
-    
-    # --- 1. กำหนด Collection (ใช้ค่าที่ส่งมาจริง ไม่สลับไป evidence เอง) ---
-    actual_doc_type = doc_type 
-    evidence_collection = get_doc_type_collection_key(actual_doc_type, enabler)
-    logger.info(f"🔎 กำลังค้นหาใน Collection: {evidence_collection} (Target: {actual_doc_type})")
 
-    results = []
+    # --- 1. จัดการ Singleton VSM ให้ตรงตามประเภทเอกสาร ---
+    if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
+        logger.info(f"🔄 Switching VSM doc_type to: {doc_type}")
+        vsm.close()
+        vsm.__init__(tenant=tenant, year=year, doc_type=doc_type, enabler=enabler)
+
+    evidence_collection = get_doc_type_collection_key(doc_type, enabler or "KM")
+    
+    evidence_results = []
     rubric_results = []
     
+    # --- 2. การดึง Rubrics (เกณฑ์มาตรฐาน) ---
     try:
-        chroma = vsm._load_chroma_instance(evidence_collection)
-        if chroma:
-            # ดึงข้อมูลเบื้องต้นมา 100 chunks เพื่อนำมาเลือกเฉพาะไฟล์ที่ต้องการ
-            raw_docs = chroma.similarity_search(query, k=100) 
-            
-            # --- 2. Precision Filtering (ด่านกักไฟล์มั่ว) ---
-            if stable_doc_ids:
-                ids_list = [str(i).strip() for i in stable_doc_ids if i]
-                # ดึง Mapping เพื่อหาชื่อไฟล์ (ใช้ชื่อไฟล์เป็นตัวช่วยกรองที่แม่นยำที่สุด)
-                mapping = getattr(vsm, 'doc_id_mapping', getattr(vsm, '_doc_id_mapping', {}))
-                selected_fnames = [str(mapping[i]['filename']).lower() for i in ids_list if i in mapping]
-                
-                filtered_docs = []
-                for d in raw_docs:
-                    m = d.metadata or {}
-                    m_id = str(m.get('stable_doc_uuid') or m.get('doc_id') or "").strip()
-                    m_file = str(m.get('source_filename') or m.get('source') or "").lower()
-                    
-                    # ตรวจสอบ: ID ตรง หรือ ชื่อไฟล์ตรง (แบบ Partial Match)
-                    id_match = m_id in ids_list
-                    file_match = any(fname in m_file for fname in selected_fnames) if selected_fnames else False
-                    
-                    if id_match or file_match:
-                        filtered_docs.append(d)
-                
-                # บังคับใช้เฉพาะที่ผ่านการกรองแล้วเท่านั้น
-                if filtered_docs:
-                    raw_docs = filtered_docs
-                    logger.info(f"🎯 Precision Match: พบ {len(raw_docs)} chunks ในไฟล์ที่เลือกจริง")
-                else:
-                    logger.warning("⚠️ ไม่พบ chunks ที่ตรงกับไฟล์ที่เลือกใน 100 อันดับแรกของ Vector Search")
-                    # ในกรณีหาไม่เจอเลย และ strict_filter เป็น False ถึงจะยอมให้ใช้ raw_docs เดิม
-                    if strict_filter:
-                        raw_docs = []
+        rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
+        if rubric_chroma:
+            target_manual = f"SE-AM_{enabler}" if enabler else "SE-AM Manual"
+            rubric_query = f"เกณฑ์ SE-AM ข้อ {subject or ''}: {query}"
+            r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
+            for rd in r_docs:
+                rubric_results.append({"text": rd.page_content, "metadata": rd.metadata, "is_rubric": True})
+    except Exception as e:
+        logger.warning(f"⚠️ Rubric Retrieval Error: {e}")
 
-            # --- 3. จัดรูปแบบผลลัพธ์เพื่อส่งให้ AI ---
-            for d in raw_docs[:top_k]:
+    # --- 3. การดึง Evidence (หัวใจของ Logic ใหม่) ---
+    try:
+        evidence_chroma = vsm._load_chroma_instance(evidence_collection)
+        if evidence_chroma:
+            
+            # ตรวจสอบว่า User เลือกไฟล์มาหรือไม่
+            if stable_doc_ids:
+                # 🎯 [DIRECT MODE] ค้นหาเจาะจงในไฟล์ที่เลือก
+                ids_list = [str(i).strip().lower() for i in stable_doc_ids if i]
+                
+                # สร้าง Metadata Filter (Where Clause) สำหรับ ChromaDB
+                if len(ids_list) == 1:
+                    where_filter = {"stable_doc_uuid": ids_list[0]}
+                else:
+                    where_filter = {"stable_doc_uuid": {"$in": ids_list}}
+                
+                logger.info(f"🎯 Direct Mode: Searching only within File IDs: {ids_list}")
+                
+                # สั่ง Chroma ค้นหาโดยบังคับ Filter ตั้งแต่ต้นทาง
+                raw_evidence = evidence_chroma.similarity_search(
+                    query, 
+                    k=top_k, 
+                    filter=where_filter
+                )
+            else:
+                # 🌐 [GLOBAL MODE] ค้นหาแบบเหวี่ยงแห (กรณีไม่ระบุไฟล์)
+                logger.info("🌐 Global Mode: Searching across all documents in collection.")
+                raw_evidence = evidence_chroma.similarity_search(query, k=top_k)
+
+            # แปลงผลลัพธ์เป็น Format ที่พร้อมใช้งาน
+            for d in raw_evidence:
                 m = d.metadata or {}
-                results.append({
+                evidence_results.append({
                     "text": d.page_content,
-                    "source_filename": m.get("source_filename") or m.get("source") or "Document",
+                    "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
                     "page_label": str(m.get("page_label") or m.get("page") or "N/A"),
                     "doc_id": m.get("stable_doc_uuid") or m.get("doc_id"),
-                    "rerank_score": 1.0,
-                    "pdca_tag": m.get("pdca_tag") or "Content"
+                    "pdca_tag": m.get("pdca_tag") or "Content",
+                    "is_evidence": True
                 })
+            
+            logger.info(f"✅ Success: Retrieved {len(evidence_results)} chunks for analysis.")
+
+            # Fallback กรณี Direct Mode แล้วหาไม่เจอจริงๆ (อาจจะเกิดจาก UUID ใน DB ผิด format)
+            if stable_doc_ids and not evidence_results:
+                logger.error(f"❌ Strict Error: No content found for IDs {ids_list}. Please check metadata.")
 
     except Exception as e:
-        logger.error(f"❌ Retrieval Error: {e}")
+        logger.error(f"❌ Evidence Retrieval Error: {e}", exc_info=True)
 
-    # --- 4. ดึงเกณฑ์ (Rubric) มาประกอบ ---
-    try:
-        rubric_docs = vsm.retrieve(query=query, collection_name=rubric_vectorstore_name, top_k=rubric_top_k)
-        for rd in rubric_docs:
-            rubric_results.append({"text": rd.page_content, "metadata": rd.metadata})
-    except Exception as re:
-        logger.warning(f"⚠️ ไม่สามารถดึง Rubric ได้: {re}")
-
-    logger.info(f"✅ สำเร็จ: ส่ง {len(results)} chunks เข้าสู่กระบวนการวิเคราะห์")
-    
     return {
-        "top_evidences": results,
+        "top_evidences": evidence_results,
         "rubric_context": rubric_results,
         "retrieval_time": round(time.time() - start_time, 3)
     }

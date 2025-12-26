@@ -632,8 +632,17 @@ class SEAMPDCAEngine:
             tenant=self.config.tenant, year=self.config.year, enabler=self.enabler_id
         )
         self.contextual_rules_map = self._load_contextual_rules_map()
-        self.evidence_map = self._load_evidence_map()
         self.temp_map_for_save = {}
+
+        # ✅ [FIX] โหลด evidence_map เฉพาะเมื่อ doc_type เป็น evidence เท่านั้น
+        clean_dt = str(self.doc_type).strip().lower()
+        if clean_dt == EVIDENCE_DOC_TYPES.lower():
+            self.evidence_map = self._load_evidence_map()
+            self.logger.info(f"📊 Evidence mode: Loaded {len(self.evidence_map)} mapping keys.")
+        else:
+            self.evidence_map = {}
+            self.logger.info(f"📄 Document mode: Skipping heavy evidence mapping load (Speed Optimized).")
+        
 
         # =======================================================
         # 4. Document Map Loading (Dynamic Logic)
