@@ -171,97 +171,88 @@ def retrieve_context_for_endpoint(
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    k_to_retrieve: int = 25,
-    k_to_rerank: int = 12,
+    k_to_retrieve: int = 150, # 🚀 ปรับเพิ่มเพื่อความครอบคลุม
+    k_to_rerank: int = 30,    # 🚀 ปรับเพิ่มเพื่อให้ AI เห็นบริบทมากขึ้น
     strict_filter: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
-    """
-    ดึง Context พร้อมระบบ Metadata Guardrail เวอร์ชันปรับปรุง
-    - แก้ไขปัญหา Fallback ไปดึงไฟล์อื่นเมื่อหาไฟล์ที่เลือกไม่เจอ
-    - แยกความเข้มงวดระหว่าง Search ทั่วไป กับการเลือกไฟล์วิเคราะห์
-    """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # 1. Normalize doc_type & Resolve collection
+    # 1. Resolve collection
     clean_doc_type = str(doc_type or "document").strip().lower()
     collection_name = get_doc_type_collection_key(doc_type=clean_doc_type, enabler=enabler)
-
-    logger.info(f"Retrieval params: doc_type={clean_doc_type}, year={year}, enabler={enabler}, IDs={stable_doc_ids}")
     
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
-        logger.error(f"❌ Collection not found: {collection_name}")
         return {"top_evidences": [], "aggregated_context": "ไม่พบฐานข้อมูล", "retrieval_time": 0}
 
-    # 2. Create where_filter (ใช้ Logic ใหม่ที่แยก ID ออกจาก Year)
+    # 2. Create where_filter
     where_filter = _create_where_filter(
-        stable_doc_ids=stable_doc_ids, 
-        subject=subject, 
-        sub_topic=sub_topic,
-        year=year
+        stable_doc_ids=stable_doc_ids, subject=subject, sub_topic=sub_topic, year=year
     )
-    logger.info(f"🔍 Filter Applied: {where_filter}")
 
     final_chunks: List[LcDocument] = []
+    seen_contents: Set[str] = set() # ป้องกัน Chunk ซ้ำ
 
     # =====================================================
-    # CASE A: STRICT VECTOR SEARCH (FAST TRACK)
-    # =====================================================
+    # 🎯 NEW: ANCHOR RETRIEVAL (ดึงหน้าสารบัญ/โครงสร้าง)
+    # =====================-================================
     if stable_doc_ids:
-        logger.info(f"🎯 Using Strict Vector Search (Fast Track)")
-        # ใช้ query="*" หรือ query ว่างเพื่อให้ดึงเนื้อหาจาก ID ที่ระบุได้ครบถ้วน
-        search_query = query if (query and query != "*" and len(query) > 2) else ""
-        docs = chroma.similarity_search(
-            search_query, 
-            k=k_to_retrieve, 
-            filter=where_filter
-        )
-        final_chunks = [d for d in docs if d.page_content.strip()]
+        logger.info(f"⚓ Fetching Anchor Chunks for structure...")
+        # ดึง 5 Chunks แรกของแต่ละไฟล์ (ส่วนใหญ่คือหน้า 1-5)
+        anchors = chroma.get(where=where_filter, limit=8) 
+        if anchors and anchors.get('documents'):
+            for i in range(len(anchors['documents'])):
+                content = anchors['documents'][i]
+                if content not in seen_contents:
+                    final_chunks.append(LcDocument(
+                        page_content=content,
+                        metadata={**anchors['metadatas'][i], "score": 1.0, "is_anchor": True}
+                    ))
+                    seen_contents.add(content)
 
     # =====================================================
-    # CASE B: HYBRID RETRIEVAL (ใช้เมื่อไม่ได้ระบุ ID หรือ Case พิเศษ)
+    # CASE A/B: SEMANTIC & HYBRID SEARCH
     # =====================================================
-    if not final_chunks and not stable_doc_ids:
-        retriever = None
-        if USE_HYBRID_SEARCH:
-            try:
-                retriever = vsm.create_hybrid_retriever(collection_name=collection_name)
-                logger.info("🏗️ Hybrid Retriever activated")
-            except Exception as e:
-                logger.warning(f"⚠️ Hybrid initialization failed: {e}")
+    search_query = query if (query and query != "*" and len(query) > 2) else ""
+    
+    # ดึงข้อมูลตามความหมาย
+    if search_query:
+        docs = chroma.similarity_search(search_query, k=k_to_retrieve, filter=where_filter)
+        for d in docs:
+            if d.page_content not in seen_contents:
+                final_chunks.append(d)
+                seen_contents.add(d.page_content)
+    elif not final_chunks: # ถ้าไม่มี query และยังไม่มี anchor ให้ดึงแบบกวาด
+        docs = chroma.similarity_search("*", k=k_to_retrieve, filter=where_filter)
+        final_chunks.extend(docs)
 
-        if not retriever:
-            retriever = vsm.get_retriever(collection_name)
-
-        docs = retriever.invoke(query, config={"search_kwargs": {"k": k_to_retrieve, "filter": where_filter}})
-        final_chunks = docs
-
-    # 🎯 Double Check Guardrail (ป้องกันกรณี Hybrid หลุด Filter)
-    if stable_doc_ids and final_chunks:
+    # 🎯 Double Check Guardrail (Filter ID)
+    if stable_doc_ids:
         target_ids = {str(i).lower() for i in stable_doc_ids}
         final_chunks = [
             d for d in final_chunks 
             if str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")).lower() in target_ids
         ]
-        # 🚩 หมายเหตุ: หากตรงนี้เป็น 0 chunks ระบบจะตอบว่าไม่พบข้อมูล 
-        # ซึ่งถูกต้องแล้ว เพราะดีกว่าไปเอาไฟล์อื่นมาตอบมั่วๆ
 
     # =====================================================
-    # 3. RERANKING
+    # 3. RERANKING (คัดเอาตัวท็อปตามจำนวน K ที่ส่งมาจาก Router)
     # =====================================================
     reranker = get_global_reranker()
-    if reranker and final_chunks and query and query != "*":
+    if reranker and final_chunks and search_query:
         try:
             top_n = min(len(final_chunks), k_to_rerank)
-            reranked = reranker.compress_documents(documents=final_chunks, query=query, top_n=top_n)
+            reranked = reranker.compress_documents(documents=final_chunks, query=search_query, top_n=top_n)
             final_chunks = [r.document if hasattr(r, "document") else r for r in reranked]
             for i, res in enumerate(reranked):
                 final_chunks[i].metadata["rerank_score"] = getattr(res, "relevance_score", 0)
         except Exception as e:
             logger.error(f"⚠️ Rerank failed: {e}")
             final_chunks = final_chunks[:k_to_rerank]
+    else:
+        # ถ้าไม่มี reranker ให้ตัดตามลำดับคะแนนเดิม
+        final_chunks = final_chunks[:k_to_rerank]
 
     # 4. Response Build
     top_evidences = []
@@ -271,26 +262,26 @@ def retrieve_context_for_endpoint(
         md = doc.metadata or {}
         text = doc.page_content.strip()
         s_uuid = md.get("stable_doc_uuid") or md.get("doc_id")
-        page_val = md.get("page_label") or md.get("page_number") or md.get("page") or "N/A"
+        p_val = md.get("page_label") or md.get("page_number") or md.get("page") or "N/A"
         
         top_evidences.append({
             "doc_id": s_uuid,
             "chunk_uuid": md.get("chunk_uuid"),
             "source": md.get("source") or md.get("file_name") or "Unknown",
             "text": text,
-            "page": str(page_val), # 🟢 เพิ่มบรรทัดนี้เพื่อให้ส่งเลขหน้าไปที่ Router ได้
+            "page": str(p_val),
             "score": md.get("rerank_score") or md.get("score") or 0.0,
             "pdca_tag": md.get("pdca_tag", "Other")
         })
         source_name = md.get('source') or md.get('file_name') or 'Unknown'
-        aggregated_parts.append(f"[ไฟล์: {source_name}] {text}")
+        aggregated_parts.append(f"[ไฟล์: {source_name}, หน้า: {p_val}] {text}")
 
     retrieval_time = round(time.time() - start_time, 3)
     logger.info(f"🏁 Finished: {len(top_evidences)} chunks in {retrieval_time}s")
 
     return {
         "top_evidences": top_evidences,
-        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้องในไฟล์ที่เลือก",
+        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง",
         "retrieval_time": retrieval_time,
         "used_chunk_uuids": [e["chunk_uuid"] for e in top_evidences if e.get("chunk_uuid")]
     }

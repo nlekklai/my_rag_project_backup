@@ -110,7 +110,7 @@ RETRIEVAL_TOP_K: Final[int] = int(os.environ.get("RETRIEVAL_TOP_K", "150"))
 # แนะนำ: Mac=12-15 (ประหยัด RAM), Server=25-35 (เน้นความละเอียด)
 ANALYSIS_FINAL_K: Final[int] = int(os.environ.get("ANALYSIS_FINAL_K", "15"))
 # 🎯 จำนวน Chunk สุดท้ายสำหรับคำถามทั่วไป (General QA)
-QA_FINAL_K: Final[int] = int(os.environ.get("QA_FINAL_K", "8"))
+QA_FINAL_K: Final[int] = int(os.environ.get("QA_FINAL_K", "15"))
 
 # ส่วนคงเดิมสำหรับ General QA
 FINAL_K_RERANKED: Final[int] = 15

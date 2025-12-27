@@ -19,7 +19,7 @@ from core.history_utils import async_save_message, get_recent_history
 from core.llm_data_utils import retrieve_context_for_endpoint, retrieve_context_with_rubric
 from core.vectorstore import get_vectorstore_manager
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
-from core.llm_guardrails import enforce_thai_primary_language, detect_intent
+from core.llm_guardrails import enforce_thai_primary_language, detect_intent, build_prompt
 from config.global_vars import (
     EVIDENCE_DOC_TYPES,
     DEFAULT_ENABLER,
@@ -101,6 +101,7 @@ def load_all_chunks_by_doc_ids(
     docs = chroma.similarity_search(query="*", k=9999, filter=where_filter)
     return [d for d in docs if getattr(d, "page_content", "").strip()]
 
+
 # =====================================================================
 # 1. /query — Smart General RAG with Intent Detection & Auto-Routing
 # =====================================================================
@@ -120,10 +121,6 @@ async def query_llm(
     conv_id = conversation_id or str(uuid.uuid4())
     effective_year = year or str(current_user.year)
     
-    # ดึงค่า Config จาก .env
-    from config.global_vars import QA_FINAL_K, DEFAULT_DOC_TYPES, DEFAULT_ENABLER
-    from core.llm_guardrails import build_prompt # นำเข้า Prompt Builder
-
     logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
     # 🎯 1. ตรวจสอบประวัติและเจตนา (Intent Detection)
@@ -143,17 +140,11 @@ async def query_llm(
     analysis_keywords = ["pdca", "comply", "compliance", "เกณฑ์", "ผ่านระดับ", "level", "จุดแข็ง", "ช่องว่าง", "ประเมิน", "สอดคล้อง"]
     is_forcing_analysis = any(kw in question.lower() for kw in analysis_keywords) or subject is not None
     
-    # --- [BRANCH 1] Greeting & Capabilities (Revised: Bypass Retrieval) ---
+    # --- [BRANCH 1] Greeting & Capabilities (Bypass Retrieval) ---
     if intent.get("is_greeting") or intent.get("is_capabilities"):
-        logger.info(f"🎭 Route -> Self-Introduction (Bypass Retrieval)")
-        
-        # ใช้ build_prompt โดยส่ง context เป็นค่าว่าง เพื่อให้ AI แนะนำตัวจากบทบาท
+        logger.info(f"🎭 Route -> Self-Introduction")
         full_prompt = build_prompt(context="", question=question, intent=intent, user_context=history)
-        
-        messages = [
-            {"role": "user", "content": full_prompt}
-        ]
-        
+        messages = [{"role": "user", "content": full_prompt}]
         raw = await asyncio.to_thread(llm.invoke, messages)
         answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
         
@@ -186,7 +177,9 @@ async def query_llm(
                 return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
     # --- [BRANCH 4] RAG Flow (General QA & Summary) ---
-    logger.info(f"📖 Executing: General RAG Flow (K={QA_FINAL_K})")
+    # 🎯 ปลดล็อกค่า K ให้ทำงานตามสเปก Server
+    logger.info(f"📖 Executing: General RAG Flow (K_Final={QA_FINAL_K}, K_Retrieval={RETRIEVAL_TOP_K})")
+    
     used_doc_types = doc_types or DEFAULT_DOC_TYPES
     used_enabler = enabler or DEFAULT_ENABLER
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
@@ -194,12 +187,21 @@ async def query_llm(
 
     all_chunks = []
     for dt in used_doc_types:
+        # 🚀 แก้ไขจุดเรียก: ส่งค่า K จาก Global Vars เข้าไปเพื่อให้ Retrieval ดึงข้อมูลมาเพียงพอ
         res = await asyncio.to_thread(
             retrieve_context_for_endpoint,
-            vectorstore_manager=vsm, query=question, doc_type=dt,
-            enabler=used_enabler, stable_doc_ids=stable_doc_ids,
-            tenant=current_user.tenant, year=effective_year, subject=subject,
+            vectorstore_manager=vsm, 
+            query=question, 
+            doc_type=dt,
+            enabler=used_enabler, 
+            stable_doc_ids=stable_doc_ids,
+            tenant=current_user.tenant, 
+            year=effective_year, 
+            subject=subject,
+            k_to_retrieve=RETRIEVAL_TOP_K, # 🎯 ดึงจาก DB ตาม .env (เช่น 500)
+            k_to_rerank=QA_FINAL_K         # 🎯 คัดตัวท็อปตาม .env (เช่น 30)
         )
+        
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
                 f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
@@ -219,6 +221,7 @@ async def query_llm(
                     )
                 )
 
+    # จัดลำดับความสำคัญและตัดเหลือ K สุดท้าย
     all_chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
     final_chunks = all_chunks[:QA_FINAL_K]
 
@@ -226,24 +229,19 @@ async def query_llm(
         answer = "ขออภัยครับ ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกครับ"
         return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # Context with Metadata for AI
+    # รวม Context และเตรียมคำตอบ
     context_text = "\n\n".join([
         f"[ไฟล์: {c.metadata['source']}, หน้า: {c.metadata['page']}]\n{c.page_content}" 
         for c in final_chunks
     ])
 
-    # 🎯 ใช้ build_prompt จาก Guardrails เพื่อคุมคุณภาพคำตอบ
     full_prompt = build_prompt(context=context_text, question=question, intent=intent, user_context=history)
-
-    messages = [
-        {"role": "user", "content": full_prompt}
-    ]
+    messages = [{"role": "user", "content": full_prompt}]
     
-    # Inference
     raw = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # บันทึกประวัติการสนทนา
+    # บันทึกประวัติ
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
@@ -260,6 +258,7 @@ async def query_llm(
     ]
 
     return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)
+
 
 # =====================================================================
 # 2. /compare — Document Comparison (Revised for Llama 3:70B)
@@ -436,7 +435,8 @@ async def analysis_llm(
             tenant=current_user.tenant,
             year=effective_year,
             subject=subject,
-            top_k=RETRIEVAL_TOP_K 
+            top_k=RETRIEVAL_TOP_K,
+            k_to_rerank=QA_FINAL_K
         )
         
         # เก็บเนื้อหาจากคลังความรู้ (SE-AM Manual/Guideline)
