@@ -459,20 +459,20 @@ def retrieve_context_with_rubric(
     year: Optional[Union[int, str]] = None,
     subject: Optional[str] = None,
     rubric_vectorstore_name: str = "seam", 
-    top_k: int = 50,         # จำนวน Chunk ที่ต้องการนำไปวิเคราะห์
+    top_k: int = 50,         # จำนวนตั้งต้นที่ดึงจาก Vector Store
     rubric_top_k: int = 15,  
-    strict_filter: bool = True
+    strict_filter: bool = True,
+    k_to_rerank: int = 30    # ✅ FIX: เพิ่ม Parameter นี้เพื่อรองรับค่าจาก Router
 ) -> Dict[str, Any]:
     """
-    Revised Retrieval Logic (Direct vs Global Mode):
-    - Direct Mode: หากระบุ stable_doc_ids จะค้นหา 'เฉพาะ' ภายในไฟล์เหล่านั้น (Strict Filter)
-    - Global Mode: หากไม่ระบุ จะค้นหาจากคลังทั้งหมด (Similarity Search)
+    เวอร์ชันสมบูรณ์: รองรับ Direct/Global Mode, Anchor Chunks และ Reranking
     """
     start_time = time.time()
     vsm = vectorstore_manager
     from utils.path_utils import get_doc_type_collection_key
+    from core.vectorstore import get_global_reranker # นำเข้า Reranker
 
-    # --- 1. จัดการ Singleton VSM ให้ตรงตามประเภทเอกสาร ---
+    # --- 1. ตรวจสอบและสลับ Collection ให้ตรงประเภทเอกสาร ---
     if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
         logger.info(f"🔄 Switching VSM doc_type to: {doc_type}")
         vsm.close()
@@ -482,51 +482,97 @@ def retrieve_context_with_rubric(
     
     evidence_results = []
     rubric_results = []
-    
-    # --- 2. การดึง Rubrics (เกณฑ์มาตรฐาน) ---
+    seen_contents = set()
+
+    # --- 2. การดึง Rubrics (คู่มือเกณฑ์มาตรฐาน SE-AM) ---
     try:
         rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
         if rubric_chroma:
-            # target_manual = f"SE-AM_{enabler}" if enabler else "SE-AM Manual"
-            target_manual = f"SE-AM_{enabler}.pdf" if enabler else "Seam Manual 2567.pdf"
-            rubric_query = f"เกณฑ์ SE-AM ข้อ {subject or ''}: {query}"
+            # สร้าง Query สำหรับค้นหาเกณฑ์ที่เกี่ยวข้อง
+            rubric_query = f"มาตรฐาน SE-AM ด้าน {enabler} ข้อ {subject or ''}: {query}"
             r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
             for rd in r_docs:
-                rubric_results.append({"text": rd.page_content, "metadata": rd.metadata, "is_rubric": True})
+                rubric_results.append({
+                    "text": rd.page_content, 
+                    "metadata": rd.metadata, 
+                    "is_rubric": True
+                })
     except Exception as e:
         logger.warning(f"⚠️ Rubric Retrieval Error: {e}")
 
-    # --- 3. การดึง Evidence (หัวใจของ Logic ใหม่) ---
+    # --- 3. การดึง Evidence (หลักฐานการดำเนินงาน) ---
     try:
         evidence_chroma = vsm._load_chroma_instance(evidence_collection)
-        if evidence_chroma:
-            
-            # ตรวจสอบว่า User เลือกไฟล์มาหรือไม่
-            if stable_doc_ids:
-                # 🎯 [DIRECT MODE] ค้นหาเจาะจงในไฟล์ที่เลือก
-                ids_list = [str(i).strip().lower() for i in stable_doc_ids if i]
-                
-                # สร้าง Metadata Filter (Where Clause) สำหรับ ChromaDB
-                if len(ids_list) == 1:
-                    where_filter = {"stable_doc_uuid": ids_list[0]}
-                else:
-                    where_filter = {"stable_doc_uuid": {"$in": ids_list}}
-                
-                logger.info(f"🎯 Direct Mode: Searching only within File IDs: {ids_list}")
-                
-                # สั่ง Chroma ค้นหาโดยบังคับ Filter ตั้งแต่ต้นทาง
-                raw_evidence = evidence_chroma.similarity_search(
-                    query, 
-                    k=top_k, 
-                    filter=where_filter
-                )
-            else:
-                # 🌐 [GLOBAL MODE] ค้นหาแบบเหวี่ยงแห (กรณีไม่ระบุไฟล์)
-                logger.info("🌐 Global Mode: Searching across all documents in collection.")
-                raw_evidence = evidence_chroma.similarity_search(query, k=top_k)
+        if not evidence_chroma:
+            return {"top_evidences": [], "rubric_context": rubric_results, "retrieval_time": 0}
 
-            # แปลงผลลัพธ์เป็น Format ที่พร้อมใช้งาน
-            for d in raw_evidence:
+        raw_evidence_chunks = []
+        where_filter = None
+
+        # 🎯 [DIRECT MODE] หากระบุไฟล์ ให้ดึง Anchor Chunks (หน้า 1-5) มาก่อนเสมอ
+        if stable_doc_ids:
+            ids_list = [str(i).strip().lower() for i in stable_doc_ids if i]
+            if len(ids_list) == 1:
+                where_filter = {"stable_doc_uuid": ids_list[0]}
+            else:
+                where_filter = {"stable_doc_uuid": {"$in": ids_list}}
+            
+            # ⚓ Fetch Anchor Chunks (หน้าแรกๆ ของไฟล์ที่เลือก)
+            logger.info(f"⚓ Fetching Anchor Chunks for IDs: {ids_list}")
+            anchors = evidence_chroma.get(where=where_filter, limit=10)
+            if anchors and anchors.get('documents'):
+                for i in range(len(anchors['documents'])):
+                    content = anchors['documents'][i]
+                    if content not in seen_contents:
+                        m = anchors['metadatas'][i]
+                        raw_evidence_chunks.append(Document(
+                            page_content=content,
+                            metadata={**m, "rerank_score": 0.99, "is_anchor": True}
+                        ))
+                        seen_contents.add(content)
+
+        # 🌐 Search Chunks ตามปกติ
+        search_results = evidence_chroma.similarity_search(
+            query, 
+            k=top_k, 
+            filter=where_filter
+        )
+        for d in search_results:
+            if d.page_content not in seen_contents:
+                raw_evidence_chunks.append(d)
+                seen_contents.add(d.page_content)
+
+        # --- 4. RERANKING (หัวใจของความแม่นยำ) ---
+        reranker = get_global_reranker()
+        if reranker and raw_evidence_chunks and query:
+            try:
+                top_n = min(len(raw_evidence_chunks), k_to_rerank)
+                reranked_docs = reranker.compress_documents(
+                    documents=raw_evidence_chunks, 
+                    query=query, 
+                    top_n=top_n
+                )
+                # จัดรูปแบบหลัง Rerank
+                for r in reranked_docs:
+                    doc = r.document if hasattr(r, "document") else r
+                    m = doc.metadata or {}
+                    evidence_results.append({
+                        "text": doc.page_content,
+                        "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
+                        "page_label": str(m.get("page_label") or m.get("page") or "N/A"),
+                        "doc_id": m.get("stable_doc_uuid") or m.get("doc_id"),
+                        "pdca_tag": m.get("pdca_tag") or "Content",
+                        "rerank_score": getattr(r, "relevance_score", 0.0),
+                        "is_evidence": True
+                    })
+            except Exception as e:
+                logger.error(f"⚠️ Rerank failed: {e}")
+                # Fallback: ตัดตามลำดับปกติ
+                raw_evidence_chunks = raw_evidence_chunks[:k_to_rerank]
+        
+        # กรณีไม่มี Reranker หรือ Rerank พัง ให้แปลงข้อมูลปกติ
+        if not evidence_results:
+            for d in raw_evidence_chunks[:k_to_rerank]:
                 m = d.metadata or {}
                 evidence_results.append({
                     "text": d.page_content,
@@ -534,22 +580,20 @@ def retrieve_context_with_rubric(
                     "page_label": str(m.get("page_label") or m.get("page") or "N/A"),
                     "doc_id": m.get("stable_doc_uuid") or m.get("doc_id"),
                     "pdca_tag": m.get("pdca_tag") or "Content",
+                    "rerank_score": 0.0,
                     "is_evidence": True
                 })
-            
-            logger.info(f"✅ Success: Retrieved {len(evidence_results)} chunks for analysis.")
-
-            # Fallback กรณี Direct Mode แล้วหาไม่เจอจริงๆ (อาจจะเกิดจาก UUID ใน DB ผิด format)
-            if stable_doc_ids and not evidence_results:
-                logger.error(f"❌ Strict Error: No content found for IDs {ids_list}. Please check metadata.")
 
     except Exception as e:
         logger.error(f"❌ Evidence Retrieval Error: {e}", exc_info=True)
 
+    retrieval_time = round(time.time() - start_time, 3)
+    logger.info(f"✅ Success: Retrieved {len(evidence_results)} evidence chunks in {retrieval_time}s")
+
     return {
         "top_evidences": evidence_results,
         "rubric_context": rubric_results,
-        "retrieval_time": round(time.time() - start_time, 3)
+        "retrieval_time": retrieval_time
     }
 
 # ========================
