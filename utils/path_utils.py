@@ -110,22 +110,19 @@ def get_mapping_file_path(
     )
 
 
-def get_evidence_mapping_file_path(tenant: str, year: Union[int, str], enabler: str) -> str:
-    # 🟢 FIX: สร้าง Path โดยตรง โดยใช้ EVIDENCE_MAPPING_FILENAME_SUFFIX
-    #        (แทนการเรียก get_mapping_file_path ที่สร้างชื่อไฟล์ผิด)
-    
-    # 1. ได้ Root Path ของ mapping/...
+def get_evidence_mapping_file_path(tenant: str, year: Optional[Union[int, str]], enabler: str) -> str:
+    # 1. ได้ Root Path ของ mapping/
     base = get_mapping_tenant_root_path(tenant)
     
-    # 2. สร้างชื่อไฟล์ที่ถูกต้อง: pea_2568_km_evidence_mapping.json
-    filename = f"{_n(tenant)}_{year}_{_n(enabler)}{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
+    # 2. เตรียมชื่อไฟล์: ถ้าไม่มีปี ก็ไม่ต้องใส่ปีในชื่อไฟล์
+    year_prefix = f"{year}_" if year else ""
+    filename = f"{_n(tenant)}_{year_prefix}{_n(enabler)}{EVIDENCE_MAPPING_FILENAME_SUFFIX}"
     
-    # 3. รวม Path: .../mapping/2568/pea_2568_km_evidence_mapping.json
-    return os.path.join(
-        base,
-        str(year),
-        filename
-    )
+    # 3. รวม Path: ถ้าไม่มีปี ให้เอาวางไว้ที่ base เลย (data_store/pea/mapping/...)
+    if year:
+        return os.path.join(base, str(year), filename)
+    else:
+        return os.path.join(base, filename)
 
 def get_mapping_tenant_root_path(tenant: str) -> str:
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "mapping")

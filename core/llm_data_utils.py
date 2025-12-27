@@ -458,11 +458,6 @@ def is_rubric_ready(tenant: str) -> bool:
 # =====================================================================
 # 🚀 Ultimate Version: retrieve_context_with_rubric (FIXED & REVISED)
 # =====================================================================
-import time
-import logging
-from typing import Dict, Any, Optional, Set, Union, List
-
-logger = logging.getLogger(__name__)
 
 def retrieve_context_with_rubric(
     vectorstore_manager,
@@ -502,7 +497,8 @@ def retrieve_context_with_rubric(
     try:
         rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
         if rubric_chroma:
-            target_manual = f"SE-AM_{enabler}" if enabler else "SE-AM Manual"
+            # target_manual = f"SE-AM_{enabler}" if enabler else "SE-AM Manual"
+            target_manual = f"SE-AM_{enabler}.pdf" if enabler else "Seam Manual 2567.pdf"
             rubric_query = f"เกณฑ์ SE-AM ข้อ {subject or ''}: {query}"
             r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
             for rd in r_docs:

@@ -578,20 +578,20 @@ class SEAMPDCAEngine:
         # =======================================================
         # 1. Logger & ActionPlan Setup
         # =======================================================
+        # ดึงค่า doc_type มาเช็คก่อนเพื่อตั้งชื่อ Logger
+        clean_dt = str(doc_type or getattr(config, 'doc_type', EVIDENCE_DOC_TYPES)).strip().lower()
+        log_year = config.year if clean_dt == EVIDENCE_DOC_TYPES.lower() else "general"
+
         if logger_instance is not None:
             self.logger = logger_instance
         else:
+            # เปลี่ยน config.year เป็น log_year เพื่อความชัดเจน
             self.logger = logging.getLogger(__name__).getChild(
-                f"Engine|{config.enabler}|{config.tenant}/{config.year}"
+                f"Engine|{config.enabler}|{config.tenant}/{log_year}"
             )
-        
-        self.ActionPlanActions = kwargs.get('ActionPlanActions', globals().get('ActionPlanActions'))
-        if self.ActionPlanActions is None:
-            self.logger.warning("ActionPlanActions not found. Action planning features may be limited.")
-        else:
-            self.logger.info("ActionPlanActions successfully linked to Engine.")
 
-        self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{config.year})")
+        # ปรับ Log ตอนเริ่มต้นด้วย
+        self.logger.info(f"Initializing SEAMPDCAEngine for {config.enabler} ({config.tenant}/{log_year})")
 
         # =======================================================
         # 2. Core Configuration & Safety First
@@ -626,23 +626,27 @@ class SEAMPDCAEngine:
         self.MAX_EVI_STR_CAP: float = MAX_EVI_STR_CAP
 
         # =======================================================
-        # 3. Persistent Evidence Mapping
+        # 3. Persistent Evidence Mapping (ฉบับปรับปรุง)
         # =======================================================
-        self.evidence_map_path = evidence_map_path or get_evidence_mapping_file_path(
-            tenant=self.config.tenant, year=self.config.year, enabler=self.enabler_id
-        )
-        self.contextual_rules_map = self._load_contextual_rules_map()
-        self.temp_map_for_save = {}
-
-        # ✅ [FIX] โหลด evidence_map เฉพาะเมื่อ doc_type เป็น evidence เท่านั้น
         clean_dt = str(self.doc_type).strip().lower()
+        self.evidence_map = {}
+        self.evidence_map_path = None # ตั้งค่า Default เป็น None ไว้ก่อน
+
         if clean_dt == EVIDENCE_DOC_TYPES.lower():
+            # 🎯 สร้าง Path เฉพาะเมื่อต้องใช้งาน Evidence Mode เท่านั้น
+            self.evidence_map_path = evidence_map_path or get_evidence_mapping_file_path(
+                tenant=self.config.tenant, 
+                year=self.config.year, 
+                enabler=self.enabler_id
+            )
             self.evidence_map = self._load_evidence_map()
             self.logger.info(f"📊 Evidence mode: Loaded {len(self.evidence_map)} mapping keys.")
         else:
-            self.evidence_map = {}
+            # 🎯 โหมด Document จะไม่เรียกฟังก์ชันที่ต้องมุดลงไปใน folder ปี
             self.logger.info(f"📄 Document mode: Skipping heavy evidence mapping load (Speed Optimized).")
-        
+
+        self.contextual_rules_map = self._load_contextual_rules_map()
+        self.temp_map_for_save = {}
 
         # =======================================================
         # 4. Document Map Loading (Dynamic Logic)
@@ -713,63 +717,64 @@ class SEAMPDCAEngine:
 
     def _initialize_vsm_if_none(self):
         """
-        Initializes VectorStoreManager if self.vectorstore_manager is None.
-        Handles multi-tenant/multi-year vector store loading with robust case handling.
+        Initializes VectorStoreManager with Smart Year Selection.
+        - If Evidence: Priority 1 = Specific Year, Priority 2 = Root Fallback.
+        - If Document: Priority 1 = Root (General), Priority 2 = Specific Year Fallback.
         """
-        # 1. ถ้ามีการ Initialize ไปแล้วไม่ต้องทำซ้ำ
         if self.vectorstore_manager is not None:
             return
 
-        # 2. Safety Net: ตรวจสอบความพร้อมของ doc_type
-        if not hasattr(self, 'doc_type') or self.doc_type is None:
-             self.logger.warning("doc_type was missing during VSM init, using default: evidence")
-             self.doc_type = EVIDENCE_DOC_TYPES
-
-        self.logger.info(f"🚀 Loading central vectorstore(s) for DocType: '{self.doc_type}'")
+        # 1. เตรียมความพร้อมของ DocType
+        clean_dt = str(self.doc_type or getattr(self.config, 'doc_type', EVIDENCE_DOC_TYPES)).strip().lower()
+        is_evidence = (clean_dt == EVIDENCE_DOC_TYPES.lower())
+        
+        self.logger.info(f"🚀 Loading vectorstore(s) for DocType: '{clean_dt}' (Mode: {'Evidence' if is_evidence else 'General'})")
 
         try:
-            # 🎯 [CRITICAL FIX] Normalize Enabler ให้เป็นตัวพิมพ์เล็กเสมอ
-            # เพื่อให้ตรงกับชื่อโฟลเดอร์ในเครื่อง (เช่น 'evidence_km')
             target_enabler = str(self.enabler_id).lower() if self.enabler_id else None
+            
+            # 🎯 [SMART SELECTION] กำหนดปีที่จะค้นหาเป็นอันดับแรก
+            # ถ้าเป็น evidence ให้หาตามปี (2568) ก่อน แต่ถ้าเป็น document ให้หาที่ Root (None) ก่อน
+            primary_year = self.config.year if is_evidence else None
+            secondary_year = None if is_evidence else self.config.year
 
-            # 3. เรียกใช้ load_all_vectorstores (ตัวที่แก้ให้เป็น Case-Insensitive แล้ว)
+            # 2. First Attempt: โหลดตามลำดับความสำคัญ
             self.vectorstore_manager = load_all_vectorstores(
-                doc_types=[self.doc_type], 
+                doc_types=[clean_dt], 
                 enabler_filter=target_enabler, 
                 tenant=self.config.tenant, 
-                year=self.config.year       
+                year=primary_year       
             )
             
-            # 4. ตรวจสอบเบื้องต้นว่าโหลดขึ้นมาได้กี่ Collection
-            len_retrievers = 0
-            if (self.vectorstore_manager and 
-                hasattr(self.vectorstore_manager, '_multi_doc_retriever') and 
-                self.vectorstore_manager._multi_doc_retriever):
-                
-                len_retrievers = len(self.vectorstore_manager._multi_doc_retriever._all_retrievers)
+            def count_retrievers(vsm):
+                if vsm and hasattr(vsm, '_multi_doc_retriever') and vsm._multi_doc_retriever:
+                    return len(vsm._multi_doc_retriever._all_retrievers)
+                return 0
+
+            len_retrievers = count_retrievers(self.vectorstore_manager)
             
-            # 5. [OPTIMAL FALLBACK] หากระบุปีแล้วไม่เจอ ให้ลองถอยไปหาที่ Root ของ Tenant (ปี=None)
-            if len_retrievers == 0 and self.config.year:
-                self.logger.info(f"⚠️ No collections found in year {self.config.year}, searching in tenant root...")
+            # 3. Second Attempt (Fallback): ถ้าหาแบบแรกไม่เจอ ให้สลับไปหาอีกแบบ
+            if len_retrievers == 0:
+                lookup_label = f"year {secondary_year}" if secondary_year else "tenant root"
+                self.logger.info(f"⚠️ No collections found in primary path, searching in {lookup_label}...")
+                
                 self.vectorstore_manager = load_all_vectorstores(
-                    doc_types=[self.doc_type], 
+                    doc_types=[clean_dt], 
                     enabler_filter=target_enabler, 
                     tenant=self.config.tenant, 
-                    year=None       
+                    year=secondary_year       
                 )
-                if (self.vectorstore_manager and self.vectorstore_manager._multi_doc_retriever):
-                    len_retrievers = len(self.vectorstore_manager._multi_doc_retriever._all_retrievers)
+                len_retrievers = count_retrievers(self.vectorstore_manager)
 
-            # 6. บังคับโหลด Doc ID Map หลังจากโหลด Vectorstore สำเร็จ
-            if self.vectorstore_manager:
+            # 4. Post-Load Process
+            if self.vectorstore_manager and len_retrievers > 0:
                 self.vectorstore_manager._load_doc_id_mapping() 
-                self.logger.info("✅ MultiDocRetriever loaded with %s collections.", len_retrievers) 
-            
-            # 7. Final Hard Check
-            if len_retrievers == 0:
-                expected_path = f"data_store/{self.config.tenant}/vectorstore/{self.config.year}"
-                self.logger.error(f"❌ FATAL: 0 vector store collections loaded. Please check folder: {expected_path}")
-                raise ValueError(f"No vector collections found for '{target_enabler}' in {expected_path}")
+                self.logger.info(f"✅ MultiDocRetriever loaded with {len_retrievers} collections.") 
+            else:
+                # 5. Final Error Handling
+                expected_p = f"data_store/{self.config.tenant}/vectorstore/{primary_year or 'root'}"
+                self.logger.error(f"❌ FATAL: 0 vector store collections loaded. Please check folder: {expected_p}")
+                raise ValueError(f"No vector collections found for '{target_enabler}' in {self.config.tenant}")
 
         except Exception as e:
             self.logger.error(f"❌ FATAL: Could not initialize VectorStoreManager: {str(e)}")
