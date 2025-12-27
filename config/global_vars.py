@@ -3,6 +3,9 @@ import os
 import uuid
 from typing import List, Dict, Set, Final
 import torch
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ================================================================
 # Project & Namespace
@@ -104,13 +107,13 @@ INITIAL_TOP_K: Final[int] = int(os.environ.get("INITIAL_TOP_K", "75"))
 
 # RETRIEVAL_TOP_K: จำนวนที่ดึงมาสำหรับงาน Analysis/Consultant (เน้นความครอบคลุม)
 # แนะนำ: Mac=150-200, Server=300-500
-RETRIEVAL_TOP_K: Final[int] = int(os.environ.get("RETRIEVAL_TOP_K", "150"))
+RETRIEVAL_TOP_K: Final[int] = int(os.environ.get("RETRIEVAL_TOP_K", "500"))
 
 # ANALYSIS_FINAL_K: จำนวน Chunk สุดท้ายที่จะส่งให้ LLM วิเคราะห์ (หลัง Rerank)
 # แนะนำ: Mac=12-15 (ประหยัด RAM), Server=25-35 (เน้นความละเอียด)
 ANALYSIS_FINAL_K: Final[int] = int(os.environ.get("ANALYSIS_FINAL_K", "15"))
 # 🎯 จำนวน Chunk สุดท้ายสำหรับคำถามทั่วไป (General QA)
-QA_FINAL_K: Final[int] = int(os.environ.get("QA_FINAL_K", "15"))
+QA_FINAL_K: Final[int] = int(os.environ.get("QA_FINAL_K", "30"))
 
 # ส่วนคงเดิมสำหรับ General QA
 FINAL_K_RERANKED: Final[int] = int(os.environ.get("FINAL_K_RERANKED", "15"))
