@@ -72,6 +72,7 @@ def create_llm_instance(
             num_ctx=selected_ctx,
             base_url=base_url,
             timeout=600,
+            num_predict=4096
             # คืนค่าเป็นพารามิเตอร์อื่นๆ ที่ Ollama รองรับได้ที่นี่
         )
 
