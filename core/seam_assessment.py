@@ -628,6 +628,7 @@ class SEAMPDCAEngine:
         # =======================================================
         # 3. Persistent Evidence Mapping (ฉบับปรับปรุง)
         # =======================================================
+        
         clean_dt = str(self.doc_type).strip().lower()
         self.evidence_map = {}
         self.evidence_map_path = None # ตั้งค่า Default เป็น None ไว้ก่อน
@@ -694,6 +695,7 @@ class SEAMPDCAEngine:
         self.llm_evaluator = evaluate_with_llm
         self.rag_retriever = retrieve_context_with_filter
         self.create_structured_action_plan = create_structured_action_plan
+        self.ActionPlanActions = ActionPlanActions
 
         self.logger.info(f"✅ Engine initialized: Enabler={self.enabler_id}, DocType={self.doc_type}")
 
