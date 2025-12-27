@@ -169,6 +169,8 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
     
     _cross_encoder: Optional[Any] = PrivateAttr(default=None)
 
+    # --- ส่วนที่แก้ไขใน core/vectorstore.py ---
+
     def __init__(self, **data):
         super().__init__(**data)
         detected_device = _detect_torch_device()
@@ -177,8 +179,10 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
         try:
             if not _HAS_SENT_TRANS:
                 raise ImportError("sentence-transformers not installed")
+            
+            # แก้ไขตรงนี้: ส่งชื่อโมเดลเป็น positional argument แรกแทนการระบุชื่อ parameter
             encoder = CrossEncoder(
-                model_name_or_path=self.rerank_model,
+                self.rerank_model,  # <--- แก้จาก model_name_or_path=self.rerank_model
                 device=self.rerank_device,
                 max_length=self.rerank_max_length
             )
