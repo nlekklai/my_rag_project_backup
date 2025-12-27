@@ -96,9 +96,6 @@ except Exception:
         pass
 
 # -------------------- Vectorstore Constants --------------------
-ENV_FORCE_MODE = os.getenv("VECTOR_MODE", "").lower()
-ENV_DISABLE_ACCEL = os.getenv("VECTOR_DISABLE_ACCEL", "").lower() in ("1", "true", "yes")
-
 # Global caches
 _CACHED_EMBEDDINGS = None
 _EMBED_LOCK = threading.Lock()
@@ -120,12 +117,12 @@ def _detect_system():
 def _detect_torch_device():
     try:
         import torch
-        if ENV_DISABLE_ACCEL:
-            return "cpu"
+        # ตัด ENV_DISABLE_ACCEL ออกเพื่อให้ระบบตัดสินใจจาก Hardware จริง
         if torch.cuda.is_available():
             return "cuda"
-        if platform.system().lower() == "darwin" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
+        if platform.system().lower() == "darwin":
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return "mps"
     except Exception:
         pass
     return "cpu"
@@ -157,7 +154,9 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
 
 # -------------------- Thai Tokenizer --------------------
 def thai_tokenizer_for_bm25(text: str) -> List[str]:
-    return word_tokenize(text.lower().strip())
+    # มั่นใจว่าใช้ pythainlp ตัดคำไทยเสมอ
+    if not text: return []
+    return [t for t in word_tokenize(text.lower().strip(), engine="newmm") if t.strip()]
 
 # -------------------- HuggingFace CrossEncoder Reranker --------------------
 class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
@@ -193,29 +192,27 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
         documents: Sequence[LcDocument],
         query: str,
         callbacks: Optional[Any] = None,
-        top_n: Optional[int] = None  # <- เพิ่มบรรทัดนี้
+        **kwargs  # ใช้ **kwargs เพื่อดักจับ parameter ที่ส่งมาเกิน (เช่น top_n)
     ) -> Sequence[LcDocument]:
         if not self._cross_encoder or not documents:
             return documents
 
-        # ใช้ top_n ที่ส่งเข้ามา ถ้าไม่มีให้ fallback เป็น self.top_n
-        current_top_n = min(len(documents), top_n or self.top_n)
+        # ดึง top_n จาก kwargs ถ้ามี ถ้าไม่มีใช้ค่า default ของ class
+        effective_top_n = kwargs.get("top_n", self.top_n)
+        current_top_n = min(len(documents), effective_top_n)
 
         pairs = [[query, doc.page_content] for doc in documents]
         scores = self._cross_encoder.predict(pairs)
 
         ranked_docs = []
         for doc, score in zip(documents, scores):
+            # ตรวจสอบว่า metadata ไม่เป็น None
+            if doc.metadata is None: doc.metadata = {}
             doc.metadata["rerank_score"] = float(score)
             ranked_docs.append(doc)
 
         ranked_docs.sort(key=lambda x: x.metadata["rerank_score"], reverse=True)
-        final_docs = ranked_docs[:current_top_n]
-
-        if final_docs:
-            logger.info(f"📊 Reranking Stats | Top Score: {final_docs[0].metadata['rerank_score']:.4f} | Selected: {len(final_docs)} docs")
-
-        return final_docs
+        return ranked_docs[:current_top_n]
 
 
 # -------------------- Global Reranker Singleton --------------------
