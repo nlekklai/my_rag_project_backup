@@ -25,7 +25,6 @@ from config.global_vars import (
     DEFAULT_ENABLER,
     DEFAULT_LLM_MODEL_NAME,
     LLM_TEMPERATURE,
-    QUERY_FINAL_K,
     DEFAULT_DOC_TYPES,  # เช่น ["document"]
     RETRIEVAL_TOP_K,      # 🎯 ดึงจาก .env (Mac: 150, Server: 500)
     ANALYSIS_FINAL_K,     # 🎯 ดึงจาก .env (Mac: 12, Server: 30)

@@ -44,7 +44,6 @@ except ImportError:
 from config.global_vars import (
     DEFAULT_ENABLER,
     INITIAL_TOP_K,
-    FINAL_K_RERANKED,
     MAX_EVAL_CONTEXT_LENGTH,
     USE_HYBRID_SEARCH, 
     HYBRID_VECTOR_WEIGHT, 

@@ -113,7 +113,7 @@ ANALYSIS_FINAL_K: Final[int] = int(os.environ.get("ANALYSIS_FINAL_K", "15"))
 QA_FINAL_K: Final[int] = int(os.environ.get("QA_FINAL_K", "15"))
 
 # ส่วนคงเดิมสำหรับ General QA
-FINAL_K_RERANKED: Final[int] = 15
+FINAL_K_RERANKED: Final[int] = int(os.environ.get("FINAL_K_RERANKED", "15"))
 FINAL_K_NON_RERANKED: Final[int] = 7
 
 
@@ -143,14 +143,13 @@ CHUNK_OVERLAP: Final[int] = 250
 STANDARD_K: Final[int] = 5
 
 QUERY_INITIAL_K: Final[int] = 20
-QUERY_FINAL_K: Final[int] = 5
 
 # ================================================================
 # Priority & Parallel Processing
 # ================================================================
 LIMIT_CHUNKS_PER_PRIORITY_DOC: Final[int] = 5
 PRIORITY_CHUNK_LIMIT: Final[int] = 30
-MAX_PARALLEL_WORKERS: Final[int] = 2
+
 
 # ================================================================
 # Logging & Context Control

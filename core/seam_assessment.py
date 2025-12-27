@@ -35,7 +35,7 @@ try:
 
     # 1. Import Constants จาก global_vars
     from config.global_vars import (
-        EXPORTS_DIR, MAX_LEVEL, INITIAL_LEVEL, FINAL_K_RERANKED,
+        EXPORTS_DIR, MAX_LEVEL, INITIAL_LEVEL, QA_FINAL_K,
         RUBRIC_FILENAME_PATTERN, DEFAULT_ENABLER,
         EVIDENCE_DOC_TYPES, INITIAL_TOP_K,
         EVIDENCE_MAPPING_FILENAME_SUFFIX,
@@ -111,7 +111,7 @@ except ImportError as e:
     EXPORTS_DIR = "exports"
     MAX_LEVEL = 5
     INITIAL_LEVEL = 1
-    FINAL_K_RERANKED = 3
+    QA_FINAL_K = 3
     RUBRIC_FILENAME_PATTERN = "{tenant}_{enabler}_rubric.json"
     DEFAULT_ENABLER = "KM"
     EVIDENCE_DOC_TYPES = "evidence"
