@@ -325,7 +325,6 @@ def retrieve_context_with_filter(
     manager = vectorstore_manager
     queries_to_run = [query] if isinstance(query, str) else list(query or [""])
     # สมมติฟังก์ชัน get_doc_type_collection_key มีการนำเข้าอยู่แล้ว
-    from config.global_vars import get_doc_type_collection_key
     collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
     
     # 2. จัดการ Filter สำหรับการทำ Retrieval (Vector Search)
@@ -518,8 +517,6 @@ def retrieve_context_with_rubric(
     """
     start_time = time.time()
     vsm = vectorstore_manager
-    from utils.path_utils import get_doc_type_collection_key
-    from core.vectorstore import get_global_reranker # นำเข้า Reranker
 
     # --- 1. ตรวจสอบและสลับ Collection ให้ตรงประเภทเอกสาร ---
     if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
