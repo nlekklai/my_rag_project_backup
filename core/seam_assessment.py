@@ -2197,304 +2197,7 @@ class SEAMPDCAEngine:
             "total_run_time_s": round(total_duration, 2)
         }
 
-    def _run_sub_criteria_assessment_worker(
-        self,
-        sub_criteria: Dict[str, Any],
-    ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
-        """
-        รันการประเมิน L1-L5 แบบ sequential (หรือแบบเต็มในโหมด Mixed/Parallel) สำหรับ sub-criteria หนึ่งตัว
-        และส่ง evidence map กลับไปให้ main process รวม (รวมถึงการสร้าง Action Plan)
-        """
-        # 📌 ใช้ Global/Class Constant ที่ประกาศไว้ใน Header ของ core/seam_assessment.py
-        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}})
-        MAX_L1_ATTEMPTS = globals().get('MAX_L1_ATTEMPTS', 2)
-        WEAK_EVIDENCE_THRESHOLD = globals().get('WEAK_EVIDENCE_THRESHOLD', 5.0)
-
-        sub_id = sub_criteria['sub_id']
-        sub_criteria_name = sub_criteria['sub_criteria_name']
-        sub_weight = sub_criteria.get('weight', 0)
-
-        
-        current_sequential_pass_level = 0 
-        
-        # 🟢 NEW: Local State Variables for Sequential Logic (Patch 3)
-        first_failed_level_local = None 
-        
-        is_passed_previous_level = True 
-        raw_results_for_sub_seq: List[Dict[str, Any]] = []
-        start_ts = time.time() 
-
-        self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
-
-        # รีเซ็ต temp_map_for_save เฉพาะ worker นี้
-        self.temp_map_for_save = {}
-
-        # -----------------------------------------------------------
-        # 1. LOOP THROUGH LEVELS (L1 → L5) - ประเมินทุก Level เสมอ
-        # -----------------------------------------------------------
-        for statement_data in sub_criteria.get('levels', []):
-            level = statement_data.get('level')
-            if level is None or level > self.config.target_level:
-                continue
-            
-            # 🛑 [REVISED LOGIC]: ลบการ Capping ก่อนเรียก LLM เพื่อบังคับรันทุก Level
-            
-            sequential_chunk_uuids = [] 
-            level_result = {}
-            level_temp_map: List[Dict[str, Any]] = []
-
-            # (โค้ดเรียก _run_single_assessment ด้วย Retry Policy)
-            # L3+ ใช้ RetryPolicy, L1/L2 ใช้ Manual Retry (MAX_L1_ATTEMPTS)
-            if level >= 3:
-                wrapper = self.retry_policy.run(
-                    fn=lambda attempt: self._run_single_assessment(
-                        sub_criteria=sub_criteria,
-                        statement_data=statement_data,
-                        vectorstore_manager=self.vectorstore_manager,
-                        sequential_chunk_uuids=sequential_chunk_uuids 
-                    ),
-                    level=level,
-                    statement=statement_data.get('statement', ''),
-                    context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
-                    logger=self.logger
-                )
-                level_result = wrapper.result if isinstance(wrapper, RetryResult) and wrapper.result is not None else {}
-                level_temp_map = level_result.get("temp_map_for_level", []) 
-            else:
-                # (โค้ดเรียก _run_single_assessment สำหรับ L1/L2)
-                for attempt_num in range(1, MAX_L1_ATTEMPTS + 1):
-                    self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt_num}/{MAX_L1_ATTEMPTS})...")
-                    level_result = self._run_single_assessment(
-                        sub_criteria=sub_criteria,
-                        statement_data=statement_data,
-                        vectorstore_manager=self.vectorstore_manager,
-                        sequential_chunk_uuids=sequential_chunk_uuids,
-                        attempt=attempt_num
-                    )
-                    level_temp_map = level_result.get("temp_map_for_level", []) 
-                    if level_result.get('is_passed', False):
-                        self.logger.info(f"  > L{level} passed on attempt {attempt_num}.")
-                        break
-                    elif attempt_num < MAX_L1_ATTEMPTS:
-                        self.logger.warning(f"  > L{level} failed on attempt {attempt_num}. Retrying...")
-                    else:
-                        self.logger.error(f"  > L{level} failed all {MAX_L1_ATTEMPTS} attempts.")
-
-
-            # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
-            result_to_process = level_result or {}
-            result_to_process.setdefault("level", level) 
-            result_to_process.setdefault("used_chunk_uuids", [])
-
-            is_passed_llm = result_to_process.get('is_passed', False)
-            # 🛑 [REVISED LOGIC]: is_passed_final ไม่ควรถูก cap ที่นี่แล้ว
-            is_passed_final = is_passed_llm 
-
-            result_to_process['is_passed'] = is_passed_final
-            result_to_process['is_capped'] = False # ตั้งเป็น False เสมอ
-            result_to_process['is_counted'] = True # ตั้งเป็น True ก่อน แล้วจะถูกเปลี่ยนเป็น False ใน Logic Capping
-
-            # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
-            if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
-                
-                # 📌 Logic การบันทึกหลักฐานและการคำนวณ Strength หลังการประเมิน
-                # --- START OF FIX ---
-                # 1. ดึงค่า highest_rerank_score
-                #    (ค่านี้ถูกส่งมาจาก _run_single_assessment ภายใต้คีย์ 'max_relevant_score')
-                highest_rerank = result_to_process.get('max_relevant_score', 0.0)
-
-                # 2. เรียกใช้ฟังก์ชันด้วยชื่อ Argument ที่ถูกต้องตาม Definition:
-                max_evi_str_after_save = self._save_level_evidences_and_calculate_strength(
-                    level_temp_map=level_temp_map,
-                    sub_id=sub_id,
-                    level=level,
-                    llm_result=result_to_process, 
-                    highest_rerank_score=highest_rerank 
-                )
-                                
-                result_to_process['max_evidence_strength_used'] = max_evi_str_after_save
-                
-                result_to_process['evidence_strength'] = round(
-                    min(max_evi_str_after_save, 10.0) if is_passed_final else 0.0, 1
-                )
-                
-            # 🟢 NEW LOGIC: Update Sequential State (Patch 3 Logic)
-            if first_failed_level_local is not None:
-                # 💡 Level ที่ตามมาทั้งหมดเป็น GAP_ONLY
-                result_to_process["evaluation_mode"] = "GAP_ONLY"
-                result_to_process["is_counted"] = False
-                result_to_process["is_passed"] = False # ถือว่าไม่ผ่านสำหรับคะแนนรวม
-                result_to_process["cap_reason"] = (
-                    f"Gap analysis after sequential fail at L{first_failed_level_local}"
-                )
-                self.logger.info(f"  > L{level} marked as GAP_ONLY (Fail at L{first_failed_level_local}).")
-            
-            elif not is_passed_final and first_failed_level_local is None:
-                # 1. ตรวจสอบการ Fail ครั้งแรก (ถ้ายังไม่เคย Fail)
-                first_failed_level_local = level
-                # 💡 Level นี้ถือว่า Fail และเป็นจุดเริ่มต้นของการ Capping
-                self.logger.info(f"  > 🛑 First Sequential FAIL detected at L{level}. (Setting first_failed_level_local={level})")
-            
-            elif is_passed_final:
-                # 2. อัปเดต Level ที่ผ่านสูงสุด (ถ้าเป็น Level ถัดไป)
-                if level == current_sequential_pass_level + 1:
-                    current_sequential_pass_level = level
-                    self.logger.info(f"  > Sequential PASS L{level}. Current Highest Pass: L{current_sequential_pass_level}")
-                else:
-                    # กรณีที่เกิดการข้าม Level (เช่น L1 ผ่าน, L3 ถูกรัน แต่ L2 ถูก Skip)
-                    # 🛑 [REVISED LOGIC]: ใช้ Logic นี้เฉพาะในโหมด SEQUENTIAL เท่านั้น 
-                    # ในโหมด MIXED/PARALLEL ปล่อยให้มันผ่านไป
-                    if self.is_sequential: # ตรวจสอบว่าเป็นโหมด sequential จริงๆ
-                        self.logger.warning(f"  > Sequential BREAK detected at L{level}. Capping at {current_sequential_pass_level}")
-                        first_failed_level_local = current_sequential_pass_level + 1 # Force cap ที่ Level ที่ถูกข้าม/ไม่ผ่าน
-                        result_to_process["is_counted"] = False
-                        result_to_process["is_passed"] = False
-
-
-            # เพิ่มลง raw results
-            result_to_process["execution_index"] = len(raw_results_for_sub_seq)
-            raw_results_for_sub_seq.append(result_to_process)
-        
-        # -----------------------------------------------------------
-        # 2. CALCULATE SUMMARY
-        # -----------------------------------------------------------
-        # 📌 highest_full_level คือ Level ที่ผ่านต่อเนื่องสูงสุด (current_sequential_pass_level)
-        highest_full_level = current_sequential_pass_level
-
-        # (โค้ด _calculate_weighted_score)
-        weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
-        weighted_score = round(weighted_score, 2)
-
-        # 📌 num_passed ต้องนับเฉพาะ Level ที่ "is_counted" ไม่ใช่ False (หรือ is_passed เป็น True ใน Logic เดิม)
-        num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True))
-
-        sub_summary = {
-            "num_statements": len(raw_results_for_sub_seq),
-            "num_passed": num_passed,
-            "num_failed": len(raw_results_for_sub_seq) - num_passed,
-            "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
-        }
-
-        
-        # -----------------------------------------------------------
-        # 3. GENERATE ACTION PLAN (POST-PROCESSING) 🚀
-        # ------------------------------------------------------------
-
-        # 🎯 ใช้ตัวแปรที่ Import มาจาก Header ได้เลยโดยตรง
-        weak_threshold = MIN_RERANK_SCORE_TO_KEEP 
-        
-        target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
-        statements_for_action_plan = []
-        
-        for r in raw_results_for_sub_seq:
-            # สร้าง copy เพื่อไม่ให้กระทบ data ต้นฉบับ
-            res_item = r.copy() 
-            is_passed = res_item.get('is_passed', False)
-            evidence_strength = res_item.get('evidence_strength', 10.0)
-            eval_mode = res_item.get('evaluation_mode', "")
-
-            # 1. กรณีไม่ผ่าน (FAILED)
-            if not is_passed and eval_mode != "GAP_ONLY":
-                res_item['recommendation_type'] = 'FAILED'
-                statements_for_action_plan.append(res_item)
-                continue
-            
-            # 2. กรณีประเมินเพื่อหา Gap โดยเฉพาะ (GAP_ONLY)
-            if eval_mode == "GAP_ONLY":
-                res_item['recommendation_type'] = 'GAP_ANALYSIS'
-                statements_for_action_plan.append(res_item)
-                continue
-
-            # 3. กรณีผ่านแต่หลักฐานอ่อน (WEAK_EVIDENCE)
-            if is_passed and evidence_strength < weak_threshold:
-                res_item['recommendation_type'] = 'WEAK_EVIDENCE'
-                statements_for_action_plan.append(res_item)
-
-        action_plan_result = []
-
-        try:
-            if not statements_for_action_plan:
-                self.logger.info(f"✨ Sub-id {sub_id} is perfect. Generating Sustain Plan...")
-
-            # 🎯 ส่ง OLLAMA_MAX_RETRIES ที่ Import มาจาก Header
-            action_plan_result = create_structured_action_plan(
-                recommendation_statements=statements_for_action_plan,
-                sub_id=sub_id,
-                sub_criteria_name=sub_criteria_name,
-                target_level=target_next_level,
-                llm_executor=self.llm,
-                logger=self.logger,
-                max_retries=OLLAMA_MAX_RETRIES 
-            )
-            
-            self.logger.info(f"✅ Action Plan generated: {len(action_plan_result)} phase(s) for {sub_id}")
-
-        except Exception as e:
-            self.logger.error(f"❌ Action Plan generation failed for {sub_id}: {e}", exc_info=True)
-            # ✅ Fallback ที่ตรงตาม schema (lowercase keys + Capitalized Step fields)
-            action_plan_result = [{
-                "phase": "Phase 1: Critical Recovery Required",
-                "goal": f"แก้ไขปัญหาเร่งด่วนในเกณฑ์ {sub_criteria_name} และฟื้นฟูระบบการสร้าง Action Plan",
-                "actions": [{
-                    "statement_id": "SYSTEM_ERROR",
-                    "failed_level": target_next_level,
-                    "recommendation": f"ระบบไม่สามารถสร้าง Action Plan อัตโนมัติได้เนื่องจาก: {str(e)[:150]}... "
-                                     "แนะนำให้ตรวจสอบการเชื่อมต่อ LLM, Prompt, และ Schema ทันที",
-                    "target_evidence_type": "Error Log / System Diagnostic Report",
-                    "key_metric": "กู้คืนระบบและสร้าง Action Plan สำเร็จภายใน 7 วัน",
-                    "steps": [
-                        {
-                            "Step": "1",
-                            "Description": "ตรวจสอบ log error และสถานะ Ollama/API endpoint",
-                            "Responsible": "System Administrator / RAG Developer",
-                            "Tools_Templates": "Server Log / Health Check Dashboard",
-                            "Verification_Outcome": "รายงานผลการวิเคราะห์ข้อผิดพลาด"
-                        },
-                        {
-                            "Step": "2",
-                            "Description": "ดำเนินการ rerun การประเมินเกณฑ์นี้หลังแก้ไขระบบ",
-                            "Responsible": "KM Assessment Team",
-                            "Tools_Templates": "SE-AM Assessment Tool",
-                            "Verification_Outcome": "Action Plan ที่สร้างสำเร็จและผ่าน validation"
-                        }
-                    ]
-                }]
-            }]
-
-
-        # -----------------------------------------------------------
-        # 4. FINAL RESULT
-        # -----------------------------------------------------------
-        
-        final_temp_map = {}
-        # 💡 Logic การดึงหลักฐานเพื่อส่งคืน Main Process
-        if self.is_sequential or self.is_parallel_all_mode: # ในโหมด Parallel ก็ต้องส่ง map ที่ใช้กลับไปด้วย
-            for key in self.evidence_map:
-                # ดึงเฉพาะหลักฐานที่ตรงกับ Sub-Criteria นี้เท่านั้น
-                if key.startswith(sub_criteria['sub_id'] + "."):
-                    final_temp_map[key] = self.evidence_map[key]
-        else:
-            # โหมด Mixed (หรือโหมดเก่า)
-            final_temp_map = self.temp_map_for_save.copy()
-
-
-        final_sub_result = {
-            "sub_criteria_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
-            "highest_full_level": highest_full_level,
-            "weight": sub_weight,
-            "target_level_achieved": highest_full_level >= self.config.target_level,
-            "weighted_score": weighted_score,
-            "action_plan": action_plan_result, 
-            "raw_results_ref": raw_results_for_sub_seq,
-            "sub_summary": sub_summary,
-            "worker_duration_s": round(time.time() - start_ts, 2)
-        }
-
-        self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Action Plans: {len(action_plan_result)} phase(s) | Duration: {final_sub_result['worker_duration_s']:.2f}s")
-
-        return final_sub_result, final_temp_map
-
+    
     def _save_level_evidences_and_calculate_strength(
         self, 
         level_temp_map: List[Dict[str, Any]], 
@@ -3267,6 +2970,304 @@ class SEAMPDCAEngine:
 
         return final_results
     
+    def _run_sub_criteria_assessment_worker(
+        self,
+        sub_criteria: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
+        """
+        รันการประเมิน L1-L5 แบบ sequential (หรือแบบเต็มในโหมด Mixed/Parallel) สำหรับ sub-criteria หนึ่งตัว
+        และส่ง evidence map กลับไปให้ main process รวม (รวมถึงการสร้าง Action Plan)
+        """
+        # 📌 ใช้ Global/Class Constant ที่ประกาศไว้ใน Header ของ core/seam_assessment.py
+        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}})
+        MAX_L1_ATTEMPTS = globals().get('MAX_L1_ATTEMPTS', 2)
+        WEAK_EVIDENCE_THRESHOLD = globals().get('WEAK_EVIDENCE_THRESHOLD', 5.0)
+
+        sub_id = sub_criteria['sub_id']
+        sub_criteria_name = sub_criteria['sub_criteria_name']
+        sub_weight = sub_criteria.get('weight', 0)
+
+        
+        current_sequential_pass_level = 0 
+        
+        # 🟢 NEW: Local State Variables for Sequential Logic (Patch 3)
+        first_failed_level_local = None 
+        
+        is_passed_previous_level = True 
+        raw_results_for_sub_seq: List[Dict[str, Any]] = []
+        start_ts = time.time() 
+
+        self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
+
+        # รีเซ็ต temp_map_for_save เฉพาะ worker นี้
+        self.temp_map_for_save = {}
+
+        # -----------------------------------------------------------
+        # 1. LOOP THROUGH LEVELS (L1 → L5) - ประเมินทุก Level เสมอ
+        # -----------------------------------------------------------
+        for statement_data in sub_criteria.get('levels', []):
+            level = statement_data.get('level')
+            if level is None or level > self.config.target_level:
+                continue
+            
+            # 🛑 [REVISED LOGIC]: ลบการ Capping ก่อนเรียก LLM เพื่อบังคับรันทุก Level
+            
+            sequential_chunk_uuids = [] 
+            level_result = {}
+            level_temp_map: List[Dict[str, Any]] = []
+
+            # (โค้ดเรียก _run_single_assessment ด้วย Retry Policy)
+            # L3+ ใช้ RetryPolicy, L1/L2 ใช้ Manual Retry (MAX_L1_ATTEMPTS)
+            if level >= 3:
+                wrapper = self.retry_policy.run(
+                    fn=lambda attempt: self._run_single_assessment(
+                        sub_criteria=sub_criteria,
+                        statement_data=statement_data,
+                        vectorstore_manager=self.vectorstore_manager,
+                        sequential_chunk_uuids=sequential_chunk_uuids 
+                    ),
+                    level=level,
+                    statement=statement_data.get('statement', ''),
+                    context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
+                    logger=self.logger
+                )
+                level_result = wrapper.result if isinstance(wrapper, RetryResult) and wrapper.result is not None else {}
+                level_temp_map = level_result.get("temp_map_for_level", []) 
+            else:
+                # (โค้ดเรียก _run_single_assessment สำหรับ L1/L2)
+                for attempt_num in range(1, MAX_L1_ATTEMPTS + 1):
+                    self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt_num}/{MAX_L1_ATTEMPTS})...")
+                    level_result = self._run_single_assessment(
+                        sub_criteria=sub_criteria,
+                        statement_data=statement_data,
+                        vectorstore_manager=self.vectorstore_manager,
+                        sequential_chunk_uuids=sequential_chunk_uuids,
+                        attempt=attempt_num
+                    )
+                    level_temp_map = level_result.get("temp_map_for_level", []) 
+                    if level_result.get('is_passed', False):
+                        self.logger.info(f"  > L{level} passed on attempt {attempt_num}.")
+                        break
+                    elif attempt_num < MAX_L1_ATTEMPTS:
+                        self.logger.warning(f"  > L{level} failed on attempt {attempt_num}. Retrying...")
+                    else:
+                        self.logger.error(f"  > L{level} failed all {MAX_L1_ATTEMPTS} attempts.")
+
+
+            # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
+            result_to_process = level_result or {}
+            result_to_process.setdefault("level", level) 
+            result_to_process.setdefault("used_chunk_uuids", [])
+
+            is_passed_llm = result_to_process.get('is_passed', False)
+            # 🛑 [REVISED LOGIC]: is_passed_final ไม่ควรถูก cap ที่นี่แล้ว
+            is_passed_final = is_passed_llm 
+
+            result_to_process['is_passed'] = is_passed_final
+            result_to_process['is_capped'] = False # ตั้งเป็น False เสมอ
+            result_to_process['is_counted'] = True # ตั้งเป็น True ก่อน แล้วจะถูกเปลี่ยนเป็น False ใน Logic Capping
+
+            # บันทึก evidence ลง temp_map_for_save เฉพาะเมื่อ PASS จริง
+            if is_passed_final and level_temp_map and isinstance(level_temp_map, list):
+                
+                # 📌 Logic การบันทึกหลักฐานและการคำนวณ Strength หลังการประเมิน
+                # --- START OF FIX ---
+                # 1. ดึงค่า highest_rerank_score
+                #    (ค่านี้ถูกส่งมาจาก _run_single_assessment ภายใต้คีย์ 'max_relevant_score')
+                highest_rerank = result_to_process.get('max_relevant_score', 0.0)
+
+                # 2. เรียกใช้ฟังก์ชันด้วยชื่อ Argument ที่ถูกต้องตาม Definition:
+                max_evi_str_after_save = self._save_level_evidences_and_calculate_strength(
+                    level_temp_map=level_temp_map,
+                    sub_id=sub_id,
+                    level=level,
+                    llm_result=result_to_process, 
+                    highest_rerank_score=highest_rerank 
+                )
+                                
+                result_to_process['max_evidence_strength_used'] = max_evi_str_after_save
+                
+                result_to_process['evidence_strength'] = round(
+                    min(max_evi_str_after_save, 10.0) if is_passed_final else 0.0, 1
+                )
+                
+            # 🟢 NEW LOGIC: Update Sequential State (Patch 3 Logic)
+            if first_failed_level_local is not None:
+                # 💡 Level ที่ตามมาทั้งหมดเป็น GAP_ONLY
+                result_to_process["evaluation_mode"] = "GAP_ONLY"
+                result_to_process["is_counted"] = False
+                result_to_process["is_passed"] = False # ถือว่าไม่ผ่านสำหรับคะแนนรวม
+                result_to_process["cap_reason"] = (
+                    f"Gap analysis after sequential fail at L{first_failed_level_local}"
+                )
+                self.logger.info(f"  > L{level} marked as GAP_ONLY (Fail at L{first_failed_level_local}).")
+            
+            elif not is_passed_final and first_failed_level_local is None:
+                # 1. ตรวจสอบการ Fail ครั้งแรก (ถ้ายังไม่เคย Fail)
+                first_failed_level_local = level
+                # 💡 Level นี้ถือว่า Fail และเป็นจุดเริ่มต้นของการ Capping
+                self.logger.info(f"  > 🛑 First Sequential FAIL detected at L{level}. (Setting first_failed_level_local={level})")
+            
+            elif is_passed_final:
+                # 2. อัปเดต Level ที่ผ่านสูงสุด (ถ้าเป็น Level ถัดไป)
+                if level == current_sequential_pass_level + 1:
+                    current_sequential_pass_level = level
+                    self.logger.info(f"  > Sequential PASS L{level}. Current Highest Pass: L{current_sequential_pass_level}")
+                else:
+                    # กรณีที่เกิดการข้าม Level (เช่น L1 ผ่าน, L3 ถูกรัน แต่ L2 ถูก Skip)
+                    # 🛑 [REVISED LOGIC]: ใช้ Logic นี้เฉพาะในโหมด SEQUENTIAL เท่านั้น 
+                    # ในโหมด MIXED/PARALLEL ปล่อยให้มันผ่านไป
+                    if self.is_sequential: # ตรวจสอบว่าเป็นโหมด sequential จริงๆ
+                        self.logger.warning(f"  > Sequential BREAK detected at L{level}. Capping at {current_sequential_pass_level}")
+                        first_failed_level_local = current_sequential_pass_level + 1 # Force cap ที่ Level ที่ถูกข้าม/ไม่ผ่าน
+                        result_to_process["is_counted"] = False
+                        result_to_process["is_passed"] = False
+
+
+            # เพิ่มลง raw results
+            result_to_process["execution_index"] = len(raw_results_for_sub_seq)
+            raw_results_for_sub_seq.append(result_to_process)
+        
+        # -----------------------------------------------------------
+        # 2. CALCULATE SUMMARY
+        # -----------------------------------------------------------
+        # 📌 highest_full_level คือ Level ที่ผ่านต่อเนื่องสูงสุด (current_sequential_pass_level)
+        highest_full_level = current_sequential_pass_level
+
+        # (โค้ด _calculate_weighted_score)
+        weighted_score = self._calculate_weighted_score(highest_full_level, sub_weight)
+        weighted_score = round(weighted_score, 2)
+
+        # 📌 num_passed ต้องนับเฉพาะ Level ที่ "is_counted" ไม่ใช่ False (หรือ is_passed เป็น True ใน Logic เดิม)
+        num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True))
+
+        sub_summary = {
+            "num_statements": len(raw_results_for_sub_seq),
+            "num_passed": num_passed,
+            "num_failed": len(raw_results_for_sub_seq) - num_passed,
+            "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
+        }
+
+        
+        # -----------------------------------------------------------
+        # 3. GENERATE ACTION PLAN (POST-PROCESSING) 🚀
+        # ------------------------------------------------------------
+
+        # 🎯 ใช้ตัวแปรที่ Import มาจาก Header ได้เลยโดยตรง
+        weak_threshold = MIN_RERANK_SCORE_TO_KEEP 
+        
+        target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
+        statements_for_action_plan = []
+        
+        for r in raw_results_for_sub_seq:
+            # สร้าง copy เพื่อไม่ให้กระทบ data ต้นฉบับ
+            res_item = r.copy() 
+            is_passed = res_item.get('is_passed', False)
+            evidence_strength = res_item.get('evidence_strength', 10.0)
+            eval_mode = res_item.get('evaluation_mode', "")
+
+            # 1. กรณีไม่ผ่าน (FAILED)
+            if not is_passed and eval_mode != "GAP_ONLY":
+                res_item['recommendation_type'] = 'FAILED'
+                statements_for_action_plan.append(res_item)
+                continue
+            
+            # 2. กรณีประเมินเพื่อหา Gap โดยเฉพาะ (GAP_ONLY)
+            if eval_mode == "GAP_ONLY":
+                res_item['recommendation_type'] = 'GAP_ANALYSIS'
+                statements_for_action_plan.append(res_item)
+                continue
+
+            # 3. กรณีผ่านแต่หลักฐานอ่อน (WEAK_EVIDENCE)
+            if is_passed and evidence_strength < weak_threshold:
+                res_item['recommendation_type'] = 'WEAK_EVIDENCE'
+                statements_for_action_plan.append(res_item)
+
+        action_plan_result = []
+
+        try:
+            if not statements_for_action_plan:
+                self.logger.info(f"✨ Sub-id {sub_id} is perfect. Generating Sustain Plan...")
+
+            # 🎯 ส่ง OLLAMA_MAX_RETRIES ที่ Import มาจาก Header
+            action_plan_result = create_structured_action_plan(
+                recommendation_statements=statements_for_action_plan,
+                sub_id=sub_id,
+                sub_criteria_name=sub_criteria_name,
+                target_level=target_next_level,
+                llm_executor=self.llm,
+                logger=self.logger,
+                max_retries=OLLAMA_MAX_RETRIES 
+            )
+            
+            self.logger.info(f"✅ Action Plan generated: {len(action_plan_result)} phase(s) for {sub_id}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Action Plan generation failed for {sub_id}: {e}", exc_info=True)
+            # ✅ Fallback ที่ตรงตาม schema (lowercase keys + Capitalized Step fields)
+            action_plan_result = [{
+                "phase": "Phase 1: Critical Recovery Required",
+                "goal": f"แก้ไขปัญหาเร่งด่วนในเกณฑ์ {sub_criteria_name} และฟื้นฟูระบบการสร้าง Action Plan",
+                "actions": [{
+                    "statement_id": "SYSTEM_ERROR",
+                    "failed_level": target_next_level,
+                    "recommendation": f"ระบบไม่สามารถสร้าง Action Plan อัตโนมัติได้เนื่องจาก: {str(e)[:150]}... "
+                                     "แนะนำให้ตรวจสอบการเชื่อมต่อ LLM, Prompt, และ Schema ทันที",
+                    "target_evidence_type": "Error Log / System Diagnostic Report",
+                    "key_metric": "กู้คืนระบบและสร้าง Action Plan สำเร็จภายใน 7 วัน",
+                    "steps": [
+                        {
+                            "Step": "1",
+                            "Description": "ตรวจสอบ log error และสถานะ Ollama/API endpoint",
+                            "Responsible": "System Administrator / RAG Developer",
+                            "Tools_Templates": "Server Log / Health Check Dashboard",
+                            "Verification_Outcome": "รายงานผลการวิเคราะห์ข้อผิดพลาด"
+                        },
+                        {
+                            "Step": "2",
+                            "Description": "ดำเนินการ rerun การประเมินเกณฑ์นี้หลังแก้ไขระบบ",
+                            "Responsible": "KM Assessment Team",
+                            "Tools_Templates": "SE-AM Assessment Tool",
+                            "Verification_Outcome": "Action Plan ที่สร้างสำเร็จและผ่าน validation"
+                        }
+                    ]
+                }]
+            }]
+
+
+        # -----------------------------------------------------------
+        # 4. FINAL RESULT
+        # -----------------------------------------------------------
+        
+        final_temp_map = {}
+        # 💡 Logic การดึงหลักฐานเพื่อส่งคืน Main Process
+        if self.is_sequential or self.is_parallel_all_mode: # ในโหมด Parallel ก็ต้องส่ง map ที่ใช้กลับไปด้วย
+            for key in self.evidence_map:
+                # ดึงเฉพาะหลักฐานที่ตรงกับ Sub-Criteria นี้เท่านั้น
+                if key.startswith(sub_criteria['sub_id'] + "."):
+                    final_temp_map[key] = self.evidence_map[key]
+        else:
+            # โหมด Mixed (หรือโหมดเก่า)
+            final_temp_map = self.temp_map_for_save.copy()
+
+
+        final_sub_result = {
+            "sub_criteria_id": sub_id,
+            "sub_criteria_name": sub_criteria_name,
+            "highest_full_level": highest_full_level,
+            "weight": sub_weight,
+            "target_level_achieved": highest_full_level >= self.config.target_level,
+            "weighted_score": weighted_score,
+            "action_plan": action_plan_result, 
+            "raw_results_ref": raw_results_for_sub_seq,
+            "sub_summary": sub_summary,
+            "worker_duration_s": round(time.time() - start_ts, 2)
+        }
+
+        self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Action Plans: {len(action_plan_result)} phase(s) | Duration: {final_sub_result['worker_duration_s']:.2f}s")
+
+        return final_sub_result, final_temp_map
+
 
     # -------------------- _run_single_assessment (FINAL REVISED VERSION) --------------------
     def _run_single_assessment(
@@ -3446,7 +3447,7 @@ class SEAMPDCAEngine:
             top_evidences = filtered 
 
         self.logger.debug(f"Adaptive Filter L{level}: Kept {len(top_evidences)}/{len(original_top_evidences)} chunks")
-        
+
         # ==================== 6.5. Robust Hydration ====================
         # เติม Text ให้สมบูรณ์สำหรับ Chunks ที่ Reranker เลือกมา
         if top_evidences and vectorstore_manager:

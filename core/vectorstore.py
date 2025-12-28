@@ -1649,25 +1649,58 @@ class MultiDocRetriever(BaseRetriever): # สังเกตว่า BaseRetrie
     
     def shutdown(self) -> None:
         """
-        🎯 แก้ไขจุดที่เคย Error: ใช้ Lock อย่างปลอดภัย
+        🎯 แก้ไขจุดที่เคย Error: เข้าถึง Private Attribute อย่างปลอดภัยจาก Pydantic
         """
-        # ใช้ getattr เพื่อความปลอดภัยในการเข้าถึง private attr
-        lock = getattr(self, '_lock', None)
-        
-        # ตรวจสอบว่า lock เป็น Lock Object จริงๆ (ไม่ใช่ FieldInfo)
-        if lock and hasattr(lock, "__enter__"):
-            with lock:
-                if getattr(self, '_is_running', False):
-                    executor = getattr(self, '_executor', None)
-                    if executor:
-                        logger.info("Closing MultiDocRetriever Executor...")
-                        executor.shutdown(wait=False)
+        try:
+            # 1. เข้าถึง Lock ด้วยวิธีที่ปลอดภัยที่สุดสำหรับ Pydantic PrivateAttr
+            # บางครั้ง getattr อาจคืนค่า ModelPrivateAttr เราจึงใช้ __dict__ หรือ object.__getattribute__
+            lock = None
+            try:
+                lock = object.__getattribute__(self, '_lock')
+            except AttributeError:
+                lock = self.__dict__.get('_lock')
+
+            # 2. ทำการ Shutdown
+            if lock and hasattr(lock, "__enter__"):
+                with lock:
+                    self._execute_shutdown_logic()
+            else:
+                # Fallback กรณี Lock เข้าถึงไม่ได้
+                self._execute_shutdown_logic()
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Shutdown warning: {e}")
+
+    def _execute_shutdown_logic(self) -> None:
+        """Helper สำหรับรัน logic การปิด executor (ปรับปรุงเล็กน้อย)"""
+        try:
+            # ดึงค่า is_running แบบปลอดภัย
+            is_running = False
+            try:
+                is_running = object.__getattribute__(self, '_is_running')
+            except AttributeError:
+                pass
+
+            if is_running:
+                # ดึงค่า executor
+                executor = None
+                try:
+                    executor = object.__getattribute__(self, '_executor')
+                except AttributeError:
+                    pass
+
+                if executor and hasattr(executor, 'shutdown'):
+                    logger.info("Closing MultiDocRetriever Executor...")
+                    executor.shutdown(wait=False)
+                
+                # มาร์คว่าปิดแล้วด้วย setattr
+                try:
                     object.__setattr__(self, '_is_running', False)
-        else:
-            # Fallback ถ้า lock มีปัญหา (ไม่ควรเกิดขึ้นแล้วหลังใช้ PrivateAttr)
-            executor = getattr(self, '_executor', None)
-            if executor:
-                executor.shutdown(wait=False)
+                except AttributeError:
+                    pass
+        except Exception as e:
+            # ใช้ debug แทน warning เพื่อไม่ให้ log รกตอนจบโปรแกรม
+            logger.debug(f"Silent shutdown info: {e}")
 
     def __del__(self):
         try:

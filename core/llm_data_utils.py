@@ -547,8 +547,6 @@ def retrieve_context_with_rubric(
     """
     start_time = time.time()
     vsm = vectorstore_manager
-    from utils.path_utils import get_doc_type_collection_key
-    from core.vectorstore import get_global_reranker
 
     # --- 1. ตรวจสอบและสลับ Collection ---
     if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
