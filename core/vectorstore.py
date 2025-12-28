@@ -1519,92 +1519,80 @@ class NamedRetriever(BaseModel):
         
         return retriever
 
-class MultiDocRetriever(BaseRetriever): # FIX: ไม่มี BaseModel เพื่อเลี่ยง Metaclass Conflict
-    # 🎯 FIX: Pydantic Fields (ใช้ชื่อตัวแปรที่ไม่มี _ นำหน้าสำหรับการรับ Input)
-    retrievers_list: List[NamedRetriever] = Field(default_factory=list)
+class MultiDocRetriever(BaseRetriever): # สังเกตว่า BaseRetriever สืบทอดจาก Pydantic v1 BaseModel
+    """
+    Revised MultiDocRetriever: แก้ไขปัญหา FieldInfo Error โดยใช้ PrivateAttr
+    สำหรับการจัดการ Internal States (Lock, Executor, ฯลฯ)
+    """
+    
+    # 🎯 1. Public Fields: สำหรับรับ Input ผ่าน Pydantic Validation
+    retrievers_list: List[Any] = Field(default_factory=list) # เปลี่ยน NamedRetriever เป็น Any ถ้าติด Type
     k_per_doc: int = Field(default=INITIAL_TOP_K)
     doc_ids_filter: Optional[Set[str]] = Field(default=None) 
-    
-    # Reranking fields 
     compressor: Optional[BaseDocumentCompressor] = Field(default=None)
     final_k: int = Field(default=FINAL_K_RERANKED)
+
+    # 🎯 2. Private Attributes: สำหรับ Internal States
+    # ใช้ PrivateAttr เพื่อไม่ให้ Pydantic เปลี่ยนตัวแปรเหล่านี้เป็น FieldInfo
+    _executor: Optional[Union[ThreadPoolExecutor, ProcessPoolExecutor]] = PrivateAttr(default=None)
+    _executor_type: Optional[str] = PrivateAttr(default=None) 
+    _executor_mode: Optional[str] = PrivateAttr(default=None)
+    _all_retrievers: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _doc_ids_filter_list: Optional[List[str]] = PrivateAttr(default=None) 
+    _chroma_filter: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+    _manager: Optional[Any] = PrivateAttr(default=None) 
+    _is_running: bool = PrivateAttr(default=False)
     
-    # 🎯 Internal Fields (ประกาศทุกตัวที่ต้องการกำหนดค่าใน __init__ และ exclude=True)
-    _executor: Optional[Union[ThreadPoolExecutor, ProcessPoolExecutor]] = Field(default=None, exclude=True)
-    _executor_type: Optional[str] = Field(default=None, exclude=True) 
-    _executor_mode: Optional[str] = Field(default=None, exclude=True)
-    _all_retrievers: Dict[str, Any] = Field(default_factory=dict, exclude=True)
-    _doc_ids_filter_list: Optional[List[str]] = Field(default=None, exclude=True) 
-    _chroma_filter: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
-    _manager: Optional['VectorStoreManager'] = Field(default=None, exclude=True) 
-    _is_running: bool = Field(default=False, exclude=True) # เพิ่ม is_running สำหรับ cleanup
-    _lock: threading.Lock = Field(default_factory=threading.Lock, exclude=True) # เพิ่ม lock
-    
-    # NOTE: _retrievers_list เป็นชื่อที่ใช้ใน _get_relevant_documents
-    # ต้องมั่นใจว่ามันถูกกำหนดค่าจาก self.retrievers_list
-    _retrievers_list: List[NamedRetriever] = Field(default_factory=list, exclude=True) 
+    # ตัวแปร Lock ที่เคยเกิดปัญหา ให้ประกาศเป็น PrivateAttr
+    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _retrievers_list: List[Any] = PrivateAttr(default_factory=list) 
 
     class Config:
         arbitrary_types_allowed = True
+        # หมายเหตุ: ใน Pydantic v1 PrivateAttr จะไม่ถูกนับเป็น Field 
+        # จึงไม่ต้องใช้ underscore_attrs_are_private = True
     
-    # -------------------- Property: num_workers (FIXED) --------------------
     @property
     def num_workers(self) -> int:
-        """Calculates the optimal number of workers for the current executor type."""
-        # ดึง MAX_PARALLEL_WORKERS จาก globals()
+        """คำนวณจำนวน Worker ที่เหมาะสม"""
         max_workers_from_config = globals().get('MAX_PARALLEL_WORKERS', 4) 
-        
-        # ดึง _executor_type ที่ถูกกำหนดค่าแล้ว
-        # ใช้ getattr เพื่อความปลอดภัยถ้า __init__ ยังทำงานไม่เสร็จสมบูรณ์
         executor_type = getattr(self, '_executor_type', 'thread') 
         
         if executor_type == "process":
-            # สำหรับ Process Pool ควรใช้จำนวนที่จำกัด
-            return max(1, min(max_workers_from_config, os.cpu_count() - 1 if os.cpu_count() else 4))
-        # สำหรับ Thread Pool สามารถใช้จำนวนที่สูงกว่าได้
+            return max(1, min(max_workers_from_config, (os.cpu_count() or 5) - 1))
         return max_workers_from_config
 
-    # -------------------- Initializer --------------------
     def __init__(self, **data: Any) -> None:
         """Initializes the MultiDocRetriever and its internal state."""
-        
-        # 1. เรียก Pydantic init ก่อน
+        # 1. เรียก Pydantic init (BaseRetriever)
         super().__init__(**data)
 
-        # 2. กำหนดค่าให้กับ Internal Fields โดยใช้ object.__setattr__
-        #    เพื่อหลีกเลี่ยงการถูกดักโดย Pydantic V1 __setattr__ (FIXED)
-        
-        # กำหนดค่าที่จำเป็น
+        # 2. กำหนดค่าเริ่มต้นให้กับ Private Attributes (Thread-safe assignment)
+        # แม้จะใช้ PrivateAttr แต่ใน Pydantic v1 การกำหนดค่าใน __init__ 
+        # แนะนำให้ใช้ object.__setattr__ เพื่อความปลอดภัยสูงสุด
+        object.__setattr__(self, '_lock', threading.Lock())
         object.__setattr__(self, '_retrievers_list', self.retrievers_list)
         
-        # กำหนด Executor Type
         executor_type_val = self._choose_executor()
         object.__setattr__(self, '_executor_type', executor_type_val)
         
-        # กำหนด Executor instance
+        # Initialize Executor
         object.__setattr__(self, '_executor', self._initialize_executor())
         object.__setattr__(self, '_is_running', True)
         
-        # 3. เตรียมโครงสร้าง Retriever
+        # เตรียมโครงสร้าง Retriever
         object.__setattr__(self, '_all_retrievers', {
-            r.doc_id: r for r in self.retrievers_list
+            getattr(r, 'doc_id', str(i)): r for i, r in enumerate(self.retrievers_list)
         })
         
-        # 4. เตรียม Doc ID Filter
+        # เตรียม Doc ID Filter
         if self.doc_ids_filter:
             doc_ids_list = list(self.doc_ids_filter)
             object.__setattr__(self, '_doc_ids_filter_list', doc_ids_list)
-            # สร้าง Chroma Filter
             chroma_filter = {"$or": [{"chunk_uuid": {"$in": doc_ids_list}}]}
             object.__setattr__(self, '_chroma_filter', chroma_filter)
         
-        # 5. Logging (ตอนนี้ num_workers สามารถใช้ได้แล้ว)
-        if self._executor_type == "process":
-            logger.info(f"Initialized MultiDocRetriever using ProcessPoolExecutor ({self.num_workers} workers).")
-        else:
-            logger.info(f"Initialized MultiDocRetriever using ThreadPoolExecutor ({self.num_workers} threads).")
-            
-    # -------------------- Executor Management --------------------
+        logger.info(f"✅ MultiDocRetriever ({self._executor_type}) initialized with {self.num_workers} workers.")
     
     def _initialize_executor(self) -> Union[ThreadPoolExecutor, ProcessPoolExecutor]:
         """Initializes the appropriate executor."""
@@ -1652,23 +1640,27 @@ class MultiDocRetriever(BaseRetriever): # FIX: ไม่มี BaseModel เพ�
             
         return self._executor
     
-    # (เมธอด get_relevant_documents, _choose_executor, shutdown, __del__, 
-    # _static_retrieve_task, _thread_retrieve_task, _get_relevant_documents 
-    # ที่เหลือยังคงใช้โค้ดที่คุณให้มาล่าสุด)
-
-    # ... (ส่วนที่เหลือของคลาส) ...
-    
-    def shutdown(self):
-        with self._lock: # ใช้ lock เพื่อป้องกัน race condition
-            if self._executor and self._is_running:
-                executor_type_name = "ProcessPoolExecutor" if self._executor_type == "process" else "ThreadPoolExecutor"
-                # ตอนนี้เราใช้ self.num_workers ได้แล้ว
-                workers = self.num_workers
-                
-                logger.info(f"Shutting down MultiDocRetriever's {executor_type_name} executor ({workers} workers).")
-                self._executor.shutdown(wait=True)
-                object.__setattr__(self, '_executor', None)
-                object.__setattr__(self, '_is_running', False)
+    def shutdown(self) -> None:
+        """
+        🎯 แก้ไขจุดที่เคย Error: ใช้ Lock อย่างปลอดภัย
+        """
+        # ใช้ getattr เพื่อความปลอดภัยในการเข้าถึง private attr
+        lock = getattr(self, '_lock', None)
+        
+        # ตรวจสอบว่า lock เป็น Lock Object จริงๆ (ไม่ใช่ FieldInfo)
+        if lock and hasattr(lock, "__enter__"):
+            with lock:
+                if getattr(self, '_is_running', False):
+                    executor = getattr(self, '_executor', None)
+                    if executor:
+                        logger.info("Closing MultiDocRetriever Executor...")
+                        executor.shutdown(wait=False)
+                    object.__setattr__(self, '_is_running', False)
+        else:
+            # Fallback ถ้า lock มีปัญหา (ไม่ควรเกิดขึ้นแล้วหลังใช้ PrivateAttr)
+            executor = getattr(self, '_executor', None)
+            if executor:
+                executor.shutdown(wait=False)
 
     def __del__(self):
         try:
