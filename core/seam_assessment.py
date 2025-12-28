@@ -2197,7 +2197,6 @@ class SEAMPDCAEngine:
             "total_run_time_s": round(total_duration, 2)
         }
 
-    
     def _save_level_evidences_and_calculate_strength(
         self, 
         level_temp_map: List[Dict[str, Any]], 
@@ -2207,74 +2206,92 @@ class SEAMPDCAEngine:
         highest_rerank_score: float = 0.0
     ) -> float:
         """
-        [CRITICAL FIX 25.0] 
-        บันทึกหลักฐานที่ใช้ในการประเมิน level นั้นๆ เข้าสู่ self.evidence_map/temp_map
-        และคำนวณ Evidence Strength (Evi Str)
-        
-        แก้ไขปัญหาหลัก: Chunk UUID ไม่ถูกต้อง ทำให้ L2, L3 Hydration ล้มเหลว (0 chunks restored).
+        [FULL REFINED VERSION 25.1]
+        บันทึกหลักฐานการประเมินและคำนวณ Evidence Strength 
+        รองรับ Metadata แบบ Robust ที่ดึงข้อมูลได้ทั้งจาก Direct Key และ Nested Metadata
+        สอดคล้องกับโครงสร้างจาก ingest.py (deterministic UUIDs)
         """
-        # 📌 Map Key ที่ใช้สำหรับเก็บ Evidence ใน self.evidence_map และ self.temp_map_for_save
         map_key = f"{sub_id}.L{level}"
         new_evidence_list: List[Dict[str, Any]] = []
         
-        # 1. วนซ้ำหลักฐานที่ใช้ในการประเมิน
+        # ดึงค่าเริ่มต้นเพื่อใช้ในการ Debug หากเกิดปัญหา
+        self.logger.info(f"💾 [EVI SAVE] Starting save for {map_key} with {len(level_temp_map)} potential chunks.")
+
         for chunk in level_temp_map:
+            # 🎯 1. ดึง Metadata และ Identifiers (Robust Extraction)
+            # รองรับทั้ง Dictionary, Object ที่มี metadata field หรือโครงสร้างแบนราบ (Flattened)
+            meta = chunk.get("metadata", {}) if isinstance(chunk.get("metadata"), dict) else {}
             
-            # 🎯 CRITICAL FIX 25.0: ดึง Chunk UUID และ Stable Doc ID แยกจากกันอย่างชัดเจน
-            chunk_uuid_key = chunk.get("chunk_uuid") 
-            stable_doc_uuid_key = chunk.get("stable_doc_uuid") or chunk.get("doc_id")
+            # ค้นหา Chunk UUID (ลำดับความสำคัญ: Direct -> Metadata -> id)
+            chunk_uuid_key = (
+                chunk.get("chunk_uuid") or 
+                meta.get("chunk_uuid") or 
+                chunk.get("id")
+            )
+            
+            # ค้นหา Stable Doc UUID (ลำดับความสำคัญ: Direct -> Metadata -> doc_id)
+            stable_doc_uuid_key = (
+                chunk.get("stable_doc_uuid") or 
+                chunk.get("doc_id") or 
+                meta.get("stable_doc_uuid") or 
+                meta.get("doc_id")
+            )
 
-            # Fallback Logic: ถ้า Chunk UUID หาย ให้ใช้ Stable Doc UUID แทน (เพื่อไม่ให้ entry ว่าง)
+            # 🎯 2. Fallback Logic: ถ้ายังหา ID ไม่เจอ (เพื่อป้องกัน Data Loss)
             if not chunk_uuid_key and stable_doc_uuid_key:
-                chunk_uuid_key = stable_doc_uuid_key 
-                self.logger.warning(f"⚠️ [EVI SAVE] Missing chunk_uuid. Falling back to Stable ID: {chunk_uuid_key[:8]}...")
+                # ใช้ Stable Doc ID + fake suffix ถ้าหา chunk uuid ไม่เจอจริงๆ
+                chunk_uuid_key = f"{stable_doc_uuid_key}_missing_uuid"
+                self.logger.warning(f"⚠️ [EVI SAVE] Missing chunk_uuid for doc {stable_doc_uuid_key[:8]}. Using Fallback.")
 
+            # 🎯 3. Validation: ถ้าไม่มี ID สำคัญเลย ให้ Skip เพื่อความปลอดภัยของ Database
             if not stable_doc_uuid_key or not chunk_uuid_key:
-                 self.logger.error(f"❌ [EVI SAVE] Cannot determine required IDs for chunk. Skipping.")
-                 continue
+                self.logger.error(f"❌ [EVI SAVE] Critical ID Missing! Skipping chunk from source: {chunk.get('source', 'Unknown')}")
+                continue
 
-            # 2. สร้าง Evidence Entry
+            # 🎯 4. สร้าง Evidence Entry (อิงตามมาตรฐาน ingest.py)
+            # ดึงหน้ากระดาษโดยให้ความสำคัญกับ page_label ก่อน (เพื่อ UI ที่สวยงาม)
+            page_val = (
+                meta.get("page_label") or 
+                chunk.get("page") or 
+                meta.get("page") or 
+                chunk.get("page_number") or 
+                "N/A"
+            )
+
             evidence_entry = {
                 "sub_id": sub_id,
                 "level": level,
-                "relevance_score": chunk.get("rerank_score", chunk.get("score", 0.0)),
-                "doc_id": stable_doc_uuid_key,          # <--- [FIXED] Stable ID (Document ID)
-                "stable_doc_uuid": stable_doc_uuid_key, # <--- Stable ID (Document ID)
-                "chunk_uuid": chunk_uuid_key,           # <--- [FIXED] Unique Chunk ID (ใช้ในการ Hydration)
-                "source": chunk.get("source", "N/A"),
-                "source_filename": chunk.get("filename", "N/A"),
-                "page": chunk.get("page") or chunk.get("metadata", {}).get("page", "N/A"),
-                "pdca_tag": chunk.get("pdca_tag", "Other"), 
-                "status": "PASS", 
+                "relevance_score": float(chunk.get("rerank_score", chunk.get("score", 0.0))),
+                "doc_id": str(stable_doc_uuid_key),
+                "stable_doc_uuid": str(stable_doc_uuid_key),
+                "chunk_uuid": str(chunk_uuid_key),
+                "source": chunk.get("source") or meta.get("source") or "N/A",
+                "source_filename": chunk.get("filename") or meta.get("source_filename") or "N/A",
+                "page": str(page_val),
+                "pdca_tag": chunk.get("pdca_tag") or meta.get("pdca_tag") or "Other", 
+                "status": "PASS" if llm_result.get("is_passed") else "FAIL", 
                 "timestamp": datetime.now().isoformat(),
             }
             new_evidence_list.append(evidence_entry)
-            
-        # 3. คำนวณ Evidence Strength (Evi Str)
-        # 📌 ใช้ self._calculate_evidence_strength_cap เพื่อกำหนดเพดานคะแนน (Cap)
+
+        # 🎯 5. คำนวณ Evidence Strength (Evi Str)
+        # ใช้ logic การคำนวณ Cap ที่คุณออกแบบไว้
         evi_cap_data = self._calculate_evidence_strength_cap(
-            top_evidences=new_evidence_list, # ใช้ List ของ Evidence ที่ถูกกรองและจัดรูปแบบแล้ว
+            top_evidences=new_evidence_list,
             level=level,
             highest_rerank_score=highest_rerank_score
         )
         
-        max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
+        final_evi_str = evi_cap_data.get('max_evi_str_for_prompt', 0.0)
 
-        # 4. บันทึกเข้า Map (ใช้ setdefault เพื่อให้แน่ใจว่า List ถูกสร้างขึ้น)
-        # *Note: ในโหมด Worker/Parallel, self.evidence_map จะถูกรวมใน Process หลัก*
-        current_map = self.evidence_map.setdefault(map_key, [])
-        current_map.extend(new_evidence_list)
+        # 🎯 6. บันทึกเข้า Memory Maps (ทั้งหลักและสำรองสำหรับ Worker)
+        self.evidence_map.setdefault(map_key, []).extend(new_evidence_list)
+        self.temp_map_for_save.setdefault(map_key, []).extend(new_evidence_list)
         
-        # 5. อัปเดต Temp Map (สำหรับ Worker Mode: ใช้สำหรับการส่งผลลัพธ์กลับใน Process)
-        temp_map = self.temp_map_for_save.setdefault(map_key, [])
-        temp_map.extend(new_evidence_list)
+        # 🎯 7. Log สรุปผล
+        self.logger.info(f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | Strength: {final_evi_str}")
         
-        # 6. Log สรุป
-        self.logger.info(f"[EVIDENCE SAVED] {map_key} → {len(new_evidence_list)} chunks")
-        self.logger.info(f"[SEQUENTIAL UPDATE] {map_key} added to engine's main evidence_map for L{level+1} dependency.")
-        
-        # คืนค่า max_evi_str_for_prompt เพื่อใช้ในการอัปเดต final_results
-        return evi_cap_data['max_evi_str_for_prompt']
+        return final_evi_str
         
     def _calculate_evidence_strength_cap(
         self,
@@ -3183,6 +3200,12 @@ class SEAMPDCAEngine:
                 res_item['recommendation_type'] = 'WEAK_EVIDENCE'
                 statements_for_action_plan.append(res_item)
 
+            if is_passed and res_item.get('suggestion_next_level'):
+                # ป้องกันการใส่ซ้ำถ้าติดเงื่อนไข WEAK_EVIDENCE ไปแล้ว
+                if res_item not in statements_for_action_plan:
+                    res_item['recommendation_type'] = 'IMPROVEMENT_ADVICE'
+                    statements_for_action_plan.append(res_item)
+
         action_plan_result = []
 
         try:
@@ -3197,7 +3220,8 @@ class SEAMPDCAEngine:
                 target_level=target_next_level,
                 llm_executor=self.llm,
                 logger=self.logger,
-                max_retries=OLLAMA_MAX_RETRIES 
+                max_retries=OLLAMA_MAX_RETRIES,
+                enabler_rules=self.contextual_rules_map
             )
             
             self.logger.info(f"✅ Action Plan generated: {len(action_plan_result)} phase(s) for {sub_id}")

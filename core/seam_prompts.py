@@ -330,3 +330,54 @@ EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
     input_variables=["sub_id", "level", "context", "next_level"],
     template=SYSTEM_EVIDENCE_DESCRIPTION_PROMPT + USER_EVIDENCE_DESCRIPTION_TEMPLATE
 )
+# =================================================================
+# 6. EXCELLENCE & SUSTAIN PROMPT (LEVEL 5 SUSTAINABILITY)
+# =================================================================
+
+SYSTEM_EXCELLENCE_PROMPT: Final[str] = """
+คุณคือที่ปรึกษาด้านการจัดการเชิงยุทธศาสตร์ (SE-AM Excellence Consultant)
+ภารกิจ: สร้างแผนปฏิบัติการยกระดับความยั่งยืน สำหรับหัวข้อที่บรรลุ Level 5 แล้ว
+
+กลยุทธ์การวิเคราะห์ PDCA สำหรับความเป็นเลิศ (Excellence Maturity):
+- P (Plan): บูรณาการแผนงานเข้ากับยุทธศาสตร์องค์กร (Strategic Alignment) และกำหนดเป้าหมายที่ท้าทายระดับสากล (Stretch Goals)
+- D (Do): สร้างวัฒนธรรมการทำงานแบบ Agile และการแบ่งปันความรู้ทั่วทั้งองค์กร (Cross-functional Excellence)
+- C (Check): วัดผลลัพธ์ในเชิงคุณค่า (Value Creation) และการทำ Benchmarking กับคู่เทียบชั้นนำระดับโลก
+- A (Act): สรุปบทเรียน (Lessons Learned) เพื่อสร้างมาตรฐานใหม่ (Standardization) และนวัตกรรมที่เปลี่ยนเกม (Game-changing Innovation)
+"""
+
+EXCELLENCE_TEMPLATE: Final[str] = """
+### [ข้อมูลวิเคราะห์]
+- รหัสเกณฑ์: {sub_id}
+- ชื่อเกณฑ์: {sub_criteria_name}
+- สถานะ: ผ่านเกณฑ์ระดับสูงสุด (Level {target_level}) 
+- แนวทางยกระดับที่เน้น: {advice_focus}
+
+### [ภารกิจ]
+จงสร้างแผนงาน 1 Phase เพื่อ "Sustain & Enhance" โดยเปลี่ยนผลลัพธ์ระดับ 5 ให้กลายเป็น "มาตรฐานใหม่ของอุตสาหกรรม" 
+แผนงานต้องครอบคลุม:
+1. การทำ Benchmarking เพื่อหาช่องว่างสู่ระดับสากล
+2. การถอดบทเรียน (Knowledge Extraction) เพื่อป้องกันการสูญเสียความรู้
+3. การระบุผลกระทบ (Impact) ต่อผู้มีส่วนได้ส่วนเสียอย่างเป็นรูปธรรม
+
+### [กฎเหล็ก JSON]
+- ตอบเป็น JSON Array ของ ActionPlanActions เท่านั้น (ตาม Schema)
+- "statement_id": "{sub_id}"
+- "failed_level": {target_level}
+- "recommendation": ต้องเน้น "การสร้างมาตรฐานใหม่" และ "ความยั่งยืนของระบบ"
+- Steps: ต้องมีกิจกรรมที่สะท้อนวงจร PDCA ในระดับสูง
+
+### [ข้อกำหนด]
+- Steps: ไม่เกิน {max_steps} ขั้นตอน
+- ภาษา: {language}
+
+เริ่มตอบในรูปแบบ JSON Array ทันที:
+"""
+
+# ใช้ร่วมกับ ActionPlanResult Schema ที่คุณเตรียมไว้
+EXCELLENCE_ADVICE_PROMPT = PromptTemplate(
+    input_variables=[
+        "sub_id", "sub_criteria_name", "target_level", 
+        "assessment_context", "advice_focus", "max_steps", "language"
+    ],
+    template=SYSTEM_EXCELLENCE_PROMPT + EXCELLENCE_TEMPLATE
+)

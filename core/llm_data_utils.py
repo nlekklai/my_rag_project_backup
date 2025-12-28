@@ -37,7 +37,6 @@ try:
 except ImportError:
     pass  # ใช้ re มาตรฐานต่อไป
 
-
 # ===================================================================
 # 1. Core Configuration (ต้องมีแน่นอน)
 # ===================================================================
@@ -87,12 +86,14 @@ from core.seam_prompts import (
     SYSTEM_LOW_LEVEL_PROMPT,
     USER_LOW_LEVEL_PROMPT,
     USER_LOW_LEVEL_PROMPT_TEMPLATE,
-    USER_EVIDENCE_DESCRIPTION_TEMPLATE
+    USER_EVIDENCE_DESCRIPTION_TEMPLATE,
+    EXCELLENCE_ADVICE_PROMPT, 
+    SYSTEM_EXCELLENCE_PROMPT
 )
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
 from core.assessment_schema import CombinedAssessment, EvidenceSummary
-from core.action_plan_schema import ActionPlanActions
+from core.action_plan_schema import ActionPlanActions, ActionPlanResult
 
 try:
     from core.assessment_schema import StatementAssessment
@@ -1380,31 +1381,23 @@ def create_context_summary_llm(
         "suggestion_for_next_level": f"ตรวจสอบเกณฑ์ของ Level {next_level} ในคู่มือ"
     }
 
-
 # =================================================================
-# 1. JSON Extractor (ทนทานที่สุด)
+# 1. JSON Extractor (ทนทานที่สุดด้วยระบบ Auto-Repair)
 # =================================================================
 def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
-    """
-    สกัด JSON Array ออกจาก Text โดยรองรับการซ่อมแซมโครงสร้าง (Auto-Repair)
-    และจัดการปัญหา Delimiter Error/Control Characters
-    """
     try:
         if not isinstance(text, str):
             text = str(text) if text is not None else ""
+        if not text.strip(): return []
 
-        if not text.strip():
-            return []
-
-        # 1. ลบ Markdown Block (ถ้ามี)
+        # 1. ลบ Markdown Block
         clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
 
-        # 2. ค้นหาขอบเขตที่กว้างที่สุดของ [ ] หรือ { }
+        # 2. ค้นหาขอบเขต [ ]
         start_idx = clean_text.find('[')
         end_idx = clean_text.rfind(']')
 
         if start_idx == -1:
-            # กรณี LLM ส่งมาเป็น Object เดียว (Single Phase)
             start_idx = clean_text.find('{')
             end_idx = clean_text.rfind('}')
             if start_idx == -1: return []
@@ -1412,136 +1405,63 @@ def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> Li
         else:
             json_candidate = clean_text[start_idx:end_idx + 1]
 
-        # 3. ล้างอักขระควบคุม (Control Characters) ที่มักทำให้ JSON Parse พัง
-        # ลบ ASCII 0-31 ยกเว้น newline, tab, carriage return
+        # 3. ล้าง Control Characters
         json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
 
-        # 4. ฟังก์ชันย่อยสำหรับพยายาม Parse
         def try_parse(content):
             try:
-                # json5 รองรับ Trailing Comma และ Single Quote
                 data = json5.loads(content)
                 return data if isinstance(data, list) else [data]
-            except Exception:
-                return None
+            except Exception: return None
 
-        # --- ลองครั้งที่ 1: Parse ปกติ ---
+        # พยายาม Parse หลายระดับ
         result = try_parse(json_candidate)
-        if result: return result
-
-        # --- ลองครั้งที่ 2: ซ่อมแซมเครื่องหมายคำพูด (Smart Quotes) ---
-        repaired_quotes = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
-        result = try_parse(repaired_quotes)
-        if result: return result
-
-        # --- ลองครั้งที่ 3: กรณี JSON ตัดจบ (Truncated Repair) ---
-        # พยายามปิด Bracket ที่ LLM เจนไม่จบ
-        logger.warning("JSON truncated or malformed, attempting brute-force closure...")
-        for suffix in ["]", "}", "}]", "}]}]", "}\n]"]:
-            result = try_parse(json_candidate + suffix)
-            if result:
-                logger.info(f"✅ Auto-repaired JSON success with suffix: {suffix}")
-                return result
-
-        # --- ลองครั้งที่ 4: สุดท้าย ใช้ Regex ดึง Object ทีละตัว (Fallback) ---
-        logger.warning("Falling back to Regex Object Extraction...")
-        # ค้นหา pattern { ... } ที่ดูเหมือนจะเป็น object
-        objects = re.findall(r'\{(?:[^{}]|(?R))*\}', json_candidate) # ต้องการ regex module พิเศษ หรือเขียนแบบง่าย:
-        if not objects:
-            objects = re.findall(r'\{[\s\S]*?\}', json_candidate)
-            
-        fallback_results = []
-        for obj_str in objects:
-            try:
-                obj_data = json5.loads(obj_str)
-                if isinstance(obj_data, dict):
-                    fallback_results.append(obj_data)
-            except:
-                continue
+        if not result:
+            repaired = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
+            result = try_parse(repaired)
         
-        if fallback_results:
-            logger.info(f"✅ Recovered {len(fallback_results)} objects via regex")
-            return fallback_results
+        # กรณี Truncated (LLM เจนไม่จบ)
+        if not result:
+            for suffix in ["]", "}", "}]", "}\n]"]:
+                result = try_parse(json_candidate + suffix)
+                if result: break
 
-        logger.error(f"Failed to parse JSON. Snippet: {json_candidate[:200]}...")
-        return []
-
+        return result or []
     except Exception as e:
-        logger.error(f"Extraction logic failed: {str(e)}", exc_info=True)
+        logger.error(f"Extraction failed: {str(e)}")
         return []
 
 # =================================================================
-# 2. Key Normalizer (ตรงกับ schema ล่าสุด)
+# 2. Key Normalizer & Type Enforcement
 # =================================================================
-
 def action_plan_normalize_keys(obj: Any) -> Any:
-    """
-    แปลง key ให้ตรงกับ schema และบังคับประเภทข้อมูล (Data Type Enforcement)
-    โดยเฉพาะ failed_level และ Step ที่ต้องเป็น Integer 100%
-    """
-    if isinstance(obj, list):
-        return [action_plan_normalize_keys(i) for i in obj]
-    
+    if isinstance(obj, list): return [action_plan_normalize_keys(i) for i in obj]
     if isinstance(obj, dict):
         field_mapping = {
-            # Phase & Action level
-            'phase': 'phase', 'Phase': 'phase',
-            'goal': 'goal', 'Goal': 'goal',
-            'actions': 'actions', 'Actions': 'actions',
-            
-            'statement_id': 'statement_id', 'Statement_ID': 'statement_id',
-            'statement id': 'statement_id', 'title': 'statement_id', 'id': 'statement_id',
-            
-            'failed_level': 'failed_level', 'Failed_Level': 'failed_level',
-            'failed level': 'failed_level', 'level': 'failed_level',
-            
-            'recommendation': 'recommendation', 'Recommendation': 'recommendation',
-            'recommend': 'recommendation',
-            
-            'target_evidence_type': 'target_evidence_type', 'Target_Evidence_Type': 'target_evidence_type',
-            'evidence_type': 'target_evidence_type', 'evidence': 'target_evidence_type',
-            
-            'key_metric': 'key_metric', 'Key_Metric': 'key_metric',
-            'metric': 'key_metric',
-            
-            'steps': 'steps', 'Steps': 'steps',
-            
-            # StepDetail (Capitalized per schema)
-            'step': 'Step', 'Step': 'Step',
-            'description': 'Description', 'Description': 'Description', 'desc': 'Description',
-            'responsible': 'Responsible', 'Responsible': 'Responsible', 'owner': 'Responsible',
-            'tools_templates': 'Tools_Templates', 'Tools_Templates': 'Tools_Templates', 'tools': 'Tools_Templates',
-            'verification_outcome': 'Verification_Outcome', 'Verification_Outcome': 'Verification_Outcome', 'outcome': 'Verification_Outcome',
+            'phase': 'phase', 'goal': 'goal', 'actions': 'actions',
+            'statement_id': 'statement_id', 'failed_level': 'failed_level',
+            'recommendation': 'recommendation', 'target_evidence_type': 'target_evidence_type',
+            'key_metric': 'key_metric', 'steps': 'steps',
+            'step': 'Step', 'description': 'Description', 'responsible': 'Responsible',
+            'tools_templates': 'Tools_Templates', 'verification_outcome': 'Verification_Outcome'
         }
-        
         new_obj = {}
         for k, v in obj.items():
-            # ทำความสะอาด Key
-            k_clean = k.lower().replace('_', ' ').replace('-', ' ').strip()
-            k_no_space = k_clean.replace(' ', '')
-            target_key = field_mapping.get(k_clean) or field_mapping.get(k_no_space) or k
+            k_clean = k.lower().replace('_', ' ').strip().replace(' ', '_')
+            target_key = field_mapping.get(k_clean) or k
             
-            # --- [CRITICAL FIX] บังคับประเภทข้อมูลตัวเลข ---
+            # บังคับประเภท Integer สำหรับ Step และ Level
             if target_key in ['failed_level', 'Step']:
                 try:
-                    if isinstance(v, str):
-                        # ดึงเฉพาะตัวเลขที่เจอใน string เช่น "Level 3" -> 3
-                        nums = re.findall(r'\d+', v)
-                        v = int(nums[0]) if nums else 0
-                    else:
-                        v = int(v) if v is not None else 0
-                except (ValueError, IndexError):
-                    v = 0 # Fallback default
-            
+                    nums = re.findall(r'\d+', str(v))
+                    v = int(nums[0]) if nums else 0
+                except: v = 0
             new_obj[target_key] = action_plan_normalize_keys(v)
-        
         return new_obj
-    
     return obj
 
-
 # =================================================================
-# 3. Main Function: create_structured_action_plan
+# 3. Main Function
 # =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
@@ -1550,134 +1470,110 @@ def create_structured_action_plan(
     target_level: int,
     llm_executor: Any,
     logger: logging.Logger,
-    max_retries: int = 3
+    max_retries: int = 3,
+    enabler_rules: Dict[str, Any] = {} # 👈 รับค่าจาก self.contextual_rules_map
 ) -> List[Dict[str, Any]]:
-    """
-    สร้าง Action Plan ที่ผ่าน Pydantic validation 100%
-    ควบคุมจาก config.global_vars อย่างเต็มรูปแบบ:
-    - จำนวน Phase สูงสุด
-    - จำนวน Steps ต่อ Action
-    - ความยาว Step (คำ)
-    - ภาษา
-    """
-    from config import global_vars as gv
-
-    # --- Sustain Mode (ไม่มี Gap) ---
-    if not recommendation_statements:
-        logger.info(f"[Sustain Mode] No gaps found → Level {target_level}")
-        return [{
-            "phase": f"Level {target_level} Sustain & Innovation",
-            "goal": f"รักษามาตรฐานและยกระดับ {sub_criteria_name} สู่ความเป็นเลิศอย่างต่อเนื่อง",
-            "actions": [{
-                "statement_id": f"SUSTAIN_L{target_level}",
-                "failed_level": target_level,
-                "recommendation": "รักษามาตรฐานการดำเนินงาน พร้อมทำ Benchmarking กับ Best Practice สากล",
-                "target_evidence_type": "Internal Audit Report / External Benchmarking Report",
-                "key_metric": f"Maintain Maturity ≥ Level {target_level}",
-                "steps": [{
-                    "Step": "1",
-                    "Description": "ทบทวนกระบวนการและ KPI รายไตรมาส พร้อมปรับปรุงตาม PDCA",
-                    "Responsible": "KM Committee / Top Management",
-                    "Tools_Templates": "PDCA Dashboard / Quarterly Review Template",
-                    "Verification_Outcome": "Quarterly KM Review Report"
-                }, {
-                    "Step": "2",
-                    "Description": "ศึกษาค้นคว้า Best Practices จากองค์กรชั้นนำทั้งในและต่างประเทศ",
-                    "Responsible": "KM Team",
-                    "Tools_Templates": "Benchmarking Framework",
-                    "Verification_Outcome": "Benchmarking Study Report"
-                }]
-            }]
-        }]
-
-    # --- วิเคราะห์ Gap และกำหนดจำนวน Phase ตามระดับ ---
-    max_failed_level = max([s.get('level', 0) for s in recommendation_statements] or [1])
-
-    if max_failed_level >= 5:
-        advice_focus = "Innovation, External Benchmarking, Digital Transformation และ Continuous Improvement"
-    elif max_failed_level >= 3:
-        advice_focus = "Standardization, KPI Monitoring, PDCA Cycle และ Evidence Strengthening"
+    
+    is_sustain_mode = not recommendation_statements
+    rules = enabler_rules.get(sub_id, {})
+    
+    # --- ส่วนการเตรียม Focus ตาม Keywords ใน JSON ---
+    if is_sustain_mode:
+        # ดึง Keywords สำหรับ L5 (Sustain)
+        l5_acts = rules.get("L5", {}).get("act_keywords", [])
+        focus_words = ", ".join(l5_acts[:3]) if l5_acts else "นวัตกรรมและการยกระดับมาตรฐาน"
+        advice_focus = f"ความเป็นเลิศอย่างยั่งยืนด้วย {focus_words}"
+        
+        current_prompt_template = EXCELLENCE_ADVICE_PROMPT
+        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
+        assessment_context = f"ผ่านเกณฑ์ระดับ 5 (เป้าหมายสูงสุด) ในหัวข้อ {sub_criteria_name}"
+        
+        human_prompt = current_prompt_template.format(
+            sub_id=sub_id, 
+            sub_criteria_name=sub_criteria_name, 
+            target_level=target_level,
+            assessment_context=assessment_context, 
+            advice_focus=advice_focus,
+            max_steps=5, 
+            max_words_per_step=150,  # 👈 เพิ่มตรงนี้
+            language="ภาษาไทย"
+        )
     else:
-        advice_focus = "Policy Establishment, Resource Allocation, Communication และ Basic Training"
+        # กรณีติด Gap (L1-L4): เลือก Keyword ตาม Level สูงสุดที่ยังไม่ผ่าน
+        failed_lvls = [s.get('level', 1) for s in recommendation_statements]
+        max_fail = max(failed_lvls) if failed_lvls else 1
+        
+        # เลือกหมวดหมู่ PDCA ตาม Level (เช่น L1-L2 มักจะติด Plan/Do, L3-L4 มักติด Check/Act)
+        phase_map = "plan" if max_fail <= 1 else "do" if max_fail <= 2 else "check"
+        keywords = rules.get(f"L{max_fail}", {}).get(f"{phase_map}_keywords", [])
+        
+        if not keywords: # Fallback ถ้าไม่มี keywords ราย phase
+            keywords = rules.get(f"L{max_fail}", {}).get("must_include_keywords", [])
 
-    stmt_blocks = [
-        f"- [Level {s.get('level')}] {s.get('statement')} (Gap: {s.get('reason')})"
-        for s in recommendation_statements
-    ]
+        focus_text = f"การเน้น {', '.join(keywords[:2])}" if keywords else "การสร้างมาตรฐานและระบบรายงาน"
+        advice_focus = focus_text
+        
+        stmt_blocks = [f"- [Level {s.get('level')}] {s.get('statement')}" for s in recommendation_statements]
+        
+        current_prompt_template = ACTION_PLAN_PROMPT
+        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT
+        human_prompt = current_prompt_template.format(
+            sub_id=sub_id, 
+            sub_criteria_name=sub_criteria_name, 
+            target_level=target_level,
+            advice_focus=advice_focus, 
+            recommendation_statements_list="\n".join(stmt_blocks),
+            max_phases=1, 
+            max_steps=3, 
+            max_words_per_step=150,  # 👈 เพิ่มตรงนี้
+            language="ภาษาไทย"
+        )
 
-    # --- สร้าง Prompt พร้อมส่ง config ทั้งหมดเข้าไปบังคับ LLM ---
-    human_prompt = ACTION_PLAN_PROMPT.format(
-        sub_id=sub_id,
-        sub_criteria_name=sub_criteria_name,
-        target_level=target_level,
-        advice_focus=advice_focus,
-        recommendation_statements_list="\n".join(stmt_blocks),
-        json_schema=schema_json,
-        max_phases=gv.MAX_ACTION_PLAN_PHASES,
-        max_steps=gv.MAX_STEPS_PER_ACTION,
-        max_words_per_step=gv.ACTION_PLAN_STEP_MAX_WORDS,
-        language="ภาษาไทย" if gv.ACTION_PLAN_LANGUAGE == "th" else "English"
-    )
-
-    # --- Retry Loop ---
+    # --- ส่วนการรัน LLM และ Validate ด้วย Pydantic Schema ---
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"Action Plan Generation | Attempt {attempt}/{gv.OLLAMA_MAX_RETRIES}")
             response = llm_executor.generate(
-                system=SYSTEM_ACTION_PLAN_PROMPT,
-                prompts=[human_prompt],
-                temperature=gv.LLM_TEMPERATURE,
-                max_tokens=3000
+                system=current_system_prompt, prompts=[human_prompt],
+                temperature=0.3
             )
-
-            raw_text = ""
-            if hasattr(response, 'generations') and response.generations:
-                raw_text = response.generations[0][0].text
-            elif hasattr(response, 'text'):
-                raw_text = response.text
-            else:
-                raw_text = str(response)
-
-            if attempt == 1:
-                logger.debug(f"Raw Response (first 800 chars):\n{raw_text[:800]}")
-
+            raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response)
+            
+            # ใช้ Extractor ที่คุณเขียนมา (ทนทานต่อ JSON เพี้ยน)
             items = _extract_json_array_for_action_plan(raw_text, logger)
-            if not items:
-                logger.warning(f"Attempt {attempt}: No JSON extracted")
-                continue
+            if not items: continue
 
-            validated_output = []
-            for idx, entry in enumerate(items):
-                try:
-                    clean_entry = action_plan_normalize_keys(entry)
-                    validated = ActionPlanActions.model_validate(clean_entry)
-                    validated_output.append(validated.model_dump(by_alias=False))
-                except Exception as ve:
-                    logger.error(f"Entry {idx} validation failed: {ve}")
-                    if idx < 3:
-                        logger.debug(f"Failed Entry:\n{json.dumps(clean_entry, ensure_ascii=False, indent=2)[:1500]}")
-
-            if validated_output:
-                logger.info(f"✅ Success: {len(validated_output)} valid phase(s) on attempt {attempt}")
-                return validated_output
+            # ทำ Key Normalization และ Validate ผ่าน Pydantic (ActionPlanResult)
+            clean_items = action_plan_normalize_keys(items)
+            from core.action_plan_schema import ActionPlanResult
+            validated_result = ActionPlanResult.model_validate(clean_items)
+            
+            return validated_result.model_dump(by_alias=True)
 
         except Exception as e:
-            logger.error(f"Attempt {attempt} error: {e}", exc_info=True)
+            logger.error(f"Action Plan Attempt {attempt} failed: {e}")
 
-    # --- Emergency Fallback ---
-    logger.warning("All attempts failed → returning emergency fallback plan")
+    return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode)
+
+# =================================================================
+# 4. Emergency Fallback
+# =================================================================
+def _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode):
+    if is_sustain_mode:
+        title = "Continuous Excellence"
+        rec = "รักษามาตรฐานและทำ Benchmarking ระดับสากล"
+    else:
+        title = "Gap Remediation"
+        rec = "เร่งจัดทำนโยบายและหลักฐานประกอบวงจร PDCA ให้ครบถ้วน"
+        
     return [{
-        "phase": "Phase 1: Immediate Action Required",
-        "goal": f"เริ่มต้นแก้ไขช่องว่างหลักใน {sub_criteria_name} อย่างเร่งด่วน",
+        "phase": f"Phase: {title}",
+        "goal": f"ยกระดับ {sub_criteria_name} อย่างเป็นระบบ",
         "actions": [{
-            "statement_id": f"GAP_L{max_failed_level}",
-            "failed_level": max_failed_level,
-            "recommendation": f"แต่งตั้งทีมงานและจัดทำแผนพัฒนาอย่างเป็นระบบ โดยเน้น {advice_focus}",
-            "target_evidence_type": "คำสั่งแต่งตั้ง / แผนปฏิบัติการ",
-            "key_metric": "จัดตั้งทีมและอนุมัติแผนภายใน 3 เดือน",
+            "statement_id": sub_id, "failed_level": target_level,
+            "recommendation": rec, "target_evidence_type": "KM Roadmap / Evidence Pack",
+            "key_metric": "Implementation Success 100%",
             "steps": [
-                {"Step": "1", "Description": "แต่งตั้งคณะทำงานพัฒนา KM เฉพาะเกณฑ์นี้", "Responsible": "ผู้บริหารสูงสุด", "Tools_Templates": "คำสั่งแต่งตั้ง", "Verification_Outcome": "คำสั่งแต่งตั้งอย่างเป็นทางการ"},
-                {"Step": "2", "Description": "จัดประชุม Kick-off และวิเคราะห์ Gap ร่วมกัน", "Responsible": "หัวหน้าทีม KM", "Tools_Templates": "Gap Analysis Template", "Verification_Outcome": "รายงานผลการประชุม"}
+                {"Step": 1, "Description": "วิเคราะห์ความพร้อมของหลักฐาน", "Responsible": "KM Team", "Tools_Templates": "Gap Template", "Verification_Outcome": "Gap Analysis Report"}
             ]
         }]
     }]
