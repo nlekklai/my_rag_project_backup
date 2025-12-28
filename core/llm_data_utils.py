@@ -288,6 +288,15 @@ def retrieve_context_for_endpoint(
 # ------------------------
 # Retrieval: retrieve_context_with_filter (Revised)
 # ------------------------
+import time
+import uuid
+import re
+import logging
+from typing import List, Dict, Any, Optional, Union, Callable
+from langchain_core.documents import Document as LcDocument
+
+logger = logging.getLogger(__name__)
+
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
     doc_type: str,
@@ -306,110 +315,150 @@ def retrieve_context_with_filter(
     top_k: int = 12,
 ) -> Dict[str, Any]:
     """
-    Retrieval + Dedup + Score Fix for Assessment
+    [FULL OPTIMIZED VERSION] Retrieval + Deduplication + Batch Reranking
+    แก้ไขปัญหา CUDA OOM โดยการแบ่งประมวลผล Reranker เป็น Batch ย่อยๆ
     """
     start_time = time.time()
     
-    manager = vectorstore_manager or VectorStoreManager(tenant=tenant, year=year)
+    # 1. Setup Manager & Configuration
+    # เราพยายามดึง VectorStoreManager เดิมมาใช้เพื่อไม่ให้โหลดซ้ำ
+    manager = vectorstore_manager
     queries_to_run = [query] if isinstance(query, str) else list(query or [""])
+    # สมมติฟังก์ชัน get_doc_type_collection_key มีการนำเข้าอยู่แล้ว
+    from config.global_vars import get_doc_type_collection_key
     collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
     
-    # Aggregate target IDs
+    # 2. จัดการ Filter สำหรับการทำ Retrieval (Vector Search)
     target_ids = set()
     if stable_doc_ids: target_ids.update([str(i) for i in stable_doc_ids])
     if mapped_uuids: target_ids.update([str(i) for i in mapped_uuids])
     if sequential_chunk_uuids: target_ids.update([str(i) for i in sequential_chunk_uuids])
     
+    # ฟังก์ชัน _create_where_filter ต้องถูกเรียกจากขอบเขตที่เหมาะสม
+    # (ในที่นี้คือเรียกใช้ตาม Logic เดิมที่คุณมี)
     where_filter = _create_where_filter(
         stable_doc_ids=list(target_ids) if target_ids else None,
         subject=subject,
         year=year
     )
 
-    # L3 fallback
-    fallback_chunks = []
-    if level == 3 and callable(get_previous_level_docs):
-        try:
-            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
-            logger.info(f"L3 Fallback: Received {len(fallback_chunks)} chunks from L2")
-        except Exception as e:
-            logger.warning(f"L3 Fallback failed: {e}")
+    # 3. รวบรวมข้อมูลเริ่มต้น (Base Chunks)
+    all_source_chunks = []
 
-    # Priority chunks
-    guaranteed_priority_chunks = []
+    # 3.1 Priority Docs (จาก Baseline หรือ Level ก่อนหน้า)
     if priority_docs_input:
         for doc in priority_docs_input:
             if not doc: continue
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
+                # รักษา ID เดิมไว้
                 meta['chunk_uuid'] = doc.get('chunk_uuid') or meta.get('chunk_uuid')
                 meta['stable_doc_uuid'] = doc.get('doc_id') or meta.get('stable_doc_uuid')
                 if pc.strip():
-                    guaranteed_priority_chunks.append(LcDocument(page_content=pc, metadata=meta))
+                    all_source_chunks.append(LcDocument(page_content=pc, metadata=meta))
             elif hasattr(doc, 'page_content'):
-                guaranteed_priority_chunks.append(doc)
+                all_source_chunks.append(doc)
 
-    # Retrieval
-    retrieved_chunks = []
+    # 3.2 L3 Fallback (ดึงจาก L2)
+    if level == 3 and callable(get_previous_level_docs):
+        try:
+            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
+            all_source_chunks.extend(fallback_chunks)
+            logger.info(f"L3 Fallback: Added {len(fallback_chunks)} chunks from L2")
+        except Exception as e:
+            logger.warning(f"L3 Fallback failed: {e}")
+
+    # 3.3 Vector Search Retrieval (ดึงจาก ChromaDB/Pinecone)
     try:
-        retriever = manager.get_retriever(collection_name=collection_name)
-        search_kwargs = {"k": top_k}
+        full_retriever = manager.get_retriever(collection_name=collection_name)
+        # 🛡️ จุดสำคัญ: ดึงเฉพาะ Base Retriever เพื่อทำ Vector Search ก่อน (ยังไม่ Rerank)
+        # หาก get_retriever ของคุณคืนค่า ContextualCompressionRetriever ให้ดึง .base_retriever
+        base_retriever = getattr(full_retriever, "base_retriever", full_retriever)
+        
+        search_kwargs = {"k": top_k} # top_k นี้อาจเป็น 100-1000
         if where_filter: search_kwargs["where"] = where_filter
 
         for q in queries_to_run:
             if not q: continue
-            docs = retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
-            retrieved_chunks.extend(docs or [])
+            docs = base_retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
+            all_source_chunks.extend(docs or [])
     except Exception as e:
         logger.error(f"Retrieval error for {collection_name}: {e}")
 
-    # Deduplicate + fix score
+    # 4. Deduplicate (ตัด Chunk ซ้ำ) เพื่อประหยัด Memory ก่อน Rerank
     unique_map: Dict[str, LcDocument] = {}
-    all_source_chunks = guaranteed_priority_chunks + retrieved_chunks + fallback_chunks
-
     for doc in all_source_chunks:
         if not doc or not doc.page_content.strip(): continue
         md = doc.metadata or {}
+        # สร้าง UID สำหรับเช็คความซ้ำ
         uid = str(md.get("chunk_uuid") or md.get("stable_doc_uuid") or hash(doc.page_content))
-
-        # 🔥 Fix: Pull score from all possible sources
-        raw_score = (
-            md.get("_rerank_score_force") or
-            md.get("relevance_score") or
-            md.get("rerank_score") or
-            getattr(doc, "relevance_score", 0.0)
-        )
-        md["_rerank_score_force"] = float(raw_score)
-        doc.metadata = md
-
         if uid not in unique_map:
+            # L3 Truncate Logic ตามโค้ดเดิมของคุณ
             if level == 3:
-                doc.page_content = doc.page_content[:1000]  # Truncate for L3 if needed
+                doc.page_content = doc.page_content[:1000]
             unique_map[uid] = doc
 
-    final_candidates = list(unique_map.values())
+    candidates = list(unique_map.values())
 
-    # Format output
+    # 5. [CRITICAL] BATCH RERANKING (ป้องกัน OOM)
+    # เราจะไม่ส่ง candidates ทั้งหมดเข้า Reranker ทีเดียว
+    final_scored_docs = []
+    batch_size = 150  # ปริมาณที่ปลอดภัยสำหรับ GPU 
+    
+    # ดึง Reranker จาก Manager (หรือสร้างขึ้นใหม่ถ้าไม่มี)
+    reranker_compressor = getattr(manager, "reranker", None)
+
+    if reranker_compressor and len(candidates) > 0:
+        logger.info(f"🚀 Performing Batch Reranking: {len(candidates)} chunks in batches of {batch_size}")
+        for i in range(0, len(candidates), batch_size):
+            batch = candidates[i : i + batch_size]
+            try:
+                # ใช้ฟังก์ชัน compress_documents ของ LangChain Reranker
+                scored_batch = reranker_compressor.compress_documents(batch, queries_to_run[0])
+                final_scored_docs.extend(scored_batch)
+            except Exception as e:
+                logger.error(f"Rerank Batch Error at index {i}: {e}")
+                # ถ้า batch นี้พัง ให้เก็บไว้แบบไม่มีคะแนน rerank เพื่อไม่ให้ข้อมูลหาย
+                final_scored_docs.extend(batch)
+    else:
+        # กรณีไม่มี Reranker ให้ใช้ผลลัพธ์จาก Vector Search ตรงๆ
+        final_scored_docs = candidates
+
+    # 6. คัดเลือกและจัดรูปแบบผลลัพธ์ (Final Output Formatting)
     top_evidences = []
     aggregated_parts = []
     used_uuids = []
     VALID_ID = re.compile(r"^[0-9a-f\-]{36}$|^[0-9a-f]{64}$", re.IGNORECASE)
 
-    for doc in final_candidates[:top_k]:
+    # เรียงลำดับตามคะแนนที่ได้จาก Reranker
+    final_scored_docs = sorted(
+        final_scored_docs, 
+        key=lambda x: getattr(x, "relevance_score", x.metadata.get("relevance_score", 0.0)), 
+        reverse=True
+    )
+
+    # เลือกเฉพาะ K ตัวแรกที่ต้องการใช้งานจริง (เช่น 12-15 ตัว)
+    final_k = getattr(globals(), 'QA_FINAL_K', 15) 
+    
+    for doc in final_scored_docs[:final_k]:
         md = doc.metadata or {}
         text = doc.page_content.strip()
+        
+        # จัดการ IDs
         c_uuid = str(md.get("chunk_uuid", ""))
         s_uuid = str(md.get("stable_doc_uuid") or md.get("doc_id") or "")
         best_id = s_uuid if VALID_ID.match(s_uuid) else (c_uuid if VALID_ID.match(c_uuid) else f"temp-{uuid.uuid4().hex[:8]}")
-        if not best_id.startswith("temp-"): used_uuids.append(best_id)
+        
+        if not best_id.startswith("temp-"): 
+            used_uuids.append(best_id)
+            
         source = md.get("source") or md.get("source_filename") or "Unknown"
         pdca = md.get("pdca_tag", "Other")
         page = str(md.get("page_label") or md.get("page_number") or md.get("page") or "N/A")
-        score = float(md.get("_rerank_score_force", 0.0))
-
-        # Debug log
-        logger.debug(f"[Debug] Candidate: {best_id} | Score: {score:.4f} | PDCA: {pdca} | Source: {source} | Page: {page}")
+        
+        # ดึงคะแนน (ดึงจาก attribute หรือ metadata)
+        score = float(getattr(doc, "relevance_score", md.get("relevance_score", 0.0)))
 
         top_evidences.append({
             "doc_id": s_uuid or best_id,
