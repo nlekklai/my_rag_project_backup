@@ -170,8 +170,8 @@ def retrieve_context_for_endpoint(
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    k_to_retrieve: int = 150, # 🚀 ปรับเพิ่มเพื่อความครอบคลุม
-    k_to_rerank: int = 30,    # 🚀 ปรับเพิ่มเพื่อให้ AI เห็นบริบทมากขึ้น
+    k_to_retrieve: int = 150, 
+    k_to_rerank: int = 30,    
     strict_filter: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
@@ -192,14 +192,11 @@ def retrieve_context_for_endpoint(
     )
 
     final_chunks: List[LcDocument] = []
-    seen_contents: Set[str] = set() # ป้องกัน Chunk ซ้ำ
+    seen_contents: Set[str] = set()
 
-    # =====================================================
-    # 🎯 NEW: ANCHOR RETRIEVAL (ดึงหน้าสารบัญ/โครงสร้าง)
-    # =====================-================================
+    # --- ANCHOR RETRIEVAL (หน้า 1-5 เพื่อโครงสร้างไฟล์) ---
     if stable_doc_ids:
         logger.info(f"⚓ Fetching Anchor Chunks for structure...")
-        # ดึง 5 Chunks แรกของแต่ละไฟล์ (ส่วนใหญ่คือหน้า 1-5)
         anchors = chroma.get(where=where_filter, limit=8) 
         if anchors and anchors.get('documents'):
             for i in range(len(anchors['documents'])):
@@ -211,23 +208,19 @@ def retrieve_context_for_endpoint(
                     ))
                     seen_contents.add(content)
 
-    # =====================================================
-    # CASE A/B: SEMANTIC & HYBRID SEARCH
-    # =====================================================
+    # --- SEMANTIC SEARCH ---
     search_query = query if (query and query != "*" and len(query) > 2) else ""
-    
-    # ดึงข้อมูลตามความหมาย
     if search_query:
         docs = chroma.similarity_search(search_query, k=k_to_retrieve, filter=where_filter)
         for d in docs:
             if d.page_content not in seen_contents:
                 final_chunks.append(d)
                 seen_contents.add(d.page_content)
-    elif not final_chunks: # ถ้าไม่มี query และยังไม่มี anchor ให้ดึงแบบกวาด
+    elif not final_chunks:
         docs = chroma.similarity_search("*", k=k_to_retrieve, filter=where_filter)
         final_chunks.extend(docs)
 
-    # 🎯 Double Check Guardrail (Filter ID)
+    # Filter Guardrail
     if stable_doc_ids:
         target_ids = {str(i).lower() for i in stable_doc_ids}
         final_chunks = [
@@ -236,21 +229,39 @@ def retrieve_context_for_endpoint(
         ]
 
     # =====================================================
-    # 3. RERANKING (คัดเอาตัวท็อปตามจำนวน K ที่ส่งมาจาก Router)
+    # 🎯 3. [CRITICAL] BATCH RERANKING
     # =====================================================
     reranker = get_global_reranker()
     if reranker and final_chunks and search_query:
         try:
-            top_n = min(len(final_chunks), k_to_rerank)
-            reranked = reranker.compress_documents(documents=final_chunks, query=search_query, top_n=top_n)
-            final_chunks = [r.document if hasattr(r, "document") else r for r in reranked]
-            for i, res in enumerate(reranked):
-                final_chunks[i].metadata["rerank_score"] = getattr(res, "relevance_score", 0)
+            batch_size = 150
+            all_scored_results = []
+            
+            logger.info(f"🚀 Batch Reranking (Endpoint Mode): {len(final_chunks)} chunks")
+            for i in range(0, len(final_chunks), batch_size):
+                batch = final_chunks[i : i + batch_size]
+                # ทำ Rerank ทีละชุดย่อยเพื่อป้องกัน OOM
+                scored_batch = reranker.compress_documents(documents=batch, query=search_query)
+                all_scored_results.extend(scored_batch)
+            
+            # เรียงลำดับคะแนนและตัดเอา Top K
+            all_scored_results = sorted(
+                all_scored_results, 
+                key=lambda x: getattr(x, "relevance_score", 0.0), 
+                reverse=True
+            )[:k_to_rerank]
+
+            # แปลงกลับเป็น List ของ Document พร้อมใส่คะแนน
+            final_chunks = []
+            for res in all_scored_results:
+                doc = res.document if hasattr(res, "document") else res
+                doc.metadata["rerank_score"] = getattr(res, "relevance_score", 0.0)
+                final_chunks.append(doc)
+
         except Exception as e:
-            logger.error(f"⚠️ Rerank failed: {e}")
+            logger.error(f"⚠️ Rerank failed in Endpoint Mode: {e}")
             final_chunks = final_chunks[:k_to_rerank]
     else:
-        # ถ้าไม่มี reranker ให้ตัดตามลำดับคะแนนเดิม
         final_chunks = final_chunks[:k_to_rerank]
 
     # 4. Response Build
@@ -262,17 +273,17 @@ def retrieve_context_for_endpoint(
         text = doc.page_content.strip()
         s_uuid = md.get("stable_doc_uuid") or md.get("doc_id")
         p_val = md.get("page_label") or md.get("page_number") or md.get("page") or "N/A"
+        source_name = md.get('source') or md.get('file_name') or 'Unknown'
         
         top_evidences.append({
             "doc_id": s_uuid,
             "chunk_uuid": md.get("chunk_uuid"),
-            "source": md.get("source") or md.get("file_name") or "Unknown",
+            "source": source_name,
             "text": text,
             "page": str(p_val),
             "score": md.get("rerank_score") or md.get("score") or 0.0,
             "pdca_tag": md.get("pdca_tag", "Other")
         })
-        source_name = md.get('source') or md.get('file_name') or 'Unknown'
         aggregated_parts.append(f"[ไฟล์: {source_name}, หน้า: {p_val}] {text}")
 
     retrieval_time = round(time.time() - start_time, 3)
@@ -288,14 +299,6 @@ def retrieve_context_for_endpoint(
 # ------------------------
 # Retrieval: retrieve_context_with_filter (Revised)
 # ------------------------
-import time
-import uuid
-import re
-import logging
-from typing import List, Dict, Any, Optional, Union, Callable
-from langchain_core.documents import Document as LcDocument
-
-logger = logging.getLogger(__name__)
 
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
@@ -496,7 +499,6 @@ def is_rubric_ready(tenant: str) -> bool:
 # =====================================================================
 # 🚀 Ultimate Version: retrieve_context_with_rubric (FIXED & REVISED)
 # =====================================================================
-
 def retrieve_context_with_rubric(
     vectorstore_manager,
     query: str,
@@ -507,34 +509,34 @@ def retrieve_context_with_rubric(
     year: Optional[Union[int, str]] = None,
     subject: Optional[str] = None,
     rubric_vectorstore_name: str = "seam", 
-    top_k: int = 50,         # จำนวนตั้งต้นที่ดึงจาก Vector Store
+    top_k: int = 50,         
     rubric_top_k: int = 15,  
     strict_filter: bool = True,
-    k_to_rerank: int = 30    # ✅ FIX: เพิ่ม Parameter นี้เพื่อรองรับค่าจาก Router
+    k_to_rerank: int = 30    
 ) -> Dict[str, Any]:
     """
-    เวอร์ชันสมบูรณ์: รองรับ Direct/Global Mode, Anchor Chunks และ Reranking
+    Revised Version: รองรับ Batch Reranking ป้องกัน OOM และจัดการ Anchor Chunks อย่างเป็นระบบ
     """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # --- 1. ตรวจสอบและสลับ Collection ให้ตรงประเภทเอกสาร ---
+    # 1. Sync VSM State
     if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
         logger.info(f"🔄 Switching VSM doc_type to: {doc_type}")
         vsm.close()
         vsm.__init__(tenant=tenant, year=year, doc_type=doc_type, enabler=enabler)
 
+    # ดึงชื่อ Collection จาก path_utils (ที่เราแก้เรื่อง import ไว้ก่อนหน้า)
     evidence_collection = get_doc_type_collection_key(doc_type, enabler or "KM")
     
     evidence_results = []
     rubric_results = []
     seen_contents = set()
 
-    # --- 2. การดึง Rubrics (คู่มือเกณฑ์มาตรฐาน SE-AM) ---
+    # 2. Rubric Retrieval (ดึงเกณฑ์อ้างอิง)
     try:
         rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
         if rubric_chroma:
-            # สร้าง Query สำหรับค้นหาเกณฑ์ที่เกี่ยวข้อง
             rubric_query = f"มาตรฐาน SE-AM ด้าน {enabler} ข้อ {subject or ''}: {query}"
             r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
             for rd in r_docs:
@@ -546,60 +548,63 @@ def retrieve_context_with_rubric(
     except Exception as e:
         logger.warning(f"⚠️ Rubric Retrieval Error: {e}")
 
-    # --- 3. การดึง Evidence (หลักฐานการดำเนินงาน) ---
+    # 3. Evidence Retrieval (ดึงหลักฐาน)
     try:
         evidence_chroma = vsm._load_chroma_instance(evidence_collection)
         if not evidence_chroma:
             return {"top_evidences": [], "rubric_context": rubric_results, "retrieval_time": 0}
 
         raw_evidence_chunks = []
-        where_filter = None
+        
+        # สร้าง where_filter ผ่าน utility (ให้ชัวร์ว่า format ถูกต้อง)
+        where_filter = _create_where_filter(
+            stable_doc_ids=list(stable_doc_ids) if stable_doc_ids else None,
+            subject=subject,
+            year=year
+        )
 
-        # 🎯 [DIRECT MODE] หากระบุไฟล์ ให้ดึง Anchor Chunks (หน้า 1-5) มาก่อนเสมอ
+        # 🎯 [ANCHOR PHASE] ดึงหน้าสารบัญ/หน้าแรกเพื่อบริบทพื้นฐาน
         if stable_doc_ids:
-            ids_list = [str(i).strip().lower() for i in stable_doc_ids if i]
-            if len(ids_list) == 1:
-                where_filter = {"stable_doc_uuid": ids_list[0]}
-            else:
-                where_filter = {"stable_doc_uuid": {"$in": ids_list}}
-            
-            # ⚓ Fetch Anchor Chunks (หน้าแรกๆ ของไฟล์ที่เลือก)
-            logger.info(f"⚓ Fetching Anchor Chunks for IDs: {ids_list}")
+            logger.info(f"⚓ Fetching Anchor Chunks for structure...")
             anchors = evidence_chroma.get(where=where_filter, limit=10)
             if anchors and anchors.get('documents'):
                 for i in range(len(anchors['documents'])):
                     content = anchors['documents'][i]
                     if content not in seen_contents:
-                        m = anchors['metadatas'][i]
-                        raw_evidence_chunks.append(Document(
+                        raw_evidence_chunks.append(LcDocument(
                             page_content=content,
-                            metadata={**m, "rerank_score": 0.99, "is_anchor": True}
+                            metadata={**anchors['metadatas'][i], "rerank_score": 0.99, "is_anchor": True}
                         ))
                         seen_contents.add(content)
 
-        # 🌐 Search Chunks ตามปกติ
-        search_results = evidence_chroma.similarity_search(
-            query, 
-            k=top_k, 
-            filter=where_filter
-        )
+        # 🌐 [SEARCH PHASE] ค้นหาตามความหมาย
+        search_results = evidence_chroma.similarity_search(query, k=top_k, filter=where_filter)
         for d in search_results:
             if d.page_content not in seen_contents:
                 raw_evidence_chunks.append(d)
                 seen_contents.add(d.page_content)
 
-        # --- 4. RERANKING (หัวใจของความแม่นยำ) ---
+        # 🎯 4. [CRITICAL] BATCH RERANKING
         reranker = get_global_reranker()
         if reranker and raw_evidence_chunks and query:
             try:
-                top_n = min(len(raw_evidence_chunks), k_to_rerank)
-                reranked_docs = reranker.compress_documents(
-                    documents=raw_evidence_chunks, 
-                    query=query, 
-                    top_n=top_n
-                )
-                # จัดรูปแบบหลัง Rerank
-                for r in reranked_docs:
+                batch_size = 150
+                all_scored_results = []
+                
+                logger.info(f"🚀 Batch Reranking (Rubric Mode): {len(raw_evidence_chunks)} chunks")
+                for i in range(0, len(raw_evidence_chunks), batch_size):
+                    batch = raw_evidence_chunks[i : i + batch_size]
+                    scored_batch = reranker.compress_documents(documents=batch, query=query)
+                    all_scored_results.extend(scored_batch)
+                
+                # Sort คะแนนจากทุก batch รวมกัน
+                all_scored_results = sorted(
+                    all_scored_results, 
+                    key=lambda x: getattr(x, "relevance_score", 0.0), 
+                    reverse=True
+                )[:k_to_rerank]
+
+                for r in all_scored_results:
                     doc = r.document if hasattr(r, "document") else r
                     m = doc.metadata or {}
                     evidence_results.append({
@@ -612,11 +617,11 @@ def retrieve_context_with_rubric(
                         "is_evidence": True
                     })
             except Exception as e:
-                logger.error(f"⚠️ Rerank failed: {e}")
-                # Fallback: ตัดตามลำดับปกติ
-                raw_evidence_chunks = raw_evidence_chunks[:k_to_rerank]
-        
-        # กรณีไม่มี Reranker หรือ Rerank พัง ให้แปลงข้อมูลปกติ
+                logger.error(f"⚠️ Rerank failed in Rubric Mode: {e}")
+                # Fallback
+                evidence_results = [] # เคลียร์เพื่อให้ลูปด้านล่างจัดการ
+
+        # Fallback กรณีไม่มี reranker หรือเกิด error
         if not evidence_results:
             for d in raw_evidence_chunks[:k_to_rerank]:
                 m = d.metadata or {}
@@ -634,8 +639,6 @@ def retrieve_context_with_rubric(
         logger.error(f"❌ Evidence Retrieval Error: {e}", exc_info=True)
 
     retrieval_time = round(time.time() - start_time, 3)
-    logger.info(f"✅ Success: Retrieved {len(evidence_results)} evidence chunks in {retrieval_time}s")
-
     return {
         "top_evidences": evidence_results,
         "rubric_context": rubric_results,
