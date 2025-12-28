@@ -755,12 +755,11 @@ class VectorStoreManager:
 
         except Exception as e:
             logger.error(f"❌ Error in get_documents_by_id: {str(e)}", exc_info=True)
-            return []
-
+    
     def get_chunks_by_page(self, collection_name: str, stable_doc_uuid: str, page_label: str) -> List[LcDocument]:
         """
-        [NEW] ดึง Chunks ทั้งหมดของเลขหน้าที่ระบุ (Exact Metadata Match)
-        ใช้สำหรับดึงบริบทข้างเคียง (Neighbor Context) เพื่อแก้ปัญหาข้อมูล Act (A) ขาดหาย
+        [FIXED] ดึง Chunks ทั้งหมดของเลขหน้าที่ระบุ (Exact Metadata Match)
+        แก้ไขปัญหา ValueError: include item 'ids' by removing it from get() call
         """
         try:
             # 1. โหลด Chroma Instance ผ่าน Cache/Logic เดิมของ VSM
@@ -775,7 +774,6 @@ class VectorStoreManager:
             collection = chroma_instance._collection
 
             # 🎯 สร้าง Filter เจาะจงไฟล์และหน้า
-            # หมายเหตุ: page_label ต้องเป็น String ตามมาตรฐานการ Ingest ของเรา
             where_filter = {
                 "$and": [
                     {"stable_doc_uuid": {"$eq": str(stable_doc_uuid)}},
@@ -783,31 +781,40 @@ class VectorStoreManager:
                 ]
             }
 
-            # 3. ดึงข้อมูล (ตั้ง limit=10 เพื่อให้ครอบคลุมกรณี 1 หน้ามีหลาย chunks)
+            # 3. ดึงข้อมูล (ตัด "ids" ออกจาก include เพราะ Chroma จะส่งคืนมาให้เป็นพื้นฐานอยู่แล้ว)
             results = collection.get(
                 where=where_filter,
                 limit=10, 
-                include=["documents", "metadatas", "ids"]
+                include=["documents", "metadatas"] 
             )
 
             extra_docs = []
-            if results and results['documents']:
-                for idx, text in enumerate(results['documents']):
-                    meta = results['metadatas'][idx].copy() if results['metadatas'] else {}
+            if results and results.get('documents'):
+                # ดึงจำนวนรายการที่พบ
+                num_results = len(results['documents'])
+                
+                for idx in range(num_results):
+                    text = results['documents'][idx]
+                    # ป้องกันกรณี metadatas หรือ ids เป็น None
+                    meta = results['metadatas'][idx].copy() if (results.get('metadatas') and results['metadatas'][idx]) else {}
+                    chunk_id = results['ids'][idx] if (results.get('ids') and results['ids'][idx]) else f"temp_{idx}"
                     
                     # ทำความสะอาด Metadata ให้พร้อมใช้งานเหมือนฟังก์ชันหลักอื่นๆ
-                    p_val = meta.get("page_label") or meta.get("page_number") or "N/A"
+                    p_val = meta.get("page_label") or meta.get("page_number") or page_label
                     meta["page_label"] = str(p_val)
-                    meta["chunk_uuid"] = results['ids'][idx].replace("-", "")
+                    meta["chunk_uuid"] = chunk_id.replace("-", "")
                     
                     extra_docs.append(LcDocument(page_content=text, metadata=meta))
             
             if extra_docs:
                 self.logger.info(f"➕ Neighbor Fetch: พบข้อมูลหน้า {page_label} ในไฟล์ {stable_doc_uuid} ({len(extra_docs)} chunks)")
+            else:
+                self.logger.warning(f"⚠️ Neighbor Fetch: ไม่พบข้อมูลเพิ่มเติมในหน้า {page_label}")
             
             return extra_docs
 
         except Exception as e:
+            # เก็บรายละเอียด Error ไว้ใน Log เพื่อการ Debug ที่ง่ายขึ้น
             self.logger.error(f"❌ Error ใน get_chunks_by_page: {str(e)}", exc_info=True)
             return []
         
