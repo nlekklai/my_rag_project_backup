@@ -3331,7 +3331,7 @@ class SEAMPDCAEngine:
         llm_evaluator_to_use = evaluate_with_llm_low_level if level <= 2 else self.llm_evaluator
 
         # ==================== 5. ADAPTIVE RAG LOOP (FINAL ROBUST VERSION) ====================
-        highest_rerank_score = 0.0
+        highest_rerank_score = -1.0  # 🚀 เปลี่ยนเป็น -1.0 เพื่อบังคับให้เก็บข้อมูลรอบแรกเสมอ
         final_top_evidences = []
         retrieval_start = time.time()
         loop_attempt = 1
@@ -3339,7 +3339,7 @@ class SEAMPDCAEngine:
         while loop_attempt <= MAX_RETRIEVAL_ATTEMPTS:
             self.logger.info(
                 f"  > RAG Retrieval {sub_id} L{level} (Attempt: {loop_attempt}/{MAX_RETRIEVAL_ATTEMPTS}). "
-                f"Best score so far: {highest_rerank_score:.4f}"
+                f"Best score so far: {max(0.0, highest_rerank_score):.4f}"
             )
 
             query_input = rag_query_list if loop_attempt == 1 and rag_query_list else [rag_query]
@@ -3363,51 +3363,54 @@ class SEAMPDCAEngine:
             # ดึงหลักฐานที่ได้จากรอบนี้
             top_evidences_current = retrieval_result.get("top_evidences", [])
 
-            # 🎯 Step 1: กรองและคำนวณคะแนนของ Chunks ใหม่ (ใช้ relevance_score เป็นหลัก)
+            # 🎯 Step 1: คำนวณคะแนนของ Chunks ใหม่ (ยืดหยุ่นขึ้นเพื่อให้ข้อมูลไม่หาย)
             if top_evidences_current:
-                # กรองพวกที่ไม่มีคะแนนออกไปเลย (ป้องกัน Noise)
-                top_evidences_current = [ev for ev in top_evidences_current if get_actual_score(ev) > 0.0001]
+                # เก็บไว้ก่อนแม้คะแนนจะน้อย (0.0001) เพื่อป้องกันการกรอง Noise ที่แรงเกินไป
                 current_max_score = max((get_actual_score(ev) for ev in top_evidences_current), default=0.0)
             else:
                 current_max_score = 0.0
 
-            # 🎯 Step 2: คำนวณคะแนนของ Priority Docs (Hydrated chunks) โดยใช้ Logic เดียวกัน
+            # 🎯 Step 2: คำนวณคะแนนของ Priority Docs
             priority_max_score = max((get_actual_score(doc) for doc in priority_docs), default=0.0)
             
             # 🎯 Step 3: หาคะแนนรวมที่ดีที่สุดในรอบนี้
             overall_max_score = max(current_max_score, priority_max_score)
 
             self.logger.info(
-                f"  > Attempt {loop_attempt} → New: {current_max_score:.4f} | Priority: {priority_max_score:.4f} | "
+                f"  > Attempt {loop_attempt} → New Max: {current_max_score:.4f} | Priority Max: {priority_max_score:.4f} | "
                 f"Overall: {overall_max_score:.4f}"
             )
 
-            # 🎯 Step 4: อัปเดตผลลัพธ์ที่ดีที่สุด
-            # ถ้าคะแนนรอบนี้ดีกว่ารอบก่อนๆ ให้บันทึกไว้
-            if overall_max_score > highest_rerank_score:
+            # 🎯 Step 4: อัปเดตผลลัพธ์ที่ดีที่สุด (ใช้ >= เพื่อให้รอบแรกที่คะแนน 0.0 มีการบันทึกข้อมูลเสมอ)
+            if overall_max_score >= highest_rerank_score:
                 highest_rerank_score = overall_max_score
-                # รวมหลักฐาน: เอาทั้งที่ดึงมาใหม่ และพวก Priority (Baseline) มารวมกัน
+                # บันทึก Chunks ทั้งหมดที่หาได้รวมกับ Priority (เพื่อส่งให้ LLM ในรอบสุดท้าย)
                 final_top_evidences = top_evidences_current + priority_docs
                 
                 if loop_attempt > 1:
                     self.logger.info(f"  > Retrieval improved: New overall best {highest_rerank_score:.4f}")
 
-            # 🎯 Step 5: Check Exit Condition (ถ้าได้คะแนนถึงเกณฑ์แล้ว ให้หยุด Loop ทันที)
+            # 🎯 Step 5: Check Exit Condition (ถ้าได้คะแนนถึงเกณฑ์แล้ว ให้หยุด Loop)
             if highest_rerank_score >= MIN_RETRY_SCORE:
                 self.logger.info(f"  > Adaptive Retrieval L{level}: Score {highest_rerank_score:.4f} ≥ {MIN_RETRY_SCORE} → STOP")
                 break
 
-            # เตรียม Query สำหรับการลองครั้งถัดไป (ถ้ายังไม่ถึงรอบสุดท้าย)
+            # เตรียม Query สำหรับการลองครั้งถัดไป
             if loop_attempt < MAX_RETRIEVAL_ATTEMPTS:
                 rag_query = f"หลักฐานเพิ่มเติมสำหรับ {statement_text} ในบริบท {level_constraint}"
 
             loop_attempt += 1
 
         retrieval_duration = time.time() - retrieval_start
-        # ส่งค่าหลักฐานที่ดีที่สุดออกไปให้ LLM วิเคราะห์
+        
+        # กรณีฉุกเฉิน: ถ้า Loop จบแล้ว final_top_evidences ยังว่าง (ซึ่งไม่ควรเกิดขึ้นถ้าใช้ >= -1.0)
+        # ให้ Fallback กลับไปใช้ข้อมูลจากรอบล่าสุดหรือ Priority Docs
+        if not final_top_evidences:
+            final_top_evidences = top_evidences_current + priority_docs
+            
         top_evidences = final_top_evidences
 
-        # ==================== 6. Adaptive Filtering ====================
+        # ==================== 6. Adaptive Filtering (STRICT PROTECTION) ====================
         filtered = []
         original_top_evidences = top_evidences 
 
@@ -3416,20 +3419,25 @@ class SEAMPDCAEngine:
             is_baseline = doc.get('is_baseline', False)
             doc_id = doc.get('chunk_uuid') or doc.get('doc_id') or 'UNKNOWN'
             
+            # 1. Baseline/Priority Keep เสมอ
             if is_baseline:
                 filtered.append(doc)
                 self.logger.debug(f"✅ Baseline chunk kept (ID: {doc_id[:8]}...) | Score {score:.4f}")
                 continue
             
+            # 2. กรองด้วย Threshold ที่ตั้งไว้
             if score >= MIN_RERANK_SCORE_TO_KEEP:
                 filtered.append(doc)
             else:
                 self.logger.debug(f"Filtering out chunk (ID: {doc_id[:8]}...) | Score {score:.4f}")
 
+        # 🎯 CRITICAL FIX: Fallback กันคะแนนเป็น 0.0
+        # ถ้า Filtering ตัดทิ้งจนไม่เหลือหลักฐานเลย แต่ตอนแรกเราเคยมีหลักฐาน (Original)
+        # ให้ "คืนค่า" ทั้งหมดกลับไป เพื่อให้ LLM ได้อ่าน (ป้องกัน AI ตอบ FAIL เพราะไม่มี Context)
         if not filtered and original_top_evidences:
             self.logger.warning(
                 f"  > (L{level}) Adaptive Filtering removed all chunks. "
-                f"Using all {len(original_top_evidences)} original chunks for PDCA grouping (Fallback)."
+                f"FALLBACK: Using all {len(original_top_evidences)} original chunks to prevent 0.0 score."
             )
             top_evidences = original_top_evidences
         elif not filtered and not original_top_evidences:
@@ -3437,9 +3445,8 @@ class SEAMPDCAEngine:
         else:
             top_evidences = filtered 
 
-        self.logger.debug(f"Adaptive Filter L{level}: Kept {len(top_evidences)}/{len(original_top_evidences)} chunks "
-                        f"({len([d for d in top_evidences if d.get('is_baseline')])} baseline)")
-
+        self.logger.debug(f"Adaptive Filter L{level}: Kept {len(top_evidences)}/{len(original_top_evidences)} chunks")
+        
         # ==================== 6.5. Robust Hydration ====================
         # เติม Text ให้สมบูรณ์สำหรับ Chunks ที่ Reranker เลือกมา
         if top_evidences and vectorstore_manager:
