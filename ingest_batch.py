@@ -1,56 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# =================================================================================
-# 🔥 CRITICAL FIX FOR CVE-2025-32434 & TORCH 2.6 RESTRICTION
-# ต้องวางไว้บนสุด ห้ามมี Import อื่นอยู่ก่อนเด็ดขาด!
-# =================================================================================
+# 1. ต้องอยู่บรรทัดแรกสุดของไฟล์จริงๆ ห้ามมีอะไรก่อนหน้า
 import transformers.utils.import_utils as import_utils
-# บังคับให้ระบบมองว่าการโหลดโมเดลปลอดภัยเสมอ (Monkey Patch)
 import_utils.check_torch_load_is_safe = lambda *args, **kwargs: True
 
 import os
-# ตั้งค่า Environment บังคับไม่ให้ Torch ตรวจสอบ Weights
 os.environ["TORCH_LOAD_WEIGHTS_ONLY"] = "FALSE"
 os.environ["TRANSFORMERS_VERIFY_SCHEDULED_PATCHES"] = "False"
-# =================================================================================
 
-"""
-ingest_batch.py
-PEA RAG Document Management Tool – Production Ready
-Version: December 29, 2025 (Revised with Torch Load Patch)
-"""
-
+# 2. ค่อยตามด้วย Import มาตรฐาน
 import argparse
 import logging
 import sys
 from pathlib import Path
 
-# === แก้ path ให้ถูกต้องทุก OS ===
+# 3. สำคัญมาก: ห้ามเพิ่ง Import จาก core.ingest หรือ config ตรงนี้!
+# ให้เราจัดการ sys.path ก่อน
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# === Imports (ย้ายมาไว้หลัง Monkey Patch เพื่อความปลอดภัย) ===
+# 4. ตอนนี้กฎ Monkey Patch ทำงานแล้ว ค่อย Import ของที่เราเขียนเอง
 try:
     from config.global_vars import (
-        DEFAULT_TENANT,
-        DEFAULT_ENABLER,
-        DEFAULT_YEAR,
-        EVIDENCE_DOC_TYPES,
-        SUPPORTED_DOC_TYPES,
+        DEFAULT_TENANT, DEFAULT_ENABLER, DEFAULT_YEAR,
+        EVIDENCE_DOC_TYPES, SUPPORTED_DOC_TYPES,
     )
     from core.ingest import (
-        ingest_all_files,
-        list_documents,
-        wipe_vectorstore,
-        get_vectorstore,
+        ingest_all_files, list_documents, wipe_vectorstore, get_vectorstore,
     )
 except ImportError as e:
     print(f"Import error: {e}")
-    print("Run from project root with: python ingest_batch.py ...")
     sys.exit(1)
-
+    
 # === Logger ===
 logging.basicConfig(
     level=logging.INFO,
