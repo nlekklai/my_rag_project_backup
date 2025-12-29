@@ -1386,20 +1386,20 @@ def create_context_summary_llm(
 
 
 # =================================================================
-# 1. Main Function: create_structured_action_plan
+# [REVISED] 1. Main Function: create_structured_action_plan
 # =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
     sub_id: str,
     sub_criteria_name: str,
-    target_level: int,
-    llm_executor: Any,
-    logger: logging.Logger,
+    target_level: int = 5, # บังคับ Default เป็น 5 เพื่อสร้าง Roadmap
+    llm_executor: Any = None,
+    logger: logging.Logger = None,
     max_retries: int = 3,
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
     """
-    สร้าง Action Plan ที่มีการจัดกลุ่มประเด็นไม่ให้ซ้ำซ้อน และเลือก Mode ตามผลประเมินจริง
+    สร้าง Action Plan แบบ Multi-Phase Roadmap (L1 -> L5)
     """
     
     # --- 1. วิเคราะห์สถานะเพื่อเลือกโหมด ---
@@ -1408,50 +1408,49 @@ def create_structured_action_plan(
     is_quality_refinement = False
     if not is_sustain_mode:
         types = [s.get('recommendation_type') for s in recommendation_statements]
-        # ตรวจสอบกรณี "ผ่านหมดแล้วแต่ต้องเสริมคุณภาพ" (ไม่มีข้อที่ตกจริง)
         if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
             is_quality_refinement = True
 
-    # --- 2. การเลือก Prompt ตามโหมด พร้อมคำสั่งคุมกำเนิดความซ้ำซ้อน ---
+    # --- 2. การเลือก Prompt และการตั้งค่า Phase (DYNAMIC PHASING) ---
     if is_sustain_mode:
-        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT + "\nสำคัญ: เน้นนวัตกรรมที่ยั่งยืน ห้ามเขียนแผนงานซ้ำซ้อน"
+        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
         current_prompt_template = EXCELLENCE_ADVICE_PROMPT
-        advice_focus = "การรักษาความเป็นเลิศและสร้างนวัตกรรมต่อเนื่อง"
-        assessment_context = f"ผ่านเกณฑ์ระดับ 5 (สูงสุด) อย่างสมบูรณ์ในหัวข้อ {sub_criteria_name}"
+        advice_focus = "การรักษาความเป็นเลิศและนวัตกรรมระดับสากล"
+        assessment_context = f"บรรลุเกณฑ์ระดับ 5 อย่างสมบูรณ์ในหัวข้อ {sub_criteria_name}"
+        dynamic_max_phases = 1
         max_steps = 5
-        
     elif is_quality_refinement:
-        current_system_prompt = SYSTEM_QUALITY_PROMPT + "\nสำคัญ: รวมประเด็นที่คล้ายกันเข้าด้วยกัน ห้ามสร้าง Action Item ที่ซ้ำซ้อน"
+        current_system_prompt = SYSTEM_QUALITY_PROMPT
         current_prompt_template = QUALITY_REFINEMENT_PROMPT
-        advice_focus = "การเสริมความแข็งแกร่งของหลักฐานและวงจร PDCA ให้สมบูรณ์ 100%"
-        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ควรเพิ่มคุณภาพและความน่าเชื่อถือของหลักฐาน"
+        advice_focus = "การเสริมความแกร่งของหลักฐานและวงจร PDCA ให้ครบ 100%"
+        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ต้องเพิ่มความน่าเชื่อถือของหลักฐาน"
+        dynamic_max_phases = 1
         max_steps = 3
-        
     else:
-        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT + "\nสำคัญ: สรุปประเด็นบกพร่องที่คล้ายกันให้เป็นหนึ่งแผนงาน (Consolidate)"
+        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT
         current_prompt_template = ACTION_PLAN_PROMPT
-        advice_focus = "การแก้ไขช่องว่างและสร้างระบบงานตามมาตรฐาน"
-        assessment_context = f"อยู่ระหว่างการพัฒนาสู่ระดับ {target_level} และแก้ไขจุดบกพร่องที่พบ"
+        advice_focus = f"การสร้าง Roadmap พัฒนาต่อเนื่องสู่ระดับ {target_level}"
+        assessment_context = f"อยู่ระหว่างการพัฒนาสู่ความเป็นเลิศ (Target Level {target_level})"
+        # ปรับ Phase เป็น 2-3 ตามระยะห่างของเป้าหมาย
+        dynamic_max_phases = 3 if target_level >= 4 else 2 
         max_steps = 3
 
-    # --- 3. จัดเตรียมเนื้อหา Statements (REVISED: Logic การลบรายการซ้ำ) ---
+    # --- 3. จัดเตรียมเนื้อหา Statements (Enrich with Target Goals) ---
+    unique_statements = {}
     if is_sustain_mode:
         stmt_content = "บรรลุเกณฑ์มาตรฐานสูงสุดอย่างครบถ้วน"
     else:
-        unique_statements = {}
         for s in recommendation_statements:
             reason = (s.get('reason') or s.get('statement') or "").strip()
             lvl = s.get('level', 0)
             if not reason: continue
-            
-            # หากข้อความเหมือนกัน ให้ยึดอันที่มี Level สูงกว่า (เพื่อคลุมเกณฑ์ที่ยากกว่า)
             if reason not in unique_statements or lvl > unique_statements[reason]:
                 unique_statements[reason] = lvl
         
         stmt_blocks = [f"- [Level {v}] {k}" for k, v in unique_statements.items()]
         stmt_content = "\n".join(stmt_blocks)
 
-    # --- 4. ประกอบ Human Prompt ---
+    # --- 4. ประกอบ Human Prompt (ใช้ dynamic_max_phases) ---
     human_prompt = current_prompt_template.format(
         sub_id=sub_id, 
         sub_criteria_name=sub_criteria_name, 
@@ -1459,38 +1458,36 @@ def create_structured_action_plan(
         assessment_context=assessment_context,
         advice_focus=advice_focus, 
         recommendation_statements_list=stmt_content,
-        max_phases=1, 
+        max_phases=dynamic_max_phases, # ปลดล็อกตรงนี้เพื่อให้พ่นหลาย Phase
         max_steps=max_steps, 
         max_words_per_step=150,
         language="ภาษาไทย"
     )
 
-    # --- 5. EXECUTION & VALIDATION LOOP ---
+    # --- 5. EXECUTION & VALIDATION LOOP (Same as before) ---
     for attempt in range(1, max_retries + 1):
         try:
             response = llm_executor.generate(
                 system=current_system_prompt, 
                 prompts=[human_prompt],
-                temperature=0.2 # ค่านิ่งขึ้น ลดความเพ้อเจ้อ
+                temperature=0.2 
             )
             raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response)
             
-            # สกัด JSON จาก Text
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items: continue
 
-            # Normalize Keys ให้เข้ากับ Schema (ป้องกัน LLM พ่น Key ผิด/มีวรรค)
             clean_items = action_plan_normalize_keys(items)
             
-            # Validate ด้วย Pydantic
+            # ตรวจสอบกับ Pydantic Schema (core/action_plan_schema.py)
+            from core.action_plan_schema import ActionPlanResult
             validated_result = ActionPlanResult.model_validate(clean_items)
             
             return validated_result.model_dump(by_alias=True)
 
         except Exception as e:
-            logger.error(f"⚠️ Action Plan Attempt {attempt} failed for {sub_id}: {e}")
+            if logger: logger.error(f"⚠️ Action Plan Attempt {attempt} failed for {sub_id}: {e}")
 
-    # --- 6. EMERGENCY FALLBACK ---
     return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement)
 
 # =================================================================

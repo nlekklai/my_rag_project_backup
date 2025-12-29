@@ -3181,39 +3181,54 @@ class SEAMPDCAEngine:
         }
 
         # -----------------------------------------------------------
-        # 3. GENERATE ACTION PLAN
+        # 3. GENERATE ACTION PLAN (REVISED FOR ACCURATE ROADMAP L5)
         # -----------------------------------------------------------
-        target_next_level = min(highest_full_level + 1, 5)
+        # 🎯 ปรับเป้าหมายเป็น Level 5 ตาม Config เพื่อให้เห็น Roadmap ระยะยาว
+        roadmap_target_level = self.config.target_level if hasattr(self.config, 'target_level') else 5
+        
         statements_for_ap = []
+        
+        # ดึง Mapping ของ Statement เพื่อใช้เติมข้อมูล (Enrichment)
+        level_statements_map = {
+            l.get('level'): l.get('statement', '') 
+            for l in sub_criteria.get('levels', [])
+        }
         
         for r in raw_results_for_sub_seq:
             res_item = r.copy()
+            current_lvl = res_item.get('level')
+            
+            # ✅ Enrichment: เติมเนื้อหาเกณฑ์จริงเข้าไปเพื่อให้ LLM วางแผนได้ตรงประเด็น
+            res_item['statement_text'] = level_statements_map.get(current_lvl, "")
+            
             is_passed = res_item.get('is_passed', False)
             eval_mode = res_item.get('evaluation_mode', "")
-            pdca = res_item.get('pdca_breakdown', {})
             
-            # เช็คคุณภาพหลักฐาน (PDCA Gap)
-            has_pdca_gap = any(v == 0 for v in pdca.values()) if pdca else False
-
-            if not is_passed and eval_mode != "GAP_ONLY":
-                res_item['recommendation_type'] = 'FAILED'
+            # --- Categorization Logic ---
+            if not is_passed:
+                # กรณีตกจริง (FAILED) หรือ เป็นผลจาก Sequential GAP (GAP_ANALYSIS)
+                res_item['recommendation_type'] = 'FAILED' if eval_mode != "GAP_ONLY" else 'GAP_ANALYSIS'
                 statements_for_ap.append(res_item)
-            elif eval_mode == "GAP_ONLY":
-                res_item['recommendation_type'] = 'GAP_ANALYSIS'
-                statements_for_ap.append(res_item)
-            elif is_passed:
-                if res_item.get('evidence_strength', 10.0) < MIN_KEEP_SC * 10: # สมมติเกณฑ์หลักฐานอ่อน
+            else:
+                # กรณีผ่าน (Passed) แต่ต้องการเสริมคุณภาพ (Quality Refinement)
+                pdca = res_item.get('pdca_breakdown', {})
+                has_pdca_gap = any(v == 0 for v in pdca.values()) if pdca else False
+                
+                # เช็คคะแนนหลักฐาน (Evidence Strength < 1.5) หรือ PDCA ไม่ครบ Loop
+                if res_item.get('evidence_strength', 10.0) < (MIN_KEEP_SC * 10):
                     res_item['recommendation_type'] = 'WEAK_EVIDENCE'
                     statements_for_ap.append(res_item)
                 elif has_pdca_gap:
                     res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
                     statements_for_ap.append(res_item)
 
+        # 🚀 ส่งไปสร้าง Roadmap 3 Phase (L3 -> L4 -> L5)
+        # การส่ง target_level=5 จะทำให้ LLM เข้าใจว่าต้องซ่อมตั้งแต่จุดที่ติดไปจนถึงระดับสูงสุด
         action_plan_result = create_structured_action_plan(
             recommendation_statements=statements_for_ap,
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
-            target_level=target_next_level,
+            target_level=roadmap_target_level, 
             llm_executor=self.llm,
             logger=self.logger,
             enabler_rules=self.contextual_rules_map

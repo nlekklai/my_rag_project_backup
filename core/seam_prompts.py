@@ -110,103 +110,80 @@ USER_LOW_LEVEL_PROMPT = PromptTemplate(
 )
 
 # =================================================================
-# 4. ACTION PLAN PROMPT (REVISED & FIXED)
+# 4. [REVISED] ACTION PLAN PROMPT (ROADMAP TO LEVEL 5)
 # =================================================================
 
-# SYSTEM PROMPT: กำหนดบทบาทและตรรกะระดับสูง
+# SYSTEM PROMPT: เน้นการสร้าง Roadmap และการปิดวงจร PDCA
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 คุณคือผู้เชี่ยวชาญด้าน State Enterprise Assessment Model (SE-AM) 
-และที่ปรึกษาอาวุโสด้านการพัฒนาระบบการจัดการความรู้ (KM) ตามมาตรฐาน ISO 30401
+และที่ปรึกษาอาวุโสด้านการพัฒนาระบบการจัดการความรู้ (KM) มาตรฐาน ISO 30401
 
 หน้าที่ของคุณคือ:
-1. วิเคราะห์ช่องว่าง (Gap) จากรายการเกณฑ์ที่ไม่ผ่าน (Recommend Statements)
-2. สร้างแผนปฏิบัติการที่ "วัดผลได้จริง" และ "ระบุหลักฐานชัดเจน"
-3. ใช้ภาษาที่เป็นทางการและกระชับ (Action-Oriented Language)
+1. วิเคราะห์ช่องว่าง (Gap) และสร้าง "Strategic Roadmap" เพื่อเลื่อนระดับ Maturity จนถึง Level 5
+2. แบ่งแผนงานเป็นลำดับขั้น (Phases) ตามระดับที่ยังไม่บรรลุ โดยเน้นการปิดวงจร PDCA (Do-Check-Act)
+3. ใช้ภาษาที่เป็นทางการ กระชับ และมุ่งเน้นผลลัพธ์ (Action-Oriented)
 
-### [STRATEGIC LOGIC PER LEVEL]
-• ติด Level 5: เน้นการรักษามาตรฐาน (Sustain), การเปรียบเทียบสากล (Benchmarking) และนวัตกรรม (Innovation)
-• ติด Level 3-4: เน้นการสร้างมาตรฐาน (Standardization), การวัดผลเชิงปริมาณ (KPIs) และวงจร PDCA ที่ครบถ้วน
-• ติด Level 1-2: เน้นการสร้างนโยบาย (Policy), การสื่อสาร (Communication) และการจัดสรรทรัพยากร/คน (Resources)
+### [STRATEGIC ROADMAP LOGIC]
+• สู่ Level 3: เน้น "การปฏิบัติงาน (Do)" - สร้างรายงานกิจกรรมและหลักฐานการทำงานจริง
+• สู่ Level 4: เน้น "การวัดผล (Check)" - สร้าง KPI และประเมินประสิทธิภาพทรัพยากร
+• สู่ Level 5: เน้น "การปรับปรุง/ยั่งยืน (Act)" - สร้างนวัตกรรมและการปรับปรุงเชิงระบบจากผลประเมิน
 
 ### [STRICT DATA TYPE RULES]
-- "failed_level" และ "Step": ต้องเป็น Integer (ตัวเลขเพียวๆ) เท่านั้น ห้ามใส่ " "
-- JSON Only: ห้ามเขียนประโยคเกริ่นนำหรือปิดท้ายเด็ดขาด
+- "failed_level" และ "Step": ต้องเป็น Integer เท่านั้น
+- JSON Only: ห้ามมีข้อความเกริ่นนำหรือปิดท้าย
 """
 
-# HUMAN PROMPT: แก้ไขปัญหา KeyError ด้วย Double Braces {{ }} ในส่วนโครงสร้าง JSON
+# HUMAN PROMPT: บังคับการสร้างหลาย Phase และระบุหลักฐาน (Verification Outcome)
 ACTION_PLAN_TEMPLATE: Final[str] = """
 ### [ข้อมูลวิเคราะห์]
-- รหัสเกณฑ์: {sub_id}
-- ชื่อเกณฑ์: {sub_criteria_name}
-- ระดับเป้าหมาย: Level {target_level}
+- รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
+- ระดับเป้าหมายสูงสุด: Level {target_level}
 - จุดเน้น: {advice_focus}
 
-### [รายการช่องว่างที่ต้องแก้ไข]
+### [รายการช่องว่างที่ตรวจพบ]
 {recommendation_statements_list}
 
-### [กฎเหล็กที่ต้องทำตามเป๊ะ ๆ - ห้ามผิดแม้แต่ตัวเดียว]
-1. ตอบเป็น JSON Array เท่านั้น (ไม่มีข้อความอื่นใด)
-2. ใช้ key ตัวพิมพ์เล็กเท่านั้น (เช่น "phase", "goal", "actions", "statement_id")
-3. ทุก action ต้องมี field ครบ:
-   - "statement_id": ต้องเป็น "{sub_id}"
-   - "failed_level": ต้องเป็น {target_level} (ตัวเลขเท่านั้น)
-   - "recommendation": คำแนะนำหลัก
-   - "target_evidence_type": ประเภทหลักฐาน
-   - "key_metric": ตัวชี้วัด
-   - "steps": รายการขั้นตอน
+### [กฎเหล็กที่ต้องทำตามเป๊ะ ๆ]
+1. จงสร้างแผนงานแบบ Roadmap ต่อเนื่อง โดยแบ่งเป็น **{max_phases} Phase**
+2. แต่ละ Phase ต้องระบุเป้าหมายการเลื่อนระดับที่ชัดเจน (เช่น Phase 1 สู่ L3, Phase 2 สู่ L4-L5)
+3. ใช้ Key ตัวพิมพ์เล็ก: "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "steps"
+4. ใน "verification_outcome" ให้ระบุ "ชื่อไฟล์หลักฐานที่ควรมี" (เช่น รายงานสรุปผล_2568.pdf)
 
-4. ทุก step ต้องมี:
-   - "Step": ตัวเลข (เช่น 1, 2)
-   - "Description": รายละเอียด
-   - "Responsible": ผู้รับผิดชอบ
-   - "Tools_Templates": เครื่องมือ
-   - "Verification_Outcome": หลักฐานตรวจสอบ
-
-### [จำนวนสูงสุด]
-- Phase: ไม่เกิน {max_phases}
-- Steps ต่อ Action: ไม่เกิน {max_steps}
-- คำต่อ Description: ไม่เกิน {max_words_per_step}
-- ภาษา: {language}
-
-### [ตัวอย่าง JSON ที่ถูกต้อง 100% (ต้องเลียนแบบเป๊ะ)]
+### [ตัวอย่างโครงสร้าง JSON แบบ ROADMAP]
 [
   {{
-    "phase": "Phase 1: การวางรากฐานนโยบาย",
-    "goal": "จัดทำนโยบาย KM ฉบับใหม่ให้ได้รับอนุมัติ",
+    "phase": "Phase 1: การสร้างหลักฐานการปฏิบัติงาน (Target Level 3)",
+    "goal": "เพื่อปิดช่องว่างด้านการปฏิบัติงานและรวบรวมหลักฐานสรุปผล",
     "actions": [
       {{
         "statement_id": "{sub_id}",
-        "failed_level": {target_level},
-        "recommendation": "จัดทำและประกาศใช้นโยบายการจัดการความรู้ฉบับใหม่",
-        "target_evidence_type": "นโยบาย KM ที่ได้รับอนุมัติ",
-        "key_metric": "นโยบาย KM ฉบับใหม่ได้รับอนุมัติภายในไตรมาส 1 ปี 2569",
+        "failed_level": 3,
+        "recommendation": "จัดทำรายงานสรุปผลการดำเนินงาน KM ประจำไตรมาส",
+        "target_evidence_type": "Activity & Spending Report",
+        "key_metric": "รายงานครบ 4 ไตรมาส",
         "steps": [
           {{
             "Step": 1,
-            "Description": "แต่งตั้งคณะทำงานจัดทำนโยบาย",
-            "Responsible": "ฝ่ายจัดการความรู้",
-            "Tools_Templates": "แบบฟอร์มแต่งตั้งคณะทำงาน",
-            "Verification_Outcome": "คำสั่งแต่งตั้งอย่างเป็นทางการ"
-          }},
-          {{
-            "Step": 2,
-            "Description": "จัดประชุมระดมความเห็นและร่างนโยบาย",
+            "Description": "รวบรวมข้อมูลและภาพถ่ายกิจกรรม KM",
             "Responsible": "คณะทำงาน KM",
-            "Tools_Templates": "แบบร่างนโยบาย KM",
-            "Verification_Outcome": "รายงานการประชุมและร่างนโยบาย"
+            "Tools_Templates": "Template รายงานสรุปผล",
+            "Verification_Outcome": "รายงานสรุปกิจกรรม_KM.pdf"
           }}
         ]
       }}
     ]
+  }},
+  {{
+    "phase": "Phase 2: การวัดผลและการปรับปรุงต่อเนื่อง (Target Level 4-5)",
+    "goal": "เพื่อสร้างระบบประเมินประสิทธิภาพและนวัตกรรม",
+    "actions": [ ... ]
   }}
 ]
 
-เริ่มตอบ JSON Array ทันที (ห้ามมีข้อความใด ๆ นอกจาก JSON):
+เริ่มตอบ JSON Array ทันที (ภาษา {language}):
 """
 
 # FINAL PROMPT DEFINITION
-# หมายเหตุ: เอา "json_schema" ออกจาก input_variables เพราะเราไม่ได้ใช้ใน template แล้ว 
-# เพื่อป้องกันความสับสนของ LangChain
 ACTION_PLAN_PROMPT = PromptTemplate(
     input_variables=[
         "sub_id",

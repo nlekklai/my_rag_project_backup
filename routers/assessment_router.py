@@ -81,6 +81,7 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     raise HTTPException(status_code=404, detail="ไม่พบไฟล์ผลการประเมิน")
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> Dict[str, Any]:
+    # ดึงค่า summary และจัดการค่าพื้นฐาน
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
 
@@ -89,132 +90,106 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> 
     strengths = []
     all_weaknesses = []
 
-    total_expected = int(summary.get("total_subcriteria", 12))
-    completion_rate = float(summary.get("percentage_achieved_run", 0.0))
-    # รองรับทั้ง highest_pass_level และ highest_pass_level_overall
-    overall_level = summary.get("highest_pass_level") or summary.get("highest_pass_level_overall") or 0
+    # --- 🟢 [Generic Metrics] ดึงค่าตาม Key ที่ระบบประเมินเจนออกมา ---
+    total_expected = int(summary.get("total_subcriteria") or 0)
+    passed_count = int(summary.get("Number of Sub-Criteria Assessed") or len(sub_results))
+    completion_rate = float(summary.get("percentage_achieved_run") or 0.0)
+    overall_level = summary.get("highest_pass_level") or 0
+    total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
+    enabler_name = (summary.get("enabler") or "N/A").upper()
 
     for res in sub_results:
         cid = res.get("sub_criteria_id", "N/A")
         cname = res.get("sub_criteria_name", f"เกณฑ์ย่อย {cid}")
-        highest_pass = int(res.get("highest_full_level") or res.get("highest_pass_level") or 0)
+        highest_pass = int(res.get("highest_full_level") or 0)
+        raw_levels_list = res.get("raw_results_ref", [])
 
-        # --- 1. Evidence & Summary Section (คงเดิมแต่ปรับปรุงการแสดงผล) ---
+        # --- 🟢 [Generic Strengths Analysis] ---
+        # วิเคราะห์จากความสำเร็จราย Level (P-D-C-A) โดยไม่สนว่าจะเป็น Enabler ไหน
+        for lv_item in raw_levels_list:
+            lv_num = lv_item.get("level", 0)
+            pdca = lv_item.get("pdca_breakdown", {})
+            
+            # นิยามจุดแข็ง: ถ้ามีคะแนนในระดับ L4-L5 และมีกิจกรรม (P/D/C/A) ที่โดดเด่น
+            if lv_num >= 4:
+                achieved_steps = [k for k, v in pdca.items() if v > 0]
+                if achieved_steps:
+                    steps_text = ", ".join(achieved_steps)
+                    strengths.append(
+                        f"💎 ศักยภาพระดับ L{lv_num} ({cid}): พบความพร้อมในส่วน ({steps_text}) "
+                        f"ตามหลักฐานที่ปรากฏในระบบ"
+                    )
+
+        # --- 🟢 [Generic Evidence Markdown] ---
         evidence_lines = []
-        raw_levels = {item.get("level"): item for item in res.get("raw_results_ref", [])}
-
+        raw_levels = {item.get("level"): item for item in raw_levels_list}
         for lv in range(1, 6):
             lv_info = raw_levels.get(lv)
             evidence_lines.append(f"### 💠 Level {lv}")
-
             if lv_info:
-                is_passed = lv_info.get("is_passed", False)
-                status = "✅ **ผ่าน**" if is_passed else "❌ **ยังไม่บรรลุ**"
+                status = "✅ **ผ่าน**" if lv_info.get("is_passed") else "❌ **ยังไม่บรรลุ**"
                 pdca = lv_info.get("pdca_breakdown", {})
                 pdca_status = [f"{'🟢' if v > 0 else '⚪'} {k}" for k, v in pdca.items()]
                 evidence_lines.append(f"{status} | {' '.join(pdca_status)}")
-
-                # ดึงเหตุผลภาษาไทย
-                reason = lv_info.get("summary_thai") or lv_info.get("reason", "")
-                sugg = lv_info.get("suggestion_next_level") or lv_info.get("suggestion", "")
-                
-                # ตรวจสอบภาษาอังกฤษเบื้องต้น
-                is_eng = any(ord(c) < 128 for c in reason[:20]) and not any(ord(c) > 128 for c in reason[:20])
-                
-                evidence_lines.append(f"> {'🌐 ' if is_eng else ''}{reason}")
-                if sugg:
-                    evidence_lines.append(f"\n> 💡 **ข้อแนะนำ**: {sugg}")
+                evidence_lines.append(f"> {lv_info.get('reason', 'ไม่มีรายละเอียดข้อมูล')}")
             else:
-                # กรณีเป็น Baseline หรือยังประเมินไม่ถึง
-                evidence_lines.append("✅ **ผ่าน (Baseline)**" if lv <= highest_pass else "⏳ **ยังไม่ถึงเกณฑ์ประเมิน**")
+                evidence_lines.append("✅ **ผ่าน**" if lv <= highest_pass else "⏳ **ยังไม่ถึงเกณฑ์ประเมิน**")
             evidence_lines.append("\n---\n")
 
-        # --- 2. Action Plan Extraction (REVISED: ตาม Schema snake_case) ---
+        # --- 🟢 [Generic Action Plan / Gap] ---
         gap_lines = []
-        raw_plans = res.get("action_plan") or res.get("Action_Plan") or []
-        
+        raw_plans = res.get("action_plan") or []
         for p in raw_plans:
-            # Normalization ชั้นที่ 1: จัดการ Key ระดับ Phase
-            p_data = {k.lower(): v for k, v in p.items()}
-            p_name = p_data.get("phase") or "แผนงานดำเนินการ"
-            p_goal = p_data.get("goal") or "รักษาและยกระดับมาตรฐาน"
+            phase_name = p.get("phase", "แผนงานพัฒนา")
+            target_goal = p.get("goal", "เพื่อยกระดับตามเกณฑ์")
             
-            icon = "🌟" if highest_pass == 5 else "🚀"
-            gap_lines.append(f"### {icon} {p_name}")
-            gap_lines.append(f"🎯 **เป้าหมาย**: {p_goal}\n")
+            gap_lines.append(f"## 🚀 {phase_name}")
+            gap_lines.append(f"🎯 **เป้าหมาย:** {target_goal}\n")
 
-            actions_list = p_data.get("actions") or []
-            for act in actions_list:
-                # Normalization ชั้นที่ 2: จัดการ Key ระดับ Action
-                act_data = {k.lower(): v for k, v in act.items()}
-                recommendation = act_data.get("recommendation") or ""
-                # ใช้ failed_level ตาม Schema
-                f_level = act_data.get("failed_level") or "Next Level"
+            for act in p.get("actions", []):
+                recomm = act.get("recommendation", "")
+                f_level = act.get("failed_level") or "ระดับถัดไป"
+                gap_lines.append(f"### 📝 ข้อเสนอแนะเพื่อบรรลุ L{f_level}")
+                gap_lines.append(f"> {recomm}\n")
                 
-                gap_lines.append(f"#### 📝 ข้อเสนอแนะ (ระดับ {f_level})")
-                gap_lines.append(f"> {recommendation}\n")
+                steps = act.get("steps", [])
+                if steps:
+                    gap_lines.append("#### 👣 ลำดับขั้นตอน:")
+                    for s in steps:
+                        s_idx = s.get("step") or s.get("step_number") or "-"
+                        s_desc = s.get("description") or ""
+                        s_resp = s.get("responsible") or "หน่วยงานที่เกี่ยวข้อง"
+                        gap_lines.append(f"- **{s_idx}:** {s_desc} (👤 *{s_resp}*)")
+                
+                all_weaknesses.append(f"🔍 เกณฑ์ {cid}: {recomm}")
+            gap_lines.append("\n---\n")
 
-                # เตรียมข้อมูลสำหรับ Dashboard (ใช้ชื่อ Phase มาช่วยแยกประเด็น)
-                weakness_entry = f"🔍 เกณฑ์ {cid} ({p_name}): {recommendation}"
-                
-                # Normalization ชั้นที่ 3: จัดการ Key ระดับ Step
-                steps_list = act_data.get("steps") or []
-                if steps_list:
-                    step_details = []
-                    gap_lines.append("##### 👣 ขั้นตอนการดำเนินงาน:")
-                    for s in steps_list:
-                        s_data = {k.lower(): v for k, v in s.items()}
-                        # ยึด 'step' ตาม Schema ล่าสุด (snake_case)
-                        s_idx = s_data.get("step") or s_data.get("step_number") or "-"
-                        s_desc = s_data.get("description") or ""
-                        s_resp = s_data.get("responsible") or "-"
-                        
-                        line = f"{s_idx}. {s_desc} (👤 {s_resp})"
-                        gap_lines.append(f"- {line}")
-                        step_details.append(line)
-                    
-                    if step_details:
-                        weakness_entry += " | ขั้นตอน: " + " / ".join(step_details)
-                
-                all_weaknesses.append(weakness_entry)
-
-        # บันทึกข้อมูลเกณฑ์ย่อย
         processed_sub_criteria.append({
             "code": cid,
             "name": cname,
             "level": f"L{highest_pass}",
             "score": float(res.get("weighted_score", 0.0)),
             "evidence": "\n".join(evidence_lines),
-            "gap": "\n".join(gap_lines) if gap_lines else "💡 บรรลุตามมาตรฐานสูงสุดแล้ว"
+            "gap": "\n".join(gap_lines) if gap_lines else "บรรลุตามเกณฑ์มาตรฐานแล้ว"
         })
-
-        # ข้อมูลสำหรับ Radar Chart
         radar_data.append({"axis": cid, "value": highest_pass, "fullMark": 5})
-        
-        # คัดกรองจุดแข็ง (L4-L5)
-        if highest_pass >= 4:
-            strengths.append(f"🌟 เกณฑ์ {cid}: ระดับ L{highest_pass} ({cname})")
-
-    # --- 3. FINAL SUMMARY & DE-DUPLICATION ---
-    # ลบจุดที่ควรพัฒนาซ้ำซ้อนออก (ถ้ามี) เพื่อความสะอาดของหน้า Dashboard
-    unique_weaknesses = list(dict.fromkeys(all_weaknesses))
 
     return {
         "status": "COMPLETED",
         "record_id": raw_data.get("record_id", "unknown"),
-        "tenant": summary.get("tenant", current_user.tenant).upper(),
+        "tenant": str(summary.get("tenant", current_user.tenant)).upper(),
         "year": str(summary.get("year", current_user.year)),
-        "enabler": (summary.get("enabler") or "KM").upper(),
+        "enabler": enabler_name,
         "level": f"L{overall_level}",
-        "score": round(float(summary.get("Total Weighted Score Achieved") or summary.get("achieved_weight") or 0.0), 2),
+        "score": total_score,
         "metrics": {
             "total_criteria": total_expected,
-            "passed_criteria": len(sub_results),
+            "passed_criteria": passed_count,
             "completion_rate": completion_rate
         },
         "radar_data": radar_data,
-        "strengths": strengths if strengths else ["ยังไม่พบเกณฑ์ที่อยู่ในระดับสูง (L4-L5)"],
-        "weaknesses": unique_weaknesses if unique_weaknesses else ["บรรลุเป้าหมายตามเกณฑ์ประเมิน"],
+        "strengths": list(dict.fromkeys(strengths)) if strengths else ["ระบบกำลังรวบรวมจุดแข็งเชิงเทคนิค"],
+        "weaknesses": list(dict.fromkeys(all_weaknesses)) if all_weaknesses else ["บรรลุเป้าหมายตามเกณฑ์"],
         "sub_criteria": processed_sub_criteria
     }
 
