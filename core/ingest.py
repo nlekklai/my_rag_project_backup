@@ -3,7 +3,7 @@
 # รวมการแก้ไข: Path Isolation, get_vectorstore, ingest_all_files, list_documents, wipe_vectorstore
 
 import transformers.utils.import_utils as import_utils
-# 🔥 บังคับให้ฟังก์ชันนี้คืนค่า True เสมอ (ปิดด่านตรวจถาวรใน Runtime)
+# 🔥 บัดนี้ ด่านตรวจจะถูกปิดถาวรตั้งแต่วินาทีแรกที่โปรแกรมเริ่มรัน
 import_utils.check_torch_load_is_safe = lambda *args, **kwargs: True
 
 import os
