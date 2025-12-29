@@ -1,19 +1,17 @@
-# core/ingest.py
-# เวอร์ชันเต็ม: Multi-Tenant + Multi-Year (รัฐวิสาหกิจไทย Ready)
-# รวมการแก้ไข: Path Isolation, get_vectorstore, ingest_all_files, list_documents, wipe_vectorstore
-
+# core/ingest.py (บรรทัดแรกสุด)
 import transformers.utils.import_utils as import_utils
-# 🔥 บัดนี้ ด่านตรวจจะถูกปิดถาวรตั้งแต่วินาทีแรกที่โปรแกรมเริ่มรัน
+# 🔥 ยึดอำนาจการตรวจความปลอดภัยแบบ Global
 import_utils.check_torch_load_is_safe = lambda *args, **kwargs: True
 
 import os
 os.environ["TORCH_LOAD_WEIGHTS_ONLY"] = "FALSE"
 os.environ["TRANSFORMERS_VERIFY_SCHEDULED_PATCHES"] = "False"
+
 import platform
+import logging
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import re
 import sys
-import logging
 import unicodedata
 import json
 import uuid
@@ -715,8 +713,6 @@ def process_document(
         
     return chunks, stable_doc_uuid, doc_type
 
-# -------------------- Vectorstore / Mapping Utilities --------------------
-_VECTORSTORE_SERVICE_CACHE: dict = {}
 
 # -------------------- Vectorstore / Mapping Utilities --------------------
 _VECTORSTORE_SERVICE_CACHE: dict = {}
