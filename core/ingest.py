@@ -3,6 +3,7 @@
 # รวมการแก้ไข: Path Isolation, get_vectorstore, ingest_all_files, list_documents, wipe_vectorstore
 
 import os
+import platform
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import re
 import sys
@@ -110,8 +111,12 @@ logger = logging.getLogger("IngestBatch")
 
 try:
     import pytesseract
-    # 📌 Comment out or adjust path based on target OS
-    # pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract' 
+    # --- ย้ายมาไว้ตรงนี้ ---
+    if platform.system() == "Darwin":
+        if os.path.exists('/opt/homebrew/bin/tesseract'):
+            pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'
+            logger.info(f"✅ Set Tesseract path for Mac: {pytesseract.pytesseract.tesseract_cmd}")
+    # ----------------------
     logger.info("✅ Pytesseract module loaded.")
 except ImportError:
     logger.warning("Pytesseract not installed. Tesseract OCR may fail.")
@@ -234,119 +239,122 @@ def _is_pdf_image_only(file_path: str) -> bool:
 
 
 def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Document]:
-    """Helper function to load a document using a specific LangChain loader class. (Modified for Image Fallback)"""
+    """
+    Revised Full Version: รองรับ Multi-Platform (Mac/Server),
+    แก้ปัญหา NoneType/TypeError และเพิ่ม Direct OCR เมื่อ Unstructured พัง
+    """
     raw_docs: List[Any] = [] 
     ext = "." + file_path.lower().split('.')[-1]
+    filename = os.path.basename(file_path)
     
-    # --- 1. Handle Known Loaders (CSV) ---
+    # --- 1. Handle CSV (Thai BOM Ready) ---
     if loader_class.__name__ == 'CSVLoader' or ext == ".csv":
         try:
             loader = loader_class(
                 file_path, 
-                encoding='utf-8-sig', # 💡 FIX: ใช้ utf-8-sig เพื่อรองรับไฟล์ไทยที่มี BOM
-                csv_args={
-                    "delimiter": "|", 
-                    "quotechar": '"'
-                } 
+                encoding='utf-8-sig', 
+                csv_args={"delimiter": "|", "quotechar": '"'} 
             )
             raw_docs = loader.load()
         except Exception as e:
-            logger.error(f"❌ LOADER FAILED: CSVLoader for {os.path.basename(file_path)} raised: {type(e).__name__} ({e})")
+            logger.error(f"❌ CSV LOADER FAILED: {filename} -> {e}")
             return []
     
-    # --- 2. Handle PDF (Text/Image-Only) ---
+    # --- 2. Handle PDF (Text/Image-only) with Robust Fallback ---
     elif ext == ".pdf":
         try:
             if _is_pdf_image_only(file_path):
-                logger.info(f"PDF is image-only, using OCR loader: {file_path}")
-                # 📌 FIX: เปลี่ยน mode="elements" เป็น mode="single" สำหรับ Image-Only PDF
-                loader = UnstructuredFileLoader(file_path, mode="single", languages=['tha','eng'])
+                logger.info(f"PDF is image-only, using High-Res OCR: {filename}")
+                try:
+                    # ลองแบบ Full Option (Languages support)
+                    loader = UnstructuredFileLoader(
+                        file_path, mode="elements", strategy="hi_res", languages=['tha','eng']
+                    )
+                    raw_docs = loader.load()
+                except (TypeError, Exception):
+                    # Fallback สำหรับ Mac/Server version ที่ไม่ยอมรับ parameter languages
+                    logger.warning(f"⚠️ PDF OCR fallback: Removing 'languages' for {filename}")
+                    loader = UnstructuredFileLoader(file_path, mode="elements", strategy="hi_res")
+                    raw_docs = loader.load()
             else:
-                logger.info(f"PDF has text layer, using PyPDFLoader: {file_path}")
-                # PyPDFLoader มักจะให้ผลลัพธ์ที่ดีกว่าสำหรับ PDF ที่มี text layer 
-                loader = PyPDFLoader(file_path) 
-            raw_docs = loader.load()
-        except Exception as e:
-             logger.error(f"❌ LOADER FAILED: PDF Loader for {os.path.basename(file_path)} raised: {type(e).__name__} ({e})")
-             return []
-    
-    # --- 3. Handle Images (JPG, PNG) with Fallback ---
-    elif ext in [".jpg", ".jpeg", ".png"]:
-        
-        # 3.1 Primary Attempt: UnstructuredFileLoader (Robust OCR, but can fail with TypeError)
-        try:
-            logger.info(f"Reading image file using UnstructuredFileLoader (Primary OCR): {file_path} ...")
-            
-            # 📌 FIX 1: ใช้ mode="elements" (ดีที่สุด) และ languages
-            loader = UnstructuredFileLoader(file_path, mode="elements", languages=['tha','eng']) 
-            raw_docs = loader.load()
-            
-            # ตรวจสอบว่าได้เอกสารที่มีเนื้อหาจริงหรือไม่
-            if any(doc.page_content and doc.page_content.strip() for doc in raw_docs):
-                return raw_docs
-            
-            # หากไม่มีเนื้อหา (OCR failed silently), ลอง Fallback
-            raise RuntimeError("Unstructured OCR failed to extract text content.") 
-            
-        except Exception as primary_e:
-            
-            # 📌 FIX 3: ใช้ UnstructuredFileLoader (mode="single") เป็น Fallback OCR
-            try:
-                logger.warning(
-                    f"⚠️ Primary image loader failed with {type(primary_e).__name__}. "
-                    f"Falling back to simpler UnstructuredFileLoader (mode='single') for {os.path.basename(file_path)}."
-                )
-                # ใช้ mode="single" ซึ่งง่ายกว่า mode="elements" 
-                loader = UnstructuredFileLoader(file_path, mode="single", languages=['tha','eng']) 
+                logger.info(f"PDF has text layer, using PyPDFLoader: {filename}")
+                loader = PyPDFLoader(file_path)
                 raw_docs = loader.load()
+        except Exception as e:
+             logger.error(f"❌ PDF LOADER FAILED: {filename} -> {e}")
+             return []
+
+    # --- 3. Handle Images (Triple-Guard: Unstructured -> Simple -> Direct OCR) ---
+    elif ext in [".jpg", ".jpeg", ".png"]:
+        logger.info(f"Reading image file: {filename} ...")
+        
+        # 🚀 Step 3.1: Unstructured elements mode
+        try:
+            loader = UnstructuredFileLoader(file_path, mode="elements", languages=['tha','eng'])
+            raw_docs = loader.load()
+        except (TypeError, Exception) as e:
+            logger.warning(f"⚠️ Primary image loader failed ({type(e).__name__}). Trying Fallback 1...")
+            try:
+                # 🚀 Step 3.2: Unstructured elements mode (No languages)
+                loader = UnstructuredFileLoader(file_path, mode="elements")
+                raw_docs = loader.load()
+            except: raw_docs = []
+
+        # เช็คว่าได้เนื้อหาจริงหรือไม่ (ป้องกันอาการ NoneType/Empty String)
+        has_content = any(getattr(d, 'page_content', None) and str(d.page_content).strip() for d in raw_docs)
+        
+        # 🚀 Step 3.3: Direct Pytesseract OCR (ไม้ตายสุดท้าย พร้อม Image Enhancement)
+        if not raw_docs or not has_content:
+            try:
+                logger.warning(f"⚠️ Unstructured failed/Empty. Using Direct Pytesseract OCR: {filename}")
+                from PIL import Image, ImageEnhance
+                import pytesseract
                 
-                if raw_docs and raw_docs[0].page_content.strip():
-                     logger.info("✅ Fallback Unstructured OCR (single mode) successful.")
-                     return raw_docs
-
-            except Exception as fallback_e:
-                logger.error(
-                    f"❌ FALLBACK FAILED: Simpler Unstructured OCR also failed for {os.path.basename(file_path)} "
-                    f"with {type(fallback_e).__name__}."
-                )
-                return [] # Image file fully failed to load
-            
-            # ถ้า Fallback แล้วยังไม่มีเนื้อหา ก็คืนค่าว่าง
-            return []
-
-    # --- 4. Handle Other File Types ---
+                with Image.open(file_path) as img:
+                    # Pre-processing สำหรับภาษาไทย: แปลงเป็นขาวดำ + ขยาย 2 เท่า + เพิ่ม Contrast
+                    img = img.convert('L') 
+                    img = img.resize((img.width * 2, img.height * 2), resample=Image.Resampling.LANCZOS)
+                    img = ImageEnhance.Contrast(img).enhance(2.0)
+                    text = pytesseract.image_to_string(img, lang='tha+eng')
+                
+                if text.strip():
+                    raw_docs = [Document(page_content=text, metadata={"source": file_path, "format": "Direct OCR Enhanced"})]
+                    logger.info(f"✅ Direct OCR Successful: {filename}")
+            except Exception as e_direct:
+                logger.error(f"❌ All Image loaders failed for {filename}: {e_direct}")
+                return []
+        
+    # --- 4. Handle Other File Types (Word, Excel, etc.) ---
     else:
         try:
             loader = loader_class(file_path)
             raw_docs = loader.load()
         except Exception as e:
-            loader_name = getattr(loader_class, '__name__', 'UnknownLoader')
-            logger.error(f"❌ LOADER FAILED: {os.path.basename(file_path)} - {loader_name} raised: {type(e).__name__} ({e})")
+            logger.error(f"❌ GENERAL LOADER FAILED: {filename} -> {e}")
             return []
         
-    
-    # --- 5. Post-Processing & Filtering ---
+    # --- 5. Post-Processing & Filtering (จุดที่ป้องกัน Error __str__ และทำความสะอาดข้อมูล) ---
     if raw_docs:
-        original_count = len(raw_docs)
+        filtered_docs = []
+        for doc in raw_docs:
+            try:
+                # ดึงเนื้อหาผ่าน getattr เพื่อความปลอดภัย
+                content = getattr(doc, 'page_content', None)
+                if content and str(content).strip():
+                    # ทำความสะอาดและ Normalize ภาษาไทย (NFC)
+                    cleaned_text = str(content).strip()
+                    doc.page_content = unicodedata.normalize('NFC', cleaned_text)
+                    filtered_docs.append(doc)
+            except Exception:
+                continue # ข้าม chunk ที่มีปัญหา
         
-        filtered_docs = [
-            doc for doc in raw_docs 
-            if isinstance(doc, Document) and doc.page_content is not None and doc.page_content.strip()
-        ]
-        
-        if len(filtered_docs) < original_count:
-            logger.warning(
-                f"⚠️ Loader returned {original_count - len(filtered_docs)} empty/None documents "
-                f"for {os.path.basename(file_path)}. Filtered to {len(filtered_docs)} valid documents."
-            )
-        
-        if not filtered_docs and original_count > 0:
-             logger.warning(f"⚠️ Loader returned documents but all were empty/invalid for {os.path.basename(file_path)}. Returning 0 valid documents.")
+        if not filtered_docs:
+             logger.warning(f"⚠️ [EMPTY] No valid text extracted from {filename}")
              return []
              
         return filtered_docs
     
-    return [] # Return empty list if raw_docs is empty (e.g., file was empty or loading failed silently)
+    return []
 
 # -------------------- Loaders --------------------
 FILE_LOADER_MAP = {
