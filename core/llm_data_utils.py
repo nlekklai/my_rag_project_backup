@@ -1383,97 +1383,9 @@ def create_context_summary_llm(
         "suggestion_for_next_level": f"ตรวจสอบเกณฑ์ของ Level {next_level} ในคู่มือ"
     }
 
-# =================================================================
-# 1. JSON Extractor (ทนทานที่สุดด้วยระบบ Auto-Repair)
-# =================================================================
-def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
-    try:
-        if not isinstance(text, str):
-            text = str(text) if text is not None else ""
-        if not text.strip(): return []
-
-        # 1. ลบ Markdown Block
-        clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
-
-        # 2. ค้นหาขอบเขต [ ]
-        start_idx = clean_text.find('[')
-        end_idx = clean_text.rfind(']')
-
-        if start_idx == -1:
-            start_idx = clean_text.find('{')
-            end_idx = clean_text.rfind('}')
-            if start_idx == -1: return []
-            json_candidate = clean_text[start_idx:end_idx + 1]
-        else:
-            json_candidate = clean_text[start_idx:end_idx + 1]
-
-        # 3. ล้าง Control Characters
-        json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
-
-        def try_parse(content):
-            try:
-                data = json5.loads(content)
-                return data if isinstance(data, list) else [data]
-            except Exception: return None
-
-        # พยายาม Parse หลายระดับ
-        result = try_parse(json_candidate)
-        if not result:
-            repaired = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
-            result = try_parse(repaired)
-        
-        # กรณี Truncated (LLM เจนไม่จบ)
-        if not result:
-            for suffix in ["]", "}", "}]", "}\n]"]:
-                result = try_parse(json_candidate + suffix)
-                if result: break
-
-        return result or []
-    except Exception as e:
-        logger.error(f"Extraction failed: {str(e)}")
-        return []
 
 # =================================================================
-# 2. Key Normalizer & Type Enforcement
-# =================================================================
-
-def action_plan_normalize_keys(obj: Any) -> Any:
-    if isinstance(obj, list): return [action_plan_normalize_keys(i) for i in obj]
-    if isinstance(obj, dict):
-        # แผนผังการแปลง Key ให้เป็นตัวเล็ก (Snake Case) ทั้งหมดตาม Schema ล่าสุด
-        field_mapping = {
-            'phase': 'phase', 'goal': 'goal', 'actions': 'actions',
-            'statement_id': 'statement_id', 'failed_level': 'failed_level',
-            'recommendation': 'recommendation', 'target_evidence_type': 'target_evidence_type',
-            'key_metric': 'key_metric', 'steps': 'steps',
-            'step': 'step', 'description': 'description', 'responsible': 'responsible',
-            'tools_templates': 'tools_templates', 'verification_outcome': 'verification_outcome'
-        }
-        
-        new_obj = {}
-        for k, v in obj.items():
-            # ล้าง Key ให้สะอาด (Lower + Snake Case)
-            k_clean = str(k).lower().replace(' ', '_').strip()
-            k_clean = re.sub(r'[^a-z0-9_]', '', k_clean) # ลบอักขระพิเศษ
-            
-            target_key = field_mapping.get(k_clean) or k_clean
-            
-            # บังคับประเภท Integer สำหรับ Step และ Level
-            if target_key in ['failed_level', 'step']:
-                try:
-                    if isinstance(v, (int, float)):
-                        v = int(v)
-                    else:
-                        nums = re.findall(r'\d+', str(v))
-                        v = int(nums[0]) if nums else 0
-                except: v = 0
-            
-            new_obj[target_key] = action_plan_normalize_keys(v)
-        return new_obj
-    return obj
-
-# =================================================================
-# 3. Main Function (Revised for 3-Mode Support)
+# 1. Main Function: create_structured_action_plan
 # =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
@@ -1485,6 +1397,9 @@ def create_structured_action_plan(
     max_retries: int = 3,
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
+    """
+    สร้าง Action Plan ที่มีการจัดกลุ่มประเด็นไม่ให้ซ้ำซ้อน และเลือก Mode ตามผลประเมินจริง
+    """
     
     # --- 1. วิเคราะห์สถานะเพื่อเลือกโหมด ---
     is_sustain_mode = not recommendation_statements
@@ -1492,49 +1407,47 @@ def create_structured_action_plan(
     is_quality_refinement = False
     if not is_sustain_mode:
         types = [s.get('recommendation_type') for s in recommendation_statements]
-        # ตรวจสอบว่า "ผ่านหมดแล้วแต่ต้องเติมของ" หรือไม่ (ไม่มี FAILED/GAP ใน list)
+        # ตรวจสอบกรณี "ผ่านหมดแล้วแต่ต้องเสริมคุณภาพ" (ไม่มีข้อที่ตกจริง)
         if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
             is_quality_refinement = True
 
-    rules = enabler_rules.get(sub_id, {})
-    
-    # --- 2. การเลือก Prompt และการตั้งค่าตามโหมด ---
+    # --- 2. การเลือก Prompt ตามโหมด พร้อมคำสั่งคุมกำเนิดความซ้ำซ้อน ---
     if is_sustain_mode:
-        # 🌟 โหมด Sustain: ผ่าน L5 สมบูรณ์แบบ เน้นรักษามาตรฐานและนวัตกรรม
-        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
+        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT + "\nสำคัญ: เน้นนวัตกรรมที่ยั่งยืน ห้ามเขียนแผนงานซ้ำซ้อน"
         current_prompt_template = EXCELLENCE_ADVICE_PROMPT
         advice_focus = "การรักษาความเป็นเลิศและสร้างนวัตกรรมต่อเนื่อง"
         assessment_context = f"ผ่านเกณฑ์ระดับ 5 (สูงสุด) อย่างสมบูรณ์ในหัวข้อ {sub_criteria_name}"
         max_steps = 5
         
     elif is_quality_refinement:
-        # 🛡️ โหมด Quality Refinement: ผ่านแล้วแต่หลักฐานไม่แน่น (Weak Evidence/PDCA Incomplete)
-        current_system_prompt = SYSTEM_QUALITY_PROMPT
+        current_system_prompt = SYSTEM_QUALITY_PROMPT + "\nสำคัญ: รวมประเด็นที่คล้ายกันเข้าด้วยกัน ห้ามสร้าง Action Item ที่ซ้ำซ้อน"
         current_prompt_template = QUALITY_REFINEMENT_PROMPT
         advice_focus = "การเสริมความแข็งแกร่งของหลักฐานและวงจร PDCA ให้สมบูรณ์ 100%"
-        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ควรเพิ่มคุณภาพและความน่าเชื่อถือของหลักฐานเพื่อรองรับการ Audit"
+        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ควรเพิ่มคุณภาพและความน่าเชื่อถือของหลักฐาน"
         max_steps = 3
         
     else:
-        # 🛠️ โหมด Action Plan: ติด Gap จริง (L1-L4) ต้องการการแก้ไข
-        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT
+        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT + "\nสำคัญ: สรุปประเด็นบกพร่องที่คล้ายกันให้เป็นหนึ่งแผนงาน (Consolidate)"
         current_prompt_template = ACTION_PLAN_PROMPT
         advice_focus = "การแก้ไขช่องว่างและสร้างระบบงานตามมาตรฐาน"
         assessment_context = f"อยู่ระหว่างการพัฒนาสู่ระดับ {target_level} และแก้ไขจุดบกพร่องที่พบ"
         max_steps = 3
 
-    # --- 3. จัดเตรียมเนื้อหา Statements ---
+    # --- 3. จัดเตรียมเนื้อหา Statements (REVISED: Logic การลบรายการซ้ำ) ---
     if is_sustain_mode:
         stmt_content = "บรรลุเกณฑ์มาตรฐานสูงสุดอย่างครบถ้วน"
     else:
-        stmt_blocks = []
+        unique_statements = {}
         for s in recommendation_statements:
-            rtype = s.get('recommendation_type', 'GAP')
-            lvl = s.get('level', 'N/A')
-            # ดึงเหตุผลหลักและ Note ภายใน (เช่น Score ต่ำ หรือ PDCA ตัวไหนหาย)
-            reason = s.get('reason') or s.get('statement') or "ไม่พบรายละเอียดจุดบกพร่อง"
-            note = s.get('internal_note', '')
-            stmt_blocks.append(f"- [Level {lvl}] {rtype}: {reason} {f'({note})' if note else ''}")
+            reason = (s.get('reason') or s.get('statement') or "").strip()
+            lvl = s.get('level', 0)
+            if not reason: continue
+            
+            # หากข้อความเหมือนกัน ให้ยึดอันที่มี Level สูงกว่า (เพื่อคลุมเกณฑ์ที่ยากกว่า)
+            if reason not in unique_statements or lvl > unique_statements[reason]:
+                unique_statements[reason] = lvl
+        
+        stmt_blocks = [f"- [Level {v}] {k}" for k, v in unique_statements.items()]
         stmt_content = "\n".join(stmt_blocks)
 
     # --- 4. ประกอบ Human Prompt ---
@@ -1551,23 +1464,24 @@ def create_structured_action_plan(
         language="ภาษาไทย"
     )
 
-    # --- 5. EXECUTION & VALIDATION ---
+    # --- 5. EXECUTION & VALIDATION LOOP ---
     for attempt in range(1, max_retries + 1):
         try:
             response = llm_executor.generate(
                 system=current_system_prompt, 
                 prompts=[human_prompt],
-                temperature=0.3 # ค่าต่ำเพื่อให้ได้ JSON ที่เสถียร
+                temperature=0.2 # ค่านิ่งขึ้น ลดความเพ้อเจ้อ
             )
             raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response)
             
-            # ใช้สกัด JSON array และล้างโครงสร้างให้ตรงตาม Schema
+            # สกัด JSON จาก Text
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items: continue
 
-            # ทำ Key Normalization (แปลง Phase -> phase, Step -> Step ฯลฯ)
+            # Normalize Keys ให้เข้ากับ Schema (ป้องกัน LLM พ่น Key ผิด/มีวรรค)
             clean_items = action_plan_normalize_keys(items)
-            from core.action_plan_schema import ActionPlanResult
+            
+            # Validate ด้วย Pydantic
             validated_result = ActionPlanResult.model_validate(clean_items)
             
             return validated_result.model_dump(by_alias=True)
@@ -1577,6 +1491,95 @@ def create_structured_action_plan(
 
     # --- 6. EMERGENCY FALLBACK ---
     return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement)
+
+# =================================================================
+# 2. Key Normalizer: แก้ไขปัญหา LLM พ่น Key ไม่นิ่ง
+# =================================================================
+def action_plan_normalize_keys(obj: Any) -> Any:
+    if isinstance(obj, list): return [action_plan_normalize_keys(i) for i in obj]
+    if isinstance(obj, dict):
+        field_mapping = {
+            'phase': 'phase', 'goal': 'goal', 'actions': 'actions',
+            'statementid': 'statement_id', 'statement_id': 'statement_id',
+            'failedlevel': 'failed_level', 'failed_level': 'failed_level',
+            'recommendation': 'recommendation',
+            'targetevidencetype': 'target_evidence_type', 'target_evidence_type': 'target_evidence_type',
+            'keymetric': 'key_metric', 'key_metric': 'key_metric',
+            'steps': 'steps', 'step': 'step', 
+            'description': 'description', 'responsible': 'responsible',
+            'toolstemplates': 'tools_templates', 'tools_templates': 'tools_templates',
+            'verificationoutcome': 'verification_outcome', 'verification_outcome': 'verification_outcome'
+        }
+        
+        new_obj = {}
+        for k, v in obj.items():
+            # กวาดล้าง Key ให้เหลือแต่ตัวพิมพ์เล็กและตัวเลขเพื่อเปรียบเทียบ
+            k_raw = str(k).lower().replace(' ', '').replace('_', '').strip()
+            k_raw = re.sub(r'[^a-z0-9]', '', k_raw)
+            
+            target_key = field_mapping.get(k_raw) or k_raw
+            
+            # Enforcement: บังคับ Integer สำหรับ Level และ Step
+            if target_key in ['failed_level', 'step']:
+                try:
+                    if isinstance(v, (int, float)): v = int(v)
+                    else:
+                        nums = re.findall(r'\d+', str(v))
+                        v = int(nums[0]) if nums else 0
+                except: v = 0
+            
+            new_obj[target_key] = action_plan_normalize_keys(v)
+        return new_obj
+    return obj
+
+# =================================================================
+# 3. JSON Extractor: ระบบกู้คืน JSON ที่พังหรือเจนไม่จบ
+# =================================================================
+def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
+    try:
+        if not isinstance(text, str): text = str(text) if text is not None else ""
+        if not text.strip(): return []
+
+        # ลบ Markdown tags
+        clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
+
+        # ค้นหาขอบเขต JSON
+        start_idx = clean_text.find('[')
+        end_idx = clean_text.rfind(']')
+
+        if start_idx == -1:
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            if start_idx == -1: return []
+            json_candidate = clean_text[start_idx:end_idx + 1]
+        else:
+            json_candidate = clean_text[start_idx:end_idx + 1]
+
+        # ล้าง Control characters
+        json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
+
+        def try_parse(content):
+            try:
+                data = json5.loads(content)
+                return data if isinstance(data, list) else [data]
+            except Exception: return None
+
+        # พยายาม Parse และซ่อมแซม
+        result = try_parse(json_candidate)
+        if not result:
+            repaired = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
+            result = try_parse(repaired)
+        
+        # กรณี LLM ตัดจบ (Truncated) พยายามเติมปิดท้ายให้
+        if not result:
+            for suffix in ["]", "}", "}]", "}\n]"]:
+                result = try_parse(json_candidate + suffix)
+                if result: break
+
+        return result or []
+    except Exception as e:
+        logger.error(f"Extraction failed: {str(e)}")
+        return []
 
 # =================================================================
 # 4. Emergency Fallback (Revised for All Modes)
