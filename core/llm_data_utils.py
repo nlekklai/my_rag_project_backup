@@ -88,7 +88,9 @@ from core.seam_prompts import (
     USER_LOW_LEVEL_PROMPT_TEMPLATE,
     USER_EVIDENCE_DESCRIPTION_TEMPLATE,
     EXCELLENCE_ADVICE_PROMPT, 
-    SYSTEM_EXCELLENCE_PROMPT
+    SYSTEM_EXCELLENCE_PROMPT,
+    SYSTEM_QUALITY_PROMPT,
+    QUALITY_REFINEMENT_PROMPT
 )
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
@@ -1434,34 +1436,44 @@ def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> Li
 # =================================================================
 # 2. Key Normalizer & Type Enforcement
 # =================================================================
+
 def action_plan_normalize_keys(obj: Any) -> Any:
     if isinstance(obj, list): return [action_plan_normalize_keys(i) for i in obj]
     if isinstance(obj, dict):
+        # แผนผังการแปลง Key ให้เป็นตัวเล็ก (Snake Case) ทั้งหมดตาม Schema ล่าสุด
         field_mapping = {
             'phase': 'phase', 'goal': 'goal', 'actions': 'actions',
             'statement_id': 'statement_id', 'failed_level': 'failed_level',
             'recommendation': 'recommendation', 'target_evidence_type': 'target_evidence_type',
             'key_metric': 'key_metric', 'steps': 'steps',
-            'step': 'Step', 'description': 'Description', 'responsible': 'Responsible',
-            'tools_templates': 'Tools_Templates', 'verification_outcome': 'Verification_Outcome'
+            'step': 'step', 'description': 'description', 'responsible': 'responsible',
+            'tools_templates': 'tools_templates', 'verification_outcome': 'verification_outcome'
         }
+        
         new_obj = {}
         for k, v in obj.items():
-            k_clean = k.lower().replace('_', ' ').strip().replace(' ', '_')
-            target_key = field_mapping.get(k_clean) or k
+            # ล้าง Key ให้สะอาด (Lower + Snake Case)
+            k_clean = str(k).lower().replace(' ', '_').strip()
+            k_clean = re.sub(r'[^a-z0-9_]', '', k_clean) # ลบอักขระพิเศษ
+            
+            target_key = field_mapping.get(k_clean) or k_clean
             
             # บังคับประเภท Integer สำหรับ Step และ Level
-            if target_key in ['failed_level', 'Step']:
+            if target_key in ['failed_level', 'step']:
                 try:
-                    nums = re.findall(r'\d+', str(v))
-                    v = int(nums[0]) if nums else 0
+                    if isinstance(v, (int, float)):
+                        v = int(v)
+                    else:
+                        nums = re.findall(r'\d+', str(v))
+                        v = int(nums[0]) if nums else 0
                 except: v = 0
+            
             new_obj[target_key] = action_plan_normalize_keys(v)
         return new_obj
     return obj
 
 # =================================================================
-# 3. Main Function
+# 3. Main Function (Revised for 3-Mode Support)
 # =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
@@ -1471,78 +1483,89 @@ def create_structured_action_plan(
     llm_executor: Any,
     logger: logging.Logger,
     max_retries: int = 3,
-    enabler_rules: Dict[str, Any] = {} # 👈 รับค่าจาก self.contextual_rules_map
+    enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
     
+    # --- 1. วิเคราะห์สถานะเพื่อเลือกโหมด ---
     is_sustain_mode = not recommendation_statements
+    
+    is_quality_refinement = False
+    if not is_sustain_mode:
+        types = [s.get('recommendation_type') for s in recommendation_statements]
+        # ตรวจสอบว่า "ผ่านหมดแล้วแต่ต้องเติมของ" หรือไม่ (ไม่มี FAILED/GAP ใน list)
+        if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
+            is_quality_refinement = True
+
     rules = enabler_rules.get(sub_id, {})
     
-    # --- ส่วนการเตรียม Focus ตาม Keywords ใน JSON ---
+    # --- 2. การเลือก Prompt และการตั้งค่าตามโหมด ---
     if is_sustain_mode:
-        # ดึง Keywords สำหรับ L5 (Sustain)
-        l5_acts = rules.get("L5", {}).get("act_keywords", [])
-        focus_words = ", ".join(l5_acts[:3]) if l5_acts else "นวัตกรรมและการยกระดับมาตรฐาน"
-        advice_focus = f"ความเป็นเลิศอย่างยั่งยืนด้วย {focus_words}"
-        
-        current_prompt_template = EXCELLENCE_ADVICE_PROMPT
+        # 🌟 โหมด Sustain: ผ่าน L5 สมบูรณ์แบบ เน้นรักษามาตรฐานและนวัตกรรม
         current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
-        assessment_context = f"ผ่านเกณฑ์ระดับ 5 (เป้าหมายสูงสุด) ในหัวข้อ {sub_criteria_name}"
+        current_prompt_template = EXCELLENCE_ADVICE_PROMPT
+        advice_focus = "การรักษาความเป็นเลิศและสร้างนวัตกรรมต่อเนื่อง"
+        assessment_context = f"ผ่านเกณฑ์ระดับ 5 (สูงสุด) อย่างสมบูรณ์ในหัวข้อ {sub_criteria_name}"
+        max_steps = 5
         
-        human_prompt = current_prompt_template.format(
-            sub_id=sub_id, 
-            sub_criteria_name=sub_criteria_name, 
-            target_level=target_level,
-            assessment_context=assessment_context, 
-            advice_focus=advice_focus,
-            max_steps=5, 
-            max_words_per_step=150,  # 👈 เพิ่มตรงนี้
-            language="ภาษาไทย"
-        )
+    elif is_quality_refinement:
+        # 🛡️ โหมด Quality Refinement: ผ่านแล้วแต่หลักฐานไม่แน่น (Weak Evidence/PDCA Incomplete)
+        current_system_prompt = SYSTEM_QUALITY_PROMPT
+        current_prompt_template = QUALITY_REFINEMENT_PROMPT
+        advice_focus = "การเสริมความแข็งแกร่งของหลักฐานและวงจร PDCA ให้สมบูรณ์ 100%"
+        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ควรเพิ่มคุณภาพและความน่าเชื่อถือของหลักฐานเพื่อรองรับการ Audit"
+        max_steps = 3
+        
     else:
-        # กรณีติด Gap (L1-L4): เลือก Keyword ตาม Level สูงสุดที่ยังไม่ผ่าน
-        failed_lvls = [s.get('level', 1) for s in recommendation_statements]
-        max_fail = max(failed_lvls) if failed_lvls else 1
-        
-        # เลือกหมวดหมู่ PDCA ตาม Level (เช่น L1-L2 มักจะติด Plan/Do, L3-L4 มักติด Check/Act)
-        phase_map = "plan" if max_fail <= 1 else "do" if max_fail <= 2 else "check"
-        keywords = rules.get(f"L{max_fail}", {}).get(f"{phase_map}_keywords", [])
-        
-        if not keywords: # Fallback ถ้าไม่มี keywords ราย phase
-            keywords = rules.get(f"L{max_fail}", {}).get("must_include_keywords", [])
-
-        focus_text = f"การเน้น {', '.join(keywords[:2])}" if keywords else "การสร้างมาตรฐานและระบบรายงาน"
-        advice_focus = focus_text
-        
-        stmt_blocks = [f"- [Level {s.get('level')}] {s.get('statement')}" for s in recommendation_statements]
-        
-        current_prompt_template = ACTION_PLAN_PROMPT
+        # 🛠️ โหมด Action Plan: ติด Gap จริง (L1-L4) ต้องการการแก้ไข
         current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT
-        human_prompt = current_prompt_template.format(
-            sub_id=sub_id, 
-            sub_criteria_name=sub_criteria_name, 
-            target_level=target_level,
-            advice_focus=advice_focus, 
-            recommendation_statements_list="\n".join(stmt_blocks),
-            max_phases=1, 
-            max_steps=3, 
-            max_words_per_step=150,  # 👈 เพิ่มตรงนี้
-            language="ภาษาไทย"
-        )
+        current_prompt_template = ACTION_PLAN_PROMPT
+        advice_focus = "การแก้ไขช่องว่างและสร้างระบบงานตามมาตรฐาน"
+        assessment_context = f"อยู่ระหว่างการพัฒนาสู่ระดับ {target_level} และแก้ไขจุดบกพร่องที่พบ"
+        max_steps = 3
 
-    # --- ส่วนการรัน LLM และ Validate ด้วย Pydantic Schema ---
+    # --- 3. จัดเตรียมเนื้อหา Statements ---
+    if is_sustain_mode:
+        stmt_content = "บรรลุเกณฑ์มาตรฐานสูงสุดอย่างครบถ้วน"
+    else:
+        stmt_blocks = []
+        for s in recommendation_statements:
+            rtype = s.get('recommendation_type', 'GAP')
+            lvl = s.get('level', 'N/A')
+            # ดึงเหตุผลหลักและ Note ภายใน (เช่น Score ต่ำ หรือ PDCA ตัวไหนหาย)
+            reason = s.get('reason') or s.get('statement') or "ไม่พบรายละเอียดจุดบกพร่อง"
+            note = s.get('internal_note', '')
+            stmt_blocks.append(f"- [Level {lvl}] {rtype}: {reason} {f'({note})' if note else ''}")
+        stmt_content = "\n".join(stmt_blocks)
+
+    # --- 4. ประกอบ Human Prompt ---
+    human_prompt = current_prompt_template.format(
+        sub_id=sub_id, 
+        sub_criteria_name=sub_criteria_name, 
+        target_level=target_level,
+        assessment_context=assessment_context,
+        advice_focus=advice_focus, 
+        recommendation_statements_list=stmt_content,
+        max_phases=1, 
+        max_steps=max_steps, 
+        max_words_per_step=150,
+        language="ภาษาไทย"
+    )
+
+    # --- 5. EXECUTION & VALIDATION ---
     for attempt in range(1, max_retries + 1):
         try:
             response = llm_executor.generate(
-                system=current_system_prompt, prompts=[human_prompt],
-                temperature=0.3
+                system=current_system_prompt, 
+                prompts=[human_prompt],
+                temperature=0.3 # ค่าต่ำเพื่อให้ได้ JSON ที่เสถียร
             )
             raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response)
             
-            # ใช้ Extractor ที่คุณเขียนมา (ทนทานต่อ JSON เพี้ยน)
+            # ใช้สกัด JSON array และล้างโครงสร้างให้ตรงตาม Schema
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items: continue
 
-            # ทำ Key Normalization และ Validate ผ่าน Pydantic (ActionPlanResult)
+            # ทำ Key Normalization (แปลง Phase -> phase, Step -> Step ฯลฯ)
             clean_items = action_plan_normalize_keys(items)
             from core.action_plan_schema import ActionPlanResult
             validated_result = ActionPlanResult.model_validate(clean_items)
@@ -1550,30 +1573,42 @@ def create_structured_action_plan(
             return validated_result.model_dump(by_alias=True)
 
         except Exception as e:
-            logger.error(f"Action Plan Attempt {attempt} failed: {e}")
+            logger.error(f"⚠️ Action Plan Attempt {attempt} failed for {sub_id}: {e}")
 
-    return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode)
+    # --- 6. EMERGENCY FALLBACK ---
+    return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement)
 
 # =================================================================
-# 4. Emergency Fallback
+# 4. Emergency Fallback (Revised for All Modes)
 # =================================================================
-def _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode):
+def _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement):
     if is_sustain_mode:
-        title = "Continuous Excellence"
-        rec = "รักษามาตรฐานและทำ Benchmarking ระดับสากล"
+        title = "Continuous Excellence Plan"
+        rec = "รักษามาตรฐานระดับสูงสุดและดำเนินการแบ่งปันองค์ความรู้สู่ภายนอก (Best Practice Sharing)"
+    elif is_quality_refinement:
+        title = "Quality Evidence Reinforcement"
+        rec = "จัดรวบรวมหลักฐานย้อนหลังและประเมินประสิทธิภาพกระบวนการ (Check) ให้ชัดเจนยิ่งขึ้น"
     else:
-        title = "Gap Remediation"
-        rec = "เร่งจัดทำนโยบายและหลักฐานประกอบวงจร PDCA ให้ครบถ้วน"
+        title = "Gap Remediation Roadmap"
+        rec = f"เร่งดำเนินการตามเกณฑ์ระดับ {target_level} และจัดทำเอกสารประกอบวงจร PDCA ให้ครบสมบูรณ์"
         
     return [{
         "phase": f"Phase: {title}",
-        "goal": f"ยกระดับ {sub_criteria_name} อย่างเป็นระบบ",
+        "goal": f"ยกระดับและรักษามาตรฐาน {sub_criteria_name}",
         "actions": [{
-            "statement_id": sub_id, "failed_level": target_level,
-            "recommendation": rec, "target_evidence_type": "KM Roadmap / Evidence Pack",
-            "key_metric": "Implementation Success 100%",
+            "statement_id": sub_id, 
+            "failed_level": target_level,
+            "recommendation": rec, 
+            "target_evidence_type": "Evidence Pack / KM Dashboard",
+            "key_metric": "ความสมบูรณ์ของหลักฐาน 100%",
             "steps": [
-                {"Step": 1, "Description": "วิเคราะห์ความพร้อมของหลักฐาน", "Responsible": "KM Team", "Tools_Templates": "Gap Template", "Verification_Outcome": "Gap Analysis Report"}
+                {
+                    "Step": 1, 
+                    "Description": "ทบทวนช่องว่างของหลักฐานและจัดทำสรุปผลการดำเนินงาน", 
+                    "Responsible": "KM Working Team", 
+                    "Tools_Templates": "Gap Analysis Template", 
+                    "Verification_Outcome": "รายงานสรุปช่องว่างและการแก้ไข"
+                }
             ]
         }]
     }]

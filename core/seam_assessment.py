@@ -3168,51 +3168,69 @@ class SEAMPDCAEngine:
         
         # -----------------------------------------------------------
         # 3. GENERATE ACTION PLAN (POST-PROCESSING) 🚀
-        # ------------------------------------------------------------
+        # -----------------------------------------------------------
 
-        # 🎯 ใช้ตัวแปรที่ Import มาจาก Header ได้เลยโดยตรง
+        # 🎯 เกณฑ์การตัดสินใจสำหรับหลักฐานที่ "ไม่สมบูรณ์" (Quality Thresholds)
         weak_threshold = MIN_RERANK_SCORE_TO_KEEP 
         
         target_next_level = highest_full_level + 1 if highest_full_level < 5 else 5
         statements_for_action_plan = []
         
         for r in raw_results_for_sub_seq:
-            # สร้าง copy เพื่อไม่ให้กระทบ data ต้นฉบับ
+            # สร้าง copy เพื่อรักษาข้อมูลต้นฉบับ
             res_item = r.copy() 
             is_passed = res_item.get('is_passed', False)
             evidence_strength = res_item.get('evidence_strength', 10.0)
             eval_mode = res_item.get('evaluation_mode', "")
+            pdca = res_item.get('pdca_breakdown', {})
+            
+            # 💡 ตรวจสอบว่ามีช่องว่างใน PDCA หรือไม่ (แม้สถานะจะผ่าน)
+            # เช่น ถ้าตัวใดตัวหนึ่งเป็น 0 แปลว่าหลักฐานในมิตินั้นหายไป
+            has_pdca_gap = any(v == 0 for v in pdca.values()) if pdca else False
 
-            # 1. กรณีไม่ผ่าน (FAILED)
+            # --- กรณีที่ 1: ไม่ผ่าน (FAILED) ---
             if not is_passed and eval_mode != "GAP_ONLY":
                 res_item['recommendation_type'] = 'FAILED'
                 statements_for_action_plan.append(res_item)
                 continue
             
-            # 2. กรณีประเมินเพื่อหา Gap โดยเฉพาะ (GAP_ONLY)
+            # --- กรณีที่ 2: ประเมินช่องว่างโดยเฉพาะ (GAP_ONLY) ---
             if eval_mode == "GAP_ONLY":
                 res_item['recommendation_type'] = 'GAP_ANALYSIS'
                 statements_for_action_plan.append(res_item)
                 continue
 
-            # 3. กรณีผ่านแต่หลักฐานอ่อน (WEAK_EVIDENCE)
-            if is_passed and evidence_strength < weak_threshold:
-                res_item['recommendation_type'] = 'WEAK_EVIDENCE'
-                statements_for_action_plan.append(res_item)
-
-            if is_passed and res_item.get('suggestion_next_level'):
-                # ป้องกันการใส่ซ้ำถ้าติดเงื่อนไข WEAK_EVIDENCE ไปแล้ว
-                if res_item not in statements_for_action_plan:
-                    res_item['recommendation_type'] = 'IMPROVEMENT_ADVICE'
+            # --- กรณีที่ 3: ผ่านแต่ไม่สมบูรณ์ 100% (Quality Check) ---
+            if is_passed:
+                # A. หลักฐานอ่อน (WEAK_EVIDENCE) - Rerank Score ต่ำ
+                if evidence_strength < weak_threshold:
+                    res_item['recommendation_type'] = 'WEAK_EVIDENCE'
+                    res_item['internal_note'] = f"Strength {evidence_strength:.2f} < {weak_threshold}"
                     statements_for_action_plan.append(res_item)
+                
+                # B. PDCA ไม่ครบถ้วน (PDCA_INCOMPLETE) - มีมิติที่เป็น 0
+                elif has_pdca_gap:
+                    res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
+                    res_item['internal_note'] = f"Missing PDCA dimensions: {[k for k,v in pdca.items() if v==0]}"
+                    statements_for_action_plan.append(res_item)
+
+                # C. มีคำแนะนำการพัฒนาต่อ (IMPROVEMENT_ADVICE)
+                elif res_item.get('suggestion_next_level'):
+                    # ตรวจสอบเพื่อไม่ให้ใส่ซ้ำถ้าติดเงื่อนไขคุณภาพด้านบนไปแล้ว
+                    if not any(s.get('level') == res_item.get('level') for s in statements_for_action_plan):
+                        res_item['recommendation_type'] = 'IMPROVEMENT_ADVICE'
+                        statements_for_action_plan.append(res_item)
 
         action_plan_result = []
 
         try:
+            # ถ้าไม่มี statement เลย แปลว่าผ่าน L5 แบบสมบูรณ์ไร้ที่ติ
             if not statements_for_action_plan:
-                self.logger.info(f"✨ Sub-id {sub_id} is perfect. Generating Sustain Plan...")
+                self.logger.info(f"✨ Sub-id {sub_id} is perfect. Generating Excellence Sustain Plan...")
+            else:
+                self.logger.info(f"🛠️ Sub-id {sub_id} found {len(statements_for_action_plan)} improvement points.")
 
-            # 🎯 ส่ง OLLAMA_MAX_RETRIES ที่ Import มาจาก Header
+            # 🎯 ส่งไปสร้าง Structured Action Plan (รองรับทั้งโหมดแก้ไขและโหมดรักษามาตรฐาน)
             action_plan_result = create_structured_action_plan(
                 recommendation_statements=statements_for_action_plan,
                 sub_id=sub_id,
@@ -3228,36 +3246,27 @@ class SEAMPDCAEngine:
 
         except Exception as e:
             self.logger.error(f"❌ Action Plan generation failed for {sub_id}: {e}", exc_info=True)
-            # ✅ Fallback ที่ตรงตาม schema (lowercase keys + Capitalized Step fields)
+            # 🛡️ Fallback ในกรณีที่ LLM ขัดข้อง
             action_plan_result = [{
-                "phase": "Phase 1: Critical Recovery Required",
-                "goal": f"แก้ไขปัญหาเร่งด่วนในเกณฑ์ {sub_criteria_name} และฟื้นฟูระบบการสร้าง Action Plan",
+                "phase": "Phase 1: Emergency Quality Recovery",
+                "goal": f"ตรวจสอบและอุดช่องว่างในเกณฑ์ {sub_criteria_name} เนื่องจากระบบสร้างแผนอัตโนมัติขัดข้อง",
                 "actions": [{
                     "statement_id": "SYSTEM_ERROR",
                     "failed_level": target_next_level,
-                    "recommendation": f"ระบบไม่สามารถสร้าง Action Plan อัตโนมัติได้เนื่องจาก: {str(e)[:150]}... "
-                                     "แนะนำให้ตรวจสอบการเชื่อมต่อ LLM, Prompt, และ Schema ทันที",
-                    "target_evidence_type": "Error Log / System Diagnostic Report",
-                    "key_metric": "กู้คืนระบบและสร้าง Action Plan สำเร็จภายใน 7 วัน",
+                    "recommendation": f"พบข้อผิดพลาด: {str(e)[:100]}. โปรดตรวจสอบความครบถ้วนของหลักฐาน PDCA ในแต่ละเลเวลด้วยตนเอง",
+                    "target_evidence_type": "Manual Review Report",
+                    "key_metric": "ดำเนินการประเมินซ้ำสำเร็จ",
                     "steps": [
                         {
                             "Step": "1",
-                            "Description": "ตรวจสอบ log error และสถานะ Ollama/API endpoint",
-                            "Responsible": "System Administrator / RAG Developer",
-                            "Tools_Templates": "Server Log / Health Check Dashboard",
-                            "Verification_Outcome": "รายงานผลการวิเคราะห์ข้อผิดพลาด"
-                        },
-                        {
-                            "Step": "2",
-                            "Description": "ดำเนินการ rerun การประเมินเกณฑ์นี้หลังแก้ไขระบบ",
-                            "Responsible": "KM Assessment Team",
-                            "Tools_Templates": "SE-AM Assessment Tool",
-                            "Verification_Outcome": "Action Plan ที่สร้างสำเร็จและผ่าน validation"
+                            "Description": "ตรวจสอบสถานะการประมวลผลของระบบ RAG และ LLM",
+                            "Responsible": "IT / Support Team",
+                            "Tools_Templates": "System Log",
+                            "Verification_Outcome": "ระบบกลับมาใช้งานได้ปกติ"
                         }
                     ]
                 }]
             }]
-
 
         # -----------------------------------------------------------
         # 4. FINAL RESULT
