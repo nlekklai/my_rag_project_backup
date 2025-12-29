@@ -1083,7 +1083,8 @@ def evaluate_with_llm(
             must_include_keywords=must_include_keywords or "ไม่มี",
             avoid_keywords=avoid_keywords or "ไม่มี",
             max_rerank_score=max_rerank_score,
-            max_evidence_strength=max_evidence_strength
+            max_evidence_strength=max_evidence_strength,
+            target_score_threshold=kwargs.get("target_score_threshold", 2)
         )
     except KeyError as e:
         logger.error(f"Missing placeholder in prompt template: {e}")
@@ -1195,45 +1196,41 @@ def evaluate_with_llm_low_level(
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Standard Evaluation for L1/L2 using LOW_LEVEL_PROMPT (Dynamic Multi-Enabler)
-    - ดึง plan_keywords จาก contextual_rules_map (จาก pea_km_contextual_rules.json)
-    - ไม่ hardcode อีกต่อไป
-    - ส่งค่า P/D/C/A ดิบจาก LLM → ให้ _run_single_assessment บังคับกฎ L1/L2 ขั้นสุดท้าย
+    [REVISED v21.2] Standard Evaluation for L1/L2 (Low Level)
+    - รองรับ Float scores และแก้ปัญหาคะแนนหายจากการปัดเศษ
+    - ส่งค่าน้ำหนักหลักฐาน (Rerank/Strength) เข้า Prompt
     """
     
     # -------------------- 1. Setup & Context Check --------------------
-    context_to_send_eval = context[:MAX_EVAL_CONTEXT_LENGTH] if context else "ไม่มีหลักฐานที่เกี่ยวข้อง"
+    # ใช้ฟังก์ชันตัด Context ตาม Level เพื่อลด Token และเน้นความแม่นยำ
+    context_to_send_eval = _get_context_for_level(context, level)
     
     failure_result = _check_and_handle_empty_context(context, sub_id, level)
     if failure_result:
         return failure_result
 
-    # -------------------- 2. ดึง plan_keywords จาก pea_km_contextual_rules.json --------------------
-    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย"  # fallback พื้นฐาน
-
+    # -------------------- 2. ดึง plan_keywords (Dynamic Logic) --------------------
+    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย"
     if contextual_rules_map:
-        # 2.1 ดึงจาก sub-criteria เฉพาะก่อน (เช่น 1.1 → L1)
         sub_rules = contextual_rules_map.get(sub_id, {})
         l1_rules = sub_rules.get("L1", {})
         if l1_rules and "plan_keywords" in l1_rules:
             plan_keywords = l1_rules["plan_keywords"]
         else:
-            # 2.2 Fallback ไปใช้ _enabler_defaults (เช่น KM, DX)
             default_rules = contextual_rules_map.get("_enabler_defaults", {})
             if "plan_keywords" in default_rules:
                 plan_keywords = default_rules["plan_keywords"]
 
-    logger.debug(f"[L{level}] Using plan_keywords: {plan_keywords}")
-
     # -------------------- 3. Prompt Building --------------------
     try:
-        # ส่งทั้ง plan_keywords และ avoid_keywords ให้ครบตามที่ Template ต้องการ
+        # System Prompt สำหรับ L1-L2 โดยเฉพาะ
         system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(
             plan_keywords=plan_keywords,
             avoid_keywords=avoid_keywords or "ไม่มี"
         )
         system_prompt += "\n\nIMPORTANT: Respond only with valid JSON."
 
+        # User Prompt พร้อมระบุน้ำหนักหลักฐาน
         user_prompt = USER_LOW_LEVEL_PROMPT_TEMPLATE.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
@@ -1242,15 +1239,19 @@ def evaluate_with_llm_low_level(
             level_constraint=level_constraint or "ไม่มี",
             must_include_keywords=must_include_keywords or "ไม่มี",
             avoid_keywords=avoid_keywords or "ไม่มี",
-            context=context_to_send_eval
+            context=context_to_send_eval,
+            # เพิ่มเพื่อให้ AI ทราบ Quality ของ Retrieval
+            max_rerank_score=f"{max_rerank_score:.4f}",
+            max_evidence_strength=f"{max_evidence_strength:.1f}"
         )
 
     except Exception as e:
-        logger.error(f"Error formatting LOW_LEVEL_PROMPT: {e}. Using fallback prompt.")
-        system_prompt = SYSTEM_LOW_LEVEL_PROMPT + "\n\nIMPORTANT: Respond only with valid JSON."
-        user_prompt = f"เกณฑ์: {sub_id} L{level}\nหลักฐาน: {context_to_send_eval}\nตอบ JSON เท่านั้น"
+        logger.error(f"Error formatting LOW_LEVEL_PROMPT: {e}")
+        # Robust Fallback Prompt
+        system_prompt = f"{SYSTEM_LOW_LEVEL_PROMPT}\n\nIMPORTANT: Respond only with valid JSON."
+        user_prompt = f"Sub-ID: {sub_id} Level: {level}\nเกณฑ์: {sub_criteria_name}\nคำถาม: {statement_text}\nหลักฐาน: {context_to_send_eval}"
 
-    # -------------------- 4. LLM Call --------------------
+    # -------------------- 4. LLM Execution --------------------
     try:
         raw = _fetch_llm_response(
             system_prompt=system_prompt,
@@ -1262,32 +1263,32 @@ def evaluate_with_llm_low_level(
         parsed = _robust_extract_json(raw)
         
         if not isinstance(parsed, dict):
-            logger.error(f"LLM L{level} response parsed to non-dict: {type(parsed)}. Using empty dict.")
+            logger.error(f"LLM L{level} response parsed to non-dict: {type(parsed)}")
             parsed = {}
 
-        # -------------------- 5. ส่งค่าดิบจาก LLM ทั้งหมด (ไม่บังคับ C/A=0 ที่นี่) --------------------
+        # -------------------- 5. Return Results (Float Stability) --------------------
+        # แก้ไขจาก int() เป็น float() เพื่อรักษาทศนิยมของคะแนน
         return {
-            "score": int(parsed.get("score", 0)),
-            "reason": parsed.get("reason", "ไม่พบเหตุผลจาก LLM"),
+            "score": float(parsed.get("score", 0.0)),
+            "reason": parsed.get("reason", "ไม่พบเหตุผลจาก AI"),
             "is_passed": parsed.get("is_passed", False),
-            "P_Plan_Score": int(parsed.get("P_Plan_Score", 0)),
-            "D_Do_Score": int(parsed.get("D_Do_Score", 0)),
-            "C_Check_Score": int(parsed.get("C_Check_Score", 0)),
-            "A_Act_Score": int(parsed.get("A_Act_Score", 0)),
+            "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
+            "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
+            "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
+            "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
         }
 
     except Exception as e:
-        logger.exception(f"evaluate_with_llm_low_level failed for {sub_id} L{level}: {e}")
+        logger.exception(f"evaluate_with_llm_low_level failed: {e}")
         return {
-            "score": 0,
-            "reason": f"เกิดข้อผิดพลาดใน LLM: {str(e)}",
+            "score": 0.0,
+            "reason": f"เกิดข้อผิดพลาดในการประมวลผล: {str(e)}",
             "is_passed": False,
-            "P_Plan_Score": 0,
-            "D_Do_Score": 0,
-            "C_Check_Score": 0,
-            "A_Act_Score": 0,
+            "P_Plan_Score": 0.0,
+            "D_Do_Score": 0.0,
+            "C_Check_Score": 0.0,
+            "A_Act_Score": 0.0,
         }
-    
 # ------------------------
 # Summarize (FULL VERSION)
 # ------------------------
