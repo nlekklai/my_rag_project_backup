@@ -91,13 +91,8 @@ async def serve_evidence_file(
     enabler: str = None,
     current_user: UserMe = Depends(get_current_user)
 ):
-    """
-    Endpoint สำหรับเปิดไฟล์หลักฐาน (PDF/JPG/PNG) บน Browser โดยตรง (Inline Preview)
-    """
-    # 1. Check Permission
     check_user_permission(current_user, tenant, enabler or "KM")
 
-    # 2. Resolve Path (ใช้ Fuzzy Match ที่เราแก้กันล่าสุด)
     file_info = get_document_file_path(
         document_uuid=document_uuid,
         tenant=tenant,
@@ -107,23 +102,42 @@ async def serve_evidence_file(
     )
 
     if not file_info:
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์ในระบบฐานข้อมูล mapping หรือไฟล์บน Disk สูญหาย")
+        raise HTTPException(status_code=404, detail="File not found")
 
     file_path = file_info["file_path"]
+    
+    # ดึงนามสกุลไฟล์
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    # 🛡️ Force MIME Type สำหรับ Mac/Safari
+    mime_map = {
+        ".pdf": "application/pdf",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }
+    
+    mime_type = mime_map.get(ext) or mimetypes.guess_type(file_path)[0] or "application/octet-stream"
 
-    # 3. ตรวจสอบ Media Type (MIME Type)
-    # ถ้าเป็น .pdf -> application/pdf, .png -> image/png
-    mime_type, _ = mimetypes.guess_type(file_path)
-    if not mime_type:
-        mime_type = "application/octet-stream"
-
-    # 4. ส่งไฟล์แบบ Inline (เอา filename ออกเพื่อให้ Browser Preview แทนการ Download)
-    # browser จะใช้ชื่อไฟล์จาก URL หรือเราสามารถตั้ง Content-Disposition เป็น inline ได้
-    return FileResponse(
+    # ส่ง FileResponse
+    response = FileResponse(
         path=file_path,
         media_type=mime_type,
-        # หมายเหตุ: การไม่ใส่ filename parameter จะทำให้ Browser พยายามเปิดไฟล์แทนการเซฟลงเครื่อง
+        content_disposition_type="inline"
     )
+
+    # 💡 หัวใจสำคัญสำหรับ Mac/Safari:
+    # 1. ป้องกันไม่ให้ Browser ใช้ชื่อไฟล์จาก Path ซึ่งบางทีมีภาษาไทยแล้วทำให้ Header เพี้ยน
+    # 2. บังคับ Header ให้ชัดเจน
+    response.headers["Content-Type"] = mime_type
+    response.headers["Accept-Ranges"] = "bytes" 
+    
+    # ถ้าเป็น PDF บน Mac ให้เติม Cache-Control เพื่อให้ Viewer ทำงานได้ดีขึ้น
+    if ext == ".pdf":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+    return response
+
 
 @assessment_router.get("/view-document")
 async def view_document(filename: str, page: Optional[str] = "1", current_user: UserMe = Depends(get_current_user)):
@@ -144,10 +158,10 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันสมบูรณ์: 
-    1. แก้ Bug 'lv' undefined ใน Roadmap
-    2. เพิ่ม 'document_uuid' ใน sources เพื่อให้ UI คลิกเปิดไฟล์ผ่าน API ใหม่ได้
-    3. รักษาโครงสร้างเดิมให้สอดคล้องกับ AssessmentResults.tsx (Original)
+    เวอร์ชันแยกหลักฐานตาม Level: 
+    1. เพิ่ม 'grouped_sources' แยกหมวดหมู่ L1-L5
+    2. แก้ Bug 'lv' undefined ใน Roadmap
+    3. ส่ง 'document_uuid' ครบถ้วนสำหรับการเปิด Preview
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -155,7 +169,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     processed_sub_criteria = []
     radar_data = []
     strengths = []
-    all_weaknesses = []
 
     # --- 1. ดึงค่า Metrics พื้นฐาน ---
     total_expected = int(summary.get("total_subcriteria") or 0)
@@ -171,7 +184,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
 
-        # --- 2. สร้าง PDCA Matrix (ใช้ lv_idx เพื่อความปลอดภัยของ Scope) ---
+        # --- 2. สร้าง PDCA Matrix ---
         pdca_matrix = []
         raw_levels_map = {item.get("level"): item for item in raw_levels_list}
         
@@ -192,7 +205,33 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     "reason": "ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
                 })
 
-        # --- 3. สร้าง Roadmap (FIXED: แก้จุดที่ lv undefined โดยใช้ highest_pass + 1) ---
+        # --- 3. จัดกลุ่ม Sources แยกตาม Level (หัวใจสำคัญ) ---
+        grouped_sources = {str(lv): [] for lv in range(1, 6)}
+        
+        for ref in raw_levels_list:
+            lv_key = str(ref.get("level"))
+            seen_in_lv = set()
+            
+            # วนลูปหลักฐานที่ engine พบในระดับ (Level) นั้นๆ
+            for source in ref.get("temp_map_for_level", []):
+                fname = source.get('filename') or source.get('source') or "Unknown Document"
+                pnum = str(source.get('page_number') or source.get('page') or "1")
+                d_uuid = source.get('document_uuid') or source.get('doc_id')
+                
+                if not d_uuid: continue # ข้ามถ้าไม่มี UUID
+                
+                doc_key = f"{fname}-{pnum}"
+                if doc_key not in seen_in_lv:
+                    grouped_sources[lv_key].append({
+                        "filename": fname,
+                        "page": pnum,
+                        "snippet": source.get("text", "")[:150],
+                        "document_uuid": d_uuid,
+                        "doc_type": source.get("doc_type", "evidence")
+                    })
+                    seen_in_lv.add(doc_key)
+
+        # --- 4. สร้าง Roadmap ---
         ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
@@ -214,31 +253,9 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 ]
             })
 
-        # --- 4. ดึง Sources (เพิ่ม document_uuid เพื่อเชื่อมกับ serve_evidence_file) ---
-        all_sources = []
-        seen_docs = set()
-        for ref in raw_levels_list:
-            for source in ref.get("temp_map_for_level", []):
-                # ดึงข้อมูลไฟล์และ UUID จาก metadata ที่ Engine บันทึกไว้
-                fname = source.get('filename') or source.get('source') or "Unknown Document"
-                pnum = str(source.get('page_number') or source.get('page') or "1")
-                d_uuid = source.get('document_uuid') or source.get('doc_id') # ตัวไหนมีให้ใช้ตัวนั้น
-                
-                doc_key = f"{fname}-{pnum}"
-                if doc_key not in seen_docs and d_uuid:
-                    all_sources.append({
-                        "filename": fname,
-                        "page": pnum,
-                        "snippet": source.get("text", "")[:150],
-                        "document_uuid": d_uuid, # 👈 หัวใจสำคัญในการเปิดไฟล์
-                        "doc_type": source.get("doc_type", "evidence") # ส่งไปบอก UI ว่าเป็น doc_type ไหน
-                    })
-                    seen_docs.add(doc_key)
-
-        # --- 5. สรุปจุดแข็งรายหัวข้อ (ถ้ามี) ---
-        for lv_item in raw_levels_list:
-            if lv_item.get("level", 0) >= 3 and lv_item.get("is_passed"):
-                strengths.append(f"เกณฑ์ {cid}: บรรลุระดับ L{lv_item['level']} พร้อมหลักฐานที่ชัดเจน")
+        # --- 5. สรุปจุดแข็ง ---
+        if highest_pass >= 3:
+            strengths.append(f"เกณฑ์ {cid}: บรรลุระดับ L{highest_pass} พร้อมหลักฐานที่ชัดเจน")
 
         processed_sub_criteria.append({
             "code": cid,
@@ -246,13 +263,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "level": f"L{highest_pass}",
             "score": float(res.get("weighted_score", 0.0)),
             "progress_percent": int((highest_pass / 5) * 100),
-            "pdca_matrix": pdca_matrix,
+            "pdca_matrix": pdca_matrix, # ต้องมีค่า P, D, C, A เป็น 0 หรือ 1
             "roadmap": ui_roadmap,
-            "sources": all_sources[:10], # เพิ่มโควตาแหล่งอ้างอิงให้เห็นมากขึ้น
-            "evidence": res.get("summary_thai", ""),
+            "grouped_sources": grouped_sources,
+            "summary_thai": res.get("summary_thai", ""), # ใช้ชื่อนี้เป็นหลัก
             "gap": res.get("gap_analysis", "")
         })
-        
+                
         radar_data.append({"axis": cid, "value": highest_pass})
 
     return {
