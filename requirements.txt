@@ -1,14 +1,14 @@
-# === Core RAG & LLM (ปรับให้ยืดหยุ่นตาม Mac และ Server) ===
-langchain==0.1.20
-langchain-community==0.0.38
-langchain-huggingface==0.0.3
-langchain-ollama==0.1.0
-langchain-chroma==0.1.1
+# === Core RAG & LLM (ปลดล็อคเพื่อให้ Pip ช่วยแก้ความขัดแย้ง) ===
+langchain>=0.1.20
+langchain-community>=0.0.38
+langchain-huggingface>=0.0.3
+langchain-ollama>=0.1.0
+langchain-chroma>=0.1.1
 sentence-transformers>=3.0.1
 transformers>=4.46.3
 safetensors>=0.4.1
 ollama>=0.3.3
-python-dotenv==1.0.1
+python-dotenv>=1.0.1
 
 # === Fix Dependency Conflict ===
 httpx-sse>=0.4.0
@@ -32,13 +32,13 @@ pytesseract>=0.3.10
 Pillow>=10.3.0
 pdf2image>=1.17.0
 
-# === Computation (อัปเกรดเพื่อรองรับความปลอดภัยและ GPU ใหม่) ===
+# === Computation (ตัวที่พี่ใช้ 2.9.1 สำเร็จแล้ว) ===
 numpy==1.26.4
 torch>=2.6.0
 torchvision>=0.21.0
 accelerate>=0.34.0
 
-# === API & Utility (เพิ่ม pytz เพื่อจัดการเวลาไทย) ===
+# === API & Utility ===
 fastapi>=0.111.0
 uvicorn>=0.29.0
 requests>=2.31.0
