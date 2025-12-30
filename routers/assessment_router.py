@@ -80,8 +80,11 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
                 return os.path.join(root, f)
     raise HTTPException(status_code=404, detail="ไม่พบไฟล์ผลการประเมิน")
 
-def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> Dict[str, Any]:
-    # ดึงค่า summary และจัดการค่าพื้นฐาน
+def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
+    """
+    เวอร์ชันปรับปรุงสมบูรณ์: รองรับ PDCA Matrix, Roadmap Stepper และวิเคราะห์จุดแข็ง/อ่อน
+    ให้สอดคล้องกับ UI เวอร์ชันใหม่
+    """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
 
@@ -90,12 +93,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> 
     strengths = []
     all_weaknesses = []
 
-    # --- 🟢 [Generic Metrics] ดึงค่าตาม Key ที่ระบบประเมินเจนออกมา ---
+    # --- 1. ดึงค่า Metrics พื้นฐาน ---
     total_expected = int(summary.get("total_subcriteria") or 0)
-    passed_count = int(summary.get("Number of Sub-Criteria Assessed") or len(sub_results))
+    passed_count = int(summary.get("total_subcriteria_assessed") or len(sub_results))
     completion_rate = float(summary.get("percentage_achieved_run") or 0.0)
-    overall_level = summary.get("highest_pass_level") or 0
-    total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
+    overall_level = summary.get("Overall Maturity Level (Weighted)") or f"L{summary.get('highest_pass_level', 0)}"
+    total_score = round(float(summary.get("Overall Maturity Score (Avg.)") or summary.get("Total Weighted Score Achieved") or 0.0), 2)
     enabler_name = (summary.get("enabler") or "N/A").upper()
 
     for res in sub_results:
@@ -104,92 +107,104 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: UserMe) -> 
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
 
-        # --- 🟢 [Generic Strengths Analysis] ---
-        # วิเคราะห์จากความสำเร็จราย Level (P-D-C-A) โดยไม่สนว่าจะเป็น Enabler ไหน
-        for lv_item in raw_levels_list:
-            lv_num = lv_item.get("level", 0)
-            pdca = lv_item.get("pdca_breakdown", {})
-            
-            # นิยามจุดแข็ง: ถ้ามีคะแนนในระดับ L4-L5 และมีกิจกรรม (P/D/C/A) ที่โดดเด่น
-            if lv_num >= 4:
-                achieved_steps = [k for k, v in pdca.items() if v > 0]
-                if achieved_steps:
-                    steps_text = ", ".join(achieved_steps)
-                    strengths.append(
-                        f"💎 ศักยภาพระดับ L{lv_num} ({cid}): พบความพร้อมในส่วน ({steps_text}) "
-                        f"ตามหลักฐานที่ปรากฏในระบบ"
-                    )
-
-        # --- 🟢 [Generic Evidence Markdown] ---
-        evidence_lines = []
-        raw_levels = {item.get("level"): item for item in raw_levels_list}
+        # --- 2. สร้าง PDCA Matrix (สำหรับ UI Badge Grid) ---
+        pdca_matrix = []
+        raw_levels_map = {item.get("level"): item for item in raw_levels_list}
+        
         for lv in range(1, 6):
-            lv_info = raw_levels.get(lv)
-            evidence_lines.append(f"### 💠 Level {lv}")
+            lv_info = raw_levels_map.get(lv)
             if lv_info:
-                status = "✅ **ผ่าน**" if lv_info.get("is_passed") else "❌ **ยังไม่บรรลุ**"
-                pdca = lv_info.get("pdca_breakdown", {})
-                pdca_status = [f"{'🟢' if v > 0 else '⚪'} {k}" for k, v in pdca.items()]
-                evidence_lines.append(f"{status} | {' '.join(pdca_status)}")
-                evidence_lines.append(f"> {lv_info.get('reason', 'ไม่มีรายละเอียดข้อมูล')}")
+                pdca_matrix.append({
+                    "level": lv,
+                    "is_passed": lv_info.get("is_passed", False),
+                    "pdca": lv_info.get("pdca_breakdown", {"P": 0, "D": 0, "C": 0, "A": 0}),
+                    "reason": lv_info.get("reason", "ประเมินแล้ว")
+                })
             else:
-                evidence_lines.append("✅ **ผ่าน**" if lv <= highest_pass else "⏳ **ยังไม่ถึงเกณฑ์ประเมิน**")
-            evidence_lines.append("\n---\n")
+                pdca_matrix.append({
+                    "level": lv,
+                    "is_passed": lv <= highest_pass,
+                    "pdca": {"P": 1, "D": 1, "C": 1, "A": 1} if lv <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0},
+                    "reason": "ผ่านเกณฑ์มาตรฐาน" if lv <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
+                })
 
-        # --- 🟢 [Generic Action Plan / Gap] ---
-        gap_lines = []
+        # --- 3. สร้าง Roadmap (สำหรับ UI Stepper) ---
+        ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
-            phase_name = p.get("phase", "แผนงานพัฒนา")
-            target_goal = p.get("goal", "เพื่อยกระดับตามเกณฑ์")
-            
-            gap_lines.append(f"## 🚀 {phase_name}")
-            gap_lines.append(f"🎯 **เป้าหมาย:** {target_goal}\n")
+            ui_roadmap.append({
+                "phase": p.get("phase", "แผนงานพัฒนา"),
+                "goal": p.get("goal", "เพื่อยกระดับตามเกณฑ์"),
+                "tasks": [
+                    {
+                        "level": str(act.get("failed_level", lv + 1)),
+                        "recommendation": act.get("recommendation", ""),
+                        "steps": [
+                            {
+                                "step": str(s.get("step") or s.get("step_number") or i+1),
+                                "description": s.get("description", ""),
+                                "responsible": s.get("responsible", "หน่วยงานที่เกี่ยวข้อง")
+                            } for i, s in enumerate(act.get("steps", []))
+                        ]
+                    } for act in p.get("actions", [])
+                ]
+            })
 
-            for act in p.get("actions", []):
-                recomm = act.get("recommendation", "")
-                f_level = act.get("failed_level") or "ระดับถัดไป"
-                gap_lines.append(f"### 📝 ข้อเสนอแนะเพื่อบรรลุ L{f_level}")
-                gap_lines.append(f"> {recomm}\n")
-                
-                steps = act.get("steps", [])
-                if steps:
-                    gap_lines.append("#### 👣 ลำดับขั้นตอน:")
-                    for s in steps:
-                        s_idx = s.get("step") or s.get("step_number") or "-"
-                        s_desc = s.get("description") or ""
-                        s_resp = s.get("responsible") or "หน่วยงานที่เกี่ยวข้อง"
-                        gap_lines.append(f"- **{s_idx}:** {s_desc} (👤 *{s_resp}*)")
-                
-                all_weaknesses.append(f"🔍 เกณฑ์ {cid}: {recomm}")
-            gap_lines.append("\n---\n")
+        # --- 4. ดึง Sources/Evidence Link ---
+        all_sources = []
+        seen_docs = set()
+        # รวมแหล่งอ้างอิงจากทุก level
+        for ref in raw_levels_list:
+            for source in ref.get("temp_map_for_level", []):
+                doc_id = f"{source.get('filename')}-{source.get('page_number')}"
+                if doc_id not in seen_docs:
+                    all_sources.append({
+                        "filename": source.get("filename") or source.get("source"),
+                        "page": str(source.get("page_number") or source.get("page", "1")),
+                        "snippet": source.get("text", "")[:150]
+                    })
+                    seen_docs.add(doc_id)
+
+        # --- 5. สรุปจุดแข็ง/จุดอ่อน รายหัวข้อ ---
+        for lv_item in raw_levels_list:
+            if lv_item.get("level", 0) >= 3 and lv_item.get("is_passed"):
+                strengths.append(f"เกณฑ์ {cid}: บรรลุระดับ L{lv_item['level']} พร้อมหลักฐานที่ชัดเจน")
+            
+        for plan in raw_plans:
+            for act in plan.get("actions", []):
+                all_weaknesses.append(f"L{act.get('failed_level')}: {act.get('recommendation')}")
 
         processed_sub_criteria.append({
             "code": cid,
             "name": cname,
             "level": f"L{highest_pass}",
             "score": float(res.get("weighted_score", 0.0)),
-            "evidence": "\n".join(evidence_lines),
-            "gap": "\n".join(gap_lines) if gap_lines else "บรรลุตามเกณฑ์มาตรฐานแล้ว"
+            "progress_percent": int((highest_pass / 5) * 100),
+            "pdca_matrix": pdca_matrix,
+            "roadmap": ui_roadmap,
+            "sources": all_sources[:5],  # ส่งไป 5 ลิงก์ที่สำคัญที่สุด
+            "evidence": res.get("summary_thai", "พบหลักฐานการดำเนินงานตามมาตรฐาน"),
+            "gap": f"ขาดความสมบูรณ์ในระดับ L{highest_pass + 1} ({all_weaknesses[-1] if all_weaknesses else 'ตรวจสอบเกณฑ์ถัดไป'})"
         })
-        radar_data.append({"axis": cid, "value": highest_pass, "fullMark": 5})
+        
+        radar_data.append({"axis": cid, "value": highest_pass})
 
     return {
         "status": "COMPLETED",
         "record_id": raw_data.get("record_id", "unknown"),
-        "tenant": str(summary.get("tenant", current_user.tenant)).upper(),
-        "year": str(summary.get("year", current_user.year)),
+        "tenant": str(summary.get("tenant", "N/A")).upper(),
+        "year": str(summary.get("year", "2568")),
         "enabler": enabler_name,
-        "level": f"L{overall_level}",
+        "level": overall_level,
         "score": total_score,
         "metrics": {
             "total_criteria": total_expected,
             "passed_criteria": passed_count,
-            "completion_rate": completion_rate
+            "completion_rate": int(completion_rate)
         },
         "radar_data": radar_data,
-        "strengths": list(dict.fromkeys(strengths)) if strengths else ["ระบบกำลังรวบรวมจุดแข็งเชิงเทคนิค"],
-        "weaknesses": list(dict.fromkeys(all_weaknesses)) if all_weaknesses else ["บรรลุเป้าหมายตามเกณฑ์"],
+        "strengths": list(dict.fromkeys(strengths)) if strengths else ["โครงสร้างพื้นฐานมีความพร้อม"],
+        "weaknesses": list(dict.fromkeys(all_weaknesses)) if all_weaknesses else ["บรรลุเกณฑ์ประเมิน"],
         "sub_criteria": processed_sub_criteria
     }
 
