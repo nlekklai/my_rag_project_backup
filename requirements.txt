@@ -1,7 +1,7 @@
-# === Core RAG & LLM (ใช้โครงสร้าง 0.2.x ตาม Mac เพื่อความทันสมัย) ===
-langchain>=0.2.0
+# === Core RAG & LLM (LangChain 0.2.x Ecosystem) ===
+langchain>=0.2.0,<0.3.0
 langchain-core>=0.2.43
-langchain-community>=0.2.0
+langchain-community>=0.2.10
 langchain-text-splitters>=0.2.0
 langchain-huggingface>=0.0.3
 langchain-ollama>=0.1.0
@@ -12,14 +12,16 @@ safetensors>=0.6.2
 ollama>=0.3.3
 python-dotenv>=1.2.1
 
-# === Fix Dependency Conflict (รองรับทั้งคู่) ===
+# === Fix Dependency Conflict & API Clients ===
 httpx-sse>=0.4.0
 cohere>=5.20.0
 httpx>=0.28.1
+openai>=1.0.0
 
 # === Database & Vector Storage ===
 chromadb==0.5.23
-pydantic>=2.12.5
+pydantic>=2.0.0,<3.0.0
+# ล็อค pydantic v2 เพื่อให้ model_config ในโค้ดใหม่ทำงานได้แม่นยำ
 
 # === Document Processing & OCR ===
 pypdf>=6.2.0
@@ -34,14 +36,17 @@ pytesseract>=0.3.10
 Pillow>=10.3.0
 pdf2image>=1.17.0
 
-# === Computation (ใช้ Torch 2.9.1 ตาม Mac ที่พี่รันผ่าน) ===
+# === Computation (Torch 2.9.1 - Mac M-Series & CUDA Compatible) ===
 numpy==1.26.4
 torch==2.9.1
 torchvision>=0.21.0
 accelerate>=1.11.0
+einops>=0.7.0
 
 # === API & Utility ===
 fastapi>=0.111.0
 uvicorn>=0.38.0
 requests>=2.31.0
 pytz>=2025.2
+psutil>=5.9.0
+# เพิ่ม psutil สำหรับการใช้ _detect_system() ในโค้ด vectorstore

@@ -8,7 +8,7 @@ import multiprocessing
 import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple
+from typing import List, Optional, Union, Sequence, Any, Dict, Set, Tuple, Callable
 from pathlib import Path
 import hashlib
 import uuid
@@ -27,19 +27,6 @@ from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.runnables import Runnable
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
-# from langchain.retrievers import EnsembleRetriever
-
-# --- ท่าไม้ตายสุดท้ายใน core/vectorstore.py ---
-try:
-    # 1. ลองดึงจากจุดรวมใหม่ล่าสุด (สำหรับ v0.2+)
-    from langchain.retrievers.ensemble import EnsembleRetriever
-except (ImportError, ModuleNotFoundError):
-    try:
-        # 2. ลองดึงจากจุดดั้งเดิม (สำหรับ v0.1)
-        from langchain.retrievers import EnsembleRetriever
-    except (ImportError, ModuleNotFoundError):
-        # 3. ลองดึงจากจุดสำรองใน Community
-        from langchain_community.retrievers import EnsembleRetriever
 
 # Thai Tokenizer
 from pythainlp.tokenize import word_tokenize
@@ -99,6 +86,7 @@ except Exception:
         chromadb.settings = Settings(anonymized_telemetry=False)
     except Exception:
         pass
+
 
 # -------------------- Vectorstore Constants --------------------
 # Global caches
@@ -360,6 +348,88 @@ def list_vectorstore_folders(
     
     return sorted(list(collections))
 
+
+class HybridRetriever(BaseRetriever):
+    vector_retriever: Any
+    bm25_retriever: Optional[BM25Retriever]
+    vector_weight: float = Field(default=0.7)
+    bm25_weight: float = Field(default=0.3)
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: Optional[CallbackManagerForRetrieverRun] = None
+    ) -> List[Document]:
+        # 1. ดึงจาก Vector
+        vector_docs = self.vector_retriever.get_relevant_documents(query)
+        
+        # 2. ดึงจาก BM25 (ถ้ามี)
+        bm25_docs = []
+        if self.bm25_retriever:
+            bm25_docs = self.bm25_retriever.get_relevant_documents(query)
+
+        # 3. ผสมคะแนน (Weighted Scoring)
+        scored_docs: Dict[str, Tuple[Document, float]] = {}
+
+        def _process_docs(docs, weight):
+            for i, doc in enumerate(docs):
+                # ใช้ content เป็น key (หรือ metadata['source'] + content)
+                content_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
+                if content_hash not in scored_docs:
+                    scored_docs[content_hash] = (doc, 0.0)
+                
+                # สูตรคะแนน: ยิ่งอยู่อันดับต้นยิ่งได้คะแนนเยอะ + คูณด้วย Weight
+                # หรือจะใช้ Weight ตรงๆ ตามจำนวนการปรากฏก็ได้
+                rank_score = (1.0 / (i + 1)) * weight 
+                current_doc, current_score = scored_docs[content_hash]
+                scored_docs[content_hash] = (current_doc, current_score + rank_score)
+
+        _process_docs(vector_docs, self.vector_weight)
+        _process_docs(bm25_docs, self.bm25_weight)
+
+        # 4. เรียงลำดับตามคะแนนใหม่
+        sorted_results = sorted(scored_docs.values(), key=lambda x: x[1], reverse=True)
+        return [item[0] for item in sorted_results]
+    
+# --- [CUSTOM HYBRID & RERANK ENGINE] ---
+class UltimateHybridRetriever(BaseRetriever):
+    vector_retriever: Any
+    bm25_retriever: Optional[Any] = None
+    rerank_func: Optional[Callable] = None
+    final_k: int = 5
+    
+    # อนุญาตให้ใช้ Object จากภายนอกได้ (เช่น Chroma/BM25 Instance)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def _get_relevant_documents(self, query: str, *, run_manager: Optional[CallbackManagerForRetrieverRun] = None) -> List[LcDocument]:
+        # 1. ค้นหาแบบ Dense (Vector)
+        docs = self.vector_retriever.invoke(query)
+        
+        # 2. ค้นหาแบบ Sparse (BM25) ถ้ามี
+        if self.bm25_retriever:
+            try:
+                bm_docs = self.bm25_retriever.invoke(query)
+                docs.extend(bm_docs)
+            except Exception as e:
+                logging.warning(f"BM25 Retrieval Error: {e}")
+
+        # 3. ลบตัวซ้ำ (Deduplication)
+        unique_docs = []
+        seen = set()
+        for d in docs:
+            # ใช้ content เป็น key ในการเช็คซ้ำ
+            if d.page_content not in seen:
+                unique_docs.append(d)
+                seen.add(d.page_content)
+
+        # 4. ส่งไป Rerank (ถ้ากำหนดไว้)
+        if self.rerank_func:
+            return self.rerank_func(unique_docs, query)
+        
+        return unique_docs[:self.final_k]
+
+    def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
+        return self._get_relevant_documents(query)
 
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
@@ -1003,10 +1073,9 @@ class VectorStoreManager:
         return docs[:top_k]
 
 
-    def create_hybrid_retriever(self, collection_name: str, top_k: int = 20) -> EnsembleRetriever:
+    def create_hybrid_retriever(self, collection_name: str, top_k: int = 20) -> Any:
         """
-        สร้างและ Cache Hybrid Retriever (Vector + BM25)
-        เวอร์ชันปรับปรุง: รองรับการตัดคำภาษาไทยและป้องกัน Metadata เป็น None
+        สร้างและ Cache Hybrid Retriever (Vector + BM25) โดยใช้ Custom HybridRetriever Class
         """
         # 1. ตรวจสอบ Cache เพื่อประหยัดทรัพยากร
         if collection_name in self._hybrid_retriever_cache:
@@ -1022,70 +1091,54 @@ class VectorStoreManager:
                 raise ValueError(f"Chroma instance for '{collection_name}' failed to load.")
             
             # 3. สร้าง Vector Retriever (Dense)
-            # เราจะตั้งค่า k ให้สูงกว่า top_k เล็กน้อยเพื่อให้ Ensemble มีตัวเลือกในการคำนวณคะแนน
             vector_retriever = chroma_instance.as_retriever(
                 search_kwargs={"k": top_k}
             )
 
-            # 4. ดึง Documents ทั้งหมดมาเตรียมทำ BM25 Index (Sparse)
+            # 4. เตรียม Documents สำหรับ BM25
             if collection_name in self._bm25_docs_cache:
                 langchain_docs = self._bm25_docs_cache[collection_name]
-                logger.info(f"📦 Loaded {len(langchain_docs)} docs for BM25 from cache.")
             else:
-                logger.info(f"🔍 Fetching docs from Chroma collection '{collection_name}' for BM25 indexing...")
-                
-                # ดึงข้อมูลดิบจาก Chroma (ดึงเฉพาะที่จำเป็น)
-                raw_data = chroma_instance._collection.get(
-                    include=["documents", "metadatas"]
-                )
-                
+                raw_data = chroma_instance._collection.get(include=["documents", "metadatas"])
                 texts = raw_data.get("documents", [])
                 metas = raw_data.get("metadatas", [])
+                if not metas: metas = [{} for _ in texts]
                 
-                # ป้องกันกรณี metas เป็น None หรือยาวไม่เท่ากับ texts
-                if not metas:
-                    metas = [{} for _ in texts]
-                
-                # แปลงเป็น LangChain Document Objects
                 langchain_docs = [
                     Document(page_content=text, metadata=meta if meta else {})
                     for text, meta in zip(texts, metas)
                 ]
-                
-                # เก็บลง Cache เพื่อไม่ให้ต้องดึงใหม่บ่อยๆ
                 self._bm25_docs_cache[collection_name] = langchain_docs
-                logger.info(f"✅ Indexed {len(langchain_docs)} documents for BM25.")
 
-            # 5. สร้าง BM25 Retriever พร้อมตัวตัดคำภาษาไทย
+            # 5. จัดการกรณีไม่มีเอกสาร
             if not langchain_docs:
                 logger.warning(f"⚠️ Collection '{collection_name}' is empty. Returning vector retriever only.")
                 return vector_retriever
 
+            # 6. สร้าง BM25 พร้อมตัวตัดคำไทย
             bm25_retriever = BM25Retriever.from_documents(
                 langchain_docs, 
-                preprocess_func=word_tokenize # 🎯 FIX: ใช้ pythainlp ตัดคำเพื่อให้ Search ภาษาไทยแม่นยำ
+                preprocess_func=word_tokenize 
             )
             bm25_retriever.k = top_k
 
-            # 6. รวมร่างเป็น Ensemble Retriever (Hybrid)
-            # โดยปกติ Vector 0.7 และ BM25 0.3 เป็นค่าเริ่มต้นที่ดีสำหรับงาน RAG
-            ensemble_retriever = EnsembleRetriever(
-                retrievers=[vector_retriever, bm25_retriever],
-                weights=[0.7, 0.3] # หรือใช้ค่าจาก global_vars
+            # 🎯 7. เปลี่ยนมาใช้ Custom HybridRetriever แทน EnsembleRetriever
+            # เราใช้ Field Names ตามที่เรานิยามไว้ใน Class HybridRetriever
+            hybrid_retriever = HybridRetriever(
+                vector_retriever=vector_retriever,
+                bm25_retriever=bm25_retriever,
+                vector_weight=0.7, # ดึงค่าจาก global_vars มาใส่ได้เลยครับ
+                bm25_weight=0.3
             )
             
-            # 7. เก็บเข้า Cache และส่งออก
-            self._hybrid_retriever_cache[collection_name] = ensemble_retriever
-            logger.info(f"🚀 Hybrid Retriever for '{collection_name}' is ready (Vector + BM25).")
-            return ensemble_retriever
+            # 8. เก็บเข้า Cache และส่งออก
+            self._hybrid_retriever_cache[collection_name] = hybrid_retriever
+            logger.info(f"🚀 Custom Hybrid Retriever for '{collection_name}' is ready.")
+            return hybrid_retriever
         
         except Exception as e:
-            logger.error(f"❌ Failed to create Hybrid Retriever for '{collection_name}': {str(e)}", exc_info=True)
-            # กรณีพลาด ให้คืนค่าเป็น Vector Retriever ปกติเพื่อไม่ให้ระบบล่ม
-            try:
-                return chroma_instance.as_retriever(search_kwargs={"k": top_k})
-            except:
-                return None
+            logger.error(f"❌ Failed to create Hybrid Retriever: {str(e)}", exc_info=True)
+            return chroma_instance.as_retriever(search_kwargs={"k": top_k})
         
     def get_limited_chunks_from_doc_ids(self, stable_doc_ids: Union[str, List[str]], query: Union[str, List[str]], doc_type: str, enabler: Optional[str] = None, limit_per_doc: int = 5) -> List[LcDocument]:
         if isinstance(stable_doc_ids, str):
@@ -1123,135 +1176,94 @@ class VectorStoreManager:
         logger.info(f"✅ Retrieved {total_chunks_retrieved} limited chunks (max {limit_per_doc}/doc) for {len(stable_doc_ids)} Stable IDs from '{collection_name}'.")
         return all_limited_documents
 
-    def get_retriever(self, collection_name: str, top_k: int = INITIAL_TOP_K, final_k: int = FINAL_K_RERANKED, use_rerank: bool = USE_HYBRID_SEARCH, use_hybrid: bool = True) -> Any:
+    def get_retriever(
+        self, 
+        collection_name: str, 
+        top_k: int = INITIAL_TOP_K, 
+        final_k: int = FINAL_K_RERANKED, 
+        use_rerank: bool = USE_HYBRID_SEARCH, 
+        use_hybrid: bool = True
+    ) -> Any:
         """
-        สร้าง Retriever ที่รองรับ Hybrid Search (Vector + BM25) และ Reranking 
-        โดยมีการจัดการ Scope ของฟังก์ชันภายในให้ถูกต้อง
+        สร้าง Retriever ที่รองรับ Hybrid Search และ Reranking แบบเสถียร (Revise ล่าสุด)
         """
-        
-        # โหลด Chroma Instance
+        # 1. โหลด Chroma Instance ผ่าน Helper ที่พี่มี
         chroma_instance = self._load_chroma_instance(collection_name)
         if not chroma_instance:
-            logger.warning(f"Retriever creation failed: Collection '{collection_name}' not loaded.")
+            logger.warning(f"❌ Retriever creation failed: Collection '{collection_name}' not loaded.")
             return None
 
-        # --- [INTERNAL HELPER 1]: Reranker Wrapper ---
-        # ประกาศไว้บนสุดเพื่อให้ทั้ง Hybrid และ Fallback เรียกใช้ได้
+        # --- [INTERNAL HELPER: Reranker Wrapper] ---
         def retrieve_with_rerank(docs: List[LcDocument], query: str) -> List[LcDocument]:
             reranker = get_global_reranker()
+            # ตรวจสอบเงื่อนไข Rerank (ใช้ค่าที่ส่งมาจาก Parameter)
             if not (use_rerank and reranker and hasattr(reranker, "compress_documents")):
                 return docs[:final_k]
 
             try:
+                # เรียกใช้ Compressor ที่พี่นิยามไว้ด้านบน
                 reranked = reranker.compress_documents(documents=docs, query=query, top_n=final_k)
-                # Inject score กลับเข้าไปใน metadata เพื่อแสดงผลหรือ debug
+                
+                # จัดการ Metadata และ Score สำหรับการ Debug (ตาม Logic เดิมของพี่)
                 scores = getattr(reranker, "scores", None)
                 if scores and len(scores) >= len(reranked):
-                    # เรียงลำดับตาม score
-                    doc_scores = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
-                    for i, (doc, score) in enumerate(doc_scores[:len(reranked)]):
-                        for r_doc in reranked:
-                            if r_doc.page_content == doc.page_content:
-                                score_val = float(score) if score is not None else 0.0
-                                r_doc.metadata["_rerank_score_force"] = score_val
-                                orig = r_doc.metadata.get("source_filename", "UNKNOWN")
-                                r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score_val:.4f}"
-                                break
-                logger.info(f"Reranking success → kept {len(reranked)} docs")
+                    for i, r_doc in enumerate(reranked):
+                        score_val = float(scores[i]) if scores[i] is not None else 0.0
+                        r_doc.metadata["_rerank_score_force"] = score_val
+                        orig = r_doc.metadata.get("source_filename", "UNKNOWN")
+                        if "|SCORE:" not in orig:
+                            r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score_val:.4f}"
+                
+                logger.info(f"✅ Reranking success: kept {len(reranked)} docs")
                 return reranked
             except Exception as e:
-                logger.warning(f"Rerank failed: {e}, fallback to raw")
+                logger.warning(f"⚠️ Rerank failed: {e}, fallback to raw top_k")
                 return docs[:final_k]
 
-        # --- [INTERNAL HELPER 2]: Raw Vector Retrieve ---
-        def raw_vector_retrieve(query: str, filter_dict: Optional[dict] = None, k: int = top_k) -> List[LcDocument]:
-            try:
-                # เพิ่ม Prefix สำหรับ BGE-M3 (ถ้ามี)
-                bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
-                query_with_prefix = f"{bge_prefix}{query.strip()}"
-                
-                docs = chroma_instance.similarity_search(
-                    query=query_with_prefix,
-                    k=k,
-                    filter=filter_dict
-                )
-                return docs
-            except Exception as e:
-                logger.error(f"Vector retrieval failed: {e}")
-                return []
+        # 2. เตรียม Vector Retriever พื้นฐาน
+        # ใช้ Prefix สำหรับ BGE-M3 ตามที่พี่ตั้งใจไว้
+        bge_prefix = "เป็นคำถามสำหรับการค้นหาหลักฐานเพื่อประเมินเกณฑ์: "
+        vector_retriever = chroma_instance.as_retriever(
+            search_kwargs={"k": top_k}
+        )
 
-        # 1. สร้าง Vector Retriever พื้นฐาน
-        vector_retriever = chroma_instance.as_retriever(search_kwargs={"k": top_k})
-
-        # 2. กรณีใช้ Hybrid (BM25 + Vector)
+        # 3. เตรียม BM25 Retriever (ถ้าเปิดใช้ Hybrid)
+        bm25_retriever = None
         if use_hybrid:
             try:
-                # 🟢 FIX CRITICAL: ใช้ _collection โดยตรง
-                if not hasattr(chroma_instance, "_collection"):
-                    raise ValueError("chroma_instance has no _collection attribute.")
-                
+                # ดึงข้อมูลจาก Chroma Collection โดยตรง (Logic ที่พี่ FIX มาแล้ว)
                 collection = chroma_instance._collection
-                
-                # 🟢 FIX: ดึงข้อมูลเพื่อทำ BM25 Index (ลบ "ids" ออกจาก include)
                 result = collection.get(include=["documents", "metadatas"])
                 texts = result.get("documents", [])
                 metadatas = result.get("metadatas", [])
 
                 if texts:
                     langchain_docs = [
-                        LcDocument(page_content=text, metadata=meta or {})
-                        for text, meta in zip(texts, metadatas)
+                        LcDocument(page_content=t, metadata=m or {})
+                        for t, m in zip(texts, metadatas)
                     ]
-
-                    # 🟢 KEY FIX: ใส่ Tokenizer ภาษาไทย (pythainlp)
-                    from pythainlp.tokenize import word_tokenize as thai_tokenizer
+                    
+                    # 🎯 ใช้ Thai Tokenizer ที่พี่ประกาศไว้ด้านบน
                     bm25_retriever = BM25Retriever.from_documents(
                         langchain_docs,
-                        preprocess_func=thai_tokenizer # หรือใช้ชื่อ tokenizer ตามที่คุณตั้งไว้
+                        preprocess_func=thai_tokenizer_for_bm25 # เรียกใช้ Helper ของพี่
                     )
                     bm25_retriever.k = top_k
-
-                    # รวมร่าง Ensemble
-                    ensemble_retriever = EnsembleRetriever(
-                        retrievers=[vector_retriever, bm25_retriever],
-                        weights=[HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT]
-                    )
-
-                    # คลาสสำหรับ Hybrid + Rerank
-                    class UltimateHybridRetriever(BaseRetriever):
-                        def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
-                            # ดึงผลลัพธ์ผ่าน Ensemble
-                            docs = ensemble_retriever.invoke(query)
-                            # ส่งไป Rerank ผ่านฟังก์ชัน Helper ที่ประกาศไว้ด้านบน
-                            return retrieve_with_rerank(docs, query)
-
-                        def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
-                            return self._get_relevant_documents(query)
-                    
-                    return UltimateHybridRetriever()
-
+                    logger.info(f"🧬 Hybrid (BM25) initialized for {collection_name}")
             except Exception as e:
-                logger.error(f"Hybrid setup failed for '{collection_name}': {e}", exc_info=False)
-                # หาก Hybrid มีปัญหา ให้ไหลลงไปใช้ Fallback ด้านล่าง
-                pass
+                logger.error(f"❌ Hybrid setup error: {e}")
 
-        # 3. Fallback: กรณี Rerank อย่างเดียว หรือ Hybrid พัง
-        if use_rerank and get_global_reranker():
-            class SimpleVectorRerankRetriever(BaseRetriever):
-                def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[LcDocument]:
-                    # ดึงผลลัพธ์ผ่าน Vector Search
-                    docs = raw_vector_retrieve(query, filter_dict=None, k=top_k)
-                    # ส่งไป Rerank
-                    return retrieve_with_rerank(docs, query)
-            
-                def invoke(self, query: str, config: Optional[dict] = None, **kwargs) -> List[LcDocument]:
-                    return self._get_relevant_documents(query)
-            
-            return SimpleVectorRerankRetriever()
-        
-        # 4. สุดท้าย: คืนค่า Vector Retriever ธรรมดา
-        return vector_retriever
-
+        # 🎯 4. รวมร่างผ่าน UltimateHybridRetriever (ตัวที่เราคุมเอง)
+        # ตัวนี้จะจัดการ Deduplication และเรียก Rerank ให้ในตัวเดียว
+        return UltimateHybridRetriever(
+            vector_retriever=vector_retriever,
+            bm25_retriever=bm25_retriever,
+            rerank_func=retrieve_with_rerank if use_rerank else None,
+            final_k=final_k,
+            vector_weight=HYBRID_VECTOR_WEIGHT,
+            bm25_weight=HYBRID_BM25_WEIGHT
+        )
+    
     def get_all_collection_names(self) -> List[str]:
         # 🎯 FIX: ลบ base_path ออกจากการเรียก list_vectorstore_folders
         return list_vectorstore_folders(tenant=self.tenant, year=self.year)
