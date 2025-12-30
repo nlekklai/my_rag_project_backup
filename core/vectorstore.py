@@ -29,12 +29,18 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 # from langchain.retrievers import EnsembleRetriever
 
+# --- แก้ไขจากเดิม ---
 try:
-    # สำหรับ Mac (เวอร์ชันเก่า) หรือ Server (ถ้าลงตัวหลักไว้)
-    from langchain.retrievers import EnsembleRetriever
+    # 1. ลองดึงจากตำแหน่งใหม่ (LangChain 0.2+)
+    from langchain.retrievers.ensemble import EnsembleRetriever
 except ImportError:
-    # สำหรับ Server (เวอร์ชันใหม่ v0.2+)
-    from langchain_community.retrievers import EnsembleRetriever
+    try:
+        # 2. ลองดึงจากตำแหน่งเก่า
+        from langchain.retrievers import EnsembleRetriever
+    except ImportError:
+        # 3. ลองดึงจากตำแหน่งสำรอง
+        from langchain_community.retrievers import EnsembleRetriever
+# ------------------
 
 # Thai Tokenizer
 from pythainlp.tokenize import word_tokenize
