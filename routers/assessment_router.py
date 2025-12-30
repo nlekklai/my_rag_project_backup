@@ -21,6 +21,7 @@ from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
 from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_LLM_MODEL_NAME, DEFAULT_YEAR
+import pytz
 
 
 logger = logging.getLogger(__name__)
@@ -44,17 +45,26 @@ def check_user_permission(user: UserMe, tenant: str, enabler: str):
 
 # ------------------- Helpers -------------------
 def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
+    tz = pytz.timezone('Asia/Bangkok') # กำหนด Timezone ไทย
+    
     if raw_date_str and isinstance(raw_date_str, str):
         try:
+            # ถ้ามีรูปแบบ %Y%m%d_%H%M%S (เช่นจากชื่อไฟล์)
             if "_" in raw_date_str:
                 dt = datetime.strptime(raw_date_str, "%Y%m%d_%H%M%S")
-                return dt.isoformat()
+                # บังคับให้เป็นเวลาไทย
+                return tz.localize(dt).isoformat()
         except:
             pass
+
     try:
-        return datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+        # ดึงเวลาที่แก้ไขไฟล์ล่าสุดจาก Disk
+        mtime = os.path.getmtime(file_path)
+        dt = datetime.fromtimestamp(mtime, tz) # ระบุ Timezone ตอนดึง timestamp
+        return dt.isoformat()
     except:
-        return datetime.now().isoformat()
+        # กรณีผิดพลาดให้ใช้เวลาปัจจุบันที่เป็น Thai Timezone
+        return datetime.now(tz).isoformat()
 
 def clean_suggestion(raw_val: Any) -> str:
     if not raw_val:
@@ -481,7 +491,7 @@ async def run_assessment_engine_task(
         if record_id in ACTIVE_TASKS:
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = f"Internal Server Error: {str(e)}"
-            
+
 @assessment_router.get("/download/{record_id}/{file_type}")
 async def download_assessment_file(record_id: str, file_type: str, current_user: UserMe = Depends(get_current_user)):
     file_path = _find_assessment_file(record_id, current_user)
