@@ -7,6 +7,7 @@ import uuid
 import json
 import asyncio
 import logging
+import mimetypes
 from datetime import datetime
 from typing import Optional, Dict, Any, Union, List
 
@@ -81,19 +82,22 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     raise HTTPException(status_code=404, detail="ไม่พบไฟล์ผลการประเมิน")
 
 
-@assessment_router.get("/evidence/{doc_type}/{document_uuid}") # ลบ prefix ซ้ำซ้อนออก
+@assessment_router.get("/evidence/{doc_type}/{document_uuid}")
 async def serve_evidence_file(
     document_uuid: str,
     doc_type: str,
     tenant: str,
     year: str = None,
     enabler: str = None,
-    current_user: UserMe = Depends(get_current_user) # เพิ่ม Auth เพื่อความปลอดภัย
+    current_user: UserMe = Depends(get_current_user)
 ):
-    # ตรวจสอบสิทธิ์ผู้ใช้งานก่อนส่งไฟล์
+    """
+    Endpoint สำหรับเปิดไฟล์หลักฐาน (PDF/JPG/PNG) บน Browser โดยตรง (Inline Preview)
+    """
+    # 1. Check Permission
     check_user_permission(current_user, tenant, enabler or "KM")
 
-    # 1. ใช้ Resolver หา Path จริง
+    # 2. Resolve Path (ใช้ Fuzzy Match ที่เราแก้กันล่าสุด)
     file_info = get_document_file_path(
         document_uuid=document_uuid,
         tenant=tenant,
@@ -103,20 +107,22 @@ async def serve_evidence_file(
     )
 
     if not file_info:
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์ในระบบฐานข้อมูล mapping")
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์ในระบบฐานข้อมูล mapping หรือไฟล์บน Disk สูญหาย")
 
     file_path = file_info["file_path"]
 
-    # 2. ตรวจสอบว่าไฟล์มีอยู่จริงบน Disk หรือไม่
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บน Server (Physical file missing)")
+    # 3. ตรวจสอบ Media Type (MIME Type)
+    # ถ้าเป็น .pdf -> application/pdf, .png -> image/png
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
 
-    # 3. ส่งไฟล์กลับไปให้ Browser
-    # Note: ชื่อไฟล์เดิมจะถูกส่งกลับไปด้วยเพื่อให้ Browser แสดงผลได้ถูกต้อง
+    # 4. ส่งไฟล์แบบ Inline (เอา filename ออกเพื่อให้ Browser Preview แทนการ Download)
+    # browser จะใช้ชื่อไฟล์จาก URL หรือเราสามารถตั้ง Content-Disposition เป็น inline ได้
     return FileResponse(
         path=file_path,
-        media_type="application/pdf",
-        filename=file_info["original_filename"]
+        media_type=mime_type,
+        # หมายเหตุ: การไม่ใส่ filename parameter จะทำให้ Browser พยายามเปิดไฟล์แทนการเซฟลงเครื่อง
     )
 
 @assessment_router.get("/view-document")
