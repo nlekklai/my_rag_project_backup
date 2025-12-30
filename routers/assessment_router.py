@@ -180,11 +180,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "level": f"L{highest_pass}",
             "score": float(res.get("weighted_score", 0.0)),
             "progress_percent": int((highest_pass / 5) * 100),
-            "pdca_matrix": pdca_matrix,
-            "roadmap": ui_roadmap,
-            "sources": all_sources[:5],  # ส่งไป 5 ลิงก์ที่สำคัญที่สุด
-            "evidence": res.get("summary_thai", "พบหลักฐานการดำเนินงานตามมาตรฐาน"),
-            "gap": f"ขาดความสมบูรณ์ในระดับ L{highest_pass + 1} ({all_weaknesses[-1] if all_weaknesses else 'ตรวจสอบเกณฑ์ถัดไป'})"
+            "pdca_matrix": pdca_matrix, # มั่นใจว่าชื่อตัวแปรตรงกับ UI
+            "roadmap": ui_roadmap,      # มั่นใจว่าชื่อตัวแปรตรงกับ UI
+            "sources": all_sources[:5],
+            "evidence": res.get("summary_thai", ""),
+            "gap": res.get("gap_analysis", "") # หรือฟิลด์ที่พี่ต้องการ
         })
         
         radar_data.append({"axis": cid, "value": highest_pass})
