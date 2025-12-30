@@ -261,7 +261,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "code": cid,
             "name": cname,
             "level": f"L{highest_pass}",
-            "score": float(res.get("weighted_score", 0.0)),
+            "score": round(float(res.get("weighted_score", 0.0)), 2),
             "progress_percent": int((highest_pass / 5) * 100),
             "pdca_matrix": pdca_matrix, # ต้องมีค่า P, D, C, A เป็น 0 หรือ 1
             "roadmap": ui_roadmap,
@@ -270,7 +270,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "gap": res.get("gap_analysis", "")
         })
                 
-        radar_data.append({"axis": cid, "value": highest_pass})
+        radar_data.append({"axis": cid, "value": int(highest_pass)})
 
     return {
         "status": "COMPLETED",
@@ -342,6 +342,7 @@ async def get_assessment_history(tenant: str, year: Union[int, str], current_use
                     logger.error(f"Error reading history file {f}: {e}")
 
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
+
 # --- แก้ไขส่วน Start Assessment Request ---
 @assessment_router.post("/start")
 async def start_assessment(
@@ -387,7 +388,6 @@ async def start_assessment(
     return {"record_id": record_id, "status": "RUNNING"}
 
 
-# --- แก้ไขส่วน Task Function (ปรับ Signature ให้ตรงกัน) ---
 async def run_assessment_engine_task(
     record_id: str, 
     tenant: str, 
@@ -396,11 +396,16 @@ async def run_assessment_engine_task(
     sub_id: str, 
     sequential: bool
 ):
+    """
+    Background Task สำหรับรัน Engine
+    ปรับปรุง: ตรวจสอบสถานะ FAILED จาก Engine เพื่อป้องกันการส่งข้อมูลผิดพลาดไปหน้า UI
+    """
     try:
-        # กำหนด String Year สำหรับโหลดข้อมูล
+        # 1. เตรียมข้อมูลพื้นฐาน
         str_year = str(year)
+        logger.info(f"🚀 [TASK START] Record: {record_id} | Enabler: {enabler} | Sub-ID: {sub_id}")
 
-        # 1. Load Vectorstores
+        # 2. Load Vectorstores
         vsm = await asyncio.to_thread(
             load_all_vectorstores,
             doc_types=EVIDENCE_DOC_TYPES,
@@ -409,7 +414,7 @@ async def run_assessment_engine_task(
             year=str_year
         )
         
-        # 2. Load Document Mapping
+        # 3. Load Document Mapping
         doc_map_raw = await asyncio.to_thread(
             load_doc_id_mapping, 
             EVIDENCE_DOC_TYPES, 
@@ -419,14 +424,14 @@ async def run_assessment_engine_task(
         )
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
-        # 3. Create LLM
+        # 4. Create LLM Instance
         llm = await asyncio.to_thread(
             create_llm_instance, 
             model_name=DEFAULT_LLM_MODEL_NAME, 
             temperature=0.0
         )
         
-        # 4. Config & Engine
+        # 5. Initialize Engine
         config = AssessmentConfig(
             enabler=enabler, 
             tenant=tenant, 
@@ -443,8 +448,9 @@ async def run_assessment_engine_task(
             document_map=doc_map
         )
 
-        # 5. Run Assessment (ระบุ Arguments ให้ครบตาม SEAMPDCAEngine.run_assessment)
-        await asyncio.to_thread(
+        # 6. Execution: รันการประเมินและเก็บผลลัพธ์เพื่อตรวจสอบ Error
+        # เราใช้ asyncio.to_thread เพราะ Engine ทำงานเป็น Synchronous/CPU Bound
+        result = await asyncio.to_thread(
             engine.run_assessment, 
             target_sub_id=sub_id, 
             export=True, 
@@ -454,15 +460,27 @@ async def run_assessment_engine_task(
             document_map=doc_map
         )
 
-        # 6. ลบออกจาก ACTIVE_TASKS เมื่อเสร็จ (เพื่อให้ API ไปอ่านจากไฟล์ JSON แทน)
+        # 7. ตรวจสอบสถานะผลลัพธ์ (Critical Check)
+        if isinstance(result, dict) and result.get("status") == "FAILED":
+            error_msg = result.get("error_message", "Engine reported an unspecified error")
+            logger.error(f"❌ [TASK FAILED] Record {record_id}: {error_msg}")
+            
+            if record_id in ACTIVE_TASKS:
+                ACTIVE_TASKS[record_id]["status"] = "FAILED"
+                ACTIVE_TASKS[record_id]["error_message"] = error_msg
+                # เราไม่ลบออกจาก ACTIVE_TASKS เพื่อให้ UI แสดงหน้า Error ได้ถูก
+            return
+
+        # 8. Success Cleanup: ลบออกจาก Task ที่กำลังทำงานเพื่อให้ API ไปอ่านจาก JSON จริง
         if record_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[record_id]
+            logger.info(f"✅ [TASK COMPLETED] Record: {record_id}")
             
     except Exception as e:
-        logger.error(f"❌ Engine Failed for Record {record_id}: {e}", exc_info=True)
+        logger.error(f"💥 [TASK CRASH] Record {record_id}: {str(e)}", exc_info=True)
         if record_id in ACTIVE_TASKS:
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
-            ACTIVE_TASKS[record_id]["error_message"] = str(e)
+            ACTIVE_TASKS[record_id]["error_message"] = f"Internal Server Error: {str(e)}"
             
 @assessment_router.get("/download/{record_id}/{file_type}")
 async def download_assessment_file(record_id: str, file_type: str, current_user: UserMe = Depends(get_current_user)):

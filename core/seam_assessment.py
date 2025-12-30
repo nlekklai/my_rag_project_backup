@@ -2891,28 +2891,54 @@ class SEAMPDCAEngine:
         self.current_record_id = record_id 
 
         # ============================== 1. Filter Rubric ==============================
+        all_statements = self._flatten_rubric_to_statements()
+        
+        # ค้นหา Sub-Criteria ที่ต้องการ
         if target_sub_id.lower() == "all":
-            sub_criteria_list = self._flatten_rubric_to_statements()
+            sub_criteria_list = all_statements
+            self.logger.info(f"📋 Assessing ALL criteria ({len(sub_criteria_list)} items)")
         else:
-            all_statements = self._flatten_rubric_to_statements()
+            # ค้นหาแบบยืดหยุ่น ป้องกันปัญหาเว้นวรรคหรือตัวเล็กตัวใหญ่
             sub_criteria_list = [
-                s for s in all_statements if s.get('sub_id') == target_sub_id
+                s for s in all_statements 
+                if str(s.get('sub_id')).strip().lower() == str(target_sub_id).strip().lower()
             ]
-            if not sub_criteria_list:
-                self.logger.error(f"Sub-Criteria ID '{target_sub_id}' not found in rubric.")
-                return {"error": f"Sub-Criteria ID '{target_sub_id}' not found."}
 
-        # Reset states
+        # 🚨 กรณีหา ID ไม่เจอ (เช่น เคส 1.3 ที่เป็นปัญหา)
+        if not sub_criteria_list:
+            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric (ไฟล์มีแค่: {', '.join([s.get('sub_id') for s in all_statements])})"
+            self.logger.error(f"❌ {error_msg}")
+            
+            # คืนค่าโครงสร้างผลลัพธ์แบบ FAILED เพื่อให้ Router/Frontend แสดงผลได้ ไม่ค้างที่ 404
+            return {
+                "record_id": record_id,
+                "status": "FAILED",
+                "error_message": error_msg,
+                "summary": {
+                    "score": 0.0, 
+                    "level": "L0",
+                    "total_weighted_score": 0.0,
+                    "max_weight": 0.0
+                },
+                "sub_criteria_results": [],
+                "run_time_seconds": round(time.time() - start_ts, 2),
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Reset states สำหรับการรันใหม่
+        self.logger.info(f"🎯 Target Assessment for: {target_sub_id}")
         self.raw_llm_results = []
         self.final_subcriteria_results = []
 
-        # โหลด evidence map ที่มีอยู่แล้ว
+        # โหลด evidence map เก่าถ้ามี (Resumption Logic)
         if os.path.exists(self.evidence_map_path):
-            loaded = self._load_evidence_map()
-            if loaded:
-                self.evidence_map = loaded
-                self.logger.info(f"Resumed from existing evidence map: {len(self.evidence_map)} keys")
-            else:
+            try:
+                loaded = self._load_evidence_map()
+                self.evidence_map = loaded if loaded else {}
+                if self.evidence_map:
+                    self.logger.info(f"Resumed from existing evidence map: {len(self.evidence_map)} keys")
+            except Exception as e:
+                self.logger.warning(f"Could not load existing evidence map: {e}")
                 self.evidence_map = {}
         else:
             self.evidence_map = {}
