@@ -342,72 +342,98 @@ async def get_assessment_history(tenant: str, year: Union[int, str], current_use
                     logger.error(f"Error reading history file {f}: {e}")
 
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
-
-
+# --- แก้ไขส่วน Start Assessment Request ---
 @assessment_router.post("/start")
-async def start_assessment(request: StartAssessmentRequest, background_tasks: BackgroundTasks, current_user: UserMe = Depends(get_current_user)):
-    check_user_permission(current_user, request.tenant, request.enabler)
+async def start_assessment(
+    request: StartAssessmentRequest, 
+    background_tasks: BackgroundTasks, 
+    current_user: UserMe = Depends(get_current_user)
+):
+    # 1. ตรวจสอบสิทธิ์ (Enabler ต้องเป็นตัวใหญ่)
+    enabler_uc = request.enabler.upper()
+    check_user_permission(current_user, request.tenant, enabler_uc)
 
-    # 🟢 จัดการกรณี Year ไม่ถูกเลือกหรือส่งมาว่างๆ
-    # ถ้าไม่มีค่าส่งมา ให้ใช้ปีจาก Profile ของ User หรือใช้ค่า Default ของระบบ (เช่น 2568)
-    raw_year = request.year
-    target_year = str(raw_year).strip() if (raw_year and str(raw_year).strip()) else str(current_user.year or DEFAULT_YEAR)
+    # 2. จัดการ Year: ถ้าไม่ส่งมาให้ใช้จาก User หรือ Default
+    # สำคัญ: ต้องเป็น string สำหรับ path_utils
+    target_year = str(request.year).strip() if request.year else str(current_user.year or DEFAULT_YEAR)
+    
+    # 3. จัดการ Sub-criteria: ถ้าว่างให้เป็น "all"
+    target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
 
-    # จัดการ sub_criteria (เหมือนเดิม)
-    target_sub = request.sub_criteria.strip() if (request.sub_criteria and request.sub_criteria.strip()) else "all"
-
+    # 4. สร้าง Record ID
     record_id = uuid.uuid4().hex[:12]
+    
+    # 5. บันทึกลง ACTIVE_TASKS เพื่อให้ UI ดึงสถานะได้ทันที
     ACTIVE_TASKS[record_id] = {
         "status": "RUNNING",
         "record_id": record_id,
         "tenant": request.tenant,
-        "year": target_year, # ใช้ปีที่ผ่านการตรวจสอบแล้ว
-        "enabler": request.enabler.upper(),
-        "progress_message": f"กำลังเริ่มการประเมินปี {target_year}..."
+        "year": target_year,
+        "enabler": enabler_uc,
+        "progress_message": f"กำลังเริ่มการประเมิน {enabler_uc} ปี {target_year}..."
     }
 
+    # 6. เรียก Background Task (ระบุชื่อตัวแปรให้ชัดเจนป้องกันลำดับสลับ)
     background_tasks.add_task(
         run_assessment_engine_task,
-        record_id,
-        request.tenant,
-        int(target_year), # ส่งปีที่ชัวร์แล้วเข้าไป
-        request.enabler,
-        target_sub,
-        request.sequential_mode
+        record_id=record_id,
+        tenant=request.tenant,
+        year=int(target_year), # แปลงเป็น int สำหรับ Engine บางส่วนที่ต้องการเลข
+        enabler=enabler_uc,
+        sub_id=target_sub,
+        sequential=request.sequential_mode
     )
 
     return {"record_id": record_id, "status": "RUNNING"}
 
-async def run_assessment_engine_task(record_id: str, tenant: str, year: int, enabler: str, sub_id: str, sequential: bool):
+
+# --- แก้ไขส่วน Task Function (ปรับ Signature ให้ตรงกัน) ---
+async def run_assessment_engine_task(
+    record_id: str, 
+    tenant: str, 
+    year: int, 
+    enabler: str, 
+    sub_id: str, 
+    sequential: bool
+):
     try:
-        # --- 1. เตรียม Resource (เหมือนเดิม) ---
+        # กำหนด String Year สำหรับโหลดข้อมูล
+        str_year = str(year)
+
+        # 1. Load Vectorstores
         vsm = await asyncio.to_thread(
             load_all_vectorstores,
             doc_types=EVIDENCE_DOC_TYPES,
             enabler_filter=enabler,
             tenant=tenant,
-            year=str(year)
+            year=str_year
         )
         
+        # 2. Load Document Mapping
         doc_map_raw = await asyncio.to_thread(
             load_doc_id_mapping, 
             EVIDENCE_DOC_TYPES, 
             tenant, 
-            str(year), 
+            str_year, 
             enabler
         )
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
-        llm = await asyncio.to_thread(create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
+        # 3. Create LLM
+        llm = await asyncio.to_thread(
+            create_llm_instance, 
+            model_name=DEFAULT_LLM_MODEL_NAME, 
+            temperature=0.0
+        )
         
+        # 4. Config & Engine
         config = AssessmentConfig(
             enabler=enabler, 
             tenant=tenant, 
-            year=str(year),
+            year=str_year,
             force_sequential=sequential
         )
 
-        # 🟢 แก้จุดที่ 2: Initialize Engine (ลำดับเหมือน CLI)
         engine = SEAMPDCAEngine(
             config=config,
             llm_instance=llm,
@@ -417,8 +443,7 @@ async def run_assessment_engine_task(record_id: str, tenant: str, year: int, ena
             document_map=doc_map
         )
 
-        # 🟢 แก้จุดที่ 3: เรียก run_assessment แบบระบุชื่อตัวแปร (Explicit) เพื่อความชัวร์
-        # ใช้ sub_id ที่ส่งมาจากจุดที่ 1 (มั่นใจว่าเป็น 'all' หรือ '3.1')
+        # 5. Run Assessment (ระบุ Arguments ให้ครบตาม SEAMPDCAEngine.run_assessment)
         await asyncio.to_thread(
             engine.run_assessment, 
             target_sub_id=sub_id, 
@@ -429,6 +454,7 @@ async def run_assessment_engine_task(record_id: str, tenant: str, year: int, ena
             document_map=doc_map
         )
 
+        # 6. ลบออกจาก ACTIVE_TASKS เมื่อเสร็จ (เพื่อให้ API ไปอ่านจากไฟล์ JSON แทน)
         if record_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[record_id]
             
@@ -437,7 +463,7 @@ async def run_assessment_engine_task(record_id: str, tenant: str, year: int, ena
         if record_id in ACTIVE_TASKS:
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = str(e)
-
+            
 @assessment_router.get("/download/{record_id}/{file_type}")
 async def download_assessment_file(record_id: str, file_type: str, current_user: UserMe = Depends(get_current_user)):
     file_path = _find_assessment_file(record_id, current_user)
