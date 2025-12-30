@@ -43,6 +43,8 @@ torchvision>=0.21.0
 accelerate>=1.11.0
 einops>=0.7.0
 
+rank_bm25>=0.2.2
+
 # === API & Utility ===
 fastapi>=0.111.0
 uvicorn>=0.38.0
