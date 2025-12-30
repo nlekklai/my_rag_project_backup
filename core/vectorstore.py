@@ -29,20 +29,17 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 # from langchain.retrievers import EnsembleRetriever
 
-# --- แก้ไขส่วน Import EnsembleRetriever ให้เป็นแบบนี้ครับ ---
+# --- ท่าไม้ตายสุดท้ายใน core/vectorstore.py ---
 try:
-    # ท่าที่ 1: สำหรับ LangChain 0.2+ (ตำแหน่งมาตรฐานใหม่)
+    # 1. ลองดึงจากจุดรวมใหม่ล่าสุด (สำหรับ v0.2+)
     from langchain.retrievers.ensemble import EnsembleRetriever
 except (ImportError, ModuleNotFoundError):
     try:
-        # ท่าที่ 2: สำหรับ LangChain 0.1 หรือถ้าลงตัวเต็มไว้
+        # 2. ลองดึงจากจุดดั้งเดิม (สำหรับ v0.1)
         from langchain.retrievers import EnsembleRetriever
     except (ImportError, ModuleNotFoundError):
-        # ท่าที่ 3: ท่าไม้ตายสุดท้าย ถ้าหาไม่เจอจริงๆ ให้ใช้ตัวนี้
-        from langchain_community.retrievers.ensemble import EnsembleRetriever
-# ------------------------------------------------------
-
-# ------------------
+        # 3. ลองดึงจากจุดสำรองใน Community
+        from langchain_community.retrievers import EnsembleRetriever
 
 # Thai Tokenizer
 from pythainlp.tokenize import word_tokenize

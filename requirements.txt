@@ -1,6 +1,6 @@
-# === Core RAG & LLM (บังคับลงตัวหลักเพื่อให้ Namespace ครบ) ===
+# === Core RAG & LLM (ใช้โครงสร้าง 0.2.x ตาม Mac เพื่อความทันสมัย) ===
 langchain>=0.2.0
-langchain-core>=0.2.0
+langchain-core>=0.2.43
 langchain-community>=0.2.0
 langchain-text-splitters>=0.2.0
 langchain-huggingface>=0.0.3
@@ -8,40 +8,40 @@ langchain-ollama>=0.1.0
 langchain-chroma>=0.1.1
 sentence-transformers>=3.0.1
 transformers>=4.46.3
-safetensors>=0.4.1
+safetensors>=0.6.2
 ollama>=0.3.3
-python-dotenv>=1.0.1
+python-dotenv>=1.2.1
 
-# === Fix Dependency Conflict ===
+# === Fix Dependency Conflict (รองรับทั้งคู่) ===
 httpx-sse>=0.4.0
 cohere>=5.20.0
 httpx>=0.28.1
 
 # === Database & Vector Storage ===
 chromadb==0.5.23
-pydantic>=2.7.0,<2.13.0
+pydantic>=2.12.5
 
 # === Document Processing & OCR ===
-pypdf>=4.2.0
-PyMuPDF>=1.24.2
-python-docx>=1.1.0
-python-pptx>=0.6.21
-openpyxl>=3.1.2
+pypdf>=6.2.0
+PyMuPDF>=1.26.6
+python-docx>=1.2.0
+python-pptx>=1.0.2
+openpyxl>=3.1.5
 pandas>=2.2.2
-unstructured>=0.14.4
+unstructured>=0.18.21
 pythainlp==5.1.2
 pytesseract>=0.3.10
 Pillow>=10.3.0
 pdf2image>=1.17.0
 
-# === Computation (Torch 2.9.1) ===
+# === Computation (ใช้ Torch 2.9.1 ตาม Mac ที่พี่รันผ่าน) ===
 numpy==1.26.4
-torch>=2.6.0
+torch==2.9.1
 torchvision>=0.21.0
-accelerate>=0.34.0
+accelerate>=1.11.0
 
 # === API & Utility ===
 fastapi>=0.111.0
-uvicorn>=0.29.0
+uvicorn>=0.38.0
 requests>=2.31.0
-pytz>=2024.1
+pytz>=2025.2
