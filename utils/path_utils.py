@@ -187,11 +187,10 @@ def get_document_file_path(
     enabler: Optional[str],
     doc_type_name: str
 ) -> Optional[Dict[str, str]]:
-    
     try:
         mapping_path = get_mapping_file_path(doc_type_name, tenant, year, enabler)
         if not os.path.exists(mapping_path):
-            logger.warning(f"Mapping file not found: {mapping_path}")
+            logger.warning(f"Mapping not found: {mapping_path}")
             return None
 
         with open(mapping_path, "r", encoding="utf-8") as f:
@@ -199,27 +198,50 @@ def get_document_file_path(
 
         entry = mapping_data.get(document_uuid)
         if not entry:
-            logger.warning(f"UUID {document_uuid} not found in mapping")
             return None
 
-        original_filepath_relative = entry.get("filepath")
-        if not original_filepath_relative:
-            logger.warning(f"No relative filepath in mapping for UUID {document_uuid}")
+        raw_path = entry.get("filepath", "")
+        filename = os.path.basename(raw_path)
+        
+        # 1. เตรียม Root Directory (Normalize ให้อยู่ในรูปแบบ NFKC สำหรับ Mac)
+        # เราจะลองหาในโฟลเดอร์ที่น่าจะเป็นไปได้ทั้งหมด
+        tenant_clean = _n(tenant)
+        doc_type_clean = _n(doc_type_name)
+        enabler_clean = _n(enabler or "")
+        year_str = str(year) if year else ""
+
+        # สร้าง base path: data_store/pea/data/evidence/2568
+        # ใช้ glob เพื่อให้มันหาได้ทั้ง km, KM หรือ Km
+        base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", doc_type_clean, year_str)
+        
+        if not os.path.exists(base_search_path):
+            logger.error(f"❌ Base search path not found: {base_search_path}")
             return None
 
-        # 🟢 FIX: ใช้ os.path.join() เพื่อประกอบ Path ของไฟล์จริงจาก DATA_STORE_ROOT และ Path สัมพัทธ์
-        file_path_abs = os.path.join(DATA_STORE_ROOT, original_filepath_relative)
+        # 2. ค้นหาไฟล์แบบ Case-Insensitive และ Encoding-Insensitive
+        # วนลูปหาในทุก sub-folder (เช่น km หรือ KM)
+        normalized_target_filename = unicodedata.normalize('NFKC', filename).lower()
 
-        if not os.path.exists(file_path_abs):
-            logger.error(f"File not found on disk: {file_path_abs}")
-            return None
+        for root, dirs, files in os.walk(base_search_path):
+            # ตรวจสอบว่าอยู่ใน folder enabler ที่ถูกต้องหรือไม่ (แบบไม่สนเล็กใหญ่)
+            if enabler_clean and enabler_clean not in _n(root):
+                continue
+                
+            for f in files:
+                # เทียบชื่อไฟล์แบบ NFKC และ Lowercase
+                if unicodedata.normalize('NFKC', f).lower() == normalized_target_filename:
+                    final_abs_path = os.path.join(root, f)
+                    logger.info(f"✅ Found file: {final_abs_path}")
+                    return {
+                        "file_path": final_abs_path,
+                        "original_filename": f
+                    }
 
-        return {
-            "file_path": file_path_abs,
-            "original_filename": entry.get("file_name", os.path.basename(file_path_abs))
-        }
+        logger.error(f"❌ File not found after fuzzy scan: {filename}")
+        return None
+        
     except Exception as e:
-        logger.error(f"Error resolving document path for UUID {document_uuid}: {e}")
+        logger.error(f"Error resolving path: {e}")
         return None
 
 # ==================== 8. OTHER PATHS ====================

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from routers.auth_router import UserMe, get_current_user
-from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping
+from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping, get_document_file_path
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
@@ -80,10 +80,68 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
                 return os.path.join(root, f)
     raise HTTPException(status_code=404, detail="ไม่พบไฟล์ผลการประเมิน")
 
+
+@assessment_router.get("/evidence/{doc_type}/{document_uuid}") # ลบ prefix ซ้ำซ้อนออก
+async def serve_evidence_file(
+    document_uuid: str,
+    doc_type: str,
+    tenant: str,
+    year: str = None,
+    enabler: str = None,
+    current_user: UserMe = Depends(get_current_user) # เพิ่ม Auth เพื่อความปลอดภัย
+):
+    # ตรวจสอบสิทธิ์ผู้ใช้งานก่อนส่งไฟล์
+    check_user_permission(current_user, tenant, enabler or "KM")
+
+    # 1. ใช้ Resolver หา Path จริง
+    file_info = get_document_file_path(
+        document_uuid=document_uuid,
+        tenant=tenant,
+        year=year,
+        enabler=enabler,
+        doc_type_name=doc_type
+    )
+
+    if not file_info:
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์ในระบบฐานข้อมูล mapping")
+
+    file_path = file_info["file_path"]
+
+    # 2. ตรวจสอบว่าไฟล์มีอยู่จริงบน Disk หรือไม่
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บน Server (Physical file missing)")
+
+    # 3. ส่งไฟล์กลับไปให้ Browser
+    # Note: ชื่อไฟล์เดิมจะถูกส่งกลับไปด้วยเพื่อให้ Browser แสดงผลได้ถูกต้อง
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=file_info["original_filename"]
+    )
+
+@assessment_router.get("/view-document")
+async def view_document(filename: str, page: Optional[str] = "1", current_user: UserMe = Depends(get_current_user)):
+    """ Endpoint สำหรับเปิดไฟล์ PDF ไปยังหน้าที่ระบุ """
+    # ค้นหาไฟล์ในโฟลเดอร์เก็บเอกสารของ Tenant
+    import os
+    from utils.path_utils import get_tenant_year_import_root
+    
+    # สมมติว่าไฟล์เก็บอยู่ที่โฟลเดอร์ import/EVIDENCE_DOC
+    base_path = os.path.join(get_tenant_year_import_root(current_user.tenant, current_user.year), "EVIDENCE_DOC")
+    file_path = os.path.join(base_path, filename)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์เอกสาร: {filename}")
+
+    # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
+    return FileResponse(file_path, media_type="application/pdf")
+
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันปรับปรุงสมบูรณ์: รองรับ PDCA Matrix, Roadmap Stepper และวิเคราะห์จุดแข็ง/อ่อน
-    ให้สอดคล้องกับ UI เวอร์ชันใหม่
+    เวอร์ชันสมบูรณ์: 
+    1. แก้ Bug 'lv' undefined ใน Roadmap
+    2. เพิ่ม 'document_uuid' ใน sources เพื่อให้ UI คลิกเปิดไฟล์ผ่าน API ใหม่ได้
+    3. รักษาโครงสร้างเดิมให้สอดคล้องกับ AssessmentResults.tsx (Original)
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -107,28 +165,28 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
 
-        # --- 2. สร้าง PDCA Matrix (สำหรับ UI Badge Grid) ---
+        # --- 2. สร้าง PDCA Matrix (ใช้ lv_idx เพื่อความปลอดภัยของ Scope) ---
         pdca_matrix = []
         raw_levels_map = {item.get("level"): item for item in raw_levels_list}
         
-        for lv in range(1, 6):
-            lv_info = raw_levels_map.get(lv)
+        for lv_idx in range(1, 6):
+            lv_info = raw_levels_map.get(lv_idx)
             if lv_info:
                 pdca_matrix.append({
-                    "level": lv,
+                    "level": lv_idx,
                     "is_passed": lv_info.get("is_passed", False),
                     "pdca": lv_info.get("pdca_breakdown", {"P": 0, "D": 0, "C": 0, "A": 0}),
                     "reason": lv_info.get("reason", "ประเมินแล้ว")
                 })
             else:
                 pdca_matrix.append({
-                    "level": lv,
-                    "is_passed": lv <= highest_pass,
-                    "pdca": {"P": 1, "D": 1, "C": 1, "A": 1} if lv <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0},
-                    "reason": "ผ่านเกณฑ์มาตรฐาน" if lv <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
+                    "level": lv_idx,
+                    "is_passed": lv_idx <= highest_pass,
+                    "pdca": {"P": 1, "D": 1, "C": 1, "A": 1} if lv_idx <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0},
+                    "reason": "ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
                 })
 
-        # --- 3. สร้าง Roadmap (สำหรับ UI Stepper) ---
+        # --- 3. สร้าง Roadmap (FIXED: แก้จุดที่ lv undefined โดยใช้ highest_pass + 1) ---
         ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
@@ -137,7 +195,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "goal": p.get("goal", "เพื่อยกระดับตามเกณฑ์"),
                 "tasks": [
                     {
-                        "level": str(act.get("failed_level", lv + 1)),
+                        "level": str(act.get("failed_level", highest_pass + 1)),
                         "recommendation": act.get("recommendation", ""),
                         "steps": [
                             {
@@ -150,29 +208,31 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 ]
             })
 
-        # --- 4. ดึง Sources/Evidence Link ---
+        # --- 4. ดึง Sources (เพิ่ม document_uuid เพื่อเชื่อมกับ serve_evidence_file) ---
         all_sources = []
         seen_docs = set()
-        # รวมแหล่งอ้างอิงจากทุก level
         for ref in raw_levels_list:
             for source in ref.get("temp_map_for_level", []):
-                doc_id = f"{source.get('filename')}-{source.get('page_number')}"
-                if doc_id not in seen_docs:
+                # ดึงข้อมูลไฟล์และ UUID จาก metadata ที่ Engine บันทึกไว้
+                fname = source.get('filename') or source.get('source') or "Unknown Document"
+                pnum = str(source.get('page_number') or source.get('page') or "1")
+                d_uuid = source.get('document_uuid') or source.get('doc_id') # ตัวไหนมีให้ใช้ตัวนั้น
+                
+                doc_key = f"{fname}-{pnum}"
+                if doc_key not in seen_docs and d_uuid:
                     all_sources.append({
-                        "filename": source.get("filename") or source.get("source"),
-                        "page": str(source.get("page_number") or source.get("page", "1")),
-                        "snippet": source.get("text", "")[:150]
+                        "filename": fname,
+                        "page": pnum,
+                        "snippet": source.get("text", "")[:150],
+                        "document_uuid": d_uuid, # 👈 หัวใจสำคัญในการเปิดไฟล์
+                        "doc_type": source.get("doc_type", "evidence") # ส่งไปบอก UI ว่าเป็น doc_type ไหน
                     })
-                    seen_docs.add(doc_id)
+                    seen_docs.add(doc_key)
 
-        # --- 5. สรุปจุดแข็ง/จุดอ่อน รายหัวข้อ ---
+        # --- 5. สรุปจุดแข็งรายหัวข้อ (ถ้ามี) ---
         for lv_item in raw_levels_list:
             if lv_item.get("level", 0) >= 3 and lv_item.get("is_passed"):
                 strengths.append(f"เกณฑ์ {cid}: บรรลุระดับ L{lv_item['level']} พร้อมหลักฐานที่ชัดเจน")
-            
-        for plan in raw_plans:
-            for act in plan.get("actions", []):
-                all_weaknesses.append(f"L{act.get('failed_level')}: {act.get('recommendation')}")
 
         processed_sub_criteria.append({
             "code": cid,
@@ -180,11 +240,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "level": f"L{highest_pass}",
             "score": float(res.get("weighted_score", 0.0)),
             "progress_percent": int((highest_pass / 5) * 100),
-            "pdca_matrix": pdca_matrix, # มั่นใจว่าชื่อตัวแปรตรงกับ UI
-            "roadmap": ui_roadmap,      # มั่นใจว่าชื่อตัวแปรตรงกับ UI
-            "sources": all_sources[:5],
+            "pdca_matrix": pdca_matrix,
+            "roadmap": ui_roadmap,
+            "sources": all_sources[:10], # เพิ่มโควตาแหล่งอ้างอิงให้เห็นมากขึ้น
             "evidence": res.get("summary_thai", ""),
-            "gap": res.get("gap_analysis", "") # หรือฟิลด์ที่พี่ต้องการ
+            "gap": res.get("gap_analysis", "")
         })
         
         radar_data.append({"axis": cid, "value": highest_pass})
@@ -204,7 +264,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         },
         "radar_data": radar_data,
         "strengths": list(dict.fromkeys(strengths)) if strengths else ["โครงสร้างพื้นฐานมีความพร้อม"],
-        "weaknesses": list(dict.fromkeys(all_weaknesses)) if all_weaknesses else ["บรรลุเกณฑ์ประเมิน"],
         "sub_criteria": processed_sub_criteria
     }
 
