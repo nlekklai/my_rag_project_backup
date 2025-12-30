@@ -29,17 +29,19 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 # from langchain.retrievers import EnsembleRetriever
 
-# --- แก้ไขจากเดิม ---
+# --- แก้ไขส่วน Import EnsembleRetriever ให้เป็นแบบนี้ครับ ---
 try:
-    # 1. ลองดึงจากตำแหน่งใหม่ (LangChain 0.2+)
+    # ท่าที่ 1: สำหรับ LangChain 0.2+ (ตำแหน่งมาตรฐานใหม่)
     from langchain.retrievers.ensemble import EnsembleRetriever
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     try:
-        # 2. ลองดึงจากตำแหน่งเก่า
+        # ท่าที่ 2: สำหรับ LangChain 0.1 หรือถ้าลงตัวเต็มไว้
         from langchain.retrievers import EnsembleRetriever
-    except ImportError:
-        # 3. ลองดึงจากตำแหน่งสำรอง
-        from langchain_community.retrievers import EnsembleRetriever
+    except (ImportError, ModuleNotFoundError):
+        # ท่าที่ 3: ท่าไม้ตายสุดท้าย ถ้าหาไม่เจอจริงๆ ให้ใช้ตัวนี้
+        from langchain_community.retrievers.ensemble import EnsembleRetriever
+# ------------------------------------------------------
+
 # ------------------
 
 # Thai Tokenizer

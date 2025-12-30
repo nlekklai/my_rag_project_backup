@@ -1,6 +1,8 @@
-# === Core RAG & LLM (ปลดล็อคเพื่อให้ Pip ช่วยแก้ความขัดแย้ง) ===
-langchain>=0.1.20
-langchain-community>=0.0.38
+# === Core RAG & LLM (บังคับลงตัวหลักเพื่อให้ Namespace ครบ) ===
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
 langchain-huggingface>=0.0.3
 langchain-ollama>=0.1.0
 langchain-chroma>=0.1.1
@@ -32,7 +34,7 @@ pytesseract>=0.3.10
 Pillow>=10.3.0
 pdf2image>=1.17.0
 
-# === Computation (ตัวที่พี่ใช้ 2.9.1 สำเร็จแล้ว) ===
+# === Computation (Torch 2.9.1) ===
 numpy==1.26.4
 torch>=2.6.0
 torchvision>=0.21.0
