@@ -67,18 +67,24 @@ def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
         return datetime.now(tz).isoformat()
 
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
-    # แก้ไข: แทนที่จะหาแค่ปีเดียว ให้หาจาก Root ของ Tenant เลย
+    # 1. หา root ของ tenant
+    # ลองหาปี 2568 เป็นตัวตั้งต้นก่อน
     sample_path = get_tenant_year_export_root(current_user.tenant, "2568")
     tenant_export_root = os.path.dirname(sample_path)
     
     norm_search = _n(search_id).lower()
 
-    if os.path.exists(tenant_export_root):
-        # สแกนทุกโฟลเดอร์ (รวมถึงโฟลเดอร์ย่อยที่เป็นปีต่างๆ)
-        for root, _, files in os.walk(tenant_export_root):
-            for f in files:
-                if f.endswith(".json") and norm_search in _n(f).lower():
-                    return os.path.join(root, f)
+    # 2. เพิ่มการตรวจสอบ Path สำรอง (กรณีรันบน Linux/Docker แล้ว /app/ หายไป)
+    search_paths = [tenant_export_root]
+    if tenant_export_root.startswith("/app/"):
+        search_paths.append(tenant_export_root.replace("/app/", "", 1))
+
+    for s_path in search_paths:
+        if os.path.exists(s_path):
+            for root, _, files in os.walk(s_path):
+                for f in files:
+                    if f.endswith(".json") and norm_search in _n(f).lower():
+                        return os.path.join(root, f)
                     
     raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์ผลการประเมิน ID: {search_id}")
 
@@ -425,7 +431,6 @@ async def get_assessment_history(
     # 4. เรียงลำดับตามวันที่ (ใหม่ไปเก่า)
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
-# --- แก้ไขส่วน Start Assessment Request ---
 @assessment_router.post("/start")
 async def start_assessment(
     request: StartAssessmentRequest, 
@@ -433,26 +438,26 @@ async def start_assessment(
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    Endpoint สำหรับเริ่มการประเมิน 
-    - ตรวจสอบสิทธิ์
-    - ตรวจสอบความพร้อมของ Vectorstore บน Disk ก่อนรัน
-    - ส่งงานเข้า Background Task
+    Endpoint สำหรับเริ่มการประเมินที่รองรับการเลือกปีอย่างอิสระ
+    - บังคับใช้ปีจาก Request เป็นอันดับแรก
+    - ระบบตรวจสอบ Path แบบยืดหยุ่น (รองรับ Docker/Local Path)
     """
-    # 1. ปรับ Format และดึงค่าพื้นฐาน
+    # 1. จัดเตรียมค่า Parameter
     enabler_uc = request.enabler.upper()
-    # บังคับ Year เป็น String เพื่อใช้ใน path_utils และป้องกัน Error บน Mac/Linux
-    target_year = str(request.year).strip() if request.year else str(current_user.year or DEFAULT_YEAR)
+    
+    # --- ปรับปรุง Logic การเลือกปี (Priority: Request > User Profile > Default) ---
+    raw_year = request.year if request.year else (current_user.year or DEFAULT_YEAR)
+    target_year = str(raw_year).strip()
+    
     target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
 
-    # 2. ตรวจสอบสิทธิ์ผู้ใช้งาน (Tenant และ Enabler)
+    # 2. ตรวจสอบสิทธิ์
     check_user_permission(current_user, request.tenant, enabler_uc)
 
-    # --- [ส่วน ERROR DETECTION: Pre-flight Resource Check] ---
-    
-    # ใช้ path_utils เพื่อหา Path ที่ระบบคาดหวัง
-    # หมายเหตุ: นำเข้า get_vectorstore_collection_path จาก utils.path_utils
+    # --- [ERROR DETECTION: Enhanced Pre-flight Check] ---
     from utils.path_utils import get_vectorstore_collection_path, get_vectorstore_tenant_root_path
 
+    # หา Path ที่ระบบคาดหวัง
     vs_path = get_vectorstore_collection_path(
         tenant=request.tenant,
         year=target_year,
@@ -460,43 +465,51 @@ async def start_assessment(
         enabler=enabler_uc
     )
 
-    # A. ตรวจสอบว่า Path ของ Vectorstore มีอยู่จริงหรือไม่
-    if not os.path.exists(vs_path):
-        # กรณีหาไม่เจอ ให้สแกนหาตัวเลือกอื่นที่ใกล้เคียงเพื่อแจ้ง User
+    # 🛡️ FIX: ตรวจสอบความยืดหยุ่นของ Path (กรณีรันบน Server ที่ Path อาจต่างจากใน Container)
+    resolved_vs_path = vs_path
+    if not os.path.exists(resolved_vs_path) and vs_path.startswith("/app/"):
+        # ลองหาแบบตัด /app/ ออก (Local mode)
+        alt_path = vs_path.replace("/app/", "", 1)
+        if os.path.exists(alt_path):
+            resolved_vs_path = alt_path
+
+    # A. ตรวจสอบว่าโฟลเดอร์ปีนั้นๆ มีอยู่จริงไหม
+    if not os.path.exists(resolved_vs_path):
         vs_tenant_root = get_vectorstore_tenant_root_path(request.tenant)
-        available_info = ""
+        # ลองสแกนหา Path จริงเพื่อแนะนำ User
+        real_root = vs_tenant_root.replace("/app/", "", 1) if not os.path.exists(vs_tenant_root) else vs_tenant_root
         
-        if os.path.exists(vs_tenant_root):
-            # ลองหาว่าปีอื่นๆ มีข้อมูลไหม
-            years = [d for d in os.listdir(vs_tenant_root) if os.path.isdir(os.path.join(vs_tenant_root, d))]
+        available_info = ""
+        if os.path.exists(real_root):
+            years = [d for d in os.listdir(real_root) if os.path.isdir(os.path.join(real_root, d))]
             if years:
                 available_info = f" ปีที่มีข้อมูลในระบบคือ: {', '.join(years)}"
             else:
-                available_info = " ระบบยังไม่มีข้อมูลปีใดๆ เลย โปรด Ingest ข้อมูลก่อน"
+                available_info = " ระบบยังไม่มีข้อมูลปีใดๆ ในฐานข้อมูล"
         
-        logger.error(f"❌ Pre-flight failed: Vectorstore not found at {vs_path}")
+        logger.error(f"❌ Path Not Found: {vs_path} (Resolved: {resolved_vs_path})")
         raise HTTPException(
             status_code=400, 
             detail=f"ไม่พบฐานข้อมูล {enabler_uc} ของปี {target_year}.{available_info}"
         )
 
-    # B. ตรวจสอบเบื้องต้นว่ามีไฟล์ Database หรือไม่ (ป้องกันโฟลเดอร์เปล่า)
-    db_file = os.path.join(vs_path, "chroma.sqlite3")
-    if not os.path.exists(db_file):
-        # บางครั้ง ChromaDB เก็บในรูปแบบโฟลเดอร์ UUID ให้เช็คว่ามีโฟลเดอร์ข้างในไหม
-        sub_dirs = [d for d in os.listdir(vs_path) if os.path.isdir(os.path.join(vs_path, d))]
-        if not sub_dirs:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"โฟลเดอร์ฐานข้อมูล {enabler_uc} ปี {target_year} ว่างเปล่า โปรดตรวจสอบการ Ingest"
-            )
+    # B. ตรวจสอบไฟล์ข้างใน (ป้องกันโฟลเดอร์ว่าง)
+    # เช็คทั้ง chroma.sqlite3 หรือโฟลเดอร์ UUID ของ Chroma
+    db_file = os.path.join(resolved_vs_path, "chroma.sqlite3")
+    has_subdirs = any(os.path.isdir(os.path.join(resolved_vs_path, d)) for d in os.listdir(resolved_vs_path)) if os.path.exists(resolved_vs_path) else False
+    
+    if not os.path.exists(db_file) and not has_subdirs:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"ฐานข้อมูลปี {target_year} ยังไม่ได้ถูก Ingest ข้อมูล (โฟลเดอร์ว่างเปล่า)"
+        )
 
     # --------------------------------------------------------
 
-    # 3. สร้าง Record ID (Stable-like แต่เป็นสุ่มสำหรับ Session นี้)
+    # 3. สร้าง Record ID
     record_id = uuid.uuid4().hex[:12]
     
-    # 4. บันทึกลง ACTIVE_TASKS เพื่อให้ Frontend ติดตามสถานะได้ทันที
+    # 4. บันทึกลง ACTIVE_TASKS
     ACTIVE_TASKS[record_id] = {
         "status": "RUNNING",
         "record_id": record_id,
@@ -506,18 +519,18 @@ async def start_assessment(
         "progress_message": f"กำลังเริ่มการประเมิน {enabler_uc} ปี {target_year}..."
     }
 
-    # 5. เรียก Background Task (ส่งค่าที่เป็น String ทั้งหมด เพื่อความเสถียรของ Path)
+    # 5. ส่งเข้า Background Task
     background_tasks.add_task(
         run_assessment_engine_task,
         record_id=record_id,
         tenant=request.tenant,
-        year=target_year,  # มั่นใจว่าเป็น String แน่นอน
+        year=target_year,
         enabler=enabler_uc,
         sub_id=target_sub,
         sequential=request.sequential_mode
     )
 
-    logger.info(f"✅ Assessment Task Started: {record_id} ({enabler_uc} {target_year})")
+    logger.info(f"🚀 Started Assessment: {record_id} | Year: {target_year} | Path: {resolved_vs_path}")
     return {"record_id": record_id, "status": "RUNNING"}
 
 async def run_assessment_engine_task(
