@@ -119,67 +119,68 @@ def map_entries(
 @upload_router.get("/{doc_type}", response_model=List[UploadResponse])
 async def list_files(
     doc_type: str,
-    year: Optional[int] = Query(None),
+    year: Optional[str] = Query(None), # 1. เปลี่ยนจาก int เป็น str
     enabler: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
 ):
     try:
-        search_year = year or getattr(current_user, "year", DEFAULT_YEAR)
         tenant = current_user.tenant
         dt_clean = _n(doc_type)
-
         results: List[UploadResponse] = []
 
-        # A) Specific Enabler
-        if enabler and enabler.lower() != "all":
-            mapping = await run_in_threadpool(
-                load_doc_id_mapping, doc_type, tenant, search_year, enabler
-            )
-            results.extend(map_entries(mapping, doc_type, tenant, search_year, enabler))
-
-        # B) Evidence: scan all enablers
-        elif dt_clean == _n(EVIDENCE_DOC_TYPES):
+        # 2. เตรียมรายการปีที่จะค้นหา
+        years_to_search = []
+        if year and year != "all":
+            years_to_search = [int(year)]
+        elif year == "all":
+            # ถ้าเป็น "all" ให้ไปส่องในโฟลเดอร์ tenant ว่ามีปีอะไรบ้าง
             root = get_mapping_tenant_root_path(tenant)
-            year_dir = os.path.join(root, str(search_year))
-
-            if os.path.exists(year_dir):
-                for fname in os.listdir(year_dir):
-                    if fname.endswith(DOCUMENT_ID_MAPPING_FILENAME_SUFFIX):
-                        parts = fname.replace(
-                            DOCUMENT_ID_MAPPING_FILENAME_SUFFIX, ""
-                        ).split("_")
-                        if len(parts) >= 3:
-                            found_enabler = parts[2]
-                            mapping = await run_in_threadpool(
-                                load_doc_id_mapping,
-                                doc_type,
-                                tenant,
-                                search_year,
-                                found_enabler,
-                            )
-                            results.extend(
-                                map_entries(
-                                    mapping,
-                                    doc_type,
-                                    tenant,
-                                    search_year,
-                                    found_enabler,
-                                )
-                            )
-
-        # C) Global docs
+            if os.path.exists(root):
+                # ดึงชื่อโฟลเดอร์ที่เป็นตัวเลข (ปี) ออกมา
+                years_to_search = [int(d) for d in os.listdir(root) if d.isdigit()]
         else:
-            mapping = await run_in_threadpool(
-                load_doc_id_mapping, doc_type, tenant, search_year, None
-            )
-            results.extend(map_entries(mapping, doc_type, tenant, search_year, "-"))
+            # ถ้าไม่ส่งมาเลย ให้ใช้ปี default ของ user
+            years_to_search = [getattr(current_user, "year", DEFAULT_YEAR)]
+
+        # 3. วนลูปดึงข้อมูลตามรายการปีที่สรุปได้
+        for search_year in years_to_search:
+            # --- Logic เดิมของพี่ (ปรับให้ใช้ search_year) ---
+            
+            # A) Specific Enabler
+            if enabler and enabler.lower() != "all":
+                mapping = await run_in_threadpool(
+                    load_doc_id_mapping, doc_type, tenant, search_year, enabler
+                )
+                results.extend(map_entries(mapping, doc_type, tenant, search_year, enabler))
+
+            # B) Evidence: scan all enablers
+            elif dt_clean == _n(EVIDENCE_DOC_TYPES):
+                root = get_mapping_tenant_root_path(tenant)
+                year_dir = os.path.join(root, str(search_year))
+
+                if os.path.exists(year_dir):
+                    for fname in os.listdir(year_dir):
+                        if fname.endswith(DOCUMENT_ID_MAPPING_FILENAME_SUFFIX):
+                            parts = fname.replace(DOCUMENT_ID_MAPPING_FILENAME_SUFFIX, "").split("_")
+                            if len(parts) >= 3:
+                                found_enabler = parts[2]
+                                mapping = await run_in_threadpool(
+                                    load_doc_id_mapping, doc_type, tenant, search_year, found_enabler
+                                )
+                                results.extend(map_entries(mapping, doc_type, tenant, search_year, found_enabler))
+
+            # C) Global docs
+            else:
+                mapping = await run_in_threadpool(
+                    load_doc_id_mapping, doc_type, tenant, search_year, None
+                )
+                results.extend(map_entries(mapping, doc_type, tenant, search_year, "-"))
 
         return results
 
     except Exception as e:
         logger.exception("List files error")
         return []
-
 
 # =========================
 # 2. POST: Upload (ฉบับปรับปรุง ID ให้ตรงกับ VectorStore)

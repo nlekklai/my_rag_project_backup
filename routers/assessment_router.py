@@ -11,7 +11,7 @@ import mimetypes
 from datetime import datetime
 from typing import Optional, Dict, Any, Union, List
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -336,42 +336,76 @@ async def get_assessment_status(record_id: str, current_user: UserMe = Depends(g
 
     return _transform_result_for_ui(raw_data, current_user)
 
+# ในไฟล์ assessment_router.py
+
 @assessment_router.get("/history")
-async def get_assessment_history(tenant: str, year: Union[int, str], current_user: UserMe = Depends(get_current_user)):
+async def get_assessment_history(
+    tenant: str, 
+    year: Optional[str] = Query(None), # แก้จาก Union เป็น Optional และให้ default เป็น None
+    current_user: UserMe = Depends(get_current_user)
+):
+    # 1. ตรวจสอบสิทธิ์องค์กร
     if _n(tenant) != _n(current_user.tenant):
         raise HTTPException(status_code=403, detail="Permission Denied")
 
-    export_root = get_tenant_year_export_root(tenant, str(year))
     history_list = []
+    
+    # 2. จัดการเรื่อง "ปี" ที่ต้องการค้นหา
+    # ถ้า Frontend ไม่ส่งมา หรือส่งมาเป็น "all" ให้สแกนทุกปี
+    search_years = []
+    
+    # หา Root Path ของ Tenant เพื่อดูว่ามีโฟลเดอร์ปีไหนบ้าง
+    # โดยอ้างอิงจากตำแหน่งของโฟลเดอร์ปี 2568 (หรือปีใดก็ได้)
+    sample_path = get_tenant_year_export_root(tenant, "2568")
+    tenant_export_root = os.path.dirname(sample_path)
 
-    if not os.path.exists(export_root):
-        return {"items": []}
+    if not year or str(year).lower() == "all":
+        if os.path.exists(tenant_export_root):
+            # ดึงชื่อโฟลเดอร์ย่อยที่เป็นตัวเลข (ปีงบประมาณ) ทั้งหมด
+            search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
+        else:
+            search_years = []
+    else:
+        search_years = [str(year)]
 
-    for root, _, files in os.walk(export_root):
-        for f in files:
-            if f.lower().endswith(".json"):
-                try:
-                    file_path = os.path.join(root, f)
-                    with open(file_path, "r", encoding="utf-8") as jf:
-                        data = json.load(jf)
-                        summary = data.get("summary", {})
-                        enabler = (summary.get("enabler") or "KM").upper()
-                        check_user_permission(current_user, tenant, enabler)
+    # 3. เริ่มสแกนไฟล์ JSON ตามรายการปีที่เจอ
+    for y in search_years:
+        export_root = get_tenant_year_export_root(tenant, y)
+        
+        if not os.path.exists(export_root):
+            continue
 
-                        history_list.append({
-                            "record_id": data.get("record_id") or summary.get("record_id") or f.rsplit('.', 1)[0],
-                            "date": parse_safe_date(summary.get("export_timestamp"), file_path),
-                            "tenant": tenant,
-                            "year": str(year),
-                            "enabler": enabler,
-                            "scope": summary.get("sub_criteria_id", "ALL"),
-                            "level": f"L{summary.get('highest_pass_level_overall', summary.get('highest_pass_level', 0))}",
-                            "score": round(float(summary.get("Total Weighted Score Achieved", summary.get("achieved_weight", 0.0))), 2),
-                            "status": "COMPLETED"
-                        })
-                except Exception as e:
-                    logger.error(f"Error reading history file {f}: {e}")
+        for root, _, files in os.walk(export_root):
+            for f in files:
+                if f.lower().endswith(".json"):
+                    try:
+                        file_path = os.path.join(root, f)
+                        with open(file_path, "r", encoding="utf-8") as jf:
+                            data = json.load(jf)
+                            summary = data.get("summary", {})
+                            enabler = (summary.get("enabler") or "KM").upper()
+                            
+                            # เช็คสิทธิ์ราย Enabler (ถ้าพังให้ข้ามไฟล์นี้ไป)
+                            try:
+                                check_user_permission(current_user, tenant, enabler)
+                            except:
+                                continue
 
+                            history_list.append({
+                                "record_id": data.get("record_id") or summary.get("record_id") or f.rsplit('.', 1)[0],
+                                "date": parse_safe_date(summary.get("export_timestamp"), file_path),
+                                "tenant": tenant,
+                                "year": y,
+                                "enabler": enabler,
+                                "scope": summary.get("sub_criteria_id", "ALL"),
+                                "level": f"L{summary.get('highest_pass_level_overall', summary.get('highest_pass_level', 0))}",
+                                "score": round(float(summary.get("Total Weighted Score Achieved", summary.get("achieved_weight", 0.0))), 2),
+                                "status": "COMPLETED"
+                            })
+                    except Exception as e:
+                        logger.error(f"Error reading history file {f} in year {y}: {e}")
+
+    # 4. เรียงลำดับตามวันที่ (ใหม่ไปเก่า)
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 # --- แก้ไขส่วน Start Assessment Request ---
