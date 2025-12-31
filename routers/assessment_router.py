@@ -168,10 +168,10 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันแยกหลักฐานตาม Level: 
-    1. เพิ่ม 'grouped_sources' แยกหมวดหมู่ L1-L5
-    2. แก้ Bug 'lv' undefined ใน Roadmap
-    3. ส่ง 'document_uuid' ครบถ้วนสำหรับการเปิด Preview
+    เวอร์ชันแก้ไขสมบูรณ์:
+    1. แก้ไข NameError: total_score is not defined
+    2. Hybrid Logic: รวม 'ผลวิเคราะห์จริง' กับ 'รายละเอียดเกณฑ์ (Context)'
+    3. จัดการข้อมูล summary_thai ที่มีหลายจุดโดยเลือกก้อนที่สมบูรณ์ที่สุด
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -180,12 +180,15 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     radar_data = []
     strengths = []
 
-    # --- 1. ดึงค่า Metrics พื้นฐาน ---
-    total_expected = int(summary.get("total_subcriteria") or 0)
+    # --- 1. Metrics & Score Calculation (จุดที่ต้องมีเพื่อแก้ NameError) ---
+    total_score = round(float(summary.get("Total Weighted Score Achieved") or summary.get("achieved_weight") or 0.0), 2)
+    full_score_all = round(float(summary.get("Total Possible Weight") or 40.0), 2)
+    
+    total_expected = int(summary.get("total_subcriteria") or 12)
     passed_count = int(summary.get("total_subcriteria_assessed") or len(sub_results))
-    completion_rate = float(summary.get("percentage_achieved_run") or 0.0)
+    completion_rate = (passed_count / total_expected * 100) if total_expected > 0 else 0.0
+    
     overall_level = summary.get("Overall Maturity Level (Weighted)") or f"L{summary.get('highest_pass_level', 0)}"
-    total_score = round(float(summary.get("Overall Maturity Score (Avg.)") or summary.get("Total Weighted Score Achieved") or 0.0), 2)
     enabler_name = (summary.get("enabler") or "N/A").upper()
 
     for res in sub_results:
@@ -193,6 +196,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         cname = res.get("sub_criteria_name", f"เกณฑ์ย่อย {cid}")
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
+        
+        # คะแนนรายข้อ
+        current_sub_score = round(float(res.get("weighted_score", 0.0)), 2)
+        current_sub_full = round(float(res.get("weight", 0.0)), 2)
 
         # --- 2. สร้าง PDCA Matrix ---
         pdca_matrix = []
@@ -215,21 +222,16 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     "reason": "ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
                 })
 
-        # --- 3. จัดกลุ่ม Sources แยกตาม Level (หัวใจสำคัญ) ---
+        # --- 3. จัดกลุ่ม Sources (ชื่อไฟล์จริง) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
-        
         for ref in raw_levels_list:
             lv_key = str(ref.get("level"))
             seen_in_lv = set()
-            
-            # วนลูปหลักฐานที่ engine พบในระดับ (Level) นั้นๆ
             for source in ref.get("temp_map_for_level", []):
-                fname = source.get('filename') or source.get('source') or "Unknown Document"
+                fname = source.get('source_filename') or source.get('source') or source.get('filename') or "Unknown Document"
                 pnum = str(source.get('page_number') or source.get('page') or "1")
                 d_uuid = source.get('document_uuid') or source.get('doc_id')
-                
-                if not d_uuid: continue # ข้ามถ้าไม่มี UUID
-                
+                if not d_uuid: continue
                 doc_key = f"{fname}-{pnum}"
                 if doc_key not in seen_in_lv:
                     grouped_sources[lv_key].append({
@@ -254,7 +256,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                         "recommendation": act.get("recommendation", ""),
                         "steps": [
                             {
-                                "step": str(s.get("step") or s.get("step_number") or i+1),
+                                "step": str(s.get("step") or i+1),
                                 "description": s.get("description", ""),
                                 "responsible": s.get("responsible", "หน่วยงานที่เกี่ยวข้อง")
                             } for i, s in enumerate(act.get("steps", []))
@@ -263,23 +265,63 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 ]
             })
 
-        # --- 5. สรุปจุดแข็ง ---
-        if highest_pass >= 3:
-            strengths.append(f"เกณฑ์ {cid}: บรรลุระดับ L{highest_pass} พร้อมหลักฐานที่ชัดเจน")
+        # --- 5. Hybrid Summary Logic (ปรับปรุงตามคำขอ: แยกผลวิเคราะห์จากไฟล์จริง) ---
+        
+        # 1. ดึง "ผลวิเคราะห์หลักฐาน" (Analysis)
+        # วน Loop ถอยหลังเพื่อหาเหตุผลจากระดับสูงสุดที่สอบผ่าน และต้องมี Source อ้างอิง
+        evidence_analysis = ""
+        if pdca_matrix:
+            for m in reversed(pdca_matrix):
+                r_text = m.get("reason", "")
+                if "[Source:" in r_text or "[อ้างอิง:" in r_text:
+                    evidence_analysis = r_text
+                    break
 
+        # 2. ดึง "รายละเอียดเกณฑ์" (Context)
+        # ดึงจาก summary_thai ระดับ sub-criteria (ขุมทรัพย์ข้อมูล L1-L5 ที่ยาว 10-12 บรรทัด)
+        context_criteria = res.get("summary_thai") or ""
+
+        # 3. รวมร่าง (Hybrid Merge)
+        # จัด Format ให้สวยงามพร้อมใช้ ReactMarkdown ใน Frontend
+        if evidence_analysis and context_criteria:
+            # ตรวจสอบเบื้องต้นเผื่อข้อมูลซ้ำซ้อน
+            if evidence_analysis[:40] in context_criteria:
+                sthai = context_criteria
+            else:
+                sthai = (
+                    "**ผลการวิเคราะห์หลักฐาน:**\n"
+                    f"{evidence_analysis}\n\n"
+                    "**รายละเอียดเกณฑ์อ้างอิง (Context):**\n"
+                    f"{context_criteria}"
+                )
+        else:
+            sthai = evidence_analysis or context_criteria or "ไม่พบข้อมูลสรุปผลวิเคราะห์"
+
+        # --- 6. GAP Analysis (รวมจาก Action Plan ถ้าฟิลด์ GAP ว่าง) ---
+        gap_data = res.get("gap_analysis") or res.get("gap") or ""
+        if not gap_data.strip() and ui_roadmap:
+            gap_list = []
+            for phase in ui_roadmap:
+                for task in phase.get("tasks", []):
+                    if task.get("recommendation"):
+                        gap_list.append(f"L{task['level']}: {task['recommendation']}")
+            gap_data = "\n".join(gap_list)
+
+        # เพิ่มลงใน List เพื่อส่งออกไปที่ UI
         processed_sub_criteria.append({
             "code": cid,
             "name": cname,
             "level": f"L{highest_pass}",
-            "score": round(float(res.get("weighted_score", 0.0)), 2),
+            "score": current_sub_score,
+            "full_score": current_sub_full,
             "progress_percent": int((highest_pass / 5) * 100),
-            "pdca_matrix": pdca_matrix, # ต้องมีค่า P, D, C, A เป็น 0 หรือ 1
+            "pdca_matrix": pdca_matrix,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
-            "summary_thai": res.get("summary_thai", ""), # ใช้ชื่อนี้เป็นหลัก
-            "gap": res.get("gap_analysis", "")
+            "summary_thai": sthai.strip(),
+            "gap": gap_data.strip()
         })
-                
+
         radar_data.append({"axis": cid, "value": int(highest_pass)})
 
     return {
@@ -290,10 +332,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "enabler": enabler_name,
         "level": overall_level,
         "score": total_score,
+        "full_score": full_score_all,
         "metrics": {
             "total_criteria": total_expected,
             "passed_criteria": passed_count,
-            "completion_rate": int(completion_rate)
+            "completion_rate": round(completion_rate, 2)
         },
         "radar_data": radar_data,
         "strengths": list(dict.fromkeys(strengths)) if strengths else ["โครงสร้างพื้นฐานมีความพร้อม"],
