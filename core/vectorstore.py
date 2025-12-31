@@ -186,30 +186,50 @@ class HuggingFaceCrossEncoderCompressor(BaseDocumentCompressor):
 
     def compress_documents(
         self,
-        documents: Sequence[LcDocument],
+        documents: Sequence[Document],
         query: str,
         callbacks: Optional[Any] = None,
-        **kwargs  # ใช้ **kwargs เพื่อดักจับ parameter ที่ส่งมาเกิน (เช่น top_n)
-    ) -> Sequence[LcDocument]:
+        **kwargs
+    ) -> Sequence[Document]:
+        """
+        ทำการ Rerank เอกสารโดยใช้ Cross-Encoder และเก็บคะแนนลงใน Metadata
+        """
         if not self._cross_encoder or not documents:
             return documents
 
-        # ดึง top_n จาก kwargs ถ้ามี ถ้าไม่มีใช้ค่า default ของ class
+        # 1. เตรียมพารามิเตอร์
         effective_top_n = kwargs.get("top_n", self.top_n)
         current_top_n = min(len(documents), effective_top_n)
 
+        # 2. สร้าง Pairs สำหรับการทำ Prediction
         pairs = [[query, doc.page_content] for doc in documents]
-        scores = self._cross_encoder.predict(pairs)
+        
+        try:
+            # 3. คำนวณคะแนน (รองรับทั้งภาษาไทยและอังกฤษด้วย v2-m3)
+            scores = self._cross_encoder.predict(pairs)
+            
+            ranked_docs = []
+            for doc, score in zip(documents, scores):
+                if doc.metadata is None: 
+                    doc.metadata = {}
+                
+                # แปลงค่าเป็น float มาตรฐาน
+                s_val = float(score)
+                
+                # 🎯 เก็บเข้า Metadata (ใช้หลาย Key เพื่อความชัวร์ว่า Engine จะดึงเจอ)
+                doc.metadata["rerank_score"] = s_val
+                doc.metadata["score"] = s_val
+                
+                ranked_docs.append(doc)
 
-        ranked_docs = []
-        for doc, score in zip(documents, scores):
-            # ตรวจสอบว่า metadata ไม่เป็น None
-            if doc.metadata is None: doc.metadata = {}
-            doc.metadata["rerank_score"] = float(score)
-            ranked_docs.append(doc)
+            # 4. เรียงลำดับจากคะแนนมากไปน้อย
+            ranked_docs.sort(key=lambda x: x.metadata.get("rerank_score", -99.0), reverse=True)
+            
+            return ranked_docs[:current_top_n]
 
-        ranked_docs.sort(key=lambda x: x.metadata["rerank_score"], reverse=True)
-        return ranked_docs[:current_top_n]
+        except Exception as e:
+            logger.error(f"❌ Error during Reranking process: {e}")
+            return documents[:current_top_n]
 
 
 # -------------------- Global Reranker Singleton --------------------
@@ -1194,30 +1214,42 @@ class VectorStoreManager:
             return None
 
         # --- [INTERNAL HELPER: Reranker Wrapper] ---
-        def retrieve_with_rerank(docs: List[LcDocument], query: str) -> List[LcDocument]:
+        def retrieve_with_rerank(docs: List[Document], query: str) -> List[Document]:
+            """
+            Wrapper สำหรับเรียกใช้ Global Reranker และจัดการ Log คะแนน
+            """
             reranker = get_global_reranker()
-            # ตรวจสอบเงื่อนไข Rerank (ใช้ค่าที่ส่งมาจาก Parameter)
+            
+            # ตรวจสอบว่าเปิดใช้ Rerank และมีตัวแปรพร้อมหรือไม่
             if not (use_rerank and reranker and hasattr(reranker, "compress_documents")):
                 return docs[:final_k]
 
             try:
-                # เรียกใช้ Compressor ที่พี่นิยามไว้ด้านบน
+                # 1. เรียกใช้ Compressor (ซึ่งจะใส่คะแนนลง metadata ให้เราแล้ว)
                 reranked = reranker.compress_documents(documents=docs, query=query, top_n=final_k)
                 
-                # จัดการ Metadata และ Score สำหรับการ Debug (ตาม Logic เดิมของพี่)
-                scores = getattr(reranker, "scores", None)
-                if scores and len(scores) >= len(reranked):
-                    for i, r_doc in enumerate(reranked):
-                        score_val = float(scores[i]) if scores[i] is not None else 0.0
-                        r_doc.metadata["_rerank_score_force"] = score_val
-                        orig = r_doc.metadata.get("source_filename", "UNKNOWN")
-                        if "|SCORE:" not in orig:
-                            r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score_val:.4f}"
+                # 2. จัดการ Metadata และ Score สำหรับการตรวจสอบ (Debug)
+                for r_doc in reranked:
+                    # ดึงคะแนนที่เราเพิ่งใส่ไว้ในขั้นตอนที่ 1
+                    score_val = r_doc.metadata.get("rerank_score", 0.0)
+                    
+                    # บันทึกคะแนนลงในชื่อไฟล์เพื่อให้เห็นใน Log หรือ Report
+                    orig = r_doc.metadata.get("source_filename", "UNKNOWN")
+                    if "|SCORE:" not in orig:
+                        r_doc.metadata["source_filename"] = f"{orig}|SCORE:{score_val:.4f}"
+                    
+                    # เก็บค่าลง Key สำรองเพื่อความปลอดภัย
+                    r_doc.metadata["_rerank_score_force"] = score_val
                 
-                logger.info(f"✅ Reranking success: kept {len(reranked)} docs")
+                # 3. พ่น Log เพื่อให้เรารู้ว่า Reranker ทำงานได้จริง ไม่ใช่ 0.0000
+                if reranked:
+                    top_score = reranked[0].metadata.get("rerank_score", 0.0)
+                    logger.info(f"✅ Reranking success: kept {len(reranked)} docs | Top Score: {top_score:.4f}")
+                
                 return reranked
+
             except Exception as e:
-                logger.warning(f"⚠️ Rerank failed: {e}, fallback to raw top_k")
+                logger.warning(f"⚠️ Rerank failed: {e}, falling back to raw top_k")
                 return docs[:final_k]
 
         # 2. เตรียม Vector Retriever พื้นฐาน

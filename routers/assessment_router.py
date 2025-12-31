@@ -265,10 +265,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 ]
             })
 
-        # --- 5. Hybrid Summary Logic (ปรับปรุงตามคำขอ: แยกผลวิเคราะห์จากไฟล์จริง) ---
-        
+        # --- 5. Hybrid Summary Logic ---
+
         # 1. ดึง "ผลวิเคราะห์หลักฐาน" (Analysis)
-        # วน Loop ถอยหลังเพื่อหาเหตุผลจากระดับสูงสุดที่สอบผ่าน และต้องมี Source อ้างอิง
+        # วนถอยหลังใน pdca_matrix เพื่อหาเหตุผลจากระดับสูงสุดที่ผ่าน และมี Source อ้างอิง
         evidence_analysis = ""
         if pdca_matrix:
             for m in reversed(pdca_matrix):
@@ -278,22 +278,15 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     break
 
         # 2. ดึง "รายละเอียดเกณฑ์" (Context)
-        # ดึงจาก summary_thai ระดับ sub-criteria (ขุมทรัพย์ข้อมูล L1-L5 ที่ยาว 10-12 บรรทัด)
+        # ดึงจาก summary_thai ระดับ sub-criteria (ขุมทรัพย์ 10-12 บรรทัดที่มี อก./อฝ./ผชก.)
         context_criteria = res.get("summary_thai") or ""
 
-        # 3. รวมร่าง (Hybrid Merge)
-        # จัด Format ให้สวยงามพร้อมใช้ ReactMarkdown ใน Frontend
+        # 3. รวมร่าง (Hybrid)
         if evidence_analysis and context_criteria:
-            # ตรวจสอบเบื้องต้นเผื่อข้อมูลซ้ำซ้อน
             if evidence_analysis[:40] in context_criteria:
                 sthai = context_criteria
             else:
-                sthai = (
-                    "**ผลการวิเคราะห์หลักฐาน:**\n"
-                    f"{evidence_analysis}\n\n"
-                    "**รายละเอียดเกณฑ์อ้างอิง (Context):**\n"
-                    f"{context_criteria}"
-                )
+                sthai = f"**ผลการวิเคราะห์หลักฐาน:**\n{evidence_analysis}\n\n**รายละเอียดเกณฑ์อ้างอิง (Context):**\n{context_criteria}"
         else:
             sthai = evidence_analysis or context_criteria or "ไม่พบข้อมูลสรุปผลวิเคราะห์"
 

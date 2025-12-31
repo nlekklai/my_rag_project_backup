@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # --- Ollama Service ---
+  ollama_service:
+    image: ollama/ollama:latest
+    container_name: ollama_container
+    volumes:
+      - ./ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # --- Backend Service ---
+  backend:
+    build: .
+    container_name: rag_backend
+    volumes:
+      - .:/app
+      - ./data_store:/app/data_store
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      - OLLAMA_BASE_URL=http://ollama_service:11434
+      - RAG_RUN_MODE=PRODUCTION
+      - LLM_BACKEND=OLLAMA
+      - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
+      - DEVICE=cuda
+      # --- เพิ่มค่านี้เพื่อป้องกัน VRAM Fragmentation และช่วยให้จอง Memory ได้ยืดหยุ่นขึ้น ---
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - TZ=Asia/Bangkok
+    depends_on:
+      - ollama_service
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000" 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+networks:
+  default:
+    name: rag_network

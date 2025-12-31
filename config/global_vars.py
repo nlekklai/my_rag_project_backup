@@ -94,8 +94,8 @@ EMBEDDING_ENCODE_KWARGS: Final[Dict] = {
 # Hybrid Search Configuration
 # ================================================================
 USE_HYBRID_SEARCH: Final[bool] = True
-HYBRID_VECTOR_WEIGHT: Final[float] = 0.7
-HYBRID_BM25_WEIGHT: Final[float] = 0.3
+HYBRID_VECTOR_WEIGHT: Final[float] = 0.6
+HYBRID_BM25_WEIGHT: Final[float] = 0.4
 
 
 # ================================================================
@@ -120,7 +120,7 @@ FINAL_K_RERANKED: Final[int] = int(os.environ.get("FINAL_K_RERANKED", "15"))
 FINAL_K_NON_RERANKED: Final[int] = 7
 
 
-RERANK_THRESHOLD: Final[float] = 0.5
+RERANK_THRESHOLD: Final[float] = 0.35
 MIN_RETRY_SCORE: Final[float] = 0.50
 MAX_RETRIEVAL_ATTEMPTS: Final[int] = 3
 
