@@ -67,14 +67,20 @@ def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
         return datetime.now(tz).isoformat()
 
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
-    export_root = get_tenant_year_export_root(current_user.tenant, current_user.year)
+    # แก้ไข: แทนที่จะหาแค่ปีเดียว ให้หาจาก Root ของ Tenant เลย
+    sample_path = get_tenant_year_export_root(current_user.tenant, "2568")
+    tenant_export_root = os.path.dirname(sample_path)
+    
     norm_search = _n(search_id).lower()
 
-    for root, _, files in os.walk(export_root):
-        for f in files:
-            if f.endswith(".json") and norm_search in _n(f).lower():
-                return os.path.join(root, f)
-    raise HTTPException(status_code=404, detail="ไม่พบไฟล์ผลการประเมิน")
+    if os.path.exists(tenant_export_root):
+        # สแกนทุกโฟลเดอร์ (รวมถึงโฟลเดอร์ย่อยที่เป็นปีต่างๆ)
+        for root, _, files in os.walk(tenant_export_root):
+            for f in files:
+                if f.endswith(".json") and norm_search in _n(f).lower():
+                    return os.path.join(root, f)
+                    
+    raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์ผลการประเมิน ID: {search_id}")
 
 
 @assessment_router.get("/evidence/{doc_type}/{document_uuid}")
@@ -324,19 +330,30 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 # ------------------- API Endpoints -------------------
 @assessment_router.get("/status/{record_id}")
 async def get_assessment_status(record_id: str, current_user: UserMe = Depends(get_current_user)):
+    # 1. เช็คใน Memory ก่อน (งานที่กำลังรัน)
     if record_id in ACTIVE_TASKS:
         return ACTIVE_TASKS[record_id]
 
+    # 2. ถ้าไม่อยู่ใน Memory ให้ไปหาใน Disk (งานที่เสร็จแล้ว)
+    # ฟังก์ชันนี้จะสแกนหาทุกปีให้เอง
     file_path = _find_assessment_file(record_id, current_user)
-    with open(file_path, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
 
-    enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
-    check_user_permission(current_user, current_user.tenant, enabler)
+        # ดึงข้อมูล Enabler มาเช็ค Permission
+        summary = raw_data.get("summary", {})
+        enabler = (summary.get("enabler") or "KM").upper()
+        tenant = summary.get("tenant") or current_user.tenant
+        
+        check_user_permission(current_user, tenant, enabler)
 
-    return _transform_result_for_ui(raw_data, current_user)
-
-# ในไฟล์ assessment_router.py
+        # แปลงข้อมูลส่งให้ UI
+        return _transform_result_for_ui(raw_data, current_user)
+    except Exception as e:
+        logger.error(f"Error loading status for {record_id}: {e}")
+        raise HTTPException(status_code=500, detail="ไม่สามารถอ่านไฟล์ผลการประเมินได้")
 
 @assessment_router.get("/history")
 async def get_assessment_history(
