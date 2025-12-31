@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from routers.auth_router import UserMe, get_current_user
-from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping, get_document_file_path
+from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping, get_document_file_path, get_vectorstore_collection_path
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
@@ -65,21 +65,6 @@ def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
     except:
         # กรณีผิดพลาดให้ใช้เวลาปัจจุบันที่เป็น Thai Timezone
         return datetime.now(tz).isoformat()
-
-def clean_suggestion(raw_val: Any) -> str:
-    if not raw_val:
-        return "ไม่มีข้อเสนอแนะเพิ่มเติม"
-    if isinstance(raw_val, dict):
-        return raw_val.get('description', str(raw_val))
-    if isinstance(raw_val, str):
-        raw_val = raw_val.strip()
-        if raw_val.startswith('{'):
-            try:
-                data = json.loads(raw_val.replace("'", '"'))
-                return data.get('description', raw_val)
-            except:
-                pass
-    return raw_val
 
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     export_root = get_tenant_year_export_root(current_user.tenant, current_user.year)
@@ -396,21 +381,71 @@ async def start_assessment(
     background_tasks: BackgroundTasks, 
     current_user: UserMe = Depends(get_current_user)
 ):
-    # 1. ตรวจสอบสิทธิ์ (Enabler ต้องเป็นตัวใหญ่)
+    """
+    Endpoint สำหรับเริ่มการประเมิน 
+    - ตรวจสอบสิทธิ์
+    - ตรวจสอบความพร้อมของ Vectorstore บน Disk ก่อนรัน
+    - ส่งงานเข้า Background Task
+    """
+    # 1. ปรับ Format และดึงค่าพื้นฐาน
     enabler_uc = request.enabler.upper()
-    check_user_permission(current_user, request.tenant, enabler_uc)
-
-    # 2. จัดการ Year: ถ้าไม่ส่งมาให้ใช้จาก User หรือ Default
-    # สำคัญ: ต้องเป็น string สำหรับ path_utils
+    # บังคับ Year เป็น String เพื่อใช้ใน path_utils และป้องกัน Error บน Mac/Linux
     target_year = str(request.year).strip() if request.year else str(current_user.year or DEFAULT_YEAR)
-    
-    # 3. จัดการ Sub-criteria: ถ้าว่างให้เป็น "all"
     target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
 
-    # 4. สร้าง Record ID
+    # 2. ตรวจสอบสิทธิ์ผู้ใช้งาน (Tenant และ Enabler)
+    check_user_permission(current_user, request.tenant, enabler_uc)
+
+    # --- [ส่วน ERROR DETECTION: Pre-flight Resource Check] ---
+    
+    # ใช้ path_utils เพื่อหา Path ที่ระบบคาดหวัง
+    # หมายเหตุ: นำเข้า get_vectorstore_collection_path จาก utils.path_utils
+    from utils.path_utils import get_vectorstore_collection_path, get_vectorstore_tenant_root_path
+
+    vs_path = get_vectorstore_collection_path(
+        tenant=request.tenant,
+        year=target_year,
+        doc_type="evidence",
+        enabler=enabler_uc
+    )
+
+    # A. ตรวจสอบว่า Path ของ Vectorstore มีอยู่จริงหรือไม่
+    if not os.path.exists(vs_path):
+        # กรณีหาไม่เจอ ให้สแกนหาตัวเลือกอื่นที่ใกล้เคียงเพื่อแจ้ง User
+        vs_tenant_root = get_vectorstore_tenant_root_path(request.tenant)
+        available_info = ""
+        
+        if os.path.exists(vs_tenant_root):
+            # ลองหาว่าปีอื่นๆ มีข้อมูลไหม
+            years = [d for d in os.listdir(vs_tenant_root) if os.path.isdir(os.path.join(vs_tenant_root, d))]
+            if years:
+                available_info = f" ปีที่มีข้อมูลในระบบคือ: {', '.join(years)}"
+            else:
+                available_info = " ระบบยังไม่มีข้อมูลปีใดๆ เลย โปรด Ingest ข้อมูลก่อน"
+        
+        logger.error(f"❌ Pre-flight failed: Vectorstore not found at {vs_path}")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"ไม่พบฐานข้อมูล {enabler_uc} ของปี {target_year}.{available_info}"
+        )
+
+    # B. ตรวจสอบเบื้องต้นว่ามีไฟล์ Database หรือไม่ (ป้องกันโฟลเดอร์เปล่า)
+    db_file = os.path.join(vs_path, "chroma.sqlite3")
+    if not os.path.exists(db_file):
+        # บางครั้ง ChromaDB เก็บในรูปแบบโฟลเดอร์ UUID ให้เช็คว่ามีโฟลเดอร์ข้างในไหม
+        sub_dirs = [d for d in os.listdir(vs_path) if os.path.isdir(os.path.join(vs_path, d))]
+        if not sub_dirs:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"โฟลเดอร์ฐานข้อมูล {enabler_uc} ปี {target_year} ว่างเปล่า โปรดตรวจสอบการ Ingest"
+            )
+
+    # --------------------------------------------------------
+
+    # 3. สร้าง Record ID (Stable-like แต่เป็นสุ่มสำหรับ Session นี้)
     record_id = uuid.uuid4().hex[:12]
     
-    # 5. บันทึกลง ACTIVE_TASKS เพื่อให้ UI ดึงสถานะได้ทันที
+    # 4. บันทึกลง ACTIVE_TASKS เพื่อให้ Frontend ติดตามสถานะได้ทันที
     ACTIVE_TASKS[record_id] = {
         "status": "RUNNING",
         "record_id": record_id,
@@ -420,38 +455,33 @@ async def start_assessment(
         "progress_message": f"กำลังเริ่มการประเมิน {enabler_uc} ปี {target_year}..."
     }
 
-    # 6. เรียก Background Task (ระบุชื่อตัวแปรให้ชัดเจนป้องกันลำดับสลับ)
+    # 5. เรียก Background Task (ส่งค่าที่เป็น String ทั้งหมด เพื่อความเสถียรของ Path)
     background_tasks.add_task(
         run_assessment_engine_task,
         record_id=record_id,
         tenant=request.tenant,
-        year=int(target_year), # แปลงเป็น int สำหรับ Engine บางส่วนที่ต้องการเลข
+        year=target_year,  # มั่นใจว่าเป็น String แน่นอน
         enabler=enabler_uc,
         sub_id=target_sub,
         sequential=request.sequential_mode
     )
 
+    logger.info(f"✅ Assessment Task Started: {record_id} ({enabler_uc} {target_year})")
     return {"record_id": record_id, "status": "RUNNING"}
-
 
 async def run_assessment_engine_task(
     record_id: str, 
     tenant: str, 
-    year: int, 
+    year: str,  # แก้ Type Hint เป็น str
     enabler: str, 
     sub_id: str, 
     sequential: bool
 ):
-    """
-    Background Task สำหรับรัน Engine
-    ปรับปรุง: ตรวจสอบสถานะ FAILED จาก Engine เพื่อป้องกันการส่งข้อมูลผิดพลาดไปหน้า UI
-    """
     try:
-        # 1. เตรียมข้อมูลพื้นฐาน
-        str_year = str(year)
-        logger.info(f"🚀 [TASK START] Record: {record_id} | Enabler: {enabler} | Sub-ID: {sub_id}")
+        str_year = year # ใช้ง่ายๆ ไม่ต้องแปลง
+        logger.info(f"🚀 [TASK START] Record: {record_id} | Enabler: {enabler} | Sub-ID: {sub_id} | Year: {str_year}")
 
-        # 2. Load Vectorstores
+        # 1. Load Vectorstores (ใช้ str_year เข้าไปหา Path)
         vsm = await asyncio.to_thread(
             load_all_vectorstores,
             doc_types=EVIDENCE_DOC_TYPES,
@@ -460,7 +490,7 @@ async def run_assessment_engine_task(
             year=str_year
         )
         
-        # 3. Load Document Mapping
+        # 2. Load Document Mapping
         doc_map_raw = await asyncio.to_thread(
             load_doc_id_mapping, 
             EVIDENCE_DOC_TYPES, 
@@ -470,20 +500,9 @@ async def run_assessment_engine_task(
         )
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
-        # 4. Create LLM Instance
-        llm = await asyncio.to_thread(
-            create_llm_instance, 
-            model_name=DEFAULT_LLM_MODEL_NAME, 
-            temperature=0.0
-        )
-        
-        # 5. Initialize Engine
-        config = AssessmentConfig(
-            enabler=enabler, 
-            tenant=tenant, 
-            year=str_year,
-            force_sequential=sequential
-        )
+        # 3. Create LLM & Engine
+        llm = await asyncio.to_thread(create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
+        config = AssessmentConfig(enabler=enabler, tenant=tenant, year=str_year, force_sequential=sequential)
 
         engine = SEAMPDCAEngine(
             config=config,
@@ -494,8 +513,7 @@ async def run_assessment_engine_task(
             document_map=doc_map
         )
 
-        # 6. Execution: รันการประเมินและเก็บผลลัพธ์เพื่อตรวจสอบ Error
-        # เราใช้ asyncio.to_thread เพราะ Engine ทำงานเป็น Synchronous/CPU Bound
+        # 4. Execution
         result = await asyncio.to_thread(
             engine.run_assessment, 
             target_sub_id=sub_id, 
@@ -506,18 +524,14 @@ async def run_assessment_engine_task(
             document_map=doc_map
         )
 
-        # 7. ตรวจสอบสถานะผลลัพธ์ (Critical Check)
         if isinstance(result, dict) and result.get("status") == "FAILED":
-            error_msg = result.get("error_message", "Engine reported an unspecified error")
-            logger.error(f"❌ [TASK FAILED] Record {record_id}: {error_msg}")
-            
+            error_msg = result.get("error_message", "Engine reported an error")
+            logger.error(f"❌ [TASK FAILED] {record_id}: {error_msg}")
             if record_id in ACTIVE_TASKS:
                 ACTIVE_TASKS[record_id]["status"] = "FAILED"
                 ACTIVE_TASKS[record_id]["error_message"] = error_msg
-                # เราไม่ลบออกจาก ACTIVE_TASKS เพื่อให้ UI แสดงหน้า Error ได้ถูก
             return
 
-        # 8. Success Cleanup: ลบออกจาก Task ที่กำลังทำงานเพื่อให้ API ไปอ่านจาก JSON จริง
         if record_id in ACTIVE_TASKS:
             del ACTIVE_TASKS[record_id]
             logger.info(f"✅ [TASK COMPLETED] Record: {record_id}")
