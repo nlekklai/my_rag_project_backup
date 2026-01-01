@@ -2979,15 +2979,13 @@ class SEAMPDCAEngine:
         sub_criteria: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [BEST REVISED v21.9.12 - FINAL STABLE]
-        - บังคับรักษา PDCA Breakdown และ Source Metadata แม้เป็น GAP_ONLY
-        - แก้ปัญหา Level 5 สีไม่ขึ้น (Opacity) และปุ่ม Source ไม่ปรากฏ
-        - คงระบบ Action Plan และ Scoring Logic ตามต้นฉบับ v21.9.10
+        [v21.9.15 - STABLE VERSION]
+        - แก้ปัญหา Source of Evidence หายในหน้า UI
+        - แก้ปัญหา PDCA Opaque (สีเขียวจาง) ไม่ขึ้นในช่อง GAP_ONLY
+        - แก้ Bug TypeError (dict + int) ใน Action Plan
         """
         # 📌 โหลด Global Constants
-        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {
-            1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}
-        })
+        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}})
         MAX_L1_ATTEMPTS = globals().get('MAX_L1_ATTEMPTS', 2)
         MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
 
@@ -3000,7 +2998,7 @@ class SEAMPDCAEngine:
         raw_results_for_sub_seq: List[Dict[str, Any]] = []
         start_ts = time.time() 
 
-        self.logger.info(f"[WORKER START] Assessing: {sub_id} - {sub_criteria_name}")
+        self.logger.info(f"[WORKER START] Assessing: {sub_id}")
         self.temp_map_for_save = {}
 
         # -----------------------------------------------------------
@@ -3014,13 +3012,18 @@ class SEAMPDCAEngine:
             sequential_chunk_uuids = [] 
             level_result = {}
 
-            # --- ประเมินแต่ละ Level ---
+            # --- ส่วนการประเมิน (คงเดิมจาก Original) ---
             if level >= 3:
                 wrapper = self.retry_policy.run(
                     fn=lambda attempt: self._run_single_assessment(
-                        sub_criteria, statement_data, self.vectorstore_manager, sequential_chunk_uuids, attempt
+                        sub_criteria=sub_criteria,
+                        statement_data=statement_data,
+                        vectorstore_manager=self.vectorstore_manager,
+                        sequential_chunk_uuids=sequential_chunk_uuids,
+                        attempt=attempt
                     ),
-                    level=level, statement=statement_data.get('statement', ''),
+                    level=level,
+                    statement=statement_data.get('statement', ''),
                     context_blocks={"sequential_chunk_uuids": sequential_chunk_uuids},
                     logger=self.logger
                 )
@@ -3028,83 +3031,89 @@ class SEAMPDCAEngine:
             else:
                 for attempt_num in range(1, MAX_L1_ATTEMPTS + 1):
                     level_result = self._run_single_assessment(
-                        sub_criteria, statement_data, self.vectorstore_manager, sequential_chunk_uuids, attempt_num
+                        sub_criteria=sub_criteria,
+                        statement_data=statement_data,
+                        vectorstore_manager=self.vectorstore_manager,
+                        sequential_chunk_uuids=sequential_chunk_uuids,
+                        attempt=attempt_num
                     )
                     if level_result.get('is_passed', False): break
 
-            # --- PROCESS RESULT ---
+            # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
             result_to_process = level_result or {"level": level, "is_passed": False}
             is_passed_llm = result_to_process.get('is_passed', False)
             
-            # 🟢 [CORE FIX 1] PDCA Repair: บังคับค่า P,D,C,A หากผ่านแต่ AI ส่ง 0 มา
+            # 🟢 [REPAIR] PDCA Repair Logic (ฉีดเพิ่มเพื่อแก้ปัญหาสีขาว)
             pdca_val = result_to_process.get('pdca_breakdown', {})
             if is_passed_llm and (not pdca_val or all(v == 0 for v in pdca_val.values())):
-                repaired_pdca = {"P": 1, "D": 0, "C": 0, "A": 0}
-                if level >= 2: repaired_pdca["D"] = 1
-                if level >= 3: repaired_pdca["C"] = 1
-                if level >= 4: repaired_pdca["A"] = 1
+                repaired_pdca = {"P": 1, "D": (1 if level >= 2 else 0), "C": (1 if level >= 3 else 0), "A": (1 if level >= 4 else 0)}
                 result_to_process['pdca_breakdown'] = repaired_pdca
 
-            # 🟢 [CORE FIX 2] Robust Evidence Tracking: บันทึกไฟล์หลักฐานลงระบบทันที
+            result_to_process.setdefault("is_counted", True)
+            result_to_process.setdefault("is_capped", False)
+
+            # 🟢 [SOURCE] บันทึก Evidence ลงระบบ (ฉีดเพิ่มเพื่อให้ Source ไม่หาย)
             level_temp_map = result_to_process.get("temp_map_for_level", [])
             if level_temp_map:
                 highest_rerank = result_to_process.get('max_relevant_score', 0.0)
-                # บันทึกลง Mapping หลักเสมอ เพื่อให้ระบบไฟล์อ้างอิงรู้จักไฟล์นี้
+                # บันทึกไฟล์เข้าสู่ระบบ Mapping
                 max_evi_str = self._save_level_evidences_and_calculate_strength(
-                    level_temp_map, sub_id, level, result_to_process, highest_rerank
+                    level_temp_map=level_temp_map,
+                    sub_id=sub_id,
+                    level=level,
+                    llm_result=result_to_process, 
+                    highest_rerank_score=highest_rerank 
                 )
-                # คำนวณความเข้มแข็งของหลักฐานเฉพาะตัวที่ผ่านตามลำดับ (Sequential)
+                # เก็บ Strength เฉพาะข้อที่ผ่าน Sequential จริง
                 if is_passed_llm and first_failed_level_local is None:
                     result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
                 else:
                     result_to_process['evidence_strength'] = 0.0
-            
-            result_to_process.setdefault("is_counted", True)
-            result_to_process.setdefault("is_capped", False)
                 
-            # --- 🟡 Update Sequential State (จุดสำคัญที่ทำให้ข้อมูลไม่หาย) ---
+            # --- 🟡 [SAFE UPDATE] Sequential State (ปรับปรุงจาก Original เพื่อรักษา Metadata) ---
             if first_failed_level_local is not None:
-                # ดึงค่าจริงที่ AI เจอ เก็บไว้ก่อนโดนสถานะ GAP_ONLY ทับ
-                actual_pdca = result_to_process.get('pdca_breakdown', {"P": 0, "D": 0, "C": 0, "A": 0})
-                actual_sources = result_to_process.get('temp_map_for_level', [])
+                # บังคับจำค่า Metadata ที่ AI เจอจริงก่อนเปลี่ยนสถานะเป็น GAP_ONLY
+                act_pdca = result_to_process.get('pdca_breakdown', {"P": 0, "D": 0, "C": 0, "A": 0})
+                act_src = result_to_process.get('temp_map_for_level', [])
                 
                 result_to_process.update({
                     "evaluation_mode": "GAP_ONLY",
                     "is_counted": False,
                     "is_passed": False,
-                    "pdca_breakdown": actual_pdca,      # คืนค่าให้ UI ระบายสีเขียวจาง
-                    "temp_map_for_level": actual_sources, # คืนค่าให้ UI แสดงปุ่มไฟล์
+                    "pdca_breakdown": act_pdca,      # <--- ช่วยให้สีเขียวจางขึ้น
+                    "temp_map_for_level": act_src,   # <--- ช่วยให้ปุ่ม Source ขึ้น
                     "cap_reason": f"Gap analysis after sequential fail at L{first_failed_level_local}"
                 })
             elif not is_passed_llm:
                 first_failed_level_local = level
-                self.logger.info(f"  > 🛑 Sequential FAIL at L{level}.")
             else:
                 if level == current_sequential_pass_level + 1:
                     current_sequential_pass_level = level
                 else:
                     if self.is_sequential:
                         first_failed_level_local = current_sequential_pass_level + 1
-                        result_to_process.update({"is_counted": False, "is_passed": False})
+                        result_to_process["is_counted"] = False
+                        result_to_process["is_passed"] = False
 
             result_to_process["execution_index"] = len(raw_results_for_sub_seq)
             raw_results_for_sub_seq.append(result_to_process)
         
         # -----------------------------------------------------------
-        # 2. CALCULATE SUMMARY & SCORING
+        # 2. CALCULATE SUMMARY (คงเดิม)
         # -----------------------------------------------------------
         highest_full_level = current_sequential_pass_level
         weighted_score = round(self._calculate_weighted_score(highest_full_level, sub_weight), 2)
         num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True))
 
         sub_summary = {
+            "num_statements": len(raw_results_for_sub_seq),
             "num_passed": num_passed,
             "num_failed": len(raw_results_for_sub_seq) - num_passed,
             "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
         }
 
         # -----------------------------------------------------------
-        # 3. GENERATE ACTION PLAN (คง Logic เดิมครบถ้วน)
+        # 3. GENERATE ACTION PLAN (คงเดิม แต่แก้ Bug Parameter)
         # -----------------------------------------------------------
         roadmap_target_level = self.config.target_level if hasattr(self.config, 'target_level') else 5
         statements_for_ap = []
@@ -3113,7 +3122,6 @@ class SEAMPDCAEngine:
         for r in raw_results_for_sub_seq:
             res_item = r.copy()
             res_item['statement_text'] = level_statements_map.get(res_item.get('level'), "")
-            
             if not res_item.get('is_passed', False):
                 res_item['recommendation_type'] = 'FAILED' if res_item.get('evaluation_mode') != "GAP_ONLY" else 'GAP_ANALYSIS'
                 statements_for_ap.append(res_item)
@@ -3123,7 +3131,7 @@ class SEAMPDCAEngine:
                     res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
                     statements_for_ap.append(res_item)
 
-        # ✅ FIX: ระบุชื่อ parameter เพื่อป้องกันการสลับตำแหน่งจนเกิด TypeError
+        # ✅ FIX: ระบุชื่อ parameter เพื่อป้องกัน TypeError (dict + int)
         action_plan_result = create_structured_action_plan(
             recommendation_statements=statements_for_ap,
             sub_id=sub_id,
@@ -3131,19 +3139,19 @@ class SEAMPDCAEngine:
             target_level=roadmap_target_level, 
             llm_executor=self.llm,
             logger=self.logger,
-            enabler_rules=self.contextual_rules_map  # ระบุชื่อชัดเจน จะไม่ไปทับ max_retries
+            enabler_rules=self.contextual_rules_map 
         )
-        
+
         # -----------------------------------------------------------
-        # 4. FINAL RESULTS AGGREGATION
+        # 4. FINAL RETURN
         # -----------------------------------------------------------
         final_temp_map = {}
+        # รวบรวม Source ของทุุก Level ที่รันผ่านมา
         for res in raw_results_for_sub_seq:
             lvl = res.get('level')
             for evi in res.get("temp_map_for_level", []):
                 f_id = evi.get("file_id") or evi.get("uuid")
                 if f_id:
-                    # คีย์สำหรับระบุตำแหน่งหลักฐานในรายงาน
                     final_temp_map[f"{sub_id}.{lvl}.{f_id}"] = evi
 
         final_sub_result = {
