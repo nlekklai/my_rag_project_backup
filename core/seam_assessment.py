@@ -3041,14 +3041,31 @@ class SEAMPDCAEngine:
 
             # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
             result_to_process = level_result or {"level": level, "is_passed": False}
+
+            # 🟢 [RESTORE] กู้คืนไฟล์จาก VectorStore ก่อนถ้า LLM ตอบไม่ครบ (กันปุ่ม Source หาย)
+            actual_found_files = result_to_process.get("temp_map_for_level", [])
+            if not actual_found_files and sequential_chunk_uuids:
+                actual_found_files = sequential_chunk_uuids
+
+            # 🟢 [REPAIR] PDCA Repair Logic (ฉีดเพิ่มเพื่อแก้ปัญหาสีขาวและ Metadata)
             is_passed_llm = result_to_process.get('is_passed', False)
-            
-            # 🟢 [REPAIR] PDCA Repair Logic (ฉีดเพิ่มเพื่อแก้ปัญหาสีขาว)
             pdca_val = result_to_process.get('pdca_breakdown', {})
-            if is_passed_llm and (not pdca_val or all(v == 0 for v in pdca_val.values())):
-                repaired_pdca = {"P": 1, "D": (1 if level >= 2 else 0), "C": (1 if level >= 3 else 0), "A": (1 if level >= 4 else 0)}
+            
+            # เช็คว่าถ้าไม่มีคะแนน PDCA เลย (ค่าว่างหรือเป็น 0 ทั้งหมด) ให้ซ่อมตาม Level
+            if not pdca_val or all(v == 0 for v in pdca_val.values()):
+                repaired_pdca = {
+                    "P": 1 if level >= 1 else 0,
+                    "D": 1 if level >= 2 else 0,
+                    "C": 1 if level >= 3 else 0,
+                    "A": 1 if level >= 4 else 0
+                }
                 result_to_process['pdca_breakdown'] = repaired_pdca
 
+            # บังคับใส่ไฟล์กลับเข้าไปเพื่อให้ UI มีปุ่ม Source
+            if actual_found_files:
+                result_to_process['temp_map_for_level'] = actual_found_files
+
+            # ตั้งค่า Metadata พื้นฐานที่จำเป็น
             result_to_process.setdefault("is_counted", True)
             result_to_process.setdefault("is_capped", False)
 
