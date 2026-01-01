@@ -1053,91 +1053,164 @@ def evaluate_with_llm(
     avoid_keywords: str = "",
     max_rerank_score: float = 0.0,
     max_evidence_strength: float = 10.0,
-    specific_contextual_rule: str = "N/A", # [ADDED] รับกฎพิเศษจาก Gatekeeper
+    specific_contextual_rule: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
-    """Standard Evaluation for L3+ with Contextual Rule Support."""
-    
-    # 🎯 ตัด Context ตาม Level เพื่อป้องกัน Token Overflow และความแม่นยำ
-    context_to_send_eval = _get_context_for_level(context, level)
-    
-    # ตรวจสอบ context ว่าง
-    failure_result = _check_and_handle_empty_context(context, sub_id, level)
-    if failure_result:
-        return failure_result
+    """
+    [ULTIMATE PRODUCTION v21.9.4] Standard Evaluation for L3+ 
+    - แก้ปัญหา Early FAIL + UnboundLocalError
+    - ไม่ Early FAIL ถ้า evidence แรง
+    - ส่ง Extraction Keys + final_llm_context + raw_response
+    - ทนทานสูงสุด รองรับ Expert Re-eval และ Post-process เต็มรูปแบบ
+    """
+    import logging
+    import json
 
-    # ดึงค่าจาก kwargs สำหรับกรณีมี Summary จาก Level ก่อนหน้า
-    baseline_summary = kwargs.get("baseline_summary", "")
-    aux_summary = kwargs.get("aux_summary", "")
+    logger = logging.getLogger(__name__)
 
-    # สร้าง User Prompt
+    # =================================================================
+    # 1. Context Preparation
+    # =================================================================
+    context_to_send_eval = _get_context_for_level(context, level) if context else ""
+
+    # 🎯 ไม่ Early FAIL อีกต่อไป — ให้ LLM ตัดสินเองแม้ context ว่างชั่วคราว
+    if not context_to_send_eval.strip():
+        logger.warning(
+            f"Context empty for {sub_id} L{level} - continuing evaluation "
+            f"(Evidence Strength: {max_evidence_strength:.1f}/10.0)"
+        )
+
+    # =================================================================
+    # 2. Additional Summaries
+    # =================================================================
+    baseline_summary = kwargs.get("baseline_summary", "").strip()
+    aux_summary = kwargs.get("aux_summary", "").strip()
+
+    # =================================================================
+    # 3. Prompt Building (แก้ UnboundLocalError อย่างถาวร)
+    # =================================================================
+    # ตั้ง default system_prompt ก่อน try เสมอ
+    system_prompt = "You are an expert SE-AM auditor. Respond only with valid JSON."
+
     try:
         user_prompt = USER_ASSESSMENT_PROMPT.format(
             sub_criteria_name=sub_criteria_name,
             sub_id=sub_id,
             level=level,
-            pdca_phase=pdca_phase,
+            pdca_phase=pdca_phase or "ทั่วไป",
             statement_text=statement_text,
-            context=context_to_send_eval,
-            level_constraint=level_constraint,
+            context=context_to_send_eval[:32000],  # ป้องกัน token overflow
+            level_constraint=level_constraint or "ไม่มีข้อจำกัดเพิ่มเติม",
             must_include_keywords=must_include_keywords or "ไม่มี",
             avoid_keywords=avoid_keywords or "ไม่มี",
             max_rerank_score=f"{max_rerank_score:.4f}",
             max_evidence_strength=f"{max_evidence_strength:.1f}",
             target_score_threshold=kwargs.get("target_score_threshold", 2),
-            specific_contextual_rule=specific_contextual_rule # [ADDED] ส่งเข้า Prompt
-        )
-    except KeyError as e:
-        logging.error(f"Missing placeholder in prompt template: {e}")
-        user_prompt = (
-            f"เกณฑ์: {sub_criteria_name} (L{level})\n"
-            f"คำสั่งพิเศษ: {specific_contextual_rule}\n"
-            f"คำถาม: {statement_text}\n"
-            f"หลักฐาน: {context_to_send_eval}"
+            specific_contextual_rule=specific_contextual_rule.strip() if specific_contextual_rule != "N/A" else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
         )
 
-    if baseline_summary:
-        user_prompt += f"\n\n--- Baseline summary (จาก Level ก่อนหน้า): ---\n{baseline_summary}"
-    if aux_summary:
-        user_prompt += f"\n\n--- Auxiliary evidence summary: ---\n{aux_summary}"
+        # ฉีดกฎพิเศษเข้าไปชัดเจน
+        if specific_contextual_rule.strip() and specific_contextual_rule != "N/A":
+            user_prompt += f"\n\n=== กฎพิเศษสำหรับเกณฑ์นี้ (ต้องปฏิบัติตามอย่างเคร่งครัด) ===\n{specific_contextual_rule}\n=== สิ้นสุดกฎพิเศษ ==="
 
-    # System Prompt 
-    try:
+        # เพิ่ม summary จาก level ก่อนหน้า
+        if baseline_summary:
+            user_prompt += f"\n\n--- สรุปจากระดับก่อนหน้า (Baseline) ---\n{baseline_summary}"
+        if aux_summary:
+            user_prompt += f"\n\n--- สรุปหลักฐานเสริม (Auxiliary) ---\n{aux_summary}"
+
+        # ใช้ system_prompt จาก template ถ้าสำเร็จ
         system_prompt = SYSTEM_ASSESSMENT_PROMPT.format(
             max_evidence_strength=f"{max_evidence_strength:.1f}"
         )
-    except KeyError:
-        system_prompt = SYSTEM_ASSESSMENT_PROMPT
 
-    # ดึง Schema จาก Model (Pydantic)
+    except KeyError as e:
+        logger.error(f"Missing placeholder in prompt: {e}")
+        # system_prompt ยังคงเป็น default
+        user_prompt = (
+            f"เกณฑ์: {sub_criteria_name} (L{level})\n"
+            f"รหัส: {sub_id}\n"
+            f"กฎพิเศษ: {specific_contextual_rule}\n"
+            f"คำถาม: {statement_text}\n"
+            f"หลักฐาน: {context_to_send_eval[:15000]}"
+        )
+
+    # =================================================================
+    # 4. JSON Schema Enforcement
+    # =================================================================
     try:
         schema_json = json.dumps(CombinedAssessment.model_json_schema(), ensure_ascii=False, indent=2)
-    except Exception:
-        schema_json = '{"score": 0, "reason": "string", "is_passed": false, "P_Plan_Score": 0, "D_Do_Score": 0, "C_Check_Score": 0, "A_Act_Score": 0}'
+    except Exception as e:
+        logger.warning(f"Schema generation failed: {e}")
+        schema_json = '''
+        {
+          "score": 0.0,
+          "reason": "string",
+          "is_passed": false,
+          "P_Plan_Score": 0.0,
+          "D_Do_Score": 0.0,
+          "C_Check_Score": 0.0,
+          "A_Act_Score": 0.0
+        }
+        '''
 
-    system_prompt += "\n\n--- JSON SCHEMA ---\n" + schema_json + "\nIMPORTANT: Respond only with valid JSON."
+    system_prompt += f"\n\n--- REQUIRED JSON SCHEMA ---\n{schema_json}\n"
+    system_prompt += "\nCRITICAL: ตอบเฉพาะ JSON ที่ถูกต้องเท่านั้น"
 
-    # เรียก LLM Execution
+    # =================================================================
+    # 5. LLM Execution
+    # =================================================================
     try:
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        parsed = _robust_extract_json(raw)
-        
+        raw_response = _fetch_llm_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_retries=_MAX_LLM_RETRIES,
+            llm_executor=llm_executor
+        )
+
+        logger.info(f"Raw Response ({sub_id} L{level}): {raw_response[:600]}...")
+
+        parsed = _robust_extract_json(raw_response)
         if not isinstance(parsed, dict):
+            logger.warning(f"JSON parse failed for {sub_id} L{level} - using fallback")
             parsed = {}
 
-        return {
+        # =================================================================
+        # 6. Final Output — สอดคล้องกับ low_level
+        # =================================================================
+        result = {
             "score": float(parsed.get("score", 0.0)),
-            "reason": parsed.get("reason", "No reason provided."),
-            "is_passed": parsed.get("is_passed", False),
+            "reason": parsed.get("reason", "ไม่พบเหตุผลจากการวิเคราะห์").strip(),
+            "is_passed": bool(parsed.get("is_passed", False)),
             "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
             "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
             "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
             "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
+            # 🎯 เพิ่ม Extraction Keys
+            "Extraction_P": parsed.get("Extraction_P", parsed.get("หลักฐาน P", "-")),
+            "Extraction_D": parsed.get("Extraction_D", parsed.get("หลักฐาน D", "-")),
+            "Extraction_C": parsed.get("Extraction_C", parsed.get("หลักฐาน C", "-")),
+            "Extraction_A": parsed.get("Extraction_A", parsed.get("หลักฐาน A", "-")),
+            # 🎯 เก็บ Context สำหรับ Expert Re-eval
+            "final_llm_context": context_to_send_eval,
+            "raw_llm_response": raw_response[:2000]
         }
 
+        logger.info(f"Final Result {sub_id} L{level}: Score={result['score']:.1f} | Passed={result['is_passed']}")
+        return result
+
     except Exception as e:
-        logging.exception(f"evaluate_with_llm failed for {sub_id} L{level}: {e}")
-        return {"score": 0.0, "reason": f"LLM error: {str(e)}", "is_passed": False}
+        logger.exception(f"Critical failure in evaluate_with_llm for {sub_id} L{level}: {e}")
+        return {
+            "score": 0.0,
+            "reason": f"ระบบเกิดข้อผิดพลาด: {str(e)}",
+            "is_passed": False,
+            "P_Plan_Score": 0.0, "D_Do_Score": 0.0,
+            "C_Check_Score": 0.0, "A_Act_Score": 0.0,
+            "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
+            "final_llm_context": context_to_send_eval,
+            "raw_llm_response": ""
+        }
     
 # =========================
 # Patch for L1-L2 evaluation
@@ -1188,72 +1261,140 @@ def evaluate_with_llm_low_level(
     max_evidence_strength: float = 10.0,
     contextual_rules_map: Optional[Dict[str, Any]] = None,
     enabler_id: str = "KM",
-    specific_contextual_rule: str = "N/A", # [ADDED] รับกฎพิเศษ
+    specific_contextual_rule: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
-    """[REVISED v21.3] Evaluation for L1/L2 with Rule Injection."""
-    
-    # 1. Context Preparation
-    context_to_send_eval = _get_context_for_level(context, level)
-    failure_result = _check_and_handle_empty_context(context, sub_id, level)
-    if failure_result:
-        return failure_result
+    """
+    [ULTIMATE PRODUCTION v21.9.4] Low-Level Evaluation (L1/L2)
+    - แก้ UnboundLocalError (system_prompt)
+    - ไม่ Early FAIL ถ้า evidence แรง
+    - ส่ง Extraction Keys + final_llm_context + raw_response
+    - ทนทานสูงสุด รองรับ Expert Re-eval และ Post-process เต็มรูปแบบ
+    """
+    import logging
 
+    logger = logging.getLogger(__name__)
+
+    # =================================================================
+    # 1. Context Preparation
+    # =================================================================
+    context_to_send_eval = _get_context_for_level(context, level) if context else ""
+
+    # 🎯 ไม่ Early FAIL อีกต่อไป — ให้ LLM ตัดสินเองแม้ context ว่างชั่วคราว
+    # (แต่ยัง log warning เพื่อ debug)
+    if not context_to_send_eval.strip():
+        logger.warning(
+            f"Context empty for {sub_id} L{level} - continuing evaluation "
+            f"(Evidence Strength: {max_evidence_strength:.1f}/10.0)"
+        )
+
+    # =================================================================
     # 2. Dynamic Plan Keywords
-    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย, แผนงาน"
+    # =================================================================
+    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย, แผนงาน, กลยุทธ์, วัตถุประสงค์"
     if contextual_rules_map:
         sub_rules = contextual_rules_map.get(sub_id, {})
-        l1_rules = sub_rules.get("L1", {})
-        if l1_rules and "plan_keywords" in l1_rules:
-            plan_keywords = l1_rules["plan_keywords"]
+        level_rules = sub_rules.get(f"L{level}", {}) or sub_rules.get("L1", {})
+        if level_rules and "plan_keywords" in level_rules:
+            plan_keywords = level_rules["plan_keywords"]
 
-    # 3. Prompt Building
+    # =================================================================
+    # 3. Prompt Building (แก้ UnboundLocalError อย่างถาวร)
+    # =================================================================
+    # ตั้ง default system_prompt ก่อน try เสมอ
+    system_prompt = "You are an expert SE-AM auditor. Respond only with valid JSON."
+
     try:
+        # พยายามใช้ template เต็มรูปแบบก่อน
         system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(
             plan_keywords=plan_keywords,
             avoid_keywords=avoid_keywords or "ไม่มี"
         )
-        system_prompt += "\n\nIMPORTANT: Respond only with valid JSON."
+        system_prompt += "\n\nCRITICAL RULES:\n- ตอบเฉพาะ JSON เท่านั้น\n- ใช้คะแนน 0.0 - 2.0 ต่อ PDCA phase"
 
         user_prompt = USER_LOW_LEVEL_PROMPT_TEMPLATE.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
             level=level,
             statement_text=statement_text,
-            level_constraint=level_constraint or "ไม่มี",
+            level_constraint=level_constraint or "ไม่มีข้อจำกัดพิเศษ",
             must_include_keywords=must_include_keywords or "ไม่มี",
             avoid_keywords=avoid_keywords or "ไม่มี",
-            context=context_to_send_eval,
+            context=context_to_send_eval[:32000],  # ป้องกัน token overflow
             max_rerank_score=f"{max_rerank_score:.4f}",
             max_evidence_strength=f"{max_evidence_strength:.1f}",
-            specific_contextual_rule=specific_contextual_rule # [ADDED] ส่งเข้า Prompt
+            specific_contextual_rule=specific_contextual_rule.strip() if specific_contextual_rule != "N/A" else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
         )
-    except Exception as e:
-        logging.error(f"Error formatting LOW_LEVEL_PROMPT: {e}")
-        system_prompt = f"{SYSTEM_LOW_LEVEL_PROMPT}\n\nIMPORTANT: Respond only with valid JSON."
-        user_prompt = f"ID: {sub_id} L{level}\nRule: {specific_contextual_rule}\nQuestion: {statement_text}\nContext: {context_to_send_eval}"
 
-    # 4. Execution
+        # ฉีดกฎพิเศษเข้าไปชัดเจน
+        if specific_contextual_rule.strip() and specific_contextual_rule != "N/A":
+            user_prompt += f"\n\n=== กฎพิเศษสำหรับเกณฑ์นี้ ===\n{specific_contextual_rule}\n=== สิ้นสุดกฎพิเศษ ==="
+
+    except Exception as e:
+        logger.error(f"Prompt formatting failed for {sub_id} L{level}: {e}")
+        # system_prompt ยังคงเป็น default ที่ตั้งไว้ด้านบน
+        user_prompt = (
+            f"เกณฑ์: {sub_criteria_name} (L{level})\n"
+            f"รหัส: {sub_id}\n"
+            f"กฎพิเศษ: {specific_contextual_rule}\n"
+            f"คำถาม: {statement_text}\n"
+            f"หลักฐาน: {context_to_send_eval[:15000]}"
+        )
+
+    # =================================================================
+    # 4. LLM Execution
+    # =================================================================
     try:
-        raw = _fetch_llm_response(system_prompt, user_prompt, _MAX_LLM_RETRIES, llm_executor=llm_executor)
-        parsed = _robust_extract_json(raw)
-        
+        raw_response = _fetch_llm_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_retries=_MAX_LLM_RETRIES,
+            llm_executor=llm_executor
+        )
+
+        logger.info(f"Raw LLM Response ({sub_id} L{level}): {raw_response[:500]}...")
+
+        parsed = _robust_extract_json(raw_response)
         if not isinstance(parsed, dict):
+            logger.warning(f"JSON parse failed for {sub_id} L{level} - using fallback")
             parsed = {}
 
-        # 5. Return Results (Float Stability)
-        return {
+        # =================================================================
+        # 5. Final Output — เพิ่ม Extraction Keys + Context สำหรับ Expert Loop
+        # =================================================================
+        result = {
             "score": float(parsed.get("score", 0.0)),
-            "reason": parsed.get("reason", "ไม่พบเหตุผล"),
-            "is_passed": parsed.get("is_passed", False),
+            "reason": parsed.get("reason", "ไม่พบเหตุผลจากการวิเคราะห์").strip(),
+            "is_passed": bool(parsed.get("is_passed", False)),
             "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
             "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
             "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
             "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
+            # 🎯 เพิ่ม Extraction Keys — ลดภาระ Post-process
+            "Extraction_P": parsed.get("Extraction_P", parsed.get("หลักฐาน P", parsed.get("Extraction_Plan", "-"))),
+            "Extraction_D": parsed.get("Extraction_D", parsed.get("หลักฐาน D", parsed.get("Extraction_Do", "-"))),
+            "Extraction_C": parsed.get("Extraction_C", parsed.get("หลักฐาน C", parsed.get("Extraction_Check", "-"))),
+            "Extraction_A": parsed.get("Extraction_A", parsed.get("หลักฐาน A", parsed.get("Extraction_Act", "-"))),
+            # 🎯 เก็บ Context ดั้งเดิม — สำหรับ Expert Re-eval
+            "final_llm_context": context_to_send_eval,
+            "raw_llm_response": raw_response[:2000],  # สำหรับ debug
         }
+
+        logger.info(f"Final Low-Level Result {sub_id} L{level}: Score={result['score']:.1f} | Passed={result['is_passed']}")
+        return result
+
     except Exception as e:
-        logging.exception(f"low_level_eval failed: {e}")
-        return {"score": 0.0, "reason": str(e), "is_passed": False}
+        logger.exception(f"Critical failure in low_level_eval for {sub_id} L{level}: {e}")
+        return {
+            "score": 0.0,
+            "reason": f"ระบบเกิดข้อผิดพลาด: {str(e)}",
+            "is_passed": False,
+            "P_Plan_Score": 0.0, "D_Do_Score": 0.0,
+            "C_Check_Score": 0.0, "A_Act_Score": 0.0,
+            "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
+            "final_llm_context": context_to_send_eval,
+            "raw_llm_response": ""
+        }
     
 # ------------------------
 # Summarize (FULL VERSION)

@@ -462,124 +462,73 @@ def get_pdca_keywords_str(phase: str) -> str:
     return ", ".join(clean_keywords[:10])
 
 
+
+
 def post_process_llm_result(llm_output: Dict[str, Any], level: int) -> Dict[str, Any]:
     """
-    FINAL DETERMINISTIC POST-PROCESSOR v21.7.1 — DYNAMIC HEURISTIC & MAPPING SAFE
-    - เชื่อมโยงกับ BASE_PDCA_KEYWORDS ใน global_vars.py โดยตรง
-    - ใช้ Mapping เพื่อแปลง Extraction_X เป็น Plan/Do/Check/Act ให้ตรงกับ Global Vars
-    - ป้องกันปัญหา Unicode และการริบคะแนนภาษาไทยผิดพลาดด้วย Heuristic Pass
+    POST-PROCESSOR v21.9.3 — REGEX FALLBACK & PDCA SAFEGUARD
     """
-    logger = logging.getLogger(__name__)
 
-    # 1. นิยามความสัมพันธ์ระหว่างช่องข้อมูลและคะแนน
-    extraction_map = {
-        "Extraction_P": "P_Plan_Score",
-        "Extraction_D": "D_Do_Score",
-        "Extraction_C": "C_Check_Score",
-        "Extraction_A": "A_Act_Score"
-    }
+    extraction_map = {"Extraction_P": "P_Plan_Score", "Extraction_D": "D_Do_Score", 
+                      "Extraction_C": "C_Check_Score", "Extraction_A": "A_Act_Score"}
+    phase_map = {"Extraction_P": "Plan", "Extraction_D": "Do", "Extraction_C": "Check", "Extraction_A": "Act"}
 
-    # 2. นิยาม Mapping เพื่อดึงคีย์จาก BASE_PDCA_KEYWORDS ให้ถูกต้อง
-    phase_map = {
-        "Extraction_P": "Plan",
-        "Extraction_D": "Do",
-        "Extraction_C": "Check",
-        "Extraction_A": "Act"
-    }
-
-    reason_text = llm_output.get("reason", "")
+    reason_text = llm_output.get("reason", "") or ""
 
     for ext_key, score_key in extraction_map.items():
-        val = llm_output.get(ext_key, "-")
-        if val is None: val = "-"
+        val = llm_output.get(ext_key)
         
-        # --- ก. จัดการ Unicode & String Cleaning ---
-        raw_val = str(val).strip()
-        try:
-            if "\\u" in raw_val:
-                raw_val = json.loads(f'"{raw_val}"')
-        except:
-            pass
+        # 1. Fallback: ถ้าค่าว่าง ให้ใช้ Regex ดึงจาก Reason (รองรับทั้ง "หลักฐาน P:" และ "หลักฐาน Plan:")
+        if val is None or str(val).strip() in ["", "-"]:
+            p_full = phase_map[ext_key]
+            p_char = p_full[0]
+            
+            # Regex กวาดข้อมูลจนกว่าจะเจอ Marker ตัวถัดไป หรือคำสรุป
+            pattern = rf"หลักฐาน\s*({p_full}|{p_char})\s*:\s*(.*?)(?=หลักฐาน|สรุปภาพรวม|is_passed|score|\Z)"
+            match = re.search(pattern, reason_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                val = match.group(2).strip()
+                logger.info(f" 🛡️ [Regex Match] Recovered {p_full} from reason text")
 
-        # --- ข. กรองเฉพาะเนื้อหาสำคัญ (ลบสัญลักษณ์พิเศษ) ---
-        content_only = re.sub(r'[^\u0e00-\u0e7fa-zA-Z0-9]', '', raw_val)
-        
-        # --- ค. ตรวจสอบสถานะค่าว่าง/คำปฏิเสธ ---
-        is_negative = raw_val in ["-", "N/A", "n/a", "ไม่พบ", "ไม่มี", "ไม่ปรากฏ", "ไม่ระบุ"]
-        is_empty = (not content_only) or is_negative
-        
+        raw_val = str(val or "-").strip()
         current_score = float(llm_output.get(score_key, 0))
         
-        if is_empty and current_score > 0:
-            # --- ง. [DYNAMIC HEURISTIC OVERRIDE] ---
-            # ดึงชื่อ Phase เต็ม (เช่น 'Plan') เพื่อไปหาใน BASE_PDCA_KEYWORDS
-            phase_full_name = phase_map.get(ext_key)
-            
-            # ดึงคำสำคัญจาก Global Vars และล้างสัญลักษณ์ Regex ออก
-            raw_keywords = BASE_PDCA_KEYWORDS.get(phase_full_name, [])
-            clean_keywords = [re.sub(r'[\\^$r"\']', '', kw) for kw in raw_keywords]
-            
-            # ตรวจสอบว่าในช่อง Reason มีคำสำคัญเหล่านี้หรือไม่ (ความยาวคำต้อง > 1 เพื่อกัน noise)
-            found_keyword = any(kw in reason_text for kw in clean_keywords if len(kw) > 1)
-            
-            if found_keyword:
-                logger.info(f" 🛡️ [Heuristic Pass] L{level}: {ext_key} is empty but found '{phase_full_name}' evidence in Reason text.")
-                continue 
-                
-            # ถ้าไม่ผ่าน Heuristic จริงๆ ถึงจะทำการริบคะแนน (Revoke)
-            logger.warning(
-                f" 🚨 [Safeguard] L{level}: {score_key} revoked. "
-                f"No evidence found in {ext_key} (Content: '{content_only}') and no keywords in Reason."
-            )
-            llm_output[score_key] = 0.0
+        logger.info(f" 📦 [Content Check] Phase: {phase_map[ext_key]} | Score: {current_score} | Raw: '{raw_val[:80]}...'")
 
-    # 3. Normalize Scores (Cap ไม่ให้เกิน 2.0 ต่อมิติ)
-    p = round(min(float(llm_output.get("P_Plan_Score", 0)), 2.0), 1)
-    d = round(min(float(llm_output.get("D_Do_Score", 0)), 2.0), 1)
-    c = round(min(float(llm_output.get("C_Check_Score", 0)), 2.0), 1)
-    a = round(min(float(llm_output.get("A_Act_Score", 0)), 2.0), 1)
+        # 2. Validation Logic
+        has_file_ref = any(x in raw_val.lower() for x in [".pdf", ".docx", "source", "["])
+        content_stripped = re.sub(r'[\[\]\(\)\-\|\:\s\_\#\*\"]', '', raw_val)
+        is_too_short = len(content_stripped) < 10
 
-    # 4. PDCA Integrity Check (บวกคะแนนใหม่ให้แม่นยำ)
-    pdca_sum = round(p + d + c + a, 1)
+        # 3. Smart Penalty: มีไฟล์แต่เนื้อหาสั้นไป (ปรับเหลือ 0.5)
+        if has_file_ref and is_too_short and current_score > 0.5:
+            llm_output[score_key] = 0.5
+            current_score = 0.5
+
+        # 4. Safeguard: ถ้าไม่มีหลักฐานเลยแต่ได้คะแนน -> ริบคะแนนเป็น 0
+        if not has_file_ref and is_too_short and current_score > 0:
+            # ตรวจสอบ Keyword อีกครั้งใน reason (Heuristic Rescue)
+            if not any(kw.lower() in reason_text.lower() for kw in ["พบ", "สอดคล้อง", "มีแผน"]):
+                logger.warning(f" 🚨 [Safeguard] L{level}: {score_key} revoked (No evidence found)")
+                llm_output[score_key] = 0.0
+
+    # 5. Final Score Calculation (SE-AM Logic)
+    scores = { k: round(min(max(float(llm_output.get(k, 0)), 0.0), 2.0), 1) 
+              for k in ["P_Plan_Score", "D_Do_Score", "C_Check_Score", "A_Act_Score"] }
     
-    # 5. Threshold & Hard-Fail Logic ตามมาตรฐาน SE-AM
-    threshold_map = {1: 1, 2: 2, 3: 4, 4: 6, 5: 8}
-    threshold = threshold_map.get(level, 2)
-    is_passed = pdca_sum >= threshold
+    total_score = sum(scores.values())
+    threshold = {1: 1, 2: 2, 3: 4, 4: 6, 5: 8}.get(level, 2)
+    is_passed = total_score >= threshold
 
-    # กฎบังคับตก (Hard-Fail) เฉพาะระดับ
+    # Hard-fail rules
     if is_passed:
-        if level == 3 and c <= 0:
-            logger.critical(f" 🚨 [L3 Hard-Fail] Score {pdca_sum} >= {threshold} but C_Score is 0.0!")
-            is_passed = False
-        elif level == 4 and a <= 0:
-            logger.critical(f" 🚨 [L4 Hard-Fail] Score {pdca_sum} >= {threshold} but A_Score is 0.0!")
-            is_passed = False
-        elif level == 5:
-            if c < 2.0 or a < 2.0:
-                logger.critical(f" 🚨 [L5 Hard-Fail] Level 5 requires full C & A scores (2.0 each).")
-                is_passed = False
+        if level == 3 and scores["C_Check_Score"] <= 0: is_passed = False
+        elif level == 4 and scores["A_Act_Score"] <= 0: is_passed = False
 
-    # 6. Final Object Update
     llm_output.update({
-        "score": pdca_sum,
-        "P_Plan_Score": p,
-        "D_Do_Score": d,
-        "C_Check_Score": c,
-        "A_Act_Score": a,
-        "pdca_breakdown": {"P": p, "D": d, "C": c, "A": a},
-        "is_passed": is_passed,
-        "pass_threshold": threshold,
-        "normalized": True
+        "score": total_score, **scores, "is_passed": is_passed, "normalized": True
     })
-
-    # 7. Logging ผลลัพธ์สุดท้าย
-    status_str = "PASSED" if is_passed else "FAILED"
-    logger.info(
-        f" ✅ [Post-Process] L{level} Result: {status_str} | Score: {pdca_sum}/{threshold} "
-        f"(P:{p} D:{d} C:{c} A:{a})"
-    )
-
+    
     return llm_output
 
 # =================================================================
@@ -2846,18 +2795,33 @@ class SEAMPDCAEngine:
 
         def _create_block(tag: str, chunks: List[Dict]) -> str:
             if not chunks: return ""
-            # เรียงตามคะแนน Re-rank จากมากไปน้อย
+            
+            # 1. เรียงตามคะแนน Re-rank จากมากไปน้อย
             chunks = sorted(chunks, key=get_actual_score, reverse=True)
-            total = len(chunks)
+            
+            # 2. 🛡️ ขีดเส้นใต้ 7 ชิ้นที่เทพที่สุด (ใช้ร่วมกันทั้ง Mac และ Server)
+            top_chunks = chunks[:7]
+            
+            total = len(top_chunks)
             blocks: List[str] = []
-            for i, c in enumerate(chunks, start=1):
+            seen_texts = set() # สำหรับป้องกันเนื้อหาซ้ำ (Deduplication)
+
+            for i, c in enumerate(top_chunks, start=1):
+                body = c["text"].strip()
+                
+                # Check ซ้ำเบื้องต้น (เผื่อเจอ Chunk ที่เนื้อหาเหมือนกันเป๊ะ)
+                if body[:100] in seen_texts: 
+                    continue
+                seen_texts.add(body[:100])
+
                 source, page = _normalize_meta(c)
                 score = get_actual_score(c)
                 baseline_mark = " [📜 BASELINE/REFERENCE]" if c.get("is_baseline") else ""
+                
                 header = f"### [{tag} Evidence {i}/{total}]{baseline_mark}"
-                body = c["text"].strip()
                 footer = f"\n[อ้างอิง: {source}, หน้า: {page}, Score: {score:.4f}]"
                 blocks.append(f"{header}\n{body}{footer}")
+                
             return "\n---\n".join(blocks)
 
         # ------------------------------------------------------------------
@@ -3289,7 +3253,7 @@ class SEAMPDCAEngine:
         self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Duration: {final_sub_result['worker_duration_s']}s")
 
         return final_sub_result, final_temp_map
-
+    
     def _run_expert_re_evaluation(
         self,
         sub_id: str,
@@ -3304,28 +3268,61 @@ class SEAMPDCAEngine:
         base_kwargs: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        [EXPERT LOOP] รอบประเมินพิเศษเมื่อระบบพบว่าหลักฐานมีคุณภาพสูงแต่ LLM ให้ตกในรอบแรก
+        [EXPERT LOOP v21.9.3] Fixed Context Delivery & Expert Hint
         """
-        self.logger.info(f"🔍 [EXPERT RE-EVAL] Starting second pass for {sub_id} L{level}...")
+        # 1. ป้องกัน Infinite Loop (Max 2 times)
+        if not hasattr(self, "_expert_re_eval_count"):
+            self._expert_re_eval_count = 0
+        self._expert_re_eval_count += 1
         
+        if self._expert_re_eval_count > 2:
+            self.logger.warning(f"🛑 Expert Re-evaluation limit reached for {sub_id} L{level}")
+            return {
+                "score": 0.0, "is_passed": False, 
+                "reason": f"Limit exceeded. Original error: {first_attempt_reason}",
+                "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0
+            }
+
+        self.logger.info(f"🔍 [EXPERT RE-EVAL #{self._expert_re_eval_count}] Starting second pass for {sub_id} L{level}...")
+
+        # 2. เตรียม Hint Message ให้ AI
         hint_msg = f"""
-        --- ⚠️ EXPERT RE-EVALUATION HINT ---
-        ผลการประเมินรอบแรก: "ไม่ผ่าน" เนื่องจาก: {first_attempt_reason}
+        --- ⚠️ EXPERT RE-EVALUATION MODE (Attempt #{self._expert_re_eval_count}) ---
+        ท่านคือผู้เชี่ยวชาญการตรวจประเมิน SE-AM ระดับสูง
         
-        ข้อมูลวิเคราะห์จากระบบ: 
-        1. พบหลักฐานที่มีค่าความสอดคล้องสูง (Rerank Score: {highest_rerank_score:.4f}) 
-        2. ระบบตรวจไม่พบ Tag ชัดเจนของ: {missing_tags if missing_tags else 'N/A'}
-        
-        คำสั่ง: โปรดใช้ Expert Discretion วิเคราะห์ Context อีกครั้งอย่างละเอียด 
-        หากพบร่องรอยการทำงานหรือพฤติกรรมที่สะท้อนถึงวงจร PDCA แม้จะไม่มี Keyword ตรงตัว 
-        ท่านสามารถพิจารณาให้คะแนนผ่านได้ตามความเหมาะสมในฐานะผู้เชี่ยวชาญ
+        ข้อมูลสำคัญ:
+        - พบหลักฐานคุณภาพสูงมาก (Rerank Score: {highest_rerank_score:.4f}) แต่รอบแรก LLM ให้ตก
+        - เหตุผลที่ตกในรอบแรก: {first_attempt_reason}
+        - Tag ที่ตรวจไม่พบ: {', '.join(missing_tags) if missing_tags else 'N/A'}
+
+        คำสั่งพิเศษ:
+        โปรดอ่าน Context อย่างละเอียดอีกครั้ง หากพบร่องรอยการทำงานหรือหลักฐานที่ "สะท้อนถึง" วงจร PDCA 
+        แม้จะไม่มี Keyword ตรงตัว (เช่น พบตารางเวลาทำงานที่อนุมานได้ว่าเป็นแผนงาน) 
+        จงใช้ Expert Judgment ให้คะแนนตามความเหมาะสม อย่าติดอยู่กับรูปแบบเดิม
         """
+
+        # 3. เตรียม Context (ป้องกันค่าว่าง)
+        final_context = f"{context}\n\n{hint_msg}" if context else hint_msg
         
+        # 4. เตรียม Kwargs และลบค่าที่อาจซ้ำซ้อนออก
         expert_kwargs = base_kwargs.copy()
-        expert_kwargs["context"] = f"{context}\n\n{hint_msg}"
-        expert_kwargs["sub_criteria_name"] = f"{sub_criteria_name} (Expert Re-assessment)"
+        expert_kwargs.pop("context", None)
+        expert_kwargs.pop("context_str", None)
+        expert_kwargs.pop("final_llm_context", None)
+
+        # 5. เรียก Evaluator แบบ Explicit (ระบุชื่อตัวแปรชัดเจน)
+        result = llm_evaluator_to_use(
+            context=final_context, # ส่งเข้า positional 'context' ของ evaluator
+            sub_id=sub_id,
+            level=level,
+            statement_text=statement_text,
+            sub_criteria_name=f"{sub_criteria_name} (Expert Mode)",
+            max_rerank_score=highest_rerank_score,
+            **expert_kwargs
+        )
         
-        return llm_evaluator_to_use(**expert_kwargs)
+        self.logger.info(f"✅ [EXPERT RE-EVAL #{self._expert_re_eval_count}] Completed for {sub_id} L{level}")
+        return result
 
     def _run_single_assessment(
         self,

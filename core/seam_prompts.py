@@ -99,7 +99,7 @@ Rerank Score: {max_rerank_score} | Evidence Strength: {max_evidence_strength}
 สรุปผลในรูปแบบ JSON เท่านั้น:
 {{
   "score": 0.0,
-  "reason": "วิเคราะห์ว่าหลักฐานตอบโจทย์กฎพิเศษและเกณฑ์ L{level} อย่างไร [Source: ...]",
+  "reason": "หลักฐาน P: (เนื้อหาแผน) [Source: ...]\\nหลักฐาน D: (เนื้อหาการปฏิบัติ) [Source: ...]\\nสรุปภาพรวม: (วิเคราะห์เหตุผล) [Source: ...]",
   "is_passed": false,
   "P_Plan_Score": 0.0,
   "D_Do_Score": 0.0,
