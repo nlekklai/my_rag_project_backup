@@ -2979,10 +2979,10 @@ class SEAMPDCAEngine:
         sub_criteria: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [REVISED v21.9.6 - FULL ROBUST VERSION]
+        [REVISED v21.9.10 - FINAL ROBUST VERSION]
         - รันการประเมิน L1-L5 แบบ sequential
+        - แก้ไข Bug: บันทึก Evidence Mapping ทุกกรณี (แม้ไม่ผ่าน) เพื่อให้ UI แสดงผล Source ได้
         - แก้ปัญหา PDCA Breakdown เป็น 0 เมื่อประเมินผ่าน (Repair Logic)
-        - แก้ปัญหา Source File (หลักฐาน) หายไปจากรายงาน (Robust Tracking)
         - รองรับระบบ Action Plan และ Gap Analysis สมบูรณ์
         """
         # 📌 โหลด Global Constants
@@ -3050,7 +3050,6 @@ class SEAMPDCAEngine:
             is_passed_llm = result_to_process.get('is_passed', False)
             
             # 🟢 [CORE FIX 1] PDCA Repair Logic: 
-            # ถ้า LLM ให้ผ่านแต่คะแนน PDCA เป็น 0 ให้ซ่อมค่าตามเกณฑ์มาตรฐาน SE-AM
             pdca_val = result_to_process.get('pdca_breakdown', {})
             if is_passed_llm and (not pdca_val or all(v == 0 for v in pdca_val.values())):
                 repaired_pdca = {"P": 1, "D": 0, "C": 0, "A": 0}
@@ -3058,16 +3057,14 @@ class SEAMPDCAEngine:
                 if level >= 3: repaired_pdca["C"] = 1
                 if level >= 4: repaired_pdca["A"] = 1
                 result_to_process['pdca_breakdown'] = repaired_pdca
-                self.logger.info(f"  > 🔧 Repaired PDCA for L{level} (Passed status with zero breakdown)")
+                self.logger.info(f"  > 🔧 Repaired PDCA for L{level}")
 
-            # ตั้งค่าตั้งต้นสำหรับ Logic Capping
-            result_to_process.setdefault("is_counted", True)
-            result_to_process.setdefault("is_capped", False)
-
-            # บันทึก evidence และคำนวณ Strength เฉพาะเมื่อผ่านจริง
+            # 🟢 [CORE FIX 2] ROBUST EVIDENCE MAPPING (FIXED BUG)
+            # บันทึกหลักฐานทุกกรณีที่มีการขุดเจอ เพื่อให้ UI แสดง Source of Evidence ได้แม้ระดับนั้นจะไม่ผ่าน
             level_temp_map = result_to_process.get("temp_map_for_level", [])
-            if is_passed_llm and level_temp_map and first_failed_level_local is None:
+            if level_temp_map:
                 highest_rerank = result_to_process.get('max_relevant_score', 0.0)
+                # บันทึกลงระบบ Mapping เสมอ
                 max_evi_str = self._save_level_evidences_and_calculate_strength(
                     level_temp_map=level_temp_map,
                     sub_id=sub_id,
@@ -3075,9 +3072,18 @@ class SEAMPDCAEngine:
                     llm_result=result_to_process, 
                     highest_rerank_score=highest_rerank 
                 )
-                result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
                 
-            # --- 🟡 Update Sequential State (Patch 3) ---
+                # คำนวณ Strength จริงเฉพาะกรณีที่ผ่าน และไม่ติด Sequential Fail
+                if is_passed_llm and first_failed_level_local is None:
+                    result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
+                else:
+                    result_to_process['evidence_strength'] = 0.0
+            
+            # ตั้งค่าตั้งต้นสำหรับ Logic Capping
+            result_to_process.setdefault("is_counted", True)
+            result_to_process.setdefault("is_capped", False)
+                
+            # --- 🟡 Update Sequential State ---
             if first_failed_level_local is not None:
                 result_to_process.update({
                     "evaluation_mode": "GAP_ONLY",
@@ -3150,7 +3156,7 @@ class SEAMPDCAEngine:
         )
 
         # -----------------------------------------------------------
-        # 4. FINAL RETURN (REVISED: Robust Evidence Tracking)
+        # 4. FINAL RETURN (Evidence Tracking)
         # -----------------------------------------------------------
         final_temp_map = {}
         
@@ -3159,8 +3165,7 @@ class SEAMPDCAEngine:
             if key.startswith(f"{sub_id}."):
                 final_temp_map[key] = val
 
-        # Step B: [Extra Robust] กวาดไฟล์จากทุกระดับ (L1-L5) แม้ระดับนั้นจะไม่ผ่าน
-        # แก้ปัญหาไฟล์โชว์ใน Reason แต่ไม่โชว์ใน Source File List
+        # Step B: กวาดไฟล์จากทุกระดับเข้า final_temp_map เพื่อส่งให้ระบบรายงาน
         for res in raw_results_for_sub_seq:
             lvl = res.get('level')
             level_evidences = res.get("temp_map_for_level", [])
@@ -3184,7 +3189,7 @@ class SEAMPDCAEngine:
             "worker_duration_s": round(time.time() - start_ts, 2)
         }
 
-        self.logger.info(f"[WORKER END] {sub_id} | Evidences Found: {len(final_temp_map)} | Duration: {final_sub_result['worker_duration_s']}s")
+        self.logger.info(f"[WORKER END] {sub_id} | Evidences Found: {len(final_temp_map)}")
 
         return final_sub_result, final_temp_map
     
@@ -3267,10 +3272,10 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.9.9 - FINAL PRODUCTION]
-        - แก้ไข Critical ID Missing โดยการ Mapping 'id' ให้ถูกต้อง
+        [REVISED v21.9.11 - PRODUCTION READY]
+        - การันตีการส่ง temp_map_for_level กลับไปเสมอแม้ประเมินไม่ผ่าน
+        - ปรับปรุงโครงสร้าง Metadata เพื่อให้ UI แสดงผล Source of Evidence ได้แม่นยำ
         - บูรณาการ Focus Points และ Evidence Guidelines เข้ากับระบบ RAG
-        - รองรับระบบ ADAPTIVE Retrieval และ Context Expansion
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
@@ -3283,6 +3288,7 @@ class SEAMPDCAEngine:
         MAX_RETRI_ATTEMPTS = globals().get('MAX_RETRIEVAL_ATTEMPTS', 3)
         MIN_RETRY_SC = globals().get('MIN_RETRY_SCORE', 0.7)
         MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
+        TARGET_SCORE_THRESHOLD_MAP = globals().get('TARGET_SCORE_THRESHOLD_MAP', {1:2, 2:2, 3:2, 4:2, 5:2})
 
         self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt})...")
 
@@ -3290,7 +3296,6 @@ class SEAMPDCAEngine:
         pdca_phase = self._get_pdca_phase(level)
         level_constraint = self._get_level_constraint_prompt(level)
         
-        # ดึงคำสำคัญจากกฎเหล็ก
         must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
         must_include_keywords = ", ".join(must_list) if isinstance(must_list, list) else (must_list or "")
         
@@ -3431,10 +3436,10 @@ class SEAMPDCAEngine:
             except Exception: pass
 
         # ==================== 10. Metadata Mapping for Save (THE FIX) ====================
+        # สกัดหลักฐานทั้งหมดที่ใช้ในระดับนี้เพื่อส่งกลับ แม้ประเมินจะไม่ผ่าน
         temp_map_for_level = []
         for doc in top_evidences:
             meta = doc.get('metadata', {})
-            # 🛑 CRITICAL: ต้องใช้ key 'id' เพื่อให้ระบบ Saver ยอมรับ
             chunk_id = meta.get('id') or meta.get('uuid') or meta.get('chunk_id')
             if chunk_id:
                 temp_map_for_level.append({
@@ -3448,7 +3453,7 @@ class SEAMPDCAEngine:
 
         # ==================== 11. Final Output Mapping ====================
         llm_result = post_process_llm_result(llm_result, level)
-        thai_summary = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
+        thai_summary_data = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
 
         return {
             "sub_criteria_id": sub_id,
@@ -3459,7 +3464,7 @@ class SEAMPDCAEngine:
             "reason": llm_result.get('reason', "No reason provided"),
             "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed', False) else 0.0,
             "max_relevant_score": highest_rerank_score,
-            "summary_thai": thai_summary.get("summary"),
-            "temp_map_for_level": temp_map_for_level, # 🔥 ส่งกลับไปที่ worker
+            "summary_thai": thai_summary_data.get("summary"),
+            "temp_map_for_level": temp_map_for_level, # ส่งกลับไปให้ worker ตลอดเวลา
             "duration": time.time() - start_time
         }
