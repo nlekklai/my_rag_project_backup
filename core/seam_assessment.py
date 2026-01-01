@@ -2862,124 +2862,97 @@ class SEAMPDCAEngine:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [FULL REVISED v24.2] - ULTIMATE ENGINE RUNNER
-        รองรับการรวม Evidence Map จาก Parallel Workers และ Sequential Run
+        [REVISED v24.4] - CLEAN & STABLE RUNNER
+        - แก้ปัญหา AttributeError โดยการลบ _handle_id_not_found
+        - รองรับการรวม Evidence Map จาก Parallel และ Sequential
         """
         start_ts = time.time()
         self.is_sequential = sequential
         self.current_record_id = record_id 
 
-        # -----------------------------------------------------------
         # 1. PREPARATION & FILTERING
-        # -----------------------------------------------------------
         all_statements = self._flatten_rubric_to_statements()
         
         if target_sub_id.lower() == "all":
             sub_criteria_list = all_statements
             self.logger.info(f"📋 Assessing ALL criteria ({len(sub_criteria_list)} items)")
         else:
+            # ค้นหา Sub-ID โดยใช้ strip() เพื่อป้องกันช่องว่าง
             sub_criteria_list = [
                 s for s in all_statements 
                 if str(s.get('sub_id')).strip().lower() == str(target_sub_id).strip().lower()
             ]
 
+        # 🟢 FIX: ถ้าหา ID ไม่เจอ ให้แจ้ง Error และ Return ตามโครงสร้างปกติ
         if not sub_criteria_list:
-            return self._handle_id_not_found(target_sub_id, all_statements, record_id, start_ts)
+            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric"
+            self.logger.error(f"❌ {error_msg}")
+            return {
+                "record_id": record_id,
+                "status": "FAILED",
+                "error_message": error_msg,
+                "summary": {"score": 0.0, "level": "L0"},
+                "sub_criteria_results": [],
+                "run_time_seconds": round(time.time() - start_ts, 2),
+                "timestamp": datetime.now().isoformat()
+            }
 
-        # Reset states & Load Existing Evidence (Resumption)
+        # Reset states & Load Existing Evidence
         self.raw_llm_results = []
         self.final_subcriteria_results = []
         
-        # มั่นใจว่ามีการเตรียมตัวแปร evidence_map ไว้รับค่า
         if not hasattr(self, 'evidence_map') or not self.evidence_map:
             self.evidence_map = self._load_evidence_map() if os.path.exists(self.evidence_map_path) else {}
 
-        # -----------------------------------------------------------
-        # 2. EXECUTION MODE (PARALLEL vs SEQUENTIAL)
-        # -----------------------------------------------------------
+        # 2. EXECUTION MODE
         run_parallel = (target_sub_id.lower() == "all") and not sequential
         max_workers = globals().get('MAX_PARALLEL_WORKERS', 4)
 
         if run_parallel:
-            self.logger.info(f"🚀 [PARALLEL MODE] Workers: {max_workers} | Target: {target_sub_id}")
+            self.logger.info(f"🚀 [PARALLEL MODE] Workers: {max_workers}")
             worker_args = [(
-                sub_data,
-                self.config.enabler,
-                self.config.target_level,
-                self.config.mock_mode,
-                self.evidence_map_path,
-                self.config.model_name,
-                self.config.temperature,
-                getattr(self.config, 'min_retry_score', 0.65),
+                sub_data, self.config.enabler, self.config.target_level,
+                self.config.mock_mode, self.evidence_map_path, self.config.model_name,
+                self.config.temperature, getattr(self.config, 'min_retry_score', 0.65),
                 getattr(self.config, 'max_retrieval_attempts', 3),
                 document_map or self.document_map,
-                self.ActionPlanActions  # Element ที่ 11
+                self.ActionPlanActions
             ) for sub_data in sub_criteria_list]
 
-            try:
-                # ใช้ 'spawn' context เพื่อความเสถียรของ memory ใน multiprocessing
-                with multiprocessing.get_context('spawn').Pool(processes=max_workers) as pool:
-                    # รับค่าเป็น List ของ Tuple (result, evidence_map)
-                    all_outputs = pool.map(_static_worker_process, worker_args)
-            except Exception as e:
-                self.logger.critical(f"❌ Multiprocessing Pool Failed: {e}")
-                raise
+            with multiprocessing.get_context('spawn').Pool(processes=max_workers) as pool:
+                all_outputs = pool.map(_static_worker_process, worker_args)
 
-            # --- รวมข้อมูลจาก Workers กลับเข้า Main Process ---
             for out_tuple in all_outputs:
                 if isinstance(out_tuple, tuple) and len(out_tuple) == 2:
                     sub_result, worker_evi_map = out_tuple
-                    
-                    # 1. เก็บผลคะแนนและ Action Plan
                     self.final_subcriteria_results.append(sub_result)
                     if "raw_results_ref" in sub_result:
                         self.raw_llm_results.extend(sub_result["raw_results_ref"])
-
-                    # 2. รวม Evidence Map (หัวใจสำคัญ!)
                     if worker_evi_map:
                         for key, items in worker_evi_map.items():
-                            current_list = self.evidence_map.setdefault(key, [])
-                            current_list.extend(items)
-                        self.logger.info(f"📡 Merged evidence for {sub_result.get('sub_criteria_id')}")
+                            self.evidence_map.setdefault(key, []).extend(items)
 
         else:
-            # --------------------- SEQUENTIAL MODE ---------------------
             self.logger.info(f"⏳ [SEQUENTIAL MODE] Target: {target_sub_id}")
-            
-            # Setup VectorStore ครั้งเดียวสำหรับ Sequential run
             if not vectorstore_manager and self.config.mock_mode == "none":
                 vectorstore_manager = load_all_vectorstores(
-                    doc_types=[self.doc_type],
-                    enabler_filter=self.config.enabler,
-                    tenant=self.config.tenant,
-                    year=self.config.year,
+                    doc_types=[self.doc_type], enabler_filter=self.config.enabler,
+                    tenant=self.config.tenant, year=self.config.year,
                 )
             self.vectorstore_manager = vectorstore_manager
 
             for sub_criteria in sub_criteria_list:
-                # เรียก worker logic โดยตรง
                 sub_result, worker_evi_map = self._run_sub_criteria_assessment_worker(sub_criteria)
-                
                 self.final_subcriteria_results.append(sub_result)
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
-                
-                # รวม Map เข้าส่วนกลาง
                 if worker_evi_map:
                     for key, items in worker_evi_map.items():
                         self.evidence_map.setdefault(key, []).extend(items)
 
-        # -----------------------------------------------------------
         # 3. SAVE & EXPORT
-        # -----------------------------------------------------------
-        # บันทึก Evidence Map ทันทีหลังจากรวมผลเสร็จ
         if self.evidence_map:
             self._save_evidence_map(map_to_save=self.evidence_map)
-            total_evidences = sum(len(v) for v in self.evidence_map.values())
-            self.logger.info(f"✅ Evidence Map Successfully Saved! (Total: {total_evidences} items)")
-        else:
-            self.logger.warning("⚠️ No evidence found to save. Map is empty.")
-
-        # คำนวณสถิติรวม (Level, Score, Percentage)
+            
         self._calculate_overall_stats(target_sub_id)
 
         final_results = {
