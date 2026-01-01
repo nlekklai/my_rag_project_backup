@@ -3123,10 +3123,17 @@ class SEAMPDCAEngine:
                     res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
                     statements_for_ap.append(res_item)
 
+        # ✅ FIX: ระบุชื่อ parameter เพื่อป้องกันการสลับตำแหน่งจนเกิด TypeError
         action_plan_result = create_structured_action_plan(
-            statements_for_ap, sub_id, sub_criteria_name, roadmap_target_level, self.llm, self.logger, self.contextual_rules_map
+            recommendation_statements=statements_for_ap,
+            sub_id=sub_id,
+            sub_criteria_name=sub_criteria_name,
+            target_level=roadmap_target_level, 
+            llm_executor=self.llm,
+            logger=self.logger,
+            enabler_rules=self.contextual_rules_map  # ระบุชื่อชัดเจน จะไม่ไปทับ max_retries
         )
-
+        
         # -----------------------------------------------------------
         # 4. FINAL RESULTS AGGREGATION
         # -----------------------------------------------------------
