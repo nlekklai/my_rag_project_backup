@@ -334,26 +334,27 @@ def get_correct_pdca_required_score(level: int) -> int:
     return 8
 
 
+# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม config parameter ทั้งหมด (10 elements)
 def _static_worker_process(worker_input_tuple: Tuple[
-    Dict[str, Any],    # 1. sub_criteria_data
-    str,               # 2. enabler
-    int,               # 3. target_level
-    str,               # 4. mock_mode
-    str,               # 5. evidence_map_path
-    str,               # 6. model_name
-    float,             # 7. temperature
-    float,             # 8. min_retry_score
-    int,               # 9. max_retrieval_attempts
-    Optional[Dict[str, str]], # 10. document_map
-    Any                # 11. action_plan_model (NEW)
-]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    Dict[str, Any], str, int, str, str, str, float, float, int, Optional[Dict[str, str]]
+]) -> Dict[str, Any]:
     """
-    [FULL REVISED v24.1] - ULTIMATE WORKER BRIDGE
     Static worker function for multiprocessing pool. 
-    Reconstructs the engine and returns both (Result, EvidenceMap).
+    It reconstructs SeamAssessment in the new process and executes the assessment 
+    for a single sub-criteria.
+    
+    Args:
+        worker_input_tuple: (sub_criteria_data, enabler: str, target_level: int, mock_mode: str, 
+                             evidence_map_path: str, model_name: str, temperature: float, 
+                             min_retry_score: float, max_retrieval_attempts: int,
+                             document_map: Optional[Dict[str, str]]) 
+
+    Returns:
+        Dict[str, Any]: Final result of the sub-criteria assessment.
     """
     
-    # 1. PATH SETUP: เพื่อให้ Worker Process มองเห็น Package ภายในโปรเจกต์
+    # 🟢 NEW FIX: PATH SETUP สำหรับ Worker Process
+    # การตั้งค่า path ซ้ำเพื่อความมั่นใจว่า worker process เห็น package หลัก
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -361,7 +362,7 @@ def _static_worker_process(worker_input_tuple: Tuple[
     worker_logger = logging.getLogger(__name__)
 
     try:
-        # 2. Unpack Parameters ทั้ง 11 ตัว
+        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 10 ตัว
         (
             sub_criteria_data, 
             enabler, 
@@ -370,64 +371,59 @@ def _static_worker_process(worker_input_tuple: Tuple[
             evidence_map_path, 
             model_name, 
             temperature,
-            min_retry_score,            
-            max_retrieval_attempts,     
-            document_map,                
+            min_retry_score,            # ⬅️ NEW CONFIG (8th element)
+            max_retrieval_attempts,     # ⬅️ NEW CONFIG (9th element)
+            document_map,                # (10th element)
             action_plan_model
         ) = worker_input_tuple
     except ValueError as e:
-        worker_logger.critical(f"Worker input unpack failed (expected 11, got {len(worker_input_tuple)}): {e}")
-        # คืนค่าเป็น Tuple เสมอเพื่อไม่ให้ Pool.map พัง (ErrorDict, EmptyMap)
-        return {"error": f"Invalid worker input: {e}"}, {}
+        # ใช้ len(worker_input_tuple) เพื่อให้ข้อมูลการ Debug ครบถ้วน
+        worker_logger.critical(f"Worker input tuple unpack failed (expected 10 elements, got {len(worker_input_tuple)}): {e}")
+        return {"error": f"Invalid worker input: {e}"}
         
-    # 3. Reconstruct AssessmentConfig ใน Process ใหม่
+    # 1. Reconstruct Config 
     try:
+        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process พร้อมใส่ค่า config ใหม่
+        # (Tenant/Year จะใช้ค่า Default จาก AssessmentConfig)
         worker_config = AssessmentConfig(
             enabler=enabler,
             target_level=target_level,
             mock_mode=mock_mode,
             model_name=model_name, 
             temperature=temperature,
-            min_retry_score=min_retry_score,            
-            max_retrieval_attempts=max_retrieval_attempts
+            min_retry_score=min_retry_score,            # ⬅️ Pass new config
+            max_retrieval_attempts=max_retrieval_attempts # ⬅️ Pass new config
         )
     except Exception as e:
         worker_logger.critical(f"Failed to reconstruct AssessmentConfig in worker: {e}")
         return {
             "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
             "error": f"Config reconstruction failed: {e}"
-        }, {}
+        }
 
-    # 4. Re-instantiate SEAMPDCAEngine 
+    # 2. Re-instantiate SeamAssessment 
     try:
-        # 💡 หมายเหตุ: LLM และ VectorStore จะถูก Lazy-loaded เมื่อเริ่มรัน Single Assessment ภายใน Worker
+        # 🟢 FIX (สำคัญ): ส่ง document_map และ worker_config เข้าไปใน SEAMPDCAEngine
+        # SEAMPDCAEngine จะใช้ worker_config ที่มีค่า min_retry_score และ max_retrieval_attempts
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=None,              
-            vectorstore_manager=None,       
+            llm_instance=None,              # LLM จะถูก Initialized ใน Engine หากไม่มี
+            vectorstore_manager=None,       # VSM จะถูก Initialized ใน Engine หากไม่มี
+            # doc_type ต้องถูก set ใน SEAMPDCAEngine constructor (สมมติว่ามีค่า Default)
             logger_instance=worker_logger,
-            document_map=document_map,
-            ActionPlanActions=action_plan_model # รับ Model สำหรับสร้าง Action Plan
+            document_map=document_map, # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
+            ActionPlanActions=action_plan_model
         )
     except Exception as e:
         worker_logger.critical(f"FATAL: SEAMPDCAEngine instantiation failed in worker: {e}")
         return {
             "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
             "error": f"Engine initialization failed: {e}"
-        }, {}
+        }
     
-    # 5. Execute Assessment & Return Tuple
-    try:
-        # เรียกฟังก์ชันที่เราแก้ให้ return (result_data, evidence_map) ตะกี้
-        result_data, evidence_map = worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
-        return result_data, evidence_map
-    except Exception as e:
-        worker_logger.error(f"Worker execution failed for {sub_criteria_data.get('sub_id')}: {e}")
-        return {
-            "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
-            "error": str(e)
-        }, {}
+    # 3. Execute the worker logic
+    return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
 
 def merge_evidence_mappings(results_list: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -464,8 +460,6 @@ def get_pdca_keywords_str(phase: str) -> str:
             
     # ส่งคืนเป็น string ขั้นด้วยจุลภาค (เอาแค่ 10 คำแรกเพื่อประหยัด Token)
     return ", ".join(clean_keywords[:10])
-
-
 
 
 def post_process_llm_result(llm_output: Dict[str, Any], level: int) -> Dict[str, Any]:
@@ -1482,13 +1476,10 @@ class SEAMPDCAEngine:
     
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
         """
-        [FULL REVISED v24.3] - ULTIMATE ATOMIC SAVE
-        บันทึก evidence map อย่างปลอดภัย 100% 
-        - รองรับการ Merge ข้อมูลจาก Parallel Workers เข้ากับไฟล์เดิมบน Disk
-        - ป้องกันข้อมูลสูญหาย (Persistence) และเขียนทับด้วยระบบ Atomic Move
+        บันทึก evidence map อย่างปลอดภัย 100% - Atomic Write + FileLock + Cleanup + Raw LLM Data
+        รองรับการบันทึก raw_llm_pdca เพื่อความโปร่งใสและการตรวจสอบย้อนกลับ
         """
         try:
-            # 1. กำหนด Path สำหรับบันทึกไฟล์
             map_file_path = get_evidence_mapping_file_path(
                 tenant=self.config.tenant,
                 year=self.config.year,
@@ -1501,104 +1492,98 @@ class SEAMPDCAEngine:
         lock_path = map_file_path + ".lock"
         tmp_path = None
 
-        self.logger.info(f"[EVIDENCE] Starting atomic save process → {map_file_path}")
+        self.logger.info(f"[EVIDENCE] Preparing to save evidence map → {map_file_path}")
 
         try:
-            # สร้าง Directory รอไว้ถ้ายังไม่มี
             os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
-            # 2. ใช้ FileLock เพื่อป้องกัน Process อื่นเขียนทับพร้อมกัน (สำคัญมากสำหรับ Parallel)
             with FileLock(lock_path, timeout=60):
-                self.logger.debug("[EVIDENCE] File lock acquired for atomic write.")
+                self.logger.debug("[EVIDENCE] File lock acquired.")
 
-                # --- 🟢 START SMART MERGE LOGIC ---
-                # โหลดข้อมูลที่มีอยู่แล้วใน Disk มาเป็นฐานเสมอ เพื่อป้องกันข้อมูลเกณฑ์อื่นหาย
-                final_map_to_write = self._load_evidence_map(is_for_merge=True) or {}
-                
-                # ข้อมูลใหม่ที่จะนำมาบันทึก (ถ้าไม่ส่ง Parameter มา ให้ใช้จาก Instance)
-                runtime_map = map_to_save if map_to_save is not None else self.evidence_map
+                # === Merge Logic ===
+                if map_to_save is not None:
+                    final_map_to_write = map_to_save
+                else:
+                    existing_map = self._load_evidence_map(is_for_merge=True) or {}
+                    runtime_map = deepcopy(self.evidence_map)
+                    final_map_to_write = existing_map
 
-                if not runtime_map and not final_map_to_write:
-                    self.logger.warning("[EVIDENCE] Nothing to save (both runtime and disk maps are empty).")
+                    for key, new_entries in runtime_map.items():
+                        entry_map = {
+                            e.get("chunk_uuid", e.get("doc_id", "N/A")): e
+                            for e in final_map_to_write.setdefault(key, [])
+                        }
+                        for new_entry in new_entries:
+                            entry_id = new_entry.get("chunk_uuid", new_entry.get("doc_id", "N/A"))
+                            if entry_id == "N/A" or not entry_id:
+                                continue
+
+                            new_score = new_entry.get("relevance_score", 0.0)
+
+                            if entry_id not in entry_map:
+                                entry_map[entry_id] = new_entry
+                            else:
+                                # Update ถ้า score สูงกว่า หรือถ้ามี raw_llm_pdca ที่ละเอียดกว่า
+                                old_entry = entry_map[entry_id]
+                                old_score = old_entry.get("relevance_score", 0.0)
+
+                                if "page" not in new_entry or new_entry["page"] in ["N/A", None]:
+                                    if "page" in old_entry:
+                                        new_entry["page"] = old_entry["page"]
+                                        
+                                if new_score > old_score:
+                                    entry_map[entry_id] = new_entry
+
+                        final_map_to_write[key] = list(entry_map.values())
+
+                if not final_map_to_write:
+                    self.logger.warning("[EVIDENCE] Nothing to save (empty map).")
                     return
 
-                # ทำการ Merge ข้อมูลราย Sub-ID และ Level
-                for key, new_entries in runtime_map.items():
-                    # สร้าง Entry Map ของเดิมเพื่อเช็ค Duplicate (ใช้ chunk_uuid หรือ doc_id เป็น Key)
-                    entry_map = {
-                        e.get("chunk_uuid", e.get("doc_id", "N/A")): e
-                        for e in final_map_to_write.setdefault(key, [])
-                    }
-                    
-                    for new_entry in new_entries:
-                        # สร้าง ID สำหรับเช็คความซ้ำซ้อน
-                        entry_id = new_entry.get("chunk_uuid", new_entry.get("doc_id", "N/A"))
-                        if entry_id == "N/A" or not entry_id:
-                            continue
-
-                        new_score = new_entry.get("relevance_score", 0.0)
-
-                        if entry_id not in entry_map:
-                            # ถ้าเป็นหลักฐานชิ้นใหม่ ให้เพิ่มเข้าไปเลย
-                            entry_map[entry_id] = new_entry
-                        else:
-                            # ถ้ามีอยู่แล้ว ให้เปรียบเทียบคุณภาพ (Score) และซ่อมแซม Metadata
-                            old_entry = entry_map[entry_id]
-                            old_score = old_entry.get("relevance_score", 0.0)
-
-                            # 🛠️ Data Repair: ถ้าของใหม่ไม่มี Page แต่ของเก่ามี ให้ดึงของเก่ามาใส่
-                            if ("page" not in new_entry or new_entry["page"] in ["N/A", None]) and "page" in old_entry:
-                                new_entry["page"] = old_entry["page"]
-                                        
-                            # เก็บอันที่มี Rerank Score สูงกว่าไว้
-                            if new_score >= old_score:
-                                entry_map[entry_id] = new_entry
-
-                    # บันทึกกลับลงใน Map หลัก
-                    final_map_to_write[key] = list(entry_map.values())
-                # --- 🔴 END SMART MERGE LOGIC ---
-
-                # 3. Cleanup & Sort: ลบข้อมูลขยะและเรียงลำดับหลักฐานตามคะแนน
+                # === Cleanup + Sort ===
                 final_map_to_write = self._clean_temp_entries(final_map_to_write)
-                for key in final_map_to_write:
-                    final_map_to_write[key].sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
+                for key, entries in final_map_to_write.items():
+                    entries.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
 
-                # 4. Atomic Write: เขียนลงไฟล์ชั่วคราวก่อนแล้วค่อยย้าย (ป้องกันไฟล์พังถ้าไฟดับ/โปรแกรมค้าง)
+                # === Atomic Write ===
                 with tempfile.NamedTemporaryFile(
                     mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
                 ) as tmp_file:
-                    # ทำความสะอาดข้อมูลให้เป็น JSON-friendly (ลบพวก Object ที่ Serialized ไม่ได้)
                     cleaned_data = self._clean_map_for_json(final_map_to_write)
                     json.dump(cleaned_data, tmp_file, indent=4, ensure_ascii=False)
                     tmp_path = tmp_file.name
 
-                # ย้ายไฟล์จาก Temp ไปยัง Path จริง (Atomic Move)
                 shutil.move(tmp_path, map_file_path)
-                tmp_path = None # Reset เพื่อไม่ให้โดน unlink ใน finally
+                tmp_path = None
 
-                # 5. สรุปผลการบันทึก
+                # === Stats ===
                 total_keys = len(final_map_to_write)
                 total_items = sum(len(v) for v in final_map_to_write.values())
                 file_size_kb = os.path.getsize(map_file_path) / 1024
                 self.logger.info(
-                    f"🏆 [EVIDENCE] SAVED SUCCESSFULLY! | "
-                    f"Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB"
+                    f"[EVIDENCE] SAVED SUCCESSFULLY! "
+                    f"Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB | Path: {map_file_path}"
                 )
 
         except Exception as e:
-            self.logger.critical(f"❌ [EVIDENCE] FATAL ERROR DURING SAVE: {e}")
+            self.logger.critical("[EVIDENCE] FATAL ERROR DURING SAVE")
             self.logger.exception(e)
             raise
 
         finally:
-            # ลบไฟล์ Lock และไฟล์ Temp ที่ค้างอยู่ (Double Safety)
+            # === Cleanup lock & temp file (Double Safety) ===
             if os.path.exists(lock_path):
-                try: os.unlink(lock_path)
-                except: pass
+                try:
+                    os.unlink(lock_path)
+                    self.logger.debug(f"[EVIDENCE] Removed lock file: {lock_path}")
+                except Exception as e:
+                    self.logger.warning(f"[EVIDENCE] Failed to remove lock: {e}")
 
             if tmp_path and os.path.exists(tmp_path):
-                try: os.unlink(tmp_path)
-                except: pass
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
 
     def _load_evidence_map(self, is_for_merge: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -2859,104 +2844,183 @@ class SEAMPDCAEngine:
         vectorstore_manager: Optional['VectorStoreManager'] = None,
         sequential: bool = False,
         document_map: Optional[Dict[str, str]] = None,
-        record_id: str = None,
+        record_id: str = None,  # [ADDED] รองรับ ID จาก Router
     ) -> Dict[str, Any]:
         """
-        [REVISED v24.4] - CLEAN & STABLE RUNNER
-        - แก้ปัญหา AttributeError โดยการลบ _handle_id_not_found
-        - รองรับการรวม Evidence Map จาก Parallel และ Sequential
+        Main runner ของ Assessment Engine
+        รองรับทั้ง Parallel และ Sequential 100%
+        บันทึก Evidence Map เสมอ (แม้รัน sub เดียว)
         """
         start_ts = time.time()
         self.is_sequential = sequential
+        # เก็บ record_id ไว้ใน instance เพื่อใช้อ้างอิงในการทำ Log หรือตั้งชื่อไฟล์
         self.current_record_id = record_id 
 
-        # 1. PREPARATION & FILTERING
+        # ============================== 1. Filter Rubric ==============================
         all_statements = self._flatten_rubric_to_statements()
         
+        # ค้นหา Sub-Criteria ที่ต้องการ
         if target_sub_id.lower() == "all":
             sub_criteria_list = all_statements
             self.logger.info(f"📋 Assessing ALL criteria ({len(sub_criteria_list)} items)")
         else:
-            # ค้นหา Sub-ID โดยใช้ strip() เพื่อป้องกันช่องว่าง
+            # ค้นหาแบบยืดหยุ่น ป้องกันปัญหาเว้นวรรคหรือตัวเล็กตัวใหญ่
             sub_criteria_list = [
                 s for s in all_statements 
                 if str(s.get('sub_id')).strip().lower() == str(target_sub_id).strip().lower()
             ]
 
-        # 🟢 FIX: ถ้าหา ID ไม่เจอ ให้แจ้ง Error และ Return ตามโครงสร้างปกติ
+        # 🚨 กรณีหา ID ไม่เจอ (เช่น เคส 1.3 ที่เป็นปัญหา)
         if not sub_criteria_list:
-            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric"
+            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric (ไฟล์มีแค่: {', '.join([s.get('sub_id') for s in all_statements])})"
             self.logger.error(f"❌ {error_msg}")
+            
+            # คืนค่าโครงสร้างผลลัพธ์แบบ FAILED เพื่อให้ Router/Frontend แสดงผลได้ ไม่ค้างที่ 404
             return {
                 "record_id": record_id,
                 "status": "FAILED",
                 "error_message": error_msg,
-                "summary": {"score": 0.0, "level": "L0"},
+                "summary": {
+                    "score": 0.0, 
+                    "level": "L0",
+                    "total_weighted_score": 0.0,
+                    "max_weight": 0.0
+                },
                 "sub_criteria_results": [],
                 "run_time_seconds": round(time.time() - start_ts, 2),
                 "timestamp": datetime.now().isoformat()
             }
 
-        # Reset states & Load Existing Evidence
+        # Reset states สำหรับการรันใหม่
+        self.logger.info(f"🎯 Target Assessment for: {target_sub_id}")
         self.raw_llm_results = []
         self.final_subcriteria_results = []
-        
-        if not hasattr(self, 'evidence_map') or not self.evidence_map:
-            self.evidence_map = self._load_evidence_map() if os.path.exists(self.evidence_map_path) else {}
 
-        # 2. EXECUTION MODE
-        run_parallel = (target_sub_id.lower() == "all") and not sequential
+        # โหลด evidence map เก่าถ้ามี (Resumption Logic)
+        if os.path.exists(self.evidence_map_path):
+            try:
+                loaded = self._load_evidence_map()
+                self.evidence_map = loaded if loaded else {}
+                if self.evidence_map:
+                    self.logger.info(f"Resumed from existing evidence map: {len(self.evidence_map)} keys")
+            except Exception as e:
+                self.logger.warning(f"Could not load existing evidence map: {e}")
+                self.evidence_map = {}
+        else:
+            self.evidence_map = {}
+
+        # --------------------- กำหนด Max Workers ---------------------
         max_workers = globals().get('MAX_PARALLEL_WORKERS', 4)
+        if not isinstance(max_workers, int) or max_workers <= 0:
+            max_workers = 4
+            self.logger.warning(f"Invalid MAX_PARALLEL_WORKERS in config → using safe default: {max_workers}")
+        self.logger.info(f"Using max_workers = {max_workers}")
 
+        run_parallel = (target_sub_id.lower() == "all") and not sequential
+
+        # ============================== 2. Run Assessment ==============================
         if run_parallel:
-            self.logger.info(f"🚀 [PARALLEL MODE] Workers: {max_workers}")
+            self.logger.info(f"Starting Parallel Assessment with {max_workers} processes")
             worker_args = [(
-                sub_data, self.config.enabler, self.config.target_level,
-                self.config.mock_mode, self.evidence_map_path, self.config.model_name,
-                self.config.temperature, getattr(self.config, 'min_retry_score', 0.65),
-                getattr(self.config, 'max_retrieval_attempts', 3),
+                sub_data,
+                self.config.enabler,
+                self.config.target_level,
+                self.config.mock_mode,
+                self.evidence_map_path,
+                self.config.model_name,
+                self.config.temperature,
+                getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
+                getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
-                self.ActionPlanActions
+                self.ActionPlanActions  # <--- เพิ่มตัวนี้เป็นตัวที่ 11
             ) for sub_data in sub_criteria_list]
 
-            with multiprocessing.get_context('spawn').Pool(processes=max_workers) as pool:
-                all_outputs = pool.map(_static_worker_process, worker_args)
+            try:
+                with multiprocessing.get_context('spawn').Pool(processes=max_workers) as pool:
+                    results_list = pool.map(_static_worker_process, worker_args)
+            except Exception as e:
+                self.logger.critical(f"Multiprocessing failed: {e}")
+                raise
 
-            for out_tuple in all_outputs:
-                if isinstance(out_tuple, tuple) and len(out_tuple) == 2:
-                    sub_result, worker_evi_map = out_tuple
-                    self.final_subcriteria_results.append(sub_result)
-                    if "raw_results_ref" in sub_result:
-                        self.raw_llm_results.extend(sub_result["raw_results_ref"])
-                    if worker_evi_map:
-                        for key, items in worker_evi_map.items():
-                            self.evidence_map.setdefault(key, []).extend(items)
+            for result_tuple in results_list:
+                if not isinstance(result_tuple, tuple) or len(result_tuple) != 2:
+                    continue
+                sub_result, temp_map_from_worker = result_tuple
+
+                if isinstance(temp_map_from_worker, dict):
+                    for level_key, evidence_list in temp_map_from_worker.items():
+                        for ev in evidence_list:
+                            # ตรวจสอบว่ามีเลขหน้าหรือไม่ ถ้าไม่มีให้ดึงจาก metadata
+                            if "page" not in ev:
+                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
+                                
+                        current_list = self.evidence_map.setdefault(level_key, [])
+                        current_list.extend(evidence_list)
+
+                raw_refs = sub_result.get("raw_results_ref", [])
+                self.raw_llm_results.extend(raw_refs if isinstance(raw_refs, list) else [])
+                self.final_subcriteria_results.append(sub_result)
 
         else:
-            self.logger.info(f"⏳ [SEQUENTIAL MODE] Target: {target_sub_id}")
-            if not vectorstore_manager and self.config.mock_mode == "none":
-                vectorstore_manager = load_all_vectorstores(
-                    doc_types=[self.doc_type], enabler_filter=self.config.enabler,
-                    tenant=self.config.tenant, year=self.config.year,
-                )
-            self.vectorstore_manager = vectorstore_manager
+            # --------------------- SEQUENTIAL MODE ---------------------
+            mode_desc = target_sub_id if target_sub_id != "all" else "All Sub-Criteria"
+            self.logger.info(f"Starting Sequential Assessment: {mode_desc}")
+
+            local_vsm = vectorstore_manager or (
+                load_all_vectorstores(
+                    doc_types=[self.doc_type],
+                    enabler_filter=self.config.enabler,
+                    tenant=self.config.tenant,
+                    year=self.config.year,
+                ) if self.config.mock_mode == "none" else None
+            )
+            self.vectorstore_manager = local_vsm
+
+            if self.vectorstore_manager:
+                self.vectorstore_manager.logger = self.logger
+                self.logger.info("Assigned Engine logger to VectorStoreManager")
 
             for sub_criteria in sub_criteria_list:
-                sub_result, worker_evi_map = self._run_sub_criteria_assessment_worker(sub_criteria)
-                self.final_subcriteria_results.append(sub_result)
-                self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
-                if worker_evi_map:
-                    for key, items in worker_evi_map.items():
-                        self.evidence_map.setdefault(key, []).extend(items)
+                sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria)
+                
+                # เพิ่ม Log เพื่อตรวจสอบข้อมูลที่ได้จาก Worker
+                if final_temp_map:
+                    found_count = sum(len(v) for v in final_temp_map.values())
+                    self.logger.info(f"🔍 Found {found_count} evidence items for {sub_criteria.get('sub_id')}")
+                    
+                    for level_key, evidence_list in final_temp_map.items():
+                        # ตรวจสอบเลขหน้า (Page)
+                        for ev in evidence_list:
+                            if "page" not in ev:
+                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
+                        
+                        # ตรวจสอบว่ามีข้อมูลซ้ำหรือไม่ก่อน extend
+                        current_list = self.evidence_map.setdefault(level_key, [])
+                        current_list.extend(evidence_list)
+                else:
+                    # หากจุดนี้ทำงาน แสดงว่า Worker ไม่ได้ส่ง Map กลับมาเลย
+                    self.logger.warning(f"⚠️ No evidence data extracted for {sub_criteria.get('sub_id')}")
 
-        # 3. SAVE & EXPORT
-        if self.evidence_map:
-            self._save_evidence_map(map_to_save=self.evidence_map)
-            
+                self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
+                self.final_subcriteria_results.append(sub_result)
+
+        # ============================== 3. บันทึก Evidence Map ==============================
+        self.logger.info(f"DEBUG: Evidence Map current keys: {list(self.evidence_map.keys())}")
+        if self.evidence_map and len(self.evidence_map) > 0:
+            try:
+                self._save_evidence_map(map_to_save=self.evidence_map)
+                total_items = sum(len(v) for v in self.evidence_map.values() if isinstance(v, list))
+                self.logger.info(f"✅ Evidence Map SAVED | Items: {total_items} | Path: {self.evidence_map_path}")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to save evidence map: {e}")
+        else:
+            self.logger.warning("⚠️ Evidence Map is EMPTY. Skipping save process.")
+
+        # ============================== 4. สรุปผล & Export ==============================
         self._calculate_overall_stats(target_sub_id)
 
         final_results = {
-            "record_id": record_id,
+            "record_id": record_id, # [ADDED] ใส่ ID ลงในข้อมูลเพื่อใช้อ้างอิงภายหลัง
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "raw_llm_results": self.raw_llm_results,
@@ -2965,12 +3029,14 @@ class SEAMPDCAEngine:
         }
 
         if export:
+            # ส่ง record_id ผ่าน kwargs เพื่อให้ฟังก์ชัน export เอาไปตั้งชื่อไฟล์
             export_path = self._export_results(
                 results=final_results,
                 sub_criteria_id=target_sub_id if target_sub_id != "all" else "ALL",
-                record_id=record_id
+                record_id=record_id # <--- ส่ง record_id ผ่าน kwargs
             )
             final_results["export_path_used"] = export_path
+            final_results["evidence_map_snapshot"] = deepcopy(self.evidence_map)
 
         return final_results
     
@@ -2980,14 +3046,11 @@ class SEAMPDCAEngine:
         sub_criteria: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [FULL REVISED v24.1] - ULTIMATE WORKER EDITION
-        - แก้ปัญหา Evidence Map หายในโหมด Parallel
-        - รองรับระบบ Expert-led Evaluation และการสร้าง Action Plan ที่ครอบคลุม Gap Analysis
+        รันการประเมิน L1-L5 แบบ sequential สำหรับ sub-criteria หนึ่งตัว
+        รองรับระบบ Expert-led Evaluation และการสร้าง Action Plan ที่ครอบคลุม Gap Analysis
         """
         # 📌 โหลด Global Constants
-        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {
-            1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}
-        })
+        REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}})
         MAX_L1_ATTEMPTS = globals().get('MAX_L1_ATTEMPTS', 2)
         MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
 
@@ -3000,10 +3063,13 @@ class SEAMPDCAEngine:
         raw_results_for_sub_seq: List[Dict[str, Any]] = []
         start_ts = time.time() 
 
-        self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name}")
+        self.logger.info(f"[WORKER START] Assessing Sub-Criteria: {sub_id} - {sub_criteria_name} (Weight: {sub_weight})")
+
+        # รีเซ็ต temp_map_for_save เฉพาะ worker นี้
+        self.temp_map_for_save = {}
 
         # -----------------------------------------------------------
-        # 1. LOOP THROUGH LEVELS (L1 → L5)
+        # 1. LOOP THROUGH LEVELS (L1 → L5) - รันทุก Level เพื่อทำ Gap Analysis
         # -----------------------------------------------------------
         for statement_data in sub_criteria.get('levels', []):
             level = statement_data.get('level')
@@ -3030,6 +3096,7 @@ class SEAMPDCAEngine:
                 )
                 level_result = wrapper.result if isinstance(wrapper, RetryResult) and wrapper.result is not None else {}
             else:
+                # L1/L2 ใช้ Manual Retry
                 for attempt_num in range(1, MAX_L1_ATTEMPTS + 1):
                     level_result = self._run_single_assessment(
                         sub_criteria=sub_criteria,
@@ -3044,14 +3111,14 @@ class SEAMPDCAEngine:
             result_to_process = level_result or {"level": level, "is_passed": False}
             is_passed_llm = result_to_process.get('is_passed', False)
             
+            # ตั้งค่าตั้งต้นสำหรับ Logic Capping
             result_to_process.setdefault("is_counted", True)
             result_to_process.setdefault("is_capped", False)
 
-            # บันทึก evidence เข้า Worker Local `self.evidence_map`
+            # บันทึก evidence และคำนวณ Strength เฉพาะเมื่อผ่านจริง (ในชั้นที่ยังไม่ถูก Cap)
             level_temp_map = result_to_process.get("temp_map_for_level", [])
-            if level_temp_map:
+            if is_passed_llm and level_temp_map and first_failed_level_local is None:
                 highest_rerank = result_to_process.get('max_relevant_score', 0.0)
-                # บันทึกหลักฐานลง self.evidence_map (ซึ่งเป็น dict ในตัว Engine ของ Worker นี้)
                 max_evi_str = self._save_level_evidences_and_calculate_strength(
                     level_temp_map=level_temp_map,
                     sub_id=sub_id,
@@ -3059,29 +3126,36 @@ class SEAMPDCAEngine:
                     llm_result=result_to_process, 
                     highest_rerank_score=highest_rerank 
                 )
-                if is_passed_llm:
-                    result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
+                result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
                 
-            # --- 🟢 SEQUENTIAL STATE LOGIC ---
+            # --- 🟢 NEW LOGIC: Update Sequential State (Patch 3) ---
             if first_failed_level_local is not None:
+                # ถ้าเคย Fail มาก่อนแล้ว Level นี้จะกลายเป็น GAP_ONLY ทันที
                 result_to_process.update({
                     "evaluation_mode": "GAP_ONLY",
                     "is_counted": False,
                     "is_passed": False,
                     "cap_reason": f"Gap analysis after sequential fail at L{first_failed_level_local}"
                 })
+                self.logger.info(f"  > L{level} marked as GAP_ONLY (Fail at L{first_failed_level_local}).")
+            
             elif not is_passed_llm:
+                # ตรวจพบการ Fail ครั้งแรก
                 first_failed_level_local = level
                 self.logger.info(f"  > 🛑 First Sequential FAIL detected at L{level}.")
+            
             else:
+                # ตรวจสอบการข้าม Level (Sequential Break)
                 if level == current_sequential_pass_level + 1:
                     current_sequential_pass_level = level
                 else:
                     if self.is_sequential:
+                        self.logger.warning(f"  > Sequential BREAK detected at L{level}.")
                         first_failed_level_local = current_sequential_pass_level + 1
                         result_to_process["is_counted"] = False
                         result_to_process["is_passed"] = False
 
+            result_to_process["execution_index"] = len(raw_results_for_sub_seq)
             raw_results_for_sub_seq.append(result_to_process)
         
         # -----------------------------------------------------------
@@ -3092,21 +3166,56 @@ class SEAMPDCAEngine:
         num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True))
 
         sub_summary = {
+            "num_statements": len(raw_results_for_sub_seq),
             "num_passed": num_passed,
+            "num_failed": len(raw_results_for_sub_seq) - num_passed,
             "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
         }
 
         # -----------------------------------------------------------
-        # 3. GENERATE ACTION PLAN
+        # 3. GENERATE ACTION PLAN (REVISED FOR ACCURATE ROADMAP L5)
         # -----------------------------------------------------------
+        # 🎯 ปรับเป้าหมายเป็น Level 5 ตาม Config เพื่อให้เห็น Roadmap ระยะยาว
         roadmap_target_level = self.config.target_level if hasattr(self.config, 'target_level') else 5
+        
         statements_for_ap = []
+        
+        # ดึง Mapping ของ Statement เพื่อใช้เติมข้อมูล (Enrichment)
+        level_statements_map = {
+            l.get('level'): l.get('statement', '') 
+            for l in sub_criteria.get('levels', [])
+        }
         
         for r in raw_results_for_sub_seq:
             res_item = r.copy()
-            if not res_item.get('is_passed', False) or res_item.get('evidence_strength', 10.0) < (MIN_KEEP_SC * 10):
+            current_lvl = res_item.get('level')
+            
+            # ✅ Enrichment: เติมเนื้อหาเกณฑ์จริงเข้าไปเพื่อให้ LLM วางแผนได้ตรงประเด็น
+            res_item['statement_text'] = level_statements_map.get(current_lvl, "")
+            
+            is_passed = res_item.get('is_passed', False)
+            eval_mode = res_item.get('evaluation_mode', "")
+            
+            # --- Categorization Logic ---
+            if not is_passed:
+                # กรณีตกจริง (FAILED) หรือ เป็นผลจาก Sequential GAP (GAP_ANALYSIS)
+                res_item['recommendation_type'] = 'FAILED' if eval_mode != "GAP_ONLY" else 'GAP_ANALYSIS'
                 statements_for_ap.append(res_item)
+            else:
+                # กรณีผ่าน (Passed) แต่ต้องการเสริมคุณภาพ (Quality Refinement)
+                pdca = res_item.get('pdca_breakdown', {})
+                has_pdca_gap = any(v == 0 for v in pdca.values()) if pdca else False
+                
+                # เช็คคะแนนหลักฐาน (Evidence Strength < 1.5) หรือ PDCA ไม่ครบ Loop
+                if res_item.get('evidence_strength', 10.0) < (MIN_KEEP_SC * 10):
+                    res_item['recommendation_type'] = 'WEAK_EVIDENCE'
+                    statements_for_ap.append(res_item)
+                elif has_pdca_gap:
+                    res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
+                    statements_for_ap.append(res_item)
 
+        # 🚀 ส่งไปสร้าง Roadmap 3 Phase (L3 -> L4 -> L5)
+        # การส่ง target_level=5 จะทำให้ LLM เข้าใจว่าต้องซ่อมตั้งแต่จุดที่ติดไปจนถึงระดับสูงสุด
         action_plan_result = create_structured_action_plan(
             recommendation_statements=statements_for_ap,
             sub_id=sub_id,
@@ -3118,19 +3227,20 @@ class SEAMPDCAEngine:
         )
 
         # -----------------------------------------------------------
-        # 4. CRITICAL FIX: สกัด Evidence Map เพื่อส่งคืน Main Process
+        # 4. FINAL RETURN
         # -----------------------------------------------------------
-        final_worker_evidence_map = {}
+        final_temp_map = {}
+        # ดึงหลักฐานเฉพาะของ Sub-Criteria นี้เพื่อส่งคืน
         for key, val in self.evidence_map.items():
-            # กรองเอาเฉพาะหลักฐานของ Sub-Criteria นี้ที่ Worker เพิ่งหามาได้
             if key.startswith(f"{sub_id}."):
-                final_worker_evidence_map[key] = val
+                final_temp_map[key] = val
 
         final_sub_result = {
             "sub_criteria_id": sub_id,
             "sub_criteria_name": sub_criteria_name,
             "highest_full_level": highest_full_level,
             "weight": sub_weight,
+            "target_level_achieved": highest_full_level >= self.config.target_level,
             "weighted_score": weighted_score,
             "action_plan": action_plan_result, 
             "raw_results_ref": raw_results_for_sub_seq,
@@ -3138,10 +3248,9 @@ class SEAMPDCAEngine:
             "worker_duration_s": round(time.time() - start_ts, 2)
         }
 
-        self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level}")
+        self.logger.info(f"[WORKER END] {sub_id} | Highest: L{highest_full_level} | Duration: {final_sub_result['worker_duration_s']}s")
 
-        # ✅ Return แบบ Tuple เพื่อให้ Main Process นำไป Merge ได้
-        return final_sub_result, final_worker_evidence_map
+        return final_sub_result, final_temp_map
     
     def _run_expert_re_evaluation(
         self,
