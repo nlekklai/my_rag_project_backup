@@ -788,65 +788,77 @@ class SEAMPDCAEngine:
         statement_id: str,
         level: int,
         focus_hint: str,
+        additional_context: Dict[str, Any] = None
     ) -> List[str]:
         """
-        [Generic Version] สร้าง Query โดยดึงวัตถุดิบจาก JSON ตาม Enabler นั้นๆ
-        รองรับโครงสร้าง Nested L1-L5 และดึง Keywords แบบสะสม (Accumulative)
+        [REVISED v21.4 - FULL]
+        สร้างชุดคำค้นหา (Search Queries) โดยดึงวัตถุดิบจาก Focus Points และ Guidelines 
+        เพื่อเพิ่มความแม่นยำในการเข้าถึงเอกสารหลักฐานจริง
         """
         logger = logging.getLogger(__name__)
         enabler_id = self.enabler_id
+        additional_context = additional_context or {}
         
-        # --- 1. เตรียมวัตถุดิบ (Keywords จาก JSON) ---
-        raw_keywords_collector = []
+        # --- 1. เตรียมวัตถุดิบ (Keywords & Context) ---
+        # ดึง Focus Points และ Guideline จาก Context
+        focus_points = additional_context.get('focus_points', [])
+        guideline = additional_context.get('guideline', "")
         
-        # ดึง Must Include เสมอ (ถ้ามีใน JSON ของ Enabler นั้น)
+        # ดึง Keywords ตามมาตรฐาน PDCA (สะสมตาม Level)
+        raw_keywords = []
+        # ต้องมี (Must include)
         must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
-        if isinstance(must_list, list):
-            raw_keywords_collector.extend(must_list)
+        if isinstance(must_list, list): raw_keywords.extend(must_list)
         
-        # ดึง Keywords ตาม Level แบบสะสม (Accumulative)
-        if level >= 1:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 1, "plan_keywords"))
-        if level >= 2:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 2, "do_keywords"))
-        if level >= 3:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 3, "check_keywords"))
-        if level >= 4:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 4, "act_keywords"))
-        if level >= 5:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 5, "act_keywords"))
+        # คำสำคัญตามระดับ Maturity (Plan/Do/Check/Act)
+        if level >= 1: raw_keywords.extend(self.get_rule_content(sub_id, 1, "plan_keywords") or [])
+        if level >= 3: raw_keywords.extend(self.get_rule_content(sub_id, 3, "check_keywords") or [])
+        
+        # รวม Focus Points เข้าไปในก้อน Keywords
+        if isinstance(focus_points, list):
+            raw_keywords.extend(focus_points)
 
-        # ล้างข้อมูลและลดคำซ้ำ
-        clean_keywords = [str(k).strip() for k in raw_keywords_collector if k]
-        keywords_str = ", ".join(list(set(clean_keywords)))
+        # Clean & Deduplicate
+        clean_keywords = list(dict.fromkeys([str(k).strip() for k in raw_keywords if k]))
+        keywords_str = " ".join(clean_keywords[:12]) # ใช้สูงสุด 12 คำเพื่อไม่ให้ Query ยาวเกินไป
 
-        # --- 2. สร้างชุด Queries แบบ Generic (ไม่ Fix เนื้อหา เพื่อรองรับทุก Enablers) ---
+        # --- 2. สร้างชุด Queries แบบมุ่งเป้า (Targeted Queries) ---
         queries = []
 
-        # Query 1: Base Query (เน้นใจความสำคัญ + Keywords จาก JSON)
-        queries.append(f"**{statement_text}** {sub_id} L{level} {enabler_id} {keywords_str}")
+        # Query 1: Focus-Core Query (ผสม Enabler + Sub-ID + Focus Points)
+        # ตัวอย่าง: "KM 2.2 การจัดสรรงบประมาณ ระบบ IT Infrastructure"
+        queries.append(f"{enabler_id} {sub_id} {keywords_str}")
 
-        # Query 2: Evidence Type Based (เน้นประเภทเอกสารตาม Maturity Level)
-        if level <= 2:
-            # L1-L2 เน้นหา กติกา/แนวทาง
-            queries.append(f"ประกาศ คำสั่ง แนวทาง หลักเกณฑ์ ระเบียบปฏิบัติ {sub_id} {keywords_str}")
+        # Query 2: Evidence-Type Query (เน้นตาม Guideline หรือ Maturity)
+        # ตัวอย่าง: "รายงานการประชุม คณะทำงาน KM" หรือ "ระเบียบปฏิบัติ นโยบาย"
+        if guideline:
+            queries.append(f"{guideline} {sub_id} {enabler_id} {keywords_str}")
         else:
-            # L3-L5 เน้นหา การปฏิบัติและผลลัพธ์
-            queries.append(f"รายงานสรุปผล การประเมินผล KPI การติดตาม การตรวจสอบ {sub_id} {keywords_str}")
+            if level <= 2:
+                queries.append(f"ประกาศ คำสั่ง ระเบียบปฏิบัติ แผนงาน หลักเกณฑ์ {sub_id} {keywords_str}")
+            else:
+                queries.append(f"รายงานผลการดำเนินงาน สรุปผลการประเมิน บันทึกข้อความ {sub_id} {keywords_str}")
 
-        # Query 3: PDCA Synonyms (ดึงจาก Constant กลาง)
-        current_synonyms = PDCA_LEVEL_SYNONYMS.get(level, "")
-        if current_synonyms:
-            queries.append(f"{sub_id} {enabler_id} {current_synonyms} {keywords_str}")
+        # Query 3: Statement-Based (ใช้ข้อความเกณฑ์โดยตรง + Focus Hint)
+        # ตัวอย่าง: "กำหนดหลักเกณฑ์การจัดสรรงบประมาณ L2 KM"
+        queries.append(f"{statement_text} {sub_id} {focus_hint}")
 
-        # Query 4: Special Focus (สำหรับระดับสูง)
+        # Query 4: PDCA & Result (สำหรับระดับสูง L4-L5)
         if level >= 4:
-            queries.append(f"การปรับปรุง นวัตกรรม Best Practice แนวทางที่เป็นเลิศ {sub_id} {keywords_str}")
+            queries.append(f"การปรับปรุง พัฒนาต่อเนื่อง นวัตกรรม Best Practice {sub_id} {keywords_str}")
 
-        # --- 3. จำกัดจำนวนและส่งออก ---
-        final_queries = [q.strip() for q in queries if q.strip()][:5]
-        logger.info(f"Generated {len(final_queries)} generic queries for {enabler_id} - {sub_id} L{level}")
-        return final_queries
+        # --- 3. Finalize & Limit ---
+        # ลบ Query ที่ซ้ำกันและลบช่องว่าง
+        final_queries = []
+        seen = set()
+        for q in queries:
+            q_clean = " ".join(q.split())
+            if q_clean and q_clean not in seen:
+                final_queries.append(q_clean)
+                seen.add(q_clean)
+
+        logger.info(f"🚀 Enhanced {len(final_queries[:5])} queries for {sub_id} L{level} (Context: {len(clean_keywords)} keywords)")
+        return final_queries[:5] # ส่งออกสูงสุด 5 Queries
 
     def _initialize_llm_if_none(self):
         """Initializes LLM instance if self.llm is None."""
@@ -1799,7 +1811,8 @@ class SEAMPDCAEngine:
              self.logger.error("Rubric data structure is invalid (expected dict of criteria).")
              return []
              
-        for criteria_id, criteria_data in data.items():
+        # for criteria_id, criteria_data in data.items():
+        for criteria_id, criteria_data in data.get('criteria', {}).items():
             # 🎯 FIX 1: ตรวจสอบ Criteria Data
             if not isinstance(criteria_data, dict):
                 self.logger.warning(f"Skipping malformed criteria entry: {criteria_id} (not a dict).")
@@ -3323,10 +3336,9 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.2] 
-        - รองรับโครงสร้าง JSON Nested (L1-L5) ผ่าน Helper get_rule_content
-        - ปรับปรุงการดึง Keywords และ Specific Rules ให้ตรงตาม Level
-        - รักษา Logic PDCA และ Evidence Strength ตามมาตรฐานเดิม
+        [REVISED v21.3 - FULL] 
+        - บูรณาการ Focus Points และ Evidence Guidelines เข้ากับระบบ RAG
+        - รองรับโครงสร้าง JSON Nested และระบบ ADAPTIVE Retrieval
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
@@ -3342,18 +3354,17 @@ class SEAMPDCAEngine:
 
         self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt})...")
 
-        # ==================== 1. PDCA & Keywords Setup (REVISED) ====================
+        # ==================== 1. PDCA & Keywords Setup ====================
         pdca_phase = self._get_pdca_phase(level)
         level_constraint = self._get_level_constraint_prompt(level)
         
-        # 🎯 ดึงข้อมูลจาก JSON แบบ Nested L1-L5 ผ่าน Helper
+        # ดึงคำสำคัญจากกฎเหล็กระดับย่อย
         must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
         must_include_keywords = ", ".join(must_list) if isinstance(must_list, list) else must_list
         
         avoid_list = self.get_rule_content(sub_id, level, "avoid_keywords")
         avoid_keywords = ", ".join(avoid_list) if isinstance(avoid_list, list) else avoid_list
         
-        # ดึง Plan Keywords เฉพาะ Level (สำหรับการคำนวณใน L1-L2)
         plan_keywords = self.get_rule_content(sub_id, level, "plan_keywords")
 
         # ==================== 2. Hybrid Retrieval Setup ====================
@@ -3365,10 +3376,22 @@ class SEAMPDCAEngine:
             chunks_to_hydrate=priority_unhydrated, vsm=vectorstore_manager, current_sub_id=sub_id
         )
 
-        # ==================== 3. Enhance Query (เรียกใช้ฟังก์ชันที่เราแก้ก่อนหน้า) ====================
+        # ==================== 3. Enhanced Query with Focus & Guidelines (NEW!) ====================
+        # ดึงวัตถุดิบใหม่จาก Rubric JSON
+        focus_points = sub_criteria.get('focus_points', [])
+        guideline = sub_criteria.get('evidence_guidelines', {}).get(f'level_{level}', "")
+
+        # เรียกฟังก์ชันสร้าง Query โดยส่ง Context เพิ่มเติมเข้าไป
         rag_query_list = self.enhance_query_for_statement(
-            statement_text=statement_text, sub_id=sub_id, statement_id=statement_id,
-            level=level, focus_hint=level_constraint,
+            statement_text=statement_text, 
+            sub_id=sub_id, 
+            statement_id=statement_id,
+            level=level, 
+            focus_hint=level_constraint,
+            additional_context={
+                "focus_points": focus_points,
+                "guideline": guideline
+            }
         )
 
         # ==================== 4. LLM Evaluator Selection ====================
@@ -3379,6 +3402,7 @@ class SEAMPDCAEngine:
         final_top_evidences = []
 
         for loop_attempt in range(1, MAX_RETRI_ATTEMPTS + 1):
+            # Loop 1 ใช้ Query ที่ขยายความแล้ว, Loop อื่นๆ ใช้ Statement เดิมเพื่อ Fallback
             query_input = rag_query_list if loop_attempt == 1 and rag_query_list else [statement_text]
             try:
                 retrieval_result = self.rag_retriever(
@@ -3389,8 +3413,9 @@ class SEAMPDCAEngine:
                 )
                 top_evidences_current = retrieval_result.get("top_evidences", [])
                 
-                current_max = max((get_actual_score(ev) for ev in top_evidences_current), default=0.0)
-                priority_max = max((get_actual_score(doc) for doc in priority_docs), default=0.0)
+                # หาคะแนนสูงสุดเพื่อตัดสินใจว่าจะจบ Loop หรือหาต่อ
+                current_max = max((ev.get('metadata', {}).get('rerank_score', 0.0) for ev in top_evidences_current), default=0.0)
+                priority_max = max((doc.get('metadata', {}).get('rerank_score', 0.0) for doc in priority_docs), default=0.0)
                 overall_max = max(current_max, priority_max)
 
                 if overall_max >= highest_rerank_score:
@@ -3398,18 +3423,17 @@ class SEAMPDCAEngine:
                     final_top_evidences = top_evidences_current + priority_docs
 
                 if highest_rerank_score >= MIN_RETRY_SC:
-                    break
+                    break # เจอหลักฐานที่มั่นใจแล้ว
             except Exception as e:
                 self.logger.error(f"RAG retrieval failed at loop {loop_attempt}: {e}")
                 break
 
-        # ==================== 6. Adaptive Filtering with Fallback ====================
+        # ==================== 6. Adaptive Filtering & Context Expansion ====================
         top_evidences = final_top_evidences if final_top_evidences else []
-        filtered = [doc for doc in top_evidences if get_actual_score(doc) >= MIN_KEEP_SC or doc.get('is_baseline', False)]
+        filtered = [doc for doc in top_evidences if doc.get('metadata', {}).get('rerank_score', 0) >= MIN_KEEP_SC or doc.get('is_baseline', False)]
         
         if not filtered and level <= 2:
-            self.logger.warning(f"  ⚠️ L{level} Fallback: Using top 10 raw chunks.")
-            filtered = sorted(top_evidences, key=lambda x: get_actual_score(x), reverse=True)[:10]
+            filtered = sorted(top_evidences, key=lambda x: x.get('metadata', {}).get('rerank_score', 0), reverse=True)[:10]
 
         top_evidences = filtered
 
@@ -3417,7 +3441,7 @@ class SEAMPDCAEngine:
             top_evidences = self._robust_hydrate_documents_for_priority_chunks(top_evidences, vectorstore_manager)
             top_evidences = self._expand_context_with_neighbor_pages(top_evidences, f"evidence_{self.config.enabler.lower()}")
 
-        # ==================== 7. Context Building ====================
+        # ==================== 7. Context Building (PDCA Structured) ====================
         previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
         flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
 
@@ -3436,16 +3460,15 @@ class SEAMPDCAEngine:
             f"--- BASELINE SUMMARY ---\n{channels.get('baseline_summary')}"
         ]))
 
-        # ==================== 8. Evidence Strength Calculation ====================
+        # ==================== 8. Evidence Strength & Tags ====================
         available_tags = {tag for tag, block in zip(['P', 'D', 'C', 'A'], [plan_blocks, do_blocks, check_blocks, act_blocks]) if block.strip()}
         evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, highest_rerank_score)
         max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
 
-        # ==================== 9. Contextual Rule Logic (REVISED) ====================
-        # 🎯 ดึงกฎเหล็ก (Rule Instruction) จาก JSON ตาม Level
+        # ==================== 9. Contextual Rule & Focus Logic ====================
         rule_instruction = self.get_rule_content(sub_id, level, "specific_contextual_rule")
         if not rule_instruction:
-            rule_instruction = "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
+            rule_instruction = f"เน้นพิจารณาหลักฐานตามหัวข้อ: {', '.join(focus_points)}" if focus_points else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
 
         # ==================== 10. EVALUATION EXECUTION ====================
         llm_kwargs = {
@@ -3458,7 +3481,7 @@ class SEAMPDCAEngine:
             "level_constraint": level_constraint,
             "must_include_keywords": must_include_keywords,
             "avoid_keywords": avoid_keywords,
-            "specific_contextual_rule": rule_instruction, # 🔥 กฎเฉพาะ L2/L3 ถูกส่งที่นี่
+            "specific_contextual_rule": rule_instruction,
             "max_rerank_score": highest_rerank_score,
             "max_evidence_strength": max_evi_str_for_prompt,
             "llm_executor": self.llm,
@@ -3469,7 +3492,7 @@ class SEAMPDCAEngine:
 
         llm_result = llm_evaluator_to_use(**llm_kwargs)
 
-        # Expert Re-evaluation (ถ้าจำเป็น)
+        # Expert Re-evaluation Fallback
         if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
             self.logger.info(f"  !! Initiating Expert Re-evaluation for {sub_id} L{level}")
             try:
@@ -3482,25 +3505,19 @@ class SEAMPDCAEngine:
                 )
             except Exception: pass
 
-        # ==================== 11. Post-Processing & Output ====================
+        # ==================== 11. Final Output Mapping ====================
         llm_result = post_process_llm_result(llm_result, level)
-        
-        final_score = llm_result.get('score', 0.0)
-        final_pdca = llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0})
-        final_passed = llm_result.get('is_passed', False)
-
         thai_summary = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
 
         return {
             "sub_criteria_id": sub_id,
             "level": level,
-            "is_passed": final_passed,
-            "score": final_score,
-            "pdca_breakdown": final_pdca,
+            "is_passed": llm_result.get('is_passed', False),
+            "score": llm_result.get('score', 0.0),
+            "pdca_breakdown": llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0}),
             "reason": llm_result.get('reason', "No reason provided"),
-            "evidence_strength": max_evi_str_for_prompt if final_passed else 0.0,
+            "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed', False) else 0.0,
             "max_relevant_score": highest_rerank_score,
-            "temp_map_for_level": top_evidences,
             "summary_thai": thai_summary.get("summary"),
             "duration": time.time() - start_time
         }

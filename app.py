@@ -63,20 +63,38 @@ app = FastAPI(
 # -----------------------------
 # Middleware
 # -----------------------------
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8080",  # 👈 เพิ่มบรรทัดนี้ (ตามที่ Vite รันจริง)
+        "http://127.0.0.1:8080",  # 👈 เผื่อไว้สำหรับ IP Loopback
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://lovable.dev",
+        "https://lovable.app",
+        "https://80a1a70f-61aa-4128-82c5-fc1e4ea7886e.lovableproject.com",
+    ],
+    allow_origin_regex=r"https://.*\.lovableproject\.com|https://.*\.lovable\.app|https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # -----------------------------
 # Routers 
 # -----------------------------
 # app.include_router(upload_router)
-app.include_router(upload_router, prefix="/api/upload")  # ดักพวก POST upload
-app.include_router(upload_router, prefix="/api/uploads") # ดักพวก GET list
+app.include_router(upload_router)
 app.include_router(llm_router)
 # ✅ รวม assessment_router และ auth_router เข้าสู่แอปพลิเคชัน
 app.include_router(assessment_router)   
