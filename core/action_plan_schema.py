@@ -9,14 +9,13 @@ import json
 # 1. Step Detail: ขั้นตอนย่อย
 # -----------------------------
 class StepDetail(BaseModel):
-    # ปรับให้ใช้ alias เป็น snake_case เพื่อความสะดวกของ LLM
-    Step: int = Field(..., alias="step", description="ลำดับที่ (1, 2, 3...)")
-    Description: str = Field(..., alias="description", description="กิจกรรมที่ต้องทำ")
-    Responsible: str = Field(..., alias="responsible", description="หน่วยงาน/ตำแหน่งที่รับผิดชอบ")
-    Tools_Templates: str = Field(..., alias="tools_templates", description="ชื่อไฟล์ Template หรือระบบที่ใช้")
-    Verification_Outcome: str = Field(..., alias="verification_outcome", description="ผลลัพธ์หรือหลักฐานที่ได้ (Evidence)")
+    # ใช้ alias เพื่อรองรับทั้งตัวพิมพ์เล็กและใหญ่
+    Step: int = Field(default=1, alias="step")
+    Description: str = Field(default="", alias="description")
+    Responsible: str = Field(default="หน่วยงานที่เกี่ยวข้อง", alias="responsible")
+    Tools_Templates: str = Field(default="-", alias="tools_templates")
+    Verification_Outcome: str = Field(default="หลักฐานการดำเนินงาน", alias="verification_outcome")
 
-    # อนุญาตให้ใช้ทั้งชื่อจริง (Step) และ alias (step) ในการสร้าง Object
     model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("Step", mode="before")
@@ -24,14 +23,7 @@ class StepDetail(BaseModel):
     def ensure_int(cls, v: Any) -> int:
         if isinstance(v, int): return v
         nums = re.findall(r'\d+', str(v))
-        return int(nums[0]) if nums else 0
-
-    @field_validator("Description", "Responsible", "Tools_Templates", "Verification_Outcome", mode="before")
-    @classmethod
-    def sanitize_text(cls, v: Any) -> str:
-        if v is None: return ""
-        v = re.sub(r'[\n\r\t\u200b\u200c\u200d\uFEFF]+', ' ', str(v))
-        return v.strip()
+        return int(nums[0]) if nums else 1
 
 # -----------------------------
 # 2. Action Item: รายการแผนงาน
@@ -39,19 +31,21 @@ class StepDetail(BaseModel):
 class ActionItem(BaseModel):
     Statement_ID: str = Field(..., alias="statement_id")
     Failed_Level: int = Field(..., alias="failed_level")
-    Recommendation: str = Field(..., alias="recommendation")
-    Target_Evidence_Type: str = Field(..., alias="target_evidence_type")
-    Key_Metric: str = Field(..., alias="key_metric")
+    Recommendation: str = Field(default="ปรับปรุงตามเกณฑ์มาตรฐาน", alias="recommendation")
+    # ✅ แก้จุดนี้: ใส่ default เพื่อไม่ให้ Error 'Field required'
+    Target_Evidence_Type: str = Field(default="เอกสารประกอบการดำเนินงาน", alias="target_evidence_type")
+    Key_Metric: str = Field(default="ระดับความสำเร็จตามแผน", alias="key_metric")
     Steps: List[StepDetail] = Field(default_factory=list, alias="steps")
 
-    model_config = ConfigDict(populate_by_name=True, coerce_numbers_to_str=False)
+    model_config = ConfigDict(populate_by_name=True)
 
-    @field_validator("Failed_Level", mode="before")
+    @field_validator("Steps", mode="before")
     @classmethod
-    def clean_level(cls, v: Any) -> int:
-        if isinstance(v, int): return v
-        nums = re.findall(r'\d+', str(v))
-        return int(nums[0]) if nums else 0
+    def ensure_list(cls, v: Any) -> Any:
+        # ✅ แก้จุดนี้: ถ้า AI ส่ง steps มาเป็นข้อความก้อนเดียว (String) ให้เปลี่ยนเป็น List ทันที
+        if isinstance(v, str):
+            return [{"step": 1, "description": v}]
+        return v
 
 # -----------------------------
 # 3. ActionPlanActions: ระยะ (Phase)

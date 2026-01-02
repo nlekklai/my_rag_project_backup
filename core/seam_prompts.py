@@ -145,6 +145,10 @@ SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
 """
 
 # HUMAN PROMPT: บังคับการสร้างหลาย Phase และระบุหลักฐาน (Verification Outcome)
+# =================================================================
+# 4. [REVISED] ACTION_PLAN_TEMPLATE (FULL CODE)
+# =================================================================
+
 ACTION_PLAN_TEMPLATE: Final[str] = """
 ### [ข้อมูลวิเคราะห์]
 - รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
@@ -157,37 +161,54 @@ ACTION_PLAN_TEMPLATE: Final[str] = """
 ### [กฎเหล็กที่ต้องทำตามเป๊ะ ๆ]
 1. จงสร้างแผนงานแบบ Roadmap ต่อเนื่อง โดยแบ่งเป็น **{max_phases} Phase**
 2. แต่ละ Phase ต้องระบุเป้าหมายการเลื่อนระดับที่ชัดเจน (เช่น Phase 1 สู่ L3, Phase 2 สู่ L4-L5)
-3. ใช้ Key ตัวพิมพ์เล็ก: "phase", "goal", "actions", "statement_id", "failed_level", "recommendation", "steps"
-4. ใน "verification_outcome" ให้ระบุ "ชื่อไฟล์หลักฐานที่ควรมี" (เช่น รายงานสรุปผล_2568.pdf)
+3. **ใช้ Key ตัวพิมพ์เล็กทั้งหมดตามตัวอย่าง** (สำคัญมากต่อการประมวลผล)
+4. ใน "verification_outcome" ให้ระบุ "ชื่อไฟล์หลักฐานที่ควรมี" ให้ชัดเจน
 
-### [ตัวอย่างโครงสร้าง JSON แบบ ROADMAP]
+### [ตัวอย่างโครงสร้าง JSON ที่ถูกต้อง]
 [
   {{
-    "phase": "Phase 1: การสร้างหลักฐานการปฏิบัติงาน (Target Level 3)",
-    "goal": "เพื่อปิดช่องว่างด้านการปฏิบัติงานและรวบรวมหลักฐานสรุปผล",
+    "phase": "Phase 1: การวางรากฐานและการปฏิบัติงาน (Target Level 3)",
+    "goal": "เพื่อปิดช่องว่างด้านการปฏิบัติงานและรวบรวมหลักฐานสรุปผลให้ครบถ้วน",
     "actions": [
       {{
         "statement_id": "{sub_id}",
         "failed_level": 3,
         "recommendation": "จัดทำรายงานสรุปผลการดำเนินงาน KM ประจำไตรมาส",
-        "target_evidence_type": "Activity & Spending Report",
-        "key_metric": "รายงานครบ 4 ไตรมาส",
+        "target_evidence_type": "Activity Report",
+        "key_metric": "ความครบถ้วนของรายงาน 4 ไตรมาส",
         "steps": [
           {{
-            "Step": 1,
-            "Description": "รวบรวมข้อมูลและภาพถ่ายกิจกรรม KM",
-            "Responsible": "คณะทำงาน KM",
-            "Tools_Templates": "Template รายงานสรุปผล",
-            "Verification_Outcome": "รายงานสรุปกิจกรรม_KM.pdf"
+            "step": 1,
+            "description": "รวบรวมข้อมูลและภาพถ่ายกิจกรรมจากทุกสายงาน",
+            "responsible": "คณะทำงาน KM",
+            "tools_templates": "Template รายงาน KM",
+            "verification_outcome": "รายงานสรุปกิจกรรม_KM_67.pdf"
           }}
         ]
       }}
     ]
   }},
   {{
-    "phase": "Phase 2: การวัดผลและการปรับปรุงต่อเนื่อง (Target Level 4-5)",
-    "goal": "เพื่อสร้างระบบประเมินประสิทธิภาพและนวัตกรรม",
-    "actions": [ ... ]
+    "phase": "Phase 2: การวัดผลและการปรับปรุงสู่ความเป็นเลิศ (Target Level 4-5)",
+    "goal": "เพื่อสร้างระบบประเมินประสิทธิภาพและนวัตกรรมที่เป็นแบบอย่างได้",
+    "actions": [
+      {{
+        "statement_id": "{sub_id}",
+        "failed_level": 5,
+        "recommendation": "พัฒนาระบบ Dashboard ติดตามผล KM แบบ Real-time",
+        "target_evidence_type": "Digital Dashboard",
+        "key_metric": "ร้อยละความพึงพอใจของผู้ใช้งาน > 85%",
+        "steps": [
+          {{
+            "step": 1,
+            "description": "วิเคราะห์ข้อมูลจากระบบ IT และประมวลผลผ่าน BI Tool",
+            "responsible": "แผนก IT / คณะทำงาน KM",
+            "tools_templates": "Power BI / Tableau",
+            "verification_outcome": "KM_Performance_Dashboard.png"
+          }}
+        ]
+      }}
+    ]
   }}
 ]
 
@@ -363,7 +384,7 @@ QUALITY_REFINEMENT_PROMPT = PromptTemplate(
         "key_metric": "ความครบถ้วนของหลักฐานตามวงจร PDCA",
         "steps": [
           {{
-            "Step": 1,
+            "step": 1,
             "Description": "รวบรวมบันทึกการประชุมหรือรายงานสรุปผลที่ยังตกหล่น",
             "Responsible": "ทีมเลขานุการ KM",
             "Tools_Templates": "Checklist รายการหลักฐาน",
