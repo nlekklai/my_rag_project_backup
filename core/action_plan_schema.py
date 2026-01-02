@@ -9,7 +9,6 @@ import json
 # 1. Step Detail: ขั้นตอนย่อย
 # -----------------------------
 class StepDetail(BaseModel):
-    # ใช้ alias เพื่อรองรับทั้งตัวพิมพ์เล็กและใหญ่
     Step: int = Field(default=1, alias="step")
     Description: str = Field(default="", alias="description")
     Responsible: str = Field(default="หน่วยงานที่เกี่ยวข้อง", alias="responsible")
@@ -25,6 +24,14 @@ class StepDetail(BaseModel):
         nums = re.findall(r'\d+', str(v))
         return int(nums[0]) if nums else 1
 
+    # ✅ เพิ่มจุดนี้: ถ้า AI ส่งแค่ String มาตรงๆ ให้แปลงเป็น Description ของ Step นั้น
+    @field_validator("Description", mode="before")
+    @classmethod
+    def wrap_string_to_desc(cls, v: Any) -> str:
+        if isinstance(v, dict):
+            return v.get("Description") or v.get("description") or ""
+        return str(v)
+
 # -----------------------------
 # 2. Action Item: รายการแผนงาน
 # -----------------------------
@@ -32,7 +39,6 @@ class ActionItem(BaseModel):
     Statement_ID: str = Field(..., alias="statement_id")
     Failed_Level: int = Field(..., alias="failed_level")
     Recommendation: str = Field(default="ปรับปรุงตามเกณฑ์มาตรฐาน", alias="recommendation")
-    # ✅ แก้จุดนี้: ใส่ default เพื่อไม่ให้ Error 'Field required'
     Target_Evidence_Type: str = Field(default="เอกสารประกอบการดำเนินงาน", alias="target_evidence_type")
     Key_Metric: str = Field(default="ระดับความสำเร็จตามแผน", alias="key_metric")
     Steps: List[StepDetail] = Field(default_factory=list, alias="steps")
@@ -41,10 +47,21 @@ class ActionItem(BaseModel):
 
     @field_validator("Steps", mode="before")
     @classmethod
-    def ensure_list(cls, v: Any) -> Any:
-        # ✅ แก้จุดนี้: ถ้า AI ส่ง steps มาเป็นข้อความก้อนเดียว (String) ให้เปลี่ยนเป็น List ทันที
+    def ensure_list_of_objects(cls, v: Any) -> Any:
+        # กรณี 1: มาเป็น String ก้อนเดียว (เช่น "ทำ A, B, C")
         if isinstance(v, str):
             return [{"step": 1, "description": v}]
+        
+        # กรณี 2: มาเป็น List ของ String (เช่น ["ขั้นตอน 1", "ขั้นตอน 2"]) **<-- จุดที่คุณเจอ Error**
+        if isinstance(v, list):
+            new_steps = []
+            for i, item in enumerate(v):
+                if isinstance(item, str):
+                    new_steps.append({"step": i + 1, "description": item})
+                else:
+                    new_steps.append(item)
+            return new_steps
+            
         return v
 
 # -----------------------------
