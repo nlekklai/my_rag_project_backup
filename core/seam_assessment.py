@@ -1064,7 +1064,6 @@ class SEAMPDCAEngine:
 
         return expanded_evidences
     
-    
     def _resolve_evidence_filenames(self, evidence_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         resolved_entries = []
         for entry in evidence_entries:
@@ -1099,6 +1098,7 @@ class SEAMPDCAEngine:
 
             resolved_entries.append(resolved_entry)
         return resolved_entries
+        
     
     # -------------------- Contextual Rules Handlers (FIXED) --------------------
     def _load_contextual_rules_map(self) -> Dict[str, Dict[str, str]]:
