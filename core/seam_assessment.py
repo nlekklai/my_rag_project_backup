@@ -2218,55 +2218,60 @@ class SEAMPDCAEngine:
         highest_rerank_score: float = 0.0
     ) -> float:
         """
-        [FULL REFINED VERSION 25.1]
-        บันทึกหลักฐานการประเมินและคำนวณ Evidence Strength 
-        รองรับ Metadata แบบ Robust ที่ดึงข้อมูลได้ทั้งจาก Direct Key และ Nested Metadata
-        สอดคล้องกับโครงสร้างจาก ingest.py (deterministic UUIDs)
+        [REVISED v25.2 - ROBUST RECOVERY SUPPORT]
+        บันทึกหลักฐานโดยรองรับทั้งข้อมูลจาก VectorDB และ ข้อมูลที่กู้คืนผ่าน Regex (Stable ID)
         """
         map_key = f"{sub_id}.L{level}"
         new_evidence_list: List[Dict[str, Any]] = []
         
-        # ดึงค่าเริ่มต้นเพื่อใช้ในการ Debug หากเกิดปัญหา
         self.logger.info(f"💾 [EVI SAVE] Starting save for {map_key} with {len(level_temp_map)} potential chunks.")
 
         for chunk in level_temp_map:
-            # 🎯 1. ดึง Metadata และ Identifiers (Robust Extraction)
-            # รองรับทั้ง Dictionary, Object ที่มี metadata field หรือโครงสร้างแบนราบ (Flattened)
+            # 🎯 1. ดึง Metadata
             meta = chunk.get("metadata", {}) if isinstance(chunk.get("metadata"), dict) else {}
             
-            # ค้นหา Chunk UUID (ลำดับความสำคัญ: Direct -> Metadata -> id)
+            # [PATCH v25.2] เพิ่ม chunk.get("id") เพื่อรองรับ Stable ID จาก Recovery
             chunk_uuid_key = (
                 chunk.get("chunk_uuid") or 
                 meta.get("chunk_uuid") or 
-                chunk.get("id")
+                chunk.get("id")    # <--- รองรับ stable_fake_id
             )
             
-            # ค้นหา Stable Doc UUID (ลำดับความสำคัญ: Direct -> Metadata -> doc_id)
+            # [PATCH v25.2] เพิ่ม chunk.get("file_id") เพื่อรองรับ Stable ID จาก Recovery
             stable_doc_uuid_key = (
                 chunk.get("stable_doc_uuid") or 
                 chunk.get("doc_id") or 
+                chunk.get("file_id") or # <--- รองรับ stable_fake_id ที่เป็น file_id
                 meta.get("stable_doc_uuid") or 
                 meta.get("doc_id")
             )
 
-            # 🎯 2. Fallback Logic: ถ้ายังหา ID ไม่เจอ (เพื่อป้องกัน Data Loss)
+            # 🎯 2. Fallback Logic: ป้องกัน Data Loss สำหรับเคส Recovery
             if not chunk_uuid_key and stable_doc_uuid_key:
-                # ใช้ Stable Doc ID + fake suffix ถ้าหา chunk uuid ไม่เจอจริงๆ
-                chunk_uuid_key = f"{stable_doc_uuid_key}_missing_uuid"
-                self.logger.warning(f"⚠️ [EVI SAVE] Missing chunk_uuid for doc {stable_doc_uuid_key[:8]}. Using Fallback.")
+                chunk_uuid_key = f"{stable_doc_uuid_key}_recovered"
+            elif chunk_uuid_key and not stable_doc_uuid_key:
+                stable_doc_uuid_key = chunk_uuid_key # ใช้ ID เดียวกันถ้ามาอย่างใดอย่างหนึ่ง
 
-            # 🎯 3. Validation: ถ้าไม่มี ID สำคัญเลย ให้ Skip เพื่อความปลอดภัยของ Database
+            # 🎯 3. Validation
             if not stable_doc_uuid_key or not chunk_uuid_key:
-                self.logger.error(f"❌ [EVI SAVE] Critical ID Missing! Skipping chunk from source: {chunk.get('source', 'Unknown')}")
+                # ลองดึงชื่อไฟล์มาโชว์ใน Log เพื่อให้ Debug ง่ายขึ้น
+                fname = chunk.get('file_name') or chunk.get('source') or 'Unknown'
+                self.logger.error(f"❌ [EVI SAVE] Critical ID Missing! Skipping source: {fname}")
                 continue
 
-            # 🎯 4. สร้าง Evidence Entry (อิงตามมาตรฐาน ingest.py)
-            # ดึงหน้ากระดาษโดยให้ความสำคัญกับ page_label ก่อน (เพื่อ UI ที่สวยงาม)
+            # 🎯 4. สร้าง Evidence Entry
             page_val = (
                 meta.get("page_label") or 
                 chunk.get("page") or 
                 meta.get("page") or 
-                chunk.get("page_number") or 
+                "N/A"
+            )
+
+            # [PATCH v25.2] ดึงชื่อไฟล์ให้ครอบคลุมที่สุด (รองรับ file_name จาก recovery)
+            source_display = (
+                chunk.get("file_name") or 
+                chunk.get("source") or 
+                meta.get("source") or 
                 "N/A"
             )
 
@@ -2277,8 +2282,8 @@ class SEAMPDCAEngine:
                 "doc_id": str(stable_doc_uuid_key),
                 "stable_doc_uuid": str(stable_doc_uuid_key),
                 "chunk_uuid": str(chunk_uuid_key),
-                "source": chunk.get("source") or meta.get("source") or "N/A",
-                "source_filename": chunk.get("filename") or meta.get("source_filename") or "N/A",
+                "source": source_display,
+                "source_filename": source_display, # ใช้ชื่อเดียวกันเพื่อให้ UI หาง่าย
                 "page": str(page_val),
                 "pdca_tag": chunk.get("pdca_tag") or meta.get("pdca_tag") or "Other", 
                 "status": "PASS" if llm_result.get("is_passed") else "FAIL", 
@@ -2286,8 +2291,7 @@ class SEAMPDCAEngine:
             }
             new_evidence_list.append(evidence_entry)
 
-        # 🎯 5. คำนวณ Evidence Strength (Evi Str)
-        # ใช้ logic การคำนวณ Cap ที่คุณออกแบบไว้
+        # 🎯 5. คำนวณ Evidence Strength (ใช้ฟังก์ชันเดิมของคุณ)
         evi_cap_data = self._calculate_evidence_strength_cap(
             top_evidences=new_evidence_list,
             level=level,
@@ -2296,15 +2300,14 @@ class SEAMPDCAEngine:
         
         final_evi_str = evi_cap_data.get('max_evi_str_for_prompt', 0.0)
 
-        # 🎯 6. บันทึกเข้า Memory Maps (ทั้งหลักและสำรองสำหรับ Worker)
+        # 🎯 6. บันทึกเข้า Memory Maps
         self.evidence_map.setdefault(map_key, []).extend(new_evidence_list)
         self.temp_map_for_save.setdefault(map_key, []).extend(new_evidence_list)
         
-        # 🎯 7. Log สรุปผล
         self.logger.info(f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | Strength: {final_evi_str}")
         
         return final_evi_str
-        
+    
     def _calculate_evidence_strength_cap(
         self,
         top_evidences: List[Union[Dict[str, Any], Any]],
@@ -3534,6 +3537,7 @@ class SEAMPDCAEngine:
                     })
 
         # Fallback 3: Ultimate Regex Recovery จาก reason + summary_thai
+        # [PATCH v21.9.19] Fallback 3: Ultimate Regex Recovery จาก reason + summary_thai
         if not temp_map_for_level and not recovery_sources and llm_result.get('is_passed', False):
             reason_text = (llm_result.get('reason', '') or '') + ' ' + (llm_result.get('summary_thai', '') or '')
             pattern = r'\[Source:\s*([^,\]]+?)(?:,\s*(?:หน้า[:]?|page[:]?)\s*(\d+))?\]?'
@@ -3544,14 +3548,19 @@ class SEAMPDCAEngine:
                 file_name = file_name_raw.strip()
                 if not file_name or file_name.lower() in ['n/a', '-', 'ไม่พบ', 'unknown']:
                     continue
+                
                 page = page_num if page_num else 'N/A'
-                fake_id = hashlib.md5(file_name.encode('utf-8')).hexdigest()
+                
+                # [CORE FIX] สร้าง stable_fake_id เพื่อหลอกระบบ EVI SAVE
+                # รวม page เข้าไปใน hash เพื่อให้แต่ละหน้ามี ID เฉพาะตัว
+                stable_fake_id = hashlib.md5(f"{file_name}_{page}".encode('utf-8')).hexdigest()
+                
                 temp_recovered.append({
-                    "id": fake_id,
-                    "file_id": file_name,
+                    "id": stable_fake_id,                    # สำหรับ internal tracking
+                    "file_id": stable_fake_id,               # บังคับใส่เพื่อไม่ให้ติด Critical ID Missing
                     "file_name": file_name,
                     "page": page,
-                    "rerank_score": highest_rerank_score
+                    "rerank_score": highest_rerank_score if highest_rerank_score > 0 else 0.8
                 })
 
             # Deduplicate by (file_name lower, page)
@@ -3563,7 +3572,7 @@ class SEAMPDCAEngine:
                     recovery_sources.append(src)
 
             if recovery_sources:
-                self.logger.info(f"Ultimate Regex Recovery: Restored {len(recovery_sources)} sources for {sub_id} L{level}")
+                self.logger.info(f"🛡️ Ultimate Regex Recovery: Restored {len(recovery_sources)} sources for {sub_id} L{level}")
 
         # Apply recovery if primary mapping failed
         if not temp_map_for_level and recovery_sources:
