@@ -2979,13 +2979,24 @@ class SEAMPDCAEngine:
                 sub_result, temp_map_from_worker = result_tuple
                 if isinstance(temp_map_from_worker, dict):
                     for k, v in temp_map_from_worker.items():
-                        for ev in v:
-                            if "page" not in ev: ev["page"] = ev.get("metadata", {}).get("page", "N/A")
-                        current_list = self.evidence_map.setdefault(k, [])
+                        # ✅ [PATCH v25.4] ป้องกัน Error โดยเช็คว่าเป็น dict ก่อน
                         if isinstance(v, list):
+                            for ev in v:
+                                if isinstance(ev, dict):
+                                    if "page" not in ev: 
+                                        meta = ev.get("metadata", {})
+                                        ev["page"] = meta.get("page", "N/A") if isinstance(meta, dict) else "N/A"
+                            
+                            current_list = self.evidence_map.setdefault(k, [])
                             current_list.extend(v)
                         else:
-                            current_list.append(v)
+                            # กรณี v ไม่ใช่ list แต่เป็นตัวแปรเดียว
+                            if isinstance(v, dict):
+                                if "page" not in v: 
+                                    meta = v.get("metadata", {})
+                                    v["page"] = meta.get("page", "N/A") if isinstance(meta, dict) else "N/A"
+                            self.evidence_map.setdefault(k, []).append(v)
+
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
@@ -3004,13 +3015,21 @@ class SEAMPDCAEngine:
                 
                 if final_temp_map:
                     for k, v in final_temp_map.items():
-                        for ev in v:
-                            if "page" not in ev: ev["page"] = ev.get("metadata", {}).get("page", "N/A")
-                        current_list = self.evidence_map.setdefault(k, [])
+                        # ✅ [PATCH v25.4] ทำแบบเดียวกันใน Sequential Mode
                         if isinstance(v, list):
+                            for ev in v:
+                                if isinstance(ev, dict):
+                                    if "page" not in ev:
+                                        meta = ev.get("metadata", {})
+                                        ev["page"] = meta.get("page", "N/A") if isinstance(meta, dict) else "N/A"
+                            current_list = self.evidence_map.setdefault(k, [])
                             current_list.extend(v)
                         else:
-                            current_list.append(v)
+                            if isinstance(v, dict):
+                                if "page" not in v:
+                                    meta = v.get("metadata", {})
+                                    v["page"] = meta.get("page", "N/A") if isinstance(meta, dict) else "N/A"
+                            self.evidence_map.setdefault(k, []).append(v)
 
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
@@ -3231,18 +3250,32 @@ class SEAMPDCAEngine:
         # -----------------------------------------------------------
         # 4. FINAL RETURN
         # -----------------------------------------------------------
+
         final_temp_map = {}
         for res in raw_results_for_sub_seq:
             lvl = res.get('level')
-            for evi in res.get("temp_map_for_level", []):
+            # ดึงลิสต์หลักฐานออกมา
+            evidence_list = res.get("temp_map_for_level", [])
+            
+            for evi in evidence_list:
+                # 🛡️ [PATCH v25.4] เพิ่มการเช็คว่าเป็น dict หรือไม่
+                if not isinstance(evi, dict):
+                    self.logger.warning(f"⚠️ [Worker] Skipping invalid evidence type: {type(evi)} at L{lvl}")
+                    continue
+                
                 # ใช้ .get() เพื่อป้องกัน Key Error
                 f_id = evi.get("file_id") or evi.get("uuid") or evi.get("id")
                 if f_id:
                     # ✅ เพิ่มข้อมูลระดับเข้าไปในตัว evi เลย เผื่อ UI ต้องใช้แยก
                     evi['source_level'] = lvl 
-                    # ✅ ตรวจสอบว่ามีฟิลด์ page หรือยัง ถ้าไม่มีให้ใส่ default
+                    
+                    # ✅ ตรวจสอบและใส่ค่า page อย่างปลอดภัย
                     if 'page' not in evi:
-                        evi['page'] = 'N/A'
+                        meta = evi.get("metadata", {})
+                        if isinstance(meta, dict):
+                            evi['page'] = meta.get("page", "N/A")
+                        else:
+                            evi['page'] = "N/A"
                     
                     final_temp_map[f"{sub_id}.{lvl}.{f_id}"] = evi
 
