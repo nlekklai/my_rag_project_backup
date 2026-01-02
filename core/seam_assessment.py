@@ -2918,7 +2918,10 @@ class SEAMPDCAEngine:
                         for ev in v:
                             if "page" not in ev: ev["page"] = ev.get("metadata", {}).get("page", "N/A")
                         current_list = self.evidence_map.setdefault(k, [])
-                        current_list.extend(v)
+                        if isinstance(v, list):
+                            current_list.extend(v)
+                        else:
+                            current_list.append(v)
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
@@ -2940,7 +2943,10 @@ class SEAMPDCAEngine:
                         for ev in v:
                             if "page" not in ev: ev["page"] = ev.get("metadata", {}).get("page", "N/A")
                         current_list = self.evidence_map.setdefault(k, [])
-                        current_list.extend(v)
+                        if isinstance(v, list):
+                            current_list.extend(v)
+                        else:
+                            current_list.append(v)
 
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
@@ -3047,6 +3053,9 @@ class SEAMPDCAEngine:
             if not actual_found_files and sequential_chunk_uuids:
                 actual_found_files = sequential_chunk_uuids
 
+            # 3. [สำคัญมาก] บังคับยัดข้อมูลกลับเข้า Object หลักก่อนไปทำขั้นตอนอื่น
+            result_to_process['temp_map_for_level'] = actual_found_files
+
             # 🟢 [REPAIR] PDCA Repair Logic (ฉีดเพิ่มเพื่อแก้ปัญหาสีขาวและ Metadata)
             is_passed_llm = result_to_process.get('is_passed', False)
             pdca_val = result_to_process.get('pdca_breakdown', {})
@@ -3060,10 +3069,6 @@ class SEAMPDCAEngine:
                     "A": 1 if level >= 4 else 0
                 }
                 result_to_process['pdca_breakdown'] = repaired_pdca
-
-            # บังคับใส่ไฟล์กลับเข้าไปเพื่อให้ UI มีปุ่ม Source
-            if actual_found_files:
-                result_to_process['temp_map_for_level'] = actual_found_files
 
             # ตั้งค่า Metadata พื้นฐานที่จำเป็น
             result_to_process.setdefault("is_counted", True)
@@ -3163,12 +3168,18 @@ class SEAMPDCAEngine:
         # 4. FINAL RETURN
         # -----------------------------------------------------------
         final_temp_map = {}
-        # รวบรวม Source ของทุุก Level ที่รันผ่านมา
         for res in raw_results_for_sub_seq:
             lvl = res.get('level')
             for evi in res.get("temp_map_for_level", []):
-                f_id = evi.get("file_id") or evi.get("uuid")
+                # ใช้ .get() เพื่อป้องกัน Key Error
+                f_id = evi.get("file_id") or evi.get("uuid") or evi.get("id")
                 if f_id:
+                    # ✅ เพิ่มข้อมูลระดับเข้าไปในตัว evi เลย เผื่อ UI ต้องใช้แยก
+                    evi['source_level'] = lvl 
+                    # ✅ ตรวจสอบว่ามีฟิลด์ page หรือยัง ถ้าไม่มีให้ใส่ default
+                    if 'page' not in evi:
+                        evi['page'] = 'N/A'
+                    
                     final_temp_map[f"{sub_id}.{lvl}.{f_id}"] = evi
 
         final_sub_result = {
