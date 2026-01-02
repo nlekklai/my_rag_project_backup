@@ -225,24 +225,39 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "reason": lv_info.get("reason", "ผ่านเกณฑ์มาตรฐาน") if not lv_info and lv_idx <= highest_pass else (lv_info.get("reason", "") if lv_info else "ยังไม่ถึงเกณฑ์ประเมิน")
             })
 
-        # --- 4. จัดกลุ่ม Sources (ชื่อไฟล์ + Confidence + Snippet) ---
+        # --- 4. จัดกลุ่ม Sources (แก้ไขจุดดึง Confidence) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         for ref in raw_levels_list:
             lv_key = str(ref.get("level"))
             seen_in_lv = set()
+            
+            # ดึงข้อมูลจาก temp_map_for_level
             for source in ref.get("temp_map_for_level", []):
-                fname = source.get('filename') or source.get('source_filename') or "Unknown Document"
-                pnum = str(source.get('page_number') or source.get('page') or "1")
-                d_uuid = source.get('document_uuid') or source.get('doc_id')
+                # ดึง metadata ออกมาเผื่อไว้
+                meta = source.get('metadata', {})
+                
+                fname = source.get('filename') or meta.get('filename') or "Unknown Document"
+                pnum = str(source.get('page_number') or meta.get('page') or source.get('page') or "1")
+                d_uuid = source.get('document_uuid') or source.get('doc_id') or meta.get('doc_id')
+                
                 if not d_uuid: continue
                 
                 doc_key = f"{fname}-{pnum}"
                 if doc_key not in seen_in_lv:
+                    # ✅ แก้ไขจุดนี้: ดึงจาก metadata หรือ root ตามลำดับความสำคัญ
+                    confidence_score = (
+                        source.get("rerank_score") or 
+                        meta.get("rerank_score") or 
+                        meta.get("score") or 
+                        source.get("score") or 
+                        0.0
+                    )
+
                     grouped_sources[lv_key].append({
                         "filename": fname,
                         "page": pnum,
-                        "text": source.get("text", "")[:300], # ส่ง Snippet ให้ Tooltip
-                        "rerank_score": source.get("rerank_score") or source.get("score") or 0.8, # สำหรับ Confidence Badge
+                        "text": source.get("text", "")[:300], 
+                        "rerank_score": float(confidence_score), # ส่งเป็น float เพื่อให้ Frontend คูณ 100
                         "document_uuid": d_uuid,
                         "doc_type": source.get("doc_type", "evidence")
                     })
