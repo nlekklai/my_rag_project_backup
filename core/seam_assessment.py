@@ -1371,36 +1371,42 @@ class SEAMPDCAEngine:
     # -------------------- Persistent Mapping Handlers (FIXED) --------------------
     def _process_temp_map_to_final_map(self, temp_map: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Converts the temporary map into the final map format for saving, 
-        and filters out temporary/unresolvable evidence IDs.
+        [REVISED v25.3] กรองเฉพาะ ID ที่ใช้ไม่ได้จริงๆ ออก 
+        แต่ยังคงเก็บ Stable IDs (Hash) ที่กู้คืนมาได้ไว้
         """
         working_map = temp_map or self.temp_map_for_save or {}
         final_map_for_save = {}
         total_cleaned_items = 0
 
         for sub_level_key, evidence_list in working_map.items():
-            if isinstance(evidence_list, dict):
-                evidence_list = [evidence_list]
-            elif not isinstance(evidence_list, list):
-                logger.warning(f"[EVIDENCE] Skipping {sub_level_key}: not a list or dict")
-                continue
+            if not isinstance(evidence_list, list):
+                # ถ้ามาเป็นก้อนเดียว (dict) ให้ห่อเป็น list
+                if isinstance(evidence_list, dict):
+                    evidence_list = [evidence_list]
+                else:
+                    continue
 
             clean_list = []
             seen_ids = set()
             for ev in evidence_list:
-                doc_id = ev.get("doc_id")
+                # [BUG FIX] ตรวจสอบว่า ev เป็น dictionary ก่อนเรียก .get()
+                if not isinstance(ev, dict):
+                    continue
+                
+                doc_id = ev.get("doc_id") or ev.get("id") or ev.get("chunk_uuid")
                 
                 if not doc_id:
                     continue
                 
-                # 1. FIX: กรอง ID ชั่วคราว (TEMP-) ออก
-                if doc_id.startswith("TEMP-"):
-                    # ID ที่ไม่สามารถแปลงกลับเป็น Stable Document ID ได้ ถือว่าใช้ไม่ได้
-                    logger.debug(f"[EVIDENCE] Filtering out unresolvable TEMP- ID: {doc_id} for {sub_level_key}.")
+                # 🎯 1. กรองเฉพาะ ID ที่เป็น "Temporary Placeholder" จริงๆ เท่านั้น
+                # เราจะยอมรับ ID ที่เป็น UUID จริง หรือ MD5 Hash (ความยาว 32)
+                if str(doc_id).startswith("TEMP-") and len(str(doc_id)) < 20:
+                    # ถ้าสั้นและขึ้นต้นด้วย TEMP- แสดงว่าเป็นค่าว่างที่ระบบสร้างขึ้นชั่วคราว
                     continue 
                 
-                # 2. Logic เดิม: กรอง HASH- (Placeholder) และรายการซ้ำ
-                if doc_id.startswith("HASH-") or doc_id in seen_ids:
+                # 🎯 2. กรอง HASH- (แบบเก่า) และรายการซ้ำ
+                # แต่ถ้าเป็น MD5 Hex สดๆ (ไม่มี prefix) เราจะเก็บไว้
+                if str(doc_id).startswith("HASH-") or doc_id in seen_ids:
                     continue
                     
                 seen_ids.add(doc_id)
@@ -1410,7 +1416,7 @@ class SEAMPDCAEngine:
             if clean_list:
                 final_map_for_save[sub_level_key] = clean_list
 
-        logger.info(f"[EVIDENCE] Processed {len(final_map_for_save)} sub-level keys with total {total_cleaned_items} evidence items")
+        self.logger.info(f"🧹 [EVIDENCE] Final Clean-up: {total_cleaned_items} items prepared for disk.")
         return final_map_for_save
 
     def _clean_map_for_json(self, data: Union[Dict, List, Set, Any]) -> Union[Dict, List, Any]:
