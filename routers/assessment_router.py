@@ -225,41 +225,37 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "reason": lv_info.get("reason", "ผ่านเกณฑ์มาตรฐาน") if not lv_info and lv_idx <= highest_pass else (lv_info.get("reason", "") if lv_info else "ยังไม่ถึงเกณฑ์ประเมิน")
             })
 
-        # --- 4. จัดกลุ่ม Sources (แก้ไขใหม่ให้ดึง Confidence ได้แม่นยำ) ---
+        # --- 4. จัดกลุ่ม Sources (ฉบับแก้ไขเพื่อดึง Confidence) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         for ref in raw_levels_list:
             lv_key = str(ref.get("level"))
             seen_in_lv = set()
-            
-            # เจาะเข้าไปในรายการหลักฐานของแต่ละ Level
             for source in ref.get("temp_map_for_level", []):
-                # ดึง metadata ออกมา เพราะคะแนนจริงอยู่ในนี้
+                # 1. ดึง Metadata ออกมา (จุดที่มีคะแนนจริง)
                 meta = source.get('metadata', {})
                 
                 fname = source.get('filename') or meta.get('filename') or "Unknown Document"
-                # ตรวจสอบ Page Number จากหลายแหล่ง
-                pnum = str(source.get('page_number') or meta.get('page_label') or meta.get('page') or "N/A")
+                pnum = str(source.get('page_number') or meta.get('page') or source.get('page_label') or "1")
                 d_uuid = source.get('document_uuid') or source.get('doc_id') or meta.get('doc_id')
-                
                 if not d_uuid: continue
                 
                 doc_key = f"{fname}-{pnum}"
                 if doc_key not in seen_in_lv:
-                    # ✅ ดึงคะแนนความเชื่อมั่น (เจาะไปที่ metadata)
-                    # จากไฟล์ JSON ของคุณ ค่าจะอยู่ที่ meta.get('rerank_score')
-                    conf_score = (
-                        source.get("rerank_score") or 
+                    # ✅ แก้ไขจุดนี้: ต้องดึงจาก metadata เป็นหลัก
+                    # ในไฟล์ JSON ของคุณคือ meta.get('rerank_score')
+                    score_val = (
                         meta.get("rerank_score") or 
+                        source.get("rerank_score") or 
                         meta.get("score") or 
                         source.get("score") or 
-                        0.75  # ค่าเฉลี่ยกลางๆ กรณีหาไม่เจอจริงๆ
+                        0.0
                     )
 
                     grouped_sources[lv_key].append({
                         "filename": fname,
                         "page": pnum,
-                        "text": source.get("text") or source.get("content") or "", 
-                        "rerank_score": float(conf_score), # ส่งเป็น float เพื่อให้ UI คูณ 100
+                        "text": source.get("text", "")[:300],
+                        "rerank_score": float(score_val), # ส่งเป็น float เพื่อให้ Frontend แสดงผลได้
                         "document_uuid": d_uuid,
                         "doc_type": source.get("doc_type", "evidence")
                     })
