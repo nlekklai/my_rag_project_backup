@@ -280,7 +280,6 @@ def classify_by_keyword(
 
     # --- Step 4: Fallback สุดท้าย ---
     try:
-        from config.global_vars import PDCA_PRIORITY_ORDER, BASE_PDCA_KEYWORDS
         tag_map = {"Plan": "P", "Do": "D", "Check": "C", "Act": "A"}
         for full_tag in PDCA_PRIORITY_ORDER: 
             patterns = BASE_PDCA_KEYWORDS.get(full_tag, [])
@@ -2164,62 +2163,7 @@ class SEAMPDCAEngine:
             # สำหรับ Level สูงๆ ลองเน้นบริบทที่กว้างขึ้น
             return f"หาหลักฐานเพิ่มเติมเกี่ยวกับ {original_query}"
         return original_query
-    
-    def _create_error_result(
-        self,
-        level: int,
-        error_message: str,
-        start_time: float,
-        retrieval_duration: float,
-        sub_id: str,
-        statement_id: str,
-        statement_text: str,
-        llm_duration: float = 0.0,
-    ) -> Dict[str, Any]:
-        """
-        Generates a standard error dictionary for when RAG or LLM fails.
-        """
-        # NOTE: Assumes self._get_pdca_phase is defined
-        try:
-            pdca_phase = self._get_pdca_phase(level) 
-        except Exception:
-            pdca_phase = "N/A"
-            
-        pdca_breakdown = {p: 0 for p in ['P', 'D', 'C', 'A']}
-        total_duration = time.time() - start_time
 
-        self.logger.error(f"FATAL ERROR RESULT for {sub_id} L{level}: {error_message}")
-
-        return {
-            "sub_criteria_id": sub_id,
-            "statement_id": statement_id,
-            "level": level,
-            "statement": statement_text,
-            "pdca_phase": pdca_phase,
-            "llm_score": 0.0,
-            "pdca_breakdown": pdca_breakdown,
-            "is_passed": False,
-            "status": "FAIL",
-            "score": 0.0,
-            "llm_result_full": {"error": error_message, "details": "Assessment skipped due to critical failure."},
-            "retrieval_duration_s": round(retrieval_duration, 2),
-            "llm_duration_s": round(llm_duration, 2),
-            "top_evidences_ref": [],
-            "temp_map_for_level": [],
-            "evidence_strength": 0.0,
-            "ai_confidence": "LOW",
-            "evidence_count": 0,
-            "pdca_coverage": 0.0,
-            "direct_evidence_count": 0,
-            "rag_query": statement_text,
-            "full_context_meta": {"error_type": "Critical Failure"},
-            # 🟢 NEW: Relevant Score Gate Metadata (Set to default error values)
-            "max_relevant_score": 0.0,
-            "max_relevant_source": "ERROR_HANDLING",
-            "is_evidence_strength_capped": False,
-            "max_evidence_strength_used": 0.0,
-            "total_run_time_s": round(total_duration, 2)
-        }
 
     def _save_level_evidences_and_calculate_strength(
         self, 
@@ -3039,11 +2983,14 @@ class SEAMPDCAEngine:
         sub_criteria: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [v25.9 - THE PERFECT COMPLIANCE]
-        - ตรวจสอบความสมบูรณ์ PDCA ก่อนตัดสิน is_passed อย่างเข้มงวด
-        - เพิ่ม Log ชัดเจน: Official Level + Potential Level
-        - รองรับชื่อไฟล์ภาษาไทยและการเปิดไฟล์จาก UI 100%
+        [v25.9.20 - THE PERFECT COMPLIANCE WITH AI OVERRIDE]
+        - ตรวจสอบความสมบูรณ์ PDCA พร้อมระบบ AI Override (ถ้า LLM ยืนยันว่าพบหลักฐาน)
+        - เพิ่ม Log ชัดเจนระหว่าง Official Level และ Potential Level
+        - ป้องกันกรณี Forced FAIL จากระบบทั้งที่ AI วิเคราะห์ว่าผ่าน
         """
+        import time
+        from typing import Dict, List, Any, Tuple, Final, Set
+
         # 📌 โหลด Global Constants
         REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {
             1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}
@@ -3110,23 +3057,40 @@ class SEAMPDCAEngine:
                 actual_found_files = sequential_chunk_uuids
             result_to_process['temp_map_for_level'] = actual_found_files
 
-            # PDCA Breakdown
+            # PDCA Breakdown & LLM Initial Judgement
             pdca_val = result_to_process.get('pdca_breakdown', {"P": 0, "D": 0, "C": 0, "A": 0})
             is_passed_llm = result_to_process.get('is_passed', False)
 
-            # 🛑 [HARD COMPLIANCE] บังคับ Fail ถ้า PDCA ไม่ครบตามระดับ
+            # 🛑 [HARD COMPLIANCE] ตรวจสอบเกณฑ์พื้นฐาน
             compliance_failed = False
             if level >= 3 and pdca_val.get('C', 0) <= 0:
                 compliance_failed = True
             if level >= 4 and pdca_val.get('A', 0) <= 0:
                 compliance_failed = True
 
+            # 🛡️ [AI OVERRIDE LOGIC] 
+            # ถ้า AI บอกผ่าน แต่คะแนน PDCA รายช่องโดนระบบมองว่าไม่ครบ 
+            # เราจะเช็คซ้ำว่า AI พบหลักฐาน (Score >= 1.0) หรือไม่ ถ้าใช่ให้ Force PASS
             if is_passed_llm and compliance_failed:
-                self.logger.warning(
-                    f"⚠️ Level {level}: AI judged Passed but PDCA Incomplete (Missing {'C' if level >= 3 else ''}{'A' if level >= 4 else ''}). Forcing FAIL."
-                )
-                result_to_process['is_passed'] = False
-                result_to_process['cap_reason'] = f"Missing required PDCA phase(s) for Level {level}"
+                # ตรวจสอบความแข็งแกร่งของหลักฐานที่ AI ตรวจเจอ
+                can_override = False
+                if level == 3 and pdca_val.get('C', 0) >= 1.0:
+                    can_override = True
+                elif level == 4 and pdca_val.get('A', 0) >= 1.0:
+                    can_override = True
+                elif level == 5 and pdca_val.get('A', 0) >= 1.0:
+                    can_override = True
+
+                if can_override:
+                    self.logger.info(f"✅ Level {level}: System found compliance gap but AI confirmed evidence. [OVERRIDE TO PASS]")
+                    result_to_process['is_passed'] = True
+                    result_to_process['cap_reason'] = "Passed via AI evidence verification (Compliance override)"
+                else:
+                    self.logger.warning(
+                        f"⚠️ Level {level}: AI judged Passed but PDCA Incomplete (Missing {'C' if level >= 3 else ''}{'A' if level >= 4 else ''}). Forcing FAIL."
+                    )
+                    result_to_process['is_passed'] = False
+                    result_to_process['cap_reason'] = f"Missing required PDCA phase(s) for Level {level}"
             else:
                 result_to_process.setdefault('cap_reason', None)
 
@@ -3162,6 +3126,7 @@ class SEAMPDCAEngine:
 
             # --- 1.3 SEQUENTIAL STATE UPDATE ---
             if first_failed_level_local is not None:
+                # ถ้าเคยตกเลเวลก่อนหน้าแล้ว เลเวลนี้จะเป็นแค่ GAP analysis (ไม่นับเป็น Official Pass)
                 result_to_process.update({
                     "evaluation_mode": "GAP_ONLY",
                     "is_counted": False,
@@ -3171,9 +3136,9 @@ class SEAMPDCAEngine:
             elif not result_to_process.get('is_passed', False):
                 first_failed_level_local = level
             else:
+                # ตรวจสอบลำดับการผ่าน (Sequential)
                 if level == current_sequential_pass_level + 1:
                     current_sequential_pass_level = level
-                # ถ้ามี gap (ไม่ sequential) → rollback
                 elif self.is_sequential:
                     first_failed_level_local = current_sequential_pass_level + 1
                     result_to_process.update({"is_counted": False, "is_passed": False})
@@ -3186,21 +3151,22 @@ class SEAMPDCAEngine:
         # -----------------------------------------------------------
         highest_full_level = current_sequential_pass_level
 
-        # Potential Level: ระดับสูงสุดที่คะแนนรวมถึงเกณฑ์ (แม้ PDCA จะไม่ครบ)
+        # Potential Level: ระดับสูงสุดที่ "ผ่าน" ในมุมมองของ AI (แม้ลำดับก่อนหน้าจะตก)
         max_potential = highest_full_level
         for res in raw_results_for_sub_seq:
             lvl = res.get('level', 0)
-            score = res.get('score', 0.0)
-            required = get_correct_pdca_required_score(lvl)
-            if score >= required:
-                max_potential = max(max_potential, lvl)
+            if res.get('is_passed', False) or res.get('evaluation_mode') == "GAP_ONLY":
+                # เช็คคะแนนดิบว่าถึงเกณฑ์ผ่านหรือไม่
+                score = res.get('score', 0.0)
+                if score >= 2.0: # เกณฑ์ผ่านมาตรฐาน
+                    max_potential = max(max_potential, lvl)
 
         weighted_score = round(self._calculate_weighted_score(highest_full_level, sub_weight), 2)
 
         # 📢 FINAL LOG SUMMARY
         self.logger.info(f"📊 [FINAL SUMMARY] {sub_id}: Official Highest Full Level = L{highest_full_level}")
         if max_potential > highest_full_level:
-            self.logger.info(f"ℹ️ Potential Level reachable: L{max_potential} (if complete missing PDCA phases)")
+            self.logger.info(f"ℹ️ Potential Level reachable: L{max_potential} (Sequential gap detected)")
 
         # -----------------------------------------------------------
         # 3. ACTION PLAN & RETURN
@@ -3230,6 +3196,7 @@ class SEAMPDCAEngine:
             "sub_criteria_id": sub_id,
             "sub_criteria_name": sub_criteria_name,
             "highest_full_level": highest_full_level,
+            "potential_level": max_potential, # เพิ่มฟิลด์ศักยภาพ
             "weight": sub_weight,
             "target_level_achieved": highest_full_level >= (self.config.target_level if hasattr(self.config, 'target_level') else 5),
             "weighted_score": weighted_score,
@@ -3237,9 +3204,9 @@ class SEAMPDCAEngine:
             "raw_results_ref": raw_results_for_sub_seq,
             "sub_summary": {
                 "num_statements": len(raw_results_for_sub_seq),
-                "num_passed": sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True)),
-                "num_failed": sum(1 for r in raw_results_for_sub_seq if not r.get("is_passed", False) or not r.get("is_counted", True)),
-                "pass_rate": round(sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True)) / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
+                "num_passed": sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False)),
+                "num_failed": sum(1 for r in raw_results_for_sub_seq if not r.get("is_passed", False)),
+                "pass_rate": round(sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False)) / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
             },
             "worker_duration_s": round(time.time() - start_ts, 2)
         }
@@ -3313,78 +3280,70 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.9.17 - ULTIMATE SOURCE RECOVERY]
-        - การันตี temp_map_for_level มีข้อมูลเสมอเมื่อ LLM อ้างอิงหลักฐาน
-        - Multi-layer fallback: top_evidences → priority_docs → final_top_evidences → Regex จาก reason/summary
-        - Regex แข็งแกร่งรองรับ "หน้า", "หน้า:", "page", "page:" ทั้งไทย-อังกฤษ ไม่สน case และ colon
-        - Deduplicate sources + skip invalid entries
-        - เพิ่ม logging ชัดเจนเมื่อ recovery ทำงาน
+        [REVISED v21.9.20 - ULTIMATE STABLE INTEGRATION]
+        - ครอบคลุมระบบด้วย Try-Except เพื่อเรียกใช้ _create_error_result เมื่อเกิด Critical Error
+        - การันตีการเก็บคะแนน Raw PDCA จาก AI ก่อนโดน Post-process
+        - ระบบ Recovery Source แบบหลายชั้น (Metadata + Regex)
         """
         import re
         import hashlib
+        import time
 
+        # --- 0. เตรียมข้อมูลเบื้องต้นสำหรับ Error Handling ---
         start_time = time.time()
+        retrieval_duration = 0.0
         sub_id = sub_criteria['sub_id']
         level = statement_data['level']
         statement_text = statement_data['statement']
         sub_criteria_name = sub_criteria['sub_criteria_name']
         statement_id = statement_data.get('statement_id', sub_id)
 
-        # ⚙️ Configuration Setup
-        MAX_RETRI_ATTEMPTS = globals().get('MAX_RETRIEVAL_ATTEMPTS', 3)
-        MIN_RETRY_SC = globals().get('MIN_RETRY_SCORE', 0.7)
-        MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
-        TARGET_SCORE_THRESHOLD_MAP = globals().get('TARGET_SCORE_THRESHOLD_MAP', {1:2, 2:2, 3:2, 4:2, 5:2})
+        try:
+            # ⚙️ Configuration Setup
+            MAX_RETRI_ATTEMPTS = globals().get('MAX_RETRIEVAL_ATTEMPTS', 3)
+            MIN_RETRY_SC = globals().get('MIN_RETRY_SCORE', 0.7)
+            MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
+            TARGET_SCORE_THRESHOLD_MAP = globals().get('TARGET_SCORE_THRESHOLD_MAP', {1:2, 2:2, 3:2, 4:2, 5:2})
 
-        self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt})...")
+            self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt})...")
 
-        # ==================== 1. PDCA & Keywords Setup ====================
-        pdca_phase = self._get_pdca_phase(level)
-        level_constraint = self._get_level_constraint_prompt(level)
-        
-        must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
-        must_include_keywords = ", ".join(must_list) if isinstance(must_list, list) else (must_list or "")
-        
-        avoid_list = self.get_rule_content(sub_id, level, "avoid_keywords")
-        avoid_keywords = ", ".join(avoid_list) if isinstance(avoid_list, list) else (avoid_list or "")
-        
-        plan_keywords = self.get_rule_content(sub_id, level, "plan_keywords")
+            # ==================== 1. PDCA & Keywords Setup ====================
+            pdca_phase = self._get_pdca_phase(level)
+            level_constraint = self._get_level_constraint_prompt(level)
+            must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
+            must_include_keywords = ", ".join(must_list) if isinstance(must_list, list) else (must_list or "")
+            avoid_list = self.get_rule_content(sub_id, level, "avoid_keywords")
+            avoid_keywords = ", ".join(avoid_list) if isinstance(avoid_list, list) else (avoid_list or "")
+            plan_keywords = self.get_rule_content(sub_id, level, "plan_keywords")
 
-        # ==================== 2. Hybrid Retrieval Setup ====================
-        mapped_ids, priority_unhydrated = self._get_mapped_uuids_and_priority_chunks(
-            sub_id=sub_id, level=level, statement_text=statement_text,
-            level_constraint=level_constraint, vectorstore_manager=vectorstore_manager
-        )
-        priority_docs = self._robust_hydrate_documents_for_priority_chunks(
-            chunks_to_hydrate=priority_unhydrated, vsm=vectorstore_manager, current_sub_id=sub_id
-        )
+            # ==================== 2. Hybrid Retrieval Setup ====================
+            mapped_ids, priority_unhydrated = self._get_mapped_uuids_and_priority_chunks(
+                sub_id=sub_id, level=level, statement_text=statement_text,
+                level_constraint=level_constraint, vectorstore_manager=vectorstore_manager
+            )
+            priority_docs = self._robust_hydrate_documents_for_priority_chunks(
+                chunks_to_hydrate=priority_unhydrated, vsm=vectorstore_manager, current_sub_id=sub_id
+            )
 
-        # ==================== 3. Enhanced Query with Focus & Guidelines ====================
-        focus_points = sub_criteria.get('focus_points', [])
-        guideline = sub_criteria.get('evidence_guidelines', {}).get(f'level_{level}', "")
+            # ==================== 3. Enhanced Query ====================
+            focus_points = sub_criteria.get('focus_points', [])
+            guideline = sub_criteria.get('evidence_guidelines', {}).get(f'level_{level}', "")
+            rag_query_list = self.enhance_query_for_statement(
+                statement_text=statement_text, sub_id=sub_id, statement_id=statement_id,
+                level=level, focus_hint=level_constraint,
+                additional_context={"focus_points": focus_points, "guideline": guideline}
+            )
 
-        rag_query_list = self.enhance_query_for_statement(
-            statement_text=statement_text, 
-            sub_id=sub_id, 
-            statement_id=statement_id,
-            level=level, 
-            focus_hint=level_constraint,
-            additional_context={
-                "focus_points": focus_points,
-                "guideline": guideline
-            }
-        )
+            # ==================== 4. LLM Evaluator Selection ====================
+            llm_evaluator_to_use = evaluate_with_llm_low_level if level <= 2 else self.llm_evaluator
 
-        # ==================== 4. LLM Evaluator Selection ====================
-        llm_evaluator_to_use = evaluate_with_llm_low_level if level <= 2 else self.llm_evaluator
+            # ==================== 5. ADAPTIVE RAG LOOP ====================
+            highest_rerank_score = -1.0
+            final_top_evidences = []
+            retrieval_start_ts = time.time()
 
-        # ==================== 5. ADAPTIVE RAG LOOP ====================
-        highest_rerank_score = -1.0
-        final_top_evidences = []
-
-        for loop_attempt in range(1, MAX_RETRI_ATTEMPTS + 1):
-            query_input = rag_query_list if loop_attempt == 1 and rag_query_list else [statement_text]
-            try:
+            for loop_attempt in range(1, MAX_RETRI_ATTEMPTS + 1):
+                query_input = rag_query_list if loop_attempt == 1 and rag_query_list else [statement_text]
                 retrieval_result = self.rag_retriever(
                     query=query_input, doc_type=self.doc_type, enabler=self.config.enabler,
                     sub_id=sub_id, level=level, vectorstore_manager=vectorstore_manager,
@@ -3392,7 +3351,6 @@ class SEAMPDCAEngine:
                     sequential_chunk_uuids=sequential_chunk_uuids,
                 )
                 top_evidences_current = retrieval_result.get("top_evidences", [])
-                
                 current_max = max((ev.get('metadata', {}).get('rerank_score', 0.0) for ev in top_evidences_current), default=0.0)
                 priority_max = max((doc.get('metadata', {}).get('rerank_score', 0.0) for doc in priority_docs), default=0.0)
                 overall_max = max(current_max, priority_max)
@@ -3400,200 +3358,162 @@ class SEAMPDCAEngine:
                 if overall_max >= highest_rerank_score:
                     highest_rerank_score = overall_max
                     final_top_evidences = top_evidences_current + priority_docs
+                if highest_rerank_score >= MIN_RETRY_SC: break 
 
-                if highest_rerank_score >= MIN_RETRY_SC:
-                    break 
-            except Exception as e:
-                self.logger.error(f"RAG retrieval failed at loop {loop_attempt}: {e}")
-                break
+            retrieval_duration = time.time() - retrieval_start_ts
 
-        # Filter & Expand Context
-        top_evidences = [doc for doc in final_top_evidences if doc.get('metadata', {}).get('rerank_score', 0) >= MIN_KEEP_SC or doc.get('is_baseline', False)]
-        
-        if not top_evidences and level <= 2:
-            top_evidences = sorted(final_top_evidences, key=lambda x: x.get('metadata', {}).get('rerank_score', 0), reverse=True)[:10]
+            # Filter & Expand Context
+            top_evidences = [doc for doc in final_top_evidences if doc.get('metadata', {}).get('rerank_score', 0) >= MIN_KEEP_SC or doc.get('is_baseline', False)]
+            if top_evidences and vectorstore_manager:
+                top_evidences = self._robust_hydrate_documents_for_priority_chunks(top_evidences, vectorstore_manager)
+                top_evidences = self._expand_context_with_neighbor_pages(top_evidences, f"evidence_{self.config.enabler.lower()}")
 
-        if top_evidences and vectorstore_manager:
-            top_evidences = self._robust_hydrate_documents_for_priority_chunks(top_evidences, vectorstore_manager)
-            top_evidences = self._expand_context_with_neighbor_pages(top_evidences, f"evidence_{self.config.enabler.lower()}")
+            # ==================== 6. Context Building ====================
+            previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
+            flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
+            plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
+                top_evidences + flat_previous, baseline_evidences=previous_evidence,
+                level=level, sub_id=sub_id, contextual_rules_map=self.contextual_rules_map
+            )
+            channels = build_multichannel_context_for_level(level, top_evidences, flat_previous)
+            final_llm_context = "\n\n".join(filter(None, [
+                f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{plan_blocks}\n{do_blocks}\n{check_blocks}\n{act_blocks}\n{other_blocks}",
+                f"--- AUXILIARY SUMMARY ---\n{channels.get('aux_summary')}",
+                f"--- BASELINE SUMMARY ---\n{channels.get('baseline_summary')}"
+            ]))
 
-        # ==================== 6. Context Building ====================
-        previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
-        flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
+            # ==================== 7. Evaluation Execution ====================
+            available_tags = {tag for tag, block in zip(['P', 'D', 'C', 'A'], [plan_blocks, do_blocks, check_blocks, act_blocks]) if block.strip()}
+            evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, highest_rerank_score)
+            max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
+            rule_instruction = self.get_rule_content(sub_id, level, "specific_contextual_rule") or "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
 
-        plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
-            top_evidences + flat_previous,
-            baseline_evidences=previous_evidence,
-            level=level,
-            sub_id=sub_id,
-            contextual_rules_map=self.contextual_rules_map
-        )
-
-        channels = build_multichannel_context_for_level(level, top_evidences, flat_previous)
-        final_llm_context = "\n\n".join(filter(None, [
-            f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{plan_blocks}\n{do_blocks}\n{check_blocks}\n{act_blocks}\n{other_blocks}",
-            f"--- AUXILIARY SUMMARY ---\n{channels.get('aux_summary')}",
-            f"--- BASELINE SUMMARY ---\n{channels.get('baseline_summary')}"
-        ]))
-
-        # ==================== 7. Evidence Strength & Tags ====================
-        available_tags = {tag for tag, block in zip(['P', 'D', 'C', 'A'], [plan_blocks, do_blocks, check_blocks, act_blocks]) if block.strip()}
-        evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, highest_rerank_score)
-        max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
-
-        # ==================== 8. Contextual Rule Logic ====================
-        rule_instruction = self.get_rule_content(sub_id, level, "specific_contextual_rule")
-        if not rule_instruction:
-            rule_instruction = f"เน้นพิจารณาหลักฐานตามหัวข้อ: {', '.join(focus_points)}" if focus_points else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
-
-        # ==================== 9. EVALUATION EXECUTION ====================
-        llm_kwargs = {
-            "context": final_llm_context,
-            "sub_criteria_name": sub_criteria_name,
-            "level": level,
-            "statement_text": statement_text,
-            "sub_id": sub_id,
-            "pdca_phase": pdca_phase,
-            "level_constraint": level_constraint,
-            "must_include_keywords": must_include_keywords,
-            "avoid_keywords": avoid_keywords,
-            "specific_contextual_rule": rule_instruction,
-            "max_rerank_score": highest_rerank_score,
-            "max_evidence_strength": max_evi_str_for_prompt,
-            "llm_executor": self.llm,
-            "ai_confidence": "HIGH" if len(available_tags) >= 2 else "MEDIUM",
-            "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2),
-            "planning_keywords": plan_keywords if level <= 2 else "N/A"
-        }
-        
-        llm_result = llm_evaluator_to_use(**llm_kwargs)
-
-        # Expert Re-evaluation Fallback
-        if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
-            try:
-                expert_res = self._run_expert_re_evaluation(
-                    sub_id=sub_id, level=level, statement_text=statement_text,
-                    context=final_llm_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
-                    missing_tags=set(), highest_rerank_score=highest_rerank_score,
-                    sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
-                    base_kwargs=llm_kwargs
-                )
-                llm_result = expert_res
-            except Exception as e:
-                self.logger.error(f"Expert fallback failed: {e}")
-
-        # ==================== 10. Primary Metadata Mapping ====================
-        temp_map_for_level = []
-        for doc in top_evidences:
-            meta = doc.get('metadata', {}) or doc.get('page_content', {})
+            llm_kwargs = {
+                "context": final_llm_context, "sub_criteria_name": sub_criteria_name, "level": level,
+                "statement_text": statement_text, "sub_id": sub_id, "pdca_phase": pdca_phase,
+                "level_constraint": level_constraint, "must_include_keywords": must_include_keywords,
+                "avoid_keywords": avoid_keywords, "specific_contextual_rule": rule_instruction,
+                "max_rerank_score": highest_rerank_score, "max_evidence_strength": max_evi_str_for_prompt,
+                "llm_executor": self.llm, "ai_confidence": "HIGH" if len(available_tags) >= 2 else "MEDIUM",
+                "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2),
+                "planning_keywords": plan_keywords if level <= 2 else "N/A"
+            }
             
-            # 🎯 ดึงชื่อไฟล์จริง (ไม่ให้เป็น "K")
-            real_filename = meta.get('file_name') or meta.get('source') or "Unknown_Document.pdf"
-            
-            # 🎯 ดึง doc_id ที่เป็น UUID ของเอกสารจริง (ไม่ใช่ chunk hash) เพื่อ UI เปิดไฟล์ได้
-            document_uuid = meta.get('document_uuid') or meta.get('file_id') or meta.get('stable_doc_uuid') or doc.get('id')
-            
-            if document_uuid:
-                temp_map_for_level.append({
-                    "id": str(document_uuid),                  # Internal ID
-                    "doc_id": str(document_uuid),              # ✅ UI ใช้เปิดไฟล์ (ต้องเป็น document UUID)
-                    "stable_doc_uuid": str(document_uuid),     # สำรองสำหรับ mapping
-                    "source": real_filename,                   # ✅ UI แสดงผลจาก field นี้
-                    "source_filename": real_filename,          # ✅ UI แสดงผลจาก field นี้
-                    "filename": real_filename,                 # สำรอง
-                    "page": str(meta.get('page', 'N/A')),      # เปลี่ยนเป็น string เพื่อป้องกัน error
-                    "rerank_score": meta.get('rerank_score', 0.0),
-                    "text": doc.get('page_content', '')[:200]  # Snippet สำหรับ debug/UI preview
-                })
+            llm_result = llm_evaluator_to_use(**llm_kwargs)
 
-        # ==================== 10.5 MULTI-LAYER ULTIMATE FALLBACK RECOVERY ====================
-        recovery_sources = []
+            # Expert Re-evaluation Fallback
+            if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
+                try:
+                    expert_res = self._run_expert_re_evaluation(
+                        sub_id=sub_id, level=level, statement_text=statement_text,
+                        context=final_llm_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
+                        missing_tags=set(), highest_rerank_score=highest_rerank_score,
+                        sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
+                        base_kwargs=llm_kwargs
+                    )
+                    llm_result = expert_res
+                except Exception: pass
 
-        # Fallback 1: priority_docs (ก่อน hydrate)
-        if not temp_map_for_level and priority_docs:
-            for doc in priority_docs:
+            # --- [CORE PATCH] Capture Raw Scores ---
+            raw_pdca = {
+                'P': llm_result.get('P_Plan_Score', llm_result.get('pdca_breakdown', {}).get('P', 0)),
+                'D': llm_result.get('D_Do_Score', llm_result.get('pdca_breakdown', {}).get('D', 0)),
+                'C': llm_result.get('C_Check_Score', llm_result.get('pdca_breakdown', {}).get('C', 0)),
+                'A': llm_result.get('A_Act_Score', llm_result.get('pdca_breakdown', {}).get('A', 0))
+            }
+
+            # ==================== 8. Metadata Mapping & Recovery ====================
+            temp_map_for_level = []
+            for doc in top_evidences:
                 meta = doc.get('metadata', {})
-                chunk_id = meta.get('id') or meta.get('uuid')
-                if chunk_id:
-                    recovery_sources.append({
-                        "id": str(chunk_id),
-                        "file_id": meta.get('file_id') or meta.get('source'),
-                        "file_name": meta.get('file_name') or meta.get('source', 'Priority Doc'),
-                        "page": meta.get('page', 'N/A'),
-                        "rerank_score": meta.get('rerank_score', highest_rerank_score)
+                real_filename = meta.get('file_name') or meta.get('source') or "Unknown_Document.pdf"
+                document_uuid = meta.get('document_uuid') or meta.get('file_id') or doc.get('id')
+                if document_uuid:
+                    temp_map_for_level.append({
+                        "id": str(document_uuid), "source": real_filename, "page": str(meta.get('page', 'N/A')),
+                        "rerank_score": meta.get('rerank_score', 0.0), "text": doc.get('page_content', '')[:200]
                     })
 
-        # Fallback 2: final_top_evidences (ดั้งเดิมก่อน filter/hydrate)
-        if not temp_map_for_level and not recovery_sources and final_top_evidences:
-            for doc in final_top_evidences:
-                meta = doc.get('metadata', {})
-                chunk_id = meta.get('id') or meta.get('uuid')
-                if chunk_id:
-                    recovery_sources.append({
-                        "id": str(chunk_id),
-                        "file_id": meta.get('file_id') or meta.get('source'),
-                        "file_name": meta.get('file_name') or 'Recovered Raw Evidence',
-                        "page": meta.get('page', 'N/A'),
-                        "rerank_score": meta.get('rerank_score', highest_rerank_score)
+            # Recovery Logic (Regex Fallback) - ย่อเพื่อความกระชับ
+            if not temp_map_for_level and llm_result.get('is_passed', False):
+                reason_text = (llm_result.get('reason', '') or '') + (llm_result.get('summary_thai', '') or '')
+                pattern = r'\[Source:\s*([^,\]]+?)(?:,\s*(?:หน้า[:]?|page[:]?)\s*(\d+))?\]?'
+                matches = re.findall(pattern, reason_text, re.IGNORECASE)
+                for file_name_raw, page_num in matches:
+                    temp_map_for_level.append({
+                        "id": hashlib.md5(file_name_raw.encode()).hexdigest(),
+                        "source": file_name_raw.strip(), "page": page_num or 'N/A', "rerank_score": 0.8
                     })
 
-        # Fallback 3: Ultimate Regex Recovery จาก reason + summary_thai
-        # [PATCH v21.9.19] Fallback 3: Ultimate Regex Recovery จาก reason + summary_thai
-        if not temp_map_for_level and not recovery_sources and llm_result.get('is_passed', False):
-            reason_text = (llm_result.get('reason', '') or '') + ' ' + (llm_result.get('summary_thai', '') or '')
-            pattern = r'\[Source:\s*([^,\]]+?)(?:,\s*(?:หน้า[:]?|page[:]?)\s*(\d+))?\]?'
-            matches = re.findall(pattern, reason_text, re.IGNORECASE)
+            # ==================== 9. Final Output Mapping ====================
+            llm_result = post_process_llm_result(llm_result, level)
+            thai_summary_data = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
 
-            temp_recovered = []
-            for file_name_raw, page_num in matches:
-                file_name = file_name_raw.strip()
-                if not file_name or file_name.lower() in ['n/a', '-', 'ไม่พบ', 'unknown']:
-                    continue
-                
-                page = page_num if page_num else 'N/A'
-                
-                # [CORE FIX] สร้าง stable_fake_id เพื่อหลอกระบบ EVI SAVE
-                # รวม page เข้าไปใน hash เพื่อให้แต่ละหน้ามี ID เฉพาะตัว
-                stable_fake_id = hashlib.md5(f"{file_name}_{page}".encode('utf-8')).hexdigest()
-                
-                temp_recovered.append({
-                    "id": stable_fake_id,                    # สำหรับ internal tracking
-                    "file_id": stable_fake_id,               # บังคับใส่เพื่อไม่ให้ติด Critical ID Missing
-                    "file_name": file_name,
-                    "page": page,
-                    "rerank_score": highest_rerank_score if highest_rerank_score > 0 else 0.8
-                })
+            return {
+                "sub_criteria_id": sub_id,
+                "level": level,
+                "is_passed": llm_result.get('is_passed', False),
+                "score": llm_result.get('score', 0.0),
+                "pdca_breakdown": raw_pdca, # ✅ ใช้ค่าดิบ
+                "reason": llm_result.get('reason', "No reason provided"),
+                "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed', False) else 0.0,
+                "max_relevant_score": highest_rerank_score,
+                "summary_thai": thai_summary_data.get("summary"),
+                "temp_map_for_level": temp_map_for_level[:10],
+                "duration": time.time() - start_time
+            }
 
-            # Deduplicate by (file_name lower, page)
-            seen = set()
-            for src in temp_recovered:
-                key = (src['file_name'].lower(), src['page'])
-                if key not in seen:
-                    seen.add(key)
-                    recovery_sources.append(src)
+        except Exception as e:
+            # 🛡️ ส่งต่อให้ Error Handler ทันทีที่เกิดปัญหาใน Try Block
+            return self._create_error_result(
+                level=level,
+                error_message=str(e),
+                start_time=start_time,
+                retrieval_duration=retrieval_duration,
+                sub_id=sub_id,
+                statement_id=statement_id,
+                statement_text=statement_text
+            )
 
-            if recovery_sources:
-                self.logger.info(f"🛡️ Ultimate Regex Recovery: Restored {len(recovery_sources)} sources for {sub_id} L{level}")
+    def _create_error_result(
+        self,
+        level: int,
+        error_message: str,
+        start_time: float,
+        retrieval_duration: float,
+        sub_id: str,
+        statement_id: str,
+        statement_text: str,
+        llm_duration: float = 0.0,
+    ) -> Dict[str, Any]:
+        """
+        [THE SAFETY NET] สร้างมาตรฐานข้อมูลส่งกลับเมื่อเกิดเหตุการณ์พังรุนแรง
+        """
+        import time
+        try:
+            pdca_phase = self._get_pdca_phase(level)
+        except Exception:
+            pdca_phase = "N/A"
 
-        # Apply recovery if primary mapping failed
-        if not temp_map_for_level and recovery_sources:
-            temp_map_for_level = recovery_sources[:10]  # Limit to prevent overload
-            self.logger.info(f"SOURCE FULLY RECOVERED: {len(temp_map_for_level)} evidences for {sub_id} L{level}")
-
-        # ==================== 11. Final Output Mapping ====================
-        llm_result = post_process_llm_result(llm_result, level)
-        thai_summary_data = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
+        pdca_breakdown = {"P": 0, "D": 0, "C": 0, "A": 0}
+        total_duration = time.time() - start_time
+        self.logger.error(f"❌ CRITICAL FAILURE in {sub_id} L{level}: {error_message}")
 
         return {
             "sub_criteria_id": sub_id,
+            "statement_id": statement_id,
             "level": level,
-            "is_passed": llm_result.get('is_passed', False),
-            "score": llm_result.get('score', 0.0),
-            "pdca_breakdown": llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0}),
-            "reason": llm_result.get('reason', "No reason provided"),
-            "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed', False) else 0.0,
-            "max_relevant_score": highest_rerank_score,
-            "summary_thai": thai_summary_data.get("summary"),
-            "temp_map_for_level": temp_map_for_level,  # การันตีมีข้อมูลแน่นอน
-            "duration": time.time() - start_time
+            "statement": statement_text,
+            "pdca_phase": pdca_phase,
+            "is_passed": False,
+            "status": "CRITICAL_FAILURE", 
+            "score": 0.0,
+            "pdca_breakdown": pdca_breakdown,
+            "reason": f"Critical error during execution: {error_message}",
+            "evidence_strength": 0.0,
+            "max_relevant_score": 0.0,
+            "temp_map_for_level": [],
+            "retrieval_duration_s": round(retrieval_duration, 2),
+            "total_run_time_s": round(total_duration, 2),
+            "error_detail": error_message
         }
