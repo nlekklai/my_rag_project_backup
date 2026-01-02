@@ -2224,74 +2224,37 @@ class SEAMPDCAEngine:
         highest_rerank_score: float = 0.0
     ) -> float:
         """
-        [REVISED v25.2 - ROBUST RECOVERY SUPPORT]
-        บันทึกหลักฐานโดยรองรับทั้งข้อมูลจาก VectorDB และ ข้อมูลที่กู้คืนผ่าน Regex (Stable ID)
+        [REVISED v25.6 - ROBUST RECOVERY & REGEX PAGE EXTRACTION]
+        - ทำความสะอาดชื่อไฟล์จาก "K" เป็นชื่อเต็ม
+        - ดึงเลขหน้าจากเหตุผลของ AI (re.search)
         """
+        import re
         map_key = f"{sub_id}.L{level}"
         new_evidence_list: List[Dict[str, Any]] = []
         
         self.logger.info(f"💾 [EVI SAVE] Starting save for {map_key} with {len(level_temp_map)} potential chunks.")
 
         for chunk in level_temp_map:
-            # 🎯 1. ดึง Metadata
             meta = chunk.get("metadata", {}) if isinstance(chunk.get("metadata"), dict) else {}
             
-            # [PATCH v25.2] เพิ่ม chunk.get("id") เพื่อรองรับ Stable ID จาก Recovery
-            chunk_uuid_key = (
-                chunk.get("chunk_uuid") or 
-                meta.get("chunk_uuid") or 
-                chunk.get("id")    # <--- รองรับ stable_fake_id
-            )
-            
-            # [PATCH v25.2] เพิ่ม chunk.get("file_id") เพื่อรองรับ Stable ID จาก Recovery
-            stable_doc_uuid_key = (
-                chunk.get("stable_doc_uuid") or 
-                chunk.get("doc_id") or 
-                chunk.get("file_id") or # <--- รองรับ stable_fake_id ที่เป็น file_id
-                meta.get("stable_doc_uuid") or 
-                meta.get("doc_id")
-            )
+            # ดึง ID (รองรับ Recovery Stable ID)
+            chunk_uuid_key = chunk.get("chunk_uuid") or meta.get("chunk_uuid") or chunk.get("id")
+            stable_doc_uuid_key = chunk.get("stable_doc_uuid") or chunk.get("doc_id") or chunk.get("file_id") or meta.get("stable_doc_uuid") or meta.get("doc_id")
 
-            # 🎯 2. Fallback Logic: ป้องกัน Data Loss สำหรับเคส Recovery
-            if not chunk_uuid_key and stable_doc_uuid_key:
-                chunk_uuid_key = f"{stable_doc_uuid_key}_recovered"
-            elif chunk_uuid_key and not stable_doc_uuid_key:
-                stable_doc_uuid_key = chunk_uuid_key # ใช้ ID เดียวกันถ้ามาอย่างใดอย่างหนึ่ง
+            if not chunk_uuid_key and stable_doc_uuid_key: chunk_uuid_key = f"{stable_doc_uuid_key}_recovered"
+            elif chunk_uuid_key and not stable_doc_uuid_key: stable_doc_uuid_key = chunk_uuid_key
 
-            # 🎯 3. Validation
-            if not stable_doc_uuid_key or not chunk_uuid_key:
-                # ลองดึงชื่อไฟล์มาโชว์ใน Log เพื่อให้ Debug ง่ายขึ้น
-                fname = chunk.get('file_name') or chunk.get('source') or 'Unknown'
-                self.logger.error(f"❌ [EVI SAVE] Critical ID Missing! Skipping source: {fname}")
-                continue
+            if not stable_doc_uuid_key or not chunk_uuid_key: continue
 
-            # 🎯 4. สร้าง Evidence Entry
-            page_val = (
-                chunk.get("page") or 
-                meta.get("page") or 
-                meta.get("page_label")
-            )
-            
-            # 🛡️ ถ้ายังไม่มีเลขหน้า ให้พยายามดึงจากผลลัพธ์ของ LLM (Reason Extraction)
+            # 🎯 1. ดึงเลขหน้าแบบ Robust (ใช้ Regex ถ้าใน Metadata ไม่มี)
+            page_val = chunk.get("page") or meta.get("page") or meta.get("page_label")
             if not page_val or page_val == "N/A":
-                # ลองค้นหาเลขหน้าจากข้อความ reason เช่น "หน้า: 5" หรือ "หน้า 5"
-                import re
                 reason_text = llm_result.get("reason", "")
                 page_match = re.search(r"หน้า[:\s]*(\d+)", reason_text)
-                if page_match:
-                    page_val = page_match.group(1)
-                else:
-                    page_val = "N/A"
+                page_val = page_match.group(1) if page_match else "N/A"
 
-            # [PATCH v25.2] ดึงชื่อไฟล์ให้ครอบคลุมที่สุด (รองรับ file_name จาก recovery)
-            source_display = (
-                chunk.get("file_name") or 
-                meta.get("file_name") or
-                chunk.get("source") or 
-                meta.get("source") or 
-                "N/A"
-            )
-            
+            # 🎯 2. ดึงชื่อไฟล์แบบ Robust (กันชื่อไฟล์ "K")
+            source_display = chunk.get("file_name") or meta.get("file_name") or chunk.get("source") or meta.get("source") or "N/A"
             if len(str(source_display)) < 3 and isinstance(meta, dict):
                 source_display = meta.get("file_path", "").split("/")[-1] or source_display
                 
@@ -2303,7 +2266,7 @@ class SEAMPDCAEngine:
                 "stable_doc_uuid": str(stable_doc_uuid_key),
                 "chunk_uuid": str(chunk_uuid_key),
                 "source": source_display,
-                "source_filename": source_display, # ใช้ชื่อเดียวกันเพื่อให้ UI หาง่าย
+                "source_filename": source_display,
                 "page": str(page_val),
                 "pdca_tag": chunk.get("pdca_tag") or meta.get("pdca_tag") or "Other", 
                 "status": "PASS" if llm_result.get("is_passed") else "FAIL", 
@@ -2311,20 +2274,12 @@ class SEAMPDCAEngine:
             }
             new_evidence_list.append(evidence_entry)
 
-        # 🎯 5. คำนวณ Evidence Strength (ใช้ฟังก์ชันเดิมของคุณ)
-        evi_cap_data = self._calculate_evidence_strength_cap(
-            top_evidences=new_evidence_list,
-            level=level,
-            highest_rerank_score=highest_rerank_score
-        )
-        
+        # คำนวณความแข็งแกร่งและบันทึกลง Map
+        evi_cap_data = self._calculate_evidence_strength_cap(top_evidences=new_evidence_list, level=level, highest_rerank_score=highest_rerank_score)
         final_evi_str = evi_cap_data.get('max_evi_str_for_prompt', 0.0)
 
-        # 🎯 6. บันทึกเข้า Memory Maps
         self.evidence_map.setdefault(map_key, []).extend(new_evidence_list)
         self.temp_map_for_save.setdefault(map_key, []).extend(new_evidence_list)
-        
-        self.logger.info(f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | Strength: {final_evi_str}")
         
         return final_evi_str
     
@@ -3082,15 +3037,13 @@ class SEAMPDCAEngine:
         sub_criteria: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [v21.9.15 - STABLE VERSION]
-        - แก้ปัญหา Source of Evidence หายในหน้า UI
-        - แก้ปัญหา PDCA Opaque (สีเขียวจาง) ไม่ขึ้นในช่อง GAP_ONLY
-        - แก้ Bug TypeError (dict + int) ใน Action Plan
+        [v25.7 - PRODUCTION READY]
+        - แก้ปัญหา Source of Evidence ใน JSON Export กลายเป็น "K" และ "N/A"
+        - เชื่อมโยงข้อมูลที่ผ่านการ Recovery กลับเข้าสู่ Object หลักก่อน Export
         """
         # 📌 โหลด Global Constants
         REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {1: {"P"}, 2: {"P", "D"}, 3: {"P", "D", "C"}, 4: {"P", "D", "C", "A"}, 5: {"P", "D", "C", "A"}})
         MAX_L1_ATTEMPTS = globals().get('MAX_L1_ATTEMPTS', 2)
-        MIN_KEEP_SC = globals().get('MIN_RERANK_SCORE_TO_KEEP', 0.15)
 
         sub_id = sub_criteria['sub_id']
         sub_criteria_name = sub_criteria['sub_criteria_name']
@@ -3115,7 +3068,7 @@ class SEAMPDCAEngine:
             sequential_chunk_uuids = [] 
             level_result = {}
 
-            # --- ส่วนการประเมิน (คงเดิมจาก Original) ---
+            # --- 1.1 Assessment Logic ---
             if level >= 3:
                 wrapper = self.retry_policy.run(
                     fn=lambda attempt: self._run_single_assessment(
@@ -3145,37 +3098,29 @@ class SEAMPDCAEngine:
             # --- 1.2 PROCESS RESULT AND HANDLE EVIDENCE ---
             result_to_process = level_result or {"level": level, "is_passed": False}
 
-            # 🟢 [RESTORE] กู้คืนไฟล์จาก VectorStore ก่อนถ้า LLM ตอบไม่ครบ (กันปุ่ม Source หาย)
+            # กู้คืนไฟล์เบื้องต้นก่อน (กันปุ่ม Source หาย)
             actual_found_files = result_to_process.get("temp_map_for_level", [])
             if not actual_found_files and sequential_chunk_uuids:
                 actual_found_files = sequential_chunk_uuids
-
-            # 3. [สำคัญมาก] บังคับยัดข้อมูลกลับเข้า Object หลักก่อนไปทำขั้นตอนอื่น
             result_to_process['temp_map_for_level'] = actual_found_files
 
-            # 🟢 [REPAIR] PDCA Repair Logic (ฉีดเพิ่มเพื่อแก้ปัญหาสีขาวและ Metadata)
+            # PDCA Repair
             is_passed_llm = result_to_process.get('is_passed', False)
             pdca_val = result_to_process.get('pdca_breakdown', {})
-            
-            # เช็คว่าถ้าไม่มีคะแนน PDCA เลย (ค่าว่างหรือเป็น 0 ทั้งหมด) ให้ซ่อมตาม Level
             if not pdca_val or all(v == 0 for v in pdca_val.values()):
-                repaired_pdca = {
-                    "P": 1 if level >= 1 else 0,
-                    "D": 1 if level >= 2 else 0,
-                    "C": 1 if level >= 3 else 0,
-                    "A": 1 if level >= 4 else 0
+                result_to_process['pdca_breakdown'] = {
+                    "P": 1 if level >= 1 else 0, "D": 1 if level >= 2 else 0,
+                    "C": 1 if level >= 3 else 0, "A": 1 if level >= 4 else 0
                 }
-                result_to_process['pdca_breakdown'] = repaired_pdca
 
-            # ตั้งค่า Metadata พื้นฐานที่จำเป็น
             result_to_process.setdefault("is_counted", True)
             result_to_process.setdefault("is_capped", False)
 
-            # 🟢 [SOURCE] บันทึก Evidence ลงระบบ (ฉีดเพิ่มเพื่อให้ Source ไม่หาย)
+            # 🟢 [CRITICAL FIX v25.7] บันทึกและดึงข้อมูลที่ซ่อมแล้วกลับมาใส่ JSON
             level_temp_map = result_to_process.get("temp_map_for_level", [])
             if level_temp_map:
                 highest_rerank = result_to_process.get('max_relevant_score', 0.0)
-                # บันทึกไฟล์เข้าสู่ระบบ Mapping
+                # เรียกเซฟและทำความสะอาดข้อมูล (เปลี่ยน K เป็นชื่อจริง / ดึงเลขหน้าจาก Regex)
                 max_evi_str = self._save_level_evidences_and_calculate_strength(
                     level_temp_map=level_temp_map,
                     sub_id=sub_id,
@@ -3183,24 +3128,24 @@ class SEAMPDCAEngine:
                     llm_result=result_to_process, 
                     highest_rerank_score=highest_rerank 
                 )
-                # เก็บ Strength เฉพาะข้อที่ผ่าน Sequential จริง
+                
+                # 🔥 ดึงก้อนข้อมูลที่ "ซ่อมแล้ว" กลับมาใส่ result_to_process เพื่อให้ไฟล์ Export JSON ถูกต้อง
+                map_key = f"{sub_id}.L{level}"
+                if map_key in self.temp_map_for_save:
+                    result_to_process['temp_map_for_level'] = self.temp_map_for_save[map_key]
+
                 if is_passed_llm and first_failed_level_local is None:
                     result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
                 else:
                     result_to_process['evidence_strength'] = 0.0
                 
-            # --- 🟡 [SAFE UPDATE] Sequential State (ปรับปรุงจาก Original เพื่อรักษา Metadata) ---
+            # Sequential State Update
             if first_failed_level_local is not None:
-                # บังคับจำค่า Metadata ที่ AI เจอจริงก่อนเปลี่ยนสถานะเป็น GAP_ONLY
                 act_pdca = result_to_process.get('pdca_breakdown', {"P": 0, "D": 0, "C": 0, "A": 0})
                 act_src = result_to_process.get('temp_map_for_level', [])
-                
                 result_to_process.update({
-                    "evaluation_mode": "GAP_ONLY",
-                    "is_counted": False,
-                    "is_passed": False,
-                    "pdca_breakdown": act_pdca,      # <--- ช่วยให้สีเขียวจางขึ้น
-                    "temp_map_for_level": act_src,   # <--- ช่วยให้ปุ่ม Source ขึ้น
+                    "evaluation_mode": "GAP_ONLY", "is_counted": False, "is_passed": False,
+                    "pdca_breakdown": act_pdca, "temp_map_for_level": act_src,
                     "cap_reason": f"Gap analysis after sequential fail at L{first_failed_level_local}"
                 })
             elif not is_passed_llm:
@@ -3218,94 +3163,47 @@ class SEAMPDCAEngine:
             raw_results_for_sub_seq.append(result_to_process)
         
         # -----------------------------------------------------------
-        # 2. CALCULATE SUMMARY (คงเดิม)
+        # 2. CALCULATE SUMMARY & 3. ACTION PLAN (คงเดิม)
         # -----------------------------------------------------------
         highest_full_level = current_sequential_pass_level
         weighted_score = round(self._calculate_weighted_score(highest_full_level, sub_weight), 2)
         num_passed = sum(1 for r in raw_results_for_sub_seq if r.get("is_passed", False) and r.get("is_counted", True))
+        sub_summary = {"num_statements": len(raw_results_for_sub_seq), "num_passed": num_passed, "num_failed": len(raw_results_for_sub_seq) - num_passed, "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0}
 
-        sub_summary = {
-            "num_statements": len(raw_results_for_sub_seq),
-            "num_passed": num_passed,
-            "num_failed": len(raw_results_for_sub_seq) - num_passed,
-            "pass_rate": round(num_passed / len(raw_results_for_sub_seq), 4) if raw_results_for_sub_seq else 0.0
-        }
-
-        # -----------------------------------------------------------
-        # 3. GENERATE ACTION PLAN (คงเดิม แต่แก้ Bug Parameter)
-        # -----------------------------------------------------------
         roadmap_target_level = self.config.target_level if hasattr(self.config, 'target_level') else 5
         statements_for_ap = []
         level_statements_map = {l.get('level'): l.get('statement', '') for l in sub_criteria.get('levels', [])}
-        
         for r in raw_results_for_sub_seq:
             res_item = r.copy()
             res_item['statement_text'] = level_statements_map.get(res_item.get('level'), "")
-            if not res_item.get('is_passed', False):
+            if not res_item.get('is_passed', False) or any(v == 0 for v in res_item.get('pdca_breakdown', {}).values()):
                 res_item['recommendation_type'] = 'FAILED' if res_item.get('evaluation_mode') != "GAP_ONLY" else 'GAP_ANALYSIS'
                 statements_for_ap.append(res_item)
-            else:
-                pdca = res_item.get('pdca_breakdown', {})
-                if any(v == 0 for v in pdca.values()):
-                    res_item['recommendation_type'] = 'PDCA_INCOMPLETE'
-                    statements_for_ap.append(res_item)
 
-        # ✅ FIX: ระบุชื่อ parameter เพื่อป้องกัน TypeError (dict + int)
-        action_plan_result = create_structured_action_plan(
-            recommendation_statements=statements_for_ap,
-            sub_id=sub_id,
-            sub_criteria_name=sub_criteria_name,
-            target_level=roadmap_target_level, 
-            llm_executor=self.llm,
-            logger=self.logger,
-            enabler_rules=self.contextual_rules_map 
-        )
+        action_plan_result = create_structured_action_plan(recommendation_statements=statements_for_ap, sub_id=sub_id, sub_criteria_name=sub_criteria_name, target_level=roadmap_target_level, llm_executor=self.llm, logger=self.logger, enabler_rules=self.contextual_rules_map)
 
         # -----------------------------------------------------------
-        # 4. FINAL RETURN
+        # 4. FINAL RETURN (UI Mapping)
         # -----------------------------------------------------------
-
         final_temp_map = {}
         for res in raw_results_for_sub_seq:
             lvl = res.get('level')
-            # ดึงลิสต์หลักฐานออกมา
             evidence_list = res.get("temp_map_for_level", [])
-            
             for evi in evidence_list:
-                # 🛡️ [PATCH v25.4] เพิ่มการเช็คว่าเป็น dict หรือไม่
-                if not isinstance(evi, dict):
-                    self.logger.warning(f"⚠️ [Worker] Skipping invalid evidence type: {type(evi)} at L{lvl}")
-                    continue
-                
-                # ใช้ .get() เพื่อป้องกัน Key Error
+                if not isinstance(evi, dict): continue
                 f_id = evi.get("file_id") or evi.get("uuid") or evi.get("id")
                 if f_id:
-                    # ✅ เพิ่มข้อมูลระดับเข้าไปในตัว evi เลย เผื่อ UI ต้องใช้แยก
                     evi['source_level'] = lvl 
-                    
-                    # ✅ ตรวจสอบและใส่ค่า page อย่างปลอดภัย
-                    if 'page' not in evi:
-                        meta = evi.get("metadata", {})
-                        if isinstance(meta, dict):
-                            evi['page'] = meta.get("page", "N/A")
-                        else:
-                            evi['page'] = "N/A"
-                    
                     final_temp_map[f"{sub_id}.{lvl}.{f_id}"] = evi
 
         final_sub_result = {
-            "sub_criteria_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
-            "highest_full_level": highest_full_level,
-            "weight": sub_weight,
+            "sub_criteria_id": sub_id, "sub_criteria_name": sub_criteria_name,
+            "highest_full_level": highest_full_level, "weight": sub_weight,
             "target_level_achieved": highest_full_level >= roadmap_target_level,
-            "weighted_score": weighted_score,
-            "action_plan": action_plan_result, 
-            "raw_results_ref": raw_results_for_sub_seq,
-            "sub_summary": sub_summary,
+            "weighted_score": weighted_score, "action_plan": action_plan_result, 
+            "raw_results_ref": raw_results_for_sub_seq, "sub_summary": sub_summary,
             "worker_duration_s": round(time.time() - start_ts, 2)
         }
-
         return final_sub_result, final_temp_map
     
     def _run_expert_re_evaluation(
