@@ -60,37 +60,47 @@ app = FastAPI(
 )
 
 
+# # -----------------------------
+# # Middleware
+# # -----------------------------
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+
 # -----------------------------
 # Middleware
 # -----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        # 1. Lovable & Development Tools
+        "https://lovable.dev",
+        "https://lovable.app",
+        
+        # 2. Localhost Development (Mac)
+        "http://localhost:8080",
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173",
+        
+        # 3. Server Test (ระบุ IP ของ Server คุณ)
+        "http://192.168.19.41:8080",
+        "http://192.168.19.41:5173",
+        "http://192.168.19.41", # กรณีรันผ่าน port 80
+    ],
+    # 4. ใช้ Regex เพื่อรองรับ Subdomain ของ Lovable Project และ Ngrok
+    allow_origin_regex=r"https://.*\.lovableproject\.com|https://.*\.lovable\.app|https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
-
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "http://192.168.19.41:8080", # 👈 เพิ่ม IP ของ Server และ Port ของ UI
-#         "http://192.168.19.41:5173", # 👈 เผื่อไว้สำหรับ Vite Dev Port
-#         "http://localhost:8080",  # 👈 เพิ่มบรรทัดนี้ (ตามที่ Vite รันจริง)
-#         "http://127.0.0.1:8080",  # 👈 เผื่อไว้สำหรับ IP Loopback
-#         "http://localhost:5173",
-#         "http://localhost:3000",
-#         "https://lovable.dev",
-#         "https://lovable.app",
-#         "https://80a1a70f-61aa-4128-82c5-fc1e4ea7886e.lovableproject.com",
-#     ],
-#     allow_origin_regex=r"https://.*\.lovableproject\.com|https://.*\.lovable\.app|https://.*\.ngrok-free\.app",
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-#     expose_headers=["*"],
-# )
 
 # -----------------------------
 # Routers 

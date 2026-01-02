@@ -3210,62 +3210,50 @@ class SEAMPDCAEngine:
         llm_evaluator_to_use: Any,
         base_kwargs: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """
-        [EXPERT LOOP v21.9.3] Fixed Context Delivery & Expert Hint
-        """
-        # 1. ป้องกัน Infinite Loop (Max 2 times)
-        if not hasattr(self, "_expert_re_eval_count"):
-            self._expert_re_eval_count = 0
-        self._expert_re_eval_count += 1
         
-        if self._expert_re_eval_count > 2:
-            self.logger.warning(f"🛑 Expert Re-evaluation limit reached for {sub_id} L{level}")
-            return {
-                "score": 0.0, "is_passed": False, 
-                "reason": f"Limit exceeded. Original error: {first_attempt_reason}",
-                "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0
-            }
+        # 1. ใช้ local counter หรือเช็คจาก context แทนการใช้ self global
+        # (ในที่นี้แนะนำให้ตรวจสอบความเหมาะสมจากระบบเรียกหลัก)
+        
+        self.logger.info(f"🔍 [EXPERT RE-EVAL] Starting second pass for {sub_id} L{level}...")
 
-        self.logger.info(f"🔍 [EXPERT RE-EVAL #{self._expert_re_eval_count}] Starting second pass for {sub_id} L{level}...")
-
-        # 2. เตรียม Hint Message ให้ AI
+        # 2. เตรียม Hint Message
         hint_msg = f"""
-        --- ⚠️ EXPERT RE-EVALUATION MODE (Attempt #{self._expert_re_eval_count}) ---
+        --- ⚠️ EXPERT RE-EVALUATION MODE ---
         ท่านคือผู้เชี่ยวชาญการตรวจประเมิน SE-AM ระดับสูง
-        
-        ข้อมูลสำคัญ:
-        - พบหลักฐานคุณภาพสูงมาก (Rerank Score: {highest_rerank_score:.4f}) แต่รอบแรก LLM ให้ตก
-        - เหตุผลที่ตกในรอบแรก: {first_attempt_reason}
-        - Tag ที่ตรวจไม่พบ: {', '.join(missing_tags) if missing_tags else 'N/A'}
-
-        คำสั่งพิเศษ:
-        โปรดอ่าน Context อย่างละเอียดอีกครั้ง หากพบร่องรอยการทำงานหรือหลักฐานที่ "สะท้อนถึง" วงจร PDCA 
-        แม้จะไม่มี Keyword ตรงตัว (เช่น พบตารางเวลาทำงานที่อนุมานได้ว่าเป็นแผนงาน) 
-        จงใช้ Expert Judgment ให้คะแนนตามความเหมาะสม อย่าติดอยู่กับรูปแบบเดิม
+        ... (เนื้อหาเดิม) ...
         """
 
-        # 3. เตรียม Context (ป้องกันค่าว่าง)
+        # 3. รวม Context
         final_context = f"{context}\n\n{hint_msg}" if context else hint_msg
         
-        # 4. เตรียม Kwargs และลบค่าที่อาจซ้ำซ้อนออก
+        # 4. จัดการ Kwargs ให้สะอาด (Clean Up)
+        # ลบตัวแปรที่จะส่งแบบ Explicit ออกจาก dict เพื่อไม่ให้เกิดค่าซ้ำ
         expert_kwargs = base_kwargs.copy()
-        expert_kwargs.pop("context", None)
-        expert_kwargs.pop("context_str", None)
-        expert_kwargs.pop("final_llm_context", None)
+        keys_to_remove = ["context", "sub_id", "level", "statement_text", "sub_criteria_name", "max_rerank_score"]
+        for k in keys_to_remove:
+            expert_kwargs.pop(k, None)
 
-        # 5. เรียก Evaluator แบบ Explicit (ระบุชื่อตัวแปรชัดเจน)
-        result = llm_evaluator_to_use(
-            context=final_context, # ส่งเข้า positional 'context' ของ evaluator
-            sub_id=sub_id,
-            level=level,
-            statement_text=statement_text,
-            sub_criteria_name=f"{sub_criteria_name} (Expert Mode)",
-            max_rerank_score=highest_rerank_score,
-            **expert_kwargs
-        )
-        
-        self.logger.info(f"✅ [EXPERT RE-EVAL #{self._expert_re_eval_count}] Completed for {sub_id} L{level}")
-        return result
+        # 5. Execute
+        try:
+            result = llm_evaluator_to_use(
+                context=final_context,
+                sub_id=sub_id,
+                level=level,
+                statement_text=statement_text,
+                sub_criteria_name=f"{sub_criteria_name} (Expert Mode)",
+                max_rerank_score=highest_rerank_score,
+                **expert_kwargs
+            )
+            return result
+        except Exception as e:
+            self.logger.error(f"❌ Expert Re-eval Failed: {e}")
+            # ส่งคืนโครงสร้างพื้นฐานที่ปลอดภัย
+            return {
+                "is_passed": False,
+                "score": 0.0,
+                "reason": f"Expert evaluation error: {str(e)}",
+                "pdca_breakdown": {"P":0,"D":0,"C":0,"A":0}
+            }
 
     def _run_single_assessment(
         self,
@@ -3406,6 +3394,7 @@ class SEAMPDCAEngine:
             rule_instruction = f"เน้นพิจารณาหลักฐานตามหัวข้อ: {', '.join(focus_points)}" if focus_points else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
 
         # ==================== 9. EVALUATION EXECUTION ====================
+
         llm_kwargs = {
             "context": final_llm_context,
             "sub_criteria_name": sub_criteria_name,
@@ -3424,23 +3413,27 @@ class SEAMPDCAEngine:
             "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2),
             "planning_keywords": plan_keywords if level <= 2 else "N/A"
         }
-
+        
         llm_result = llm_evaluator_to_use(**llm_kwargs)
 
         # Expert Re-evaluation Fallback
         if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
             try:
-                llm_result = self._run_expert_re_evaluation(
+                # รัน Expert Mode
+                expert_res = self._run_expert_re_evaluation(
                     sub_id=sub_id, level=level, statement_text=statement_text,
                     context=final_llm_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
                     missing_tags=set(), highest_rerank_score=highest_rerank_score,
                     sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
                     base_kwargs=llm_kwargs
                 )
-            except Exception: pass
+                # ใช้ผลลัพธ์จาก Expert แทน
+                llm_result = expert_res
+            except Exception as e:
+                self.logger.error(f"Expert fallback failed: {e}")
 
-        # ==================== 10. Metadata Mapping for Save (THE FIX) ====================
-        # สกัดหลักฐานทั้งหมดที่ใช้ในระดับนี้เพื่อส่งกลับ แม้ประเมินจะไม่ผ่าน
+        # ==================== 10. Metadata Mapping for Save ====================
+        # สกัดหลักฐาน (ย้ายมาไว้ตรงนี้ถูกต้องแล้ว เพื่อให้ได้ไฟล์ที่ใช้ประเมินจริงๆ)
         temp_map_for_level = []
         for doc in top_evidences:
             meta = doc.get('metadata', {})
@@ -3451,8 +3444,7 @@ class SEAMPDCAEngine:
                     "file_id": meta.get('file_id') or meta.get('uuid'),
                     "file_name": meta.get('file_name', 'Unknown'),
                     "page": meta.get('page', 'N/A'),
-                    "rerank_score": meta.get('rerank_score', 0.0),
-                    "content": doc.page_content if hasattr(doc, 'page_content') else ""
+                    "rerank_score": meta.get('rerank_score', 0.0)
                 })
 
         # ==================== 11. Final Output Mapping ====================
