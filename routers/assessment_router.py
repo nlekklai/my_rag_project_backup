@@ -165,21 +165,20 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันแก้ไขสมบูรณ์:
-    1. แก้ไข NameError: total_score is not defined
-    2. Hybrid Logic: รวม 'ผลวิเคราะห์จริง' กับ 'รายละเอียดเกณฑ์ (Context)'
-    3. จัดการข้อมูล summary_thai ที่มีหลายจุดโดยเลือกก้อนที่สมบูรณ์ที่สุด
+    เวอร์ชัน Hybrid + Bottleneck Support:
+    1. รองรับ is_gap_analysis เพื่อโชว์ Badge Bottleneck ใน UI
+    2. ส่ง rerank_score และ snippet แบบเต็มเพื่อทำ Tooltip
+    3. แยก evaluation_mode (NORMAL/GAP_ONLY) สำหรับการระบายสี PDCA Matrix
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
 
     processed_sub_criteria = []
     radar_data = []
-    strengths = []
 
-    # --- 1. Metrics & Score Calculation (จุดที่ต้องมีเพื่อแก้ NameError) ---
+    # --- 1. Metrics & Score Calculation ---
     total_score = round(float(summary.get("Total Weighted Score Achieved") or summary.get("achieved_weight") or 0.0), 2)
-    full_score_all = round(float(summary.get("Total Possible Weight") or 40.0), 2)
+    full_score_all = round(float(summary.get("Total Possible Weight") or 4.0), 2)
     
     total_expected = int(summary.get("total_subcriteria") or 12)
     passed_count = int(summary.get("total_subcriteria_assessed") or len(sub_results))
@@ -194,53 +193,62 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
+        # --- 2. ตรวจสอบ Bottleneck (ข้ามเลเวล) ---
+        # หาว่ามีเลเวลที่สูงกว่าเลเวลปัจจุบันที่ผ่าน (is_passed=True) หรือไม่
+        has_higher_potential = any(
+            int(r.get("level", 0)) > highest_pass and r.get("is_passed") 
+            for r in raw_levels_list
+        )
+
         # คะแนนรายข้อ
         current_sub_score = round(float(res.get("weighted_score", 0.0)), 2)
         current_sub_full = round(float(res.get("weight", 0.0)), 2)
 
-        # --- 2. สร้าง PDCA Matrix ---
+        # --- 3. สร้าง PDCA Matrix (Enhanced for UI colors) ---
         pdca_matrix = []
         raw_levels_map = {item.get("level"): item for item in raw_levels_list}
         
         for lv_idx in range(1, 6):
             lv_info = raw_levels_map.get(lv_idx)
-            if lv_info:
-                pdca_matrix.append({
-                    "level": lv_idx,
-                    "is_passed": lv_info.get("is_passed", False),
-                    "pdca": lv_info.get("pdca_breakdown", {"P": 0, "D": 0, "C": 0, "A": 0}),
-                    "reason": lv_info.get("reason", "ประเมินแล้ว")
-                })
-            else:
-                pdca_matrix.append({
-                    "level": lv_idx,
-                    "is_passed": lv_idx <= highest_pass,
-                    "pdca": {"P": 1, "D": 1, "C": 1, "A": 1} if lv_idx <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0},
-                    "reason": "ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน"
-                })
+            is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
+            
+            # กำหนด Mode: ถ้าผ่านแต่สูงกว่าเลเวลสูงสุดที่เป็นทางการ ให้เป็น GAP_ONLY (สีน้ำเงินใน UI)
+            eval_mode = "NORMAL"
+            if is_passed and lv_idx > highest_pass:
+                eval_mode = "GAP_ONLY"
 
-        # --- 3. จัดกลุ่ม Sources (ชื่อไฟล์จริง) ---
+            pdca_matrix.append({
+                "level": lv_idx,
+                "is_passed": is_passed,
+                "evaluation_mode": eval_mode,
+                "pdca": lv_info.get("pdca_breakdown", {"P": 0, "D": 0, "C": 0, "A": 0}) if lv_info else ({"P": 1, "D": 1, "C": 1, "A": 1} if lv_idx <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0}),
+                "reason": lv_info.get("reason", "ผ่านเกณฑ์มาตรฐาน") if not lv_info and lv_idx <= highest_pass else (lv_info.get("reason", "") if lv_info else "ยังไม่ถึงเกณฑ์ประเมิน")
+            })
+
+        # --- 4. จัดกลุ่ม Sources (ชื่อไฟล์ + Confidence + Snippet) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         for ref in raw_levels_list:
             lv_key = str(ref.get("level"))
             seen_in_lv = set()
             for source in ref.get("temp_map_for_level", []):
-                fname = source.get('source_filename') or source.get('source') or source.get('filename') or "Unknown Document"
+                fname = source.get('filename') or source.get('source_filename') or "Unknown Document"
                 pnum = str(source.get('page_number') or source.get('page') or "1")
                 d_uuid = source.get('document_uuid') or source.get('doc_id')
                 if not d_uuid: continue
+                
                 doc_key = f"{fname}-{pnum}"
                 if doc_key not in seen_in_lv:
                     grouped_sources[lv_key].append({
                         "filename": fname,
                         "page": pnum,
-                        "snippet": source.get("text", "")[:150],
+                        "text": source.get("text", "")[:300], # ส่ง Snippet ให้ Tooltip
+                        "rerank_score": source.get("rerank_score") or source.get("score") or 0.8, # สำหรับ Confidence Badge
                         "document_uuid": d_uuid,
                         "doc_type": source.get("doc_type", "evidence")
                     })
                     seen_in_lv.add(doc_key)
 
-        # --- 4. สร้าง Roadmap ---
+        # --- 5. Roadmap & Action Plan ---
         ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
@@ -255,46 +263,27 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                             {
                                 "step": str(s.get("step") or i+1),
                                 "description": s.get("description", ""),
-                                "responsible": s.get("responsible", "หน่วยงานที่เกี่ยวข้อง")
+                                "responsible": s.get("responsible", "หน่วยงานหลัก")
                             } for i, s in enumerate(act.get("steps", []))
                         ]
                     } for act in p.get("actions", [])
                 ]
             })
 
-        # --- 5. Hybrid Summary Logic ---
-
-        # 1. ดึง "ผลวิเคราะห์หลักฐาน" (Analysis)
-        # วนถอยหลังใน pdca_matrix เพื่อหาเหตุผลจากระดับสูงสุดที่ผ่าน และมี Source อ้างอิง
+        # --- 6. Hybrid Summary & Gap ---
         evidence_analysis = ""
         if pdca_matrix:
             for m in reversed(pdca_matrix):
-                r_text = m.get("reason", "")
-                if "[Source:" in r_text or "[อ้างอิง:" in r_text:
-                    evidence_analysis = r_text
+                if m.get("is_passed"):
+                    evidence_analysis = m.get("reason", "")
                     break
 
-        # 2. ดึง "รายละเอียดเกณฑ์" (Context)
-        # ดึงจาก summary_thai ระดับ sub-criteria (ขุมทรัพย์ 10-12 บรรทัดที่มี อก./อฝ./ผชก.)
         context_criteria = res.get("summary_thai") or ""
+        sthai = f"**การวิเคราะห์หลักฐาน:**\n{evidence_analysis}\n\n**เกณฑ์อ้างอิง:**\n{context_criteria}" if evidence_analysis and context_criteria else (evidence_analysis or context_criteria)
 
-        # 3. รวมร่าง (Hybrid)
-        if evidence_analysis and context_criteria:
-            if evidence_analysis[:40] in context_criteria:
-                sthai = context_criteria
-            else:
-                sthai = f"**ผลการวิเคราะห์หลักฐาน:**\n{evidence_analysis}\n\n**รายละเอียดเกณฑ์อ้างอิง (Context):**\n{context_criteria}"
-        else:
-            sthai = evidence_analysis or context_criteria or "ไม่พบข้อมูลสรุปผลวิเคราะห์"
-
-        # --- 6. GAP Analysis (รวมจาก Action Plan ถ้าฟิลด์ GAP ว่าง) ---
         gap_data = res.get("gap_analysis") or res.get("gap") or ""
         if not gap_data.strip() and ui_roadmap:
-            gap_list = []
-            for phase in ui_roadmap:
-                for task in phase.get("tasks", []):
-                    if task.get("recommendation"):
-                        gap_list.append(f"L{task['level']}: {task['recommendation']}")
+            gap_list = [f"L{t['level']}: {t['recommendation']}" for ph in ui_roadmap for t in ph.get("tasks", []) if t.get("recommendation")]
             gap_data = "\n".join(gap_list)
 
         # เพิ่มลงใน List เพื่อส่งออกไปที่ UI
@@ -304,7 +293,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "level": f"L{highest_pass}",
             "score": current_sub_score,
             "full_score": current_sub_full,
-            "progress_percent": int((highest_pass / 5) * 100),
+            "is_gap_analysis": has_higher_potential, # บ่งบอกว่าเป็นคอขวดหรือไม่
             "pdca_matrix": pdca_matrix,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
@@ -329,7 +318,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "completion_rate": round(completion_rate, 2)
         },
         "radar_data": radar_data,
-        "strengths": list(dict.fromkeys(strengths)) if strengths else ["โครงสร้างพื้นฐานมีความพร้อม"],
         "sub_criteria": processed_sub_criteria
     }
 
