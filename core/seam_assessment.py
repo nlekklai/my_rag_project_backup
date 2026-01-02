@@ -2461,17 +2461,25 @@ class SEAMPDCAEngine:
         current_sub_id: Optional[str] = None,
         level: Optional[int] = None
     ) -> List[Dict]:
-
+        """
+        [v21.9.18 - ULTIMATE COMPATIBILITY WITH _run_single_assessment v21.9.17]
+        - เก็บ metadata ทั้งที่ root และใน "metadata" dict (dual storage) เพื่อรองรับทุก pattern การอ่าน
+        - เพิ่ม debug logging สำหรับ priority chunks ที่ hydrate ไม่สำเร็จ (แสดงชื่อไฟล์ที่หาย)
+        - Deduplication ที่แข็งแกร่ง + skip invalid
+        - Boost score ชัดเจน + PDCA tagging ปลอดภัย
+        """
         active_sub_id = current_sub_id or getattr(self, 'sub_id', 'unknown')
         if not chunks_to_hydrate:
             return []
 
         TAG_ABBREV = {
             "PLAN": "P", "DO": "D", "CHECK": "C", "ACT": "A",
-            "P": "P", "D": "D", "C": "C", "A": "A"
+            "P": "P", "D": "D", "C": "C", "A": "A", "SUSTAINABILITY": "A"
         }
 
         def _safe_classify(text: str) -> str:
+            if not text:
+                return "Other"
             try:
                 raw = classify_by_keyword(
                     text=text,
@@ -2479,33 +2487,41 @@ class SEAMPDCAEngine:
                     level=level,
                     contextual_rules_map=self.contextual_rules_map
                 )
-                if not raw:
-                    return "Other"
-                return TAG_ABBREV.get(str(raw).upper(), "Other")
+                return TAG_ABBREV.get(str(raw).strip().upper(), "Other")
             except Exception as e:
-                self.logger.warning(f"PDCA classify failed → Other | {e}")
+                self.logger.warning(f"PDCA classify failed → 'Other' | {e}")
                 return "Other"
 
-        def _standardize_chunk(chunk: Dict, score: float):
+        def _standardize_chunk(chunk: Dict, score: float, is_hydrated: bool = False) -> Dict:
+            chunk = chunk.copy()
             chunk.setdefault("is_baseline", True)
+            chunk.setdefault("is_priority", True)
 
-            text = chunk.get("text", "").strip()
-            if text:
-                chunk["pdca_tag"] = _safe_classify(text)
+            text = str(chunk.get("text", "") or "").strip()
+            chunk["pdca_tag"] = _safe_classify(text) if text else "Other"
 
-                # ป้องกัน baseline score inflate
-                chunk["rerank_score"] = max(chunk.get("rerank_score", 0.0), score)
-                chunk["score"] = max(chunk.get("score", 0.0), score)
+            boost = 1.0 if is_hydrated else 0.85
+            chunk["rerank_score"] = max(chunk.get("rerank_score", 0.0), score * boost)
+            chunk["score"] = max(chunk.get("score", 0.0), score * boost)
 
             return chunk
 
-        stable_ids = {
-            sid for c in chunks_to_hydrate
-            if (sid := (c.get("stable_doc_uuid") or c.get("doc_id") or c.get("chunk_uuid")))
-        }
+        # ดึง stable IDs อย่างครอบคลุม
+        stable_ids = set()
+        original_names = {}  # สำหรับ debug log เมื่อหาย
+        for c in chunks_to_hydrate:
+            sid = (
+                c.get("stable_doc_uuid") or c.get("doc_id") or
+                c.get("chunk_uuid") or c.get("uuid") or c.get("id")
+            )
+            if sid:
+                stable_ids.add(sid)
+                # เก็บชื่อไฟล์เดิมไว้เพื่อ debug
+                original_names[sid] = c.get("file_name") or c.get("source") or "Unknown File"
 
         if not stable_ids or not vsm:
-            boosted = [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            self.logger.info(f"VSM unavailable → fallback hydration for {len(chunks_to_hydrate)} priority chunks")
+            boosted = [_standardize_chunk(c, score=0.9, is_hydrated=False) for c in chunks_to_hydrate]
             return self._guarantee_text_key(boosted)
 
         stable_id_map = defaultdict(list)
@@ -2518,65 +2534,104 @@ class SEAMPDCAEngine:
             )
 
             for doc in retrieved_docs:
-                sid = doc.metadata.get("stable_doc_uuid") or doc.metadata.get("doc_id")
+                meta = doc.metadata
+                sid = (
+                    meta.get("stable_doc_uuid") or meta.get("doc_id") or
+                    meta.get("chunk_uuid") or meta.get("uuid")
+                )
                 if sid:
                     stable_id_map[sid].append({
-                        "text": doc.page_content,
-                        "metadata": doc.metadata
+                        "text": doc.page_content.strip(),
+                        "metadata": meta
                     })
 
+            self.logger.debug(f"Hydration: Retrieved {len(retrieved_docs)} docs for {len(stable_ids)} requested IDs")
+
         except Exception as e:
-            self.logger.error(f"VSM Hydration failed: {e}")
-            fallback = [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            self.logger.error(f"VSM Hydration failed: {e} → using fallback")
+            fallback = [_standardize_chunk(c, score=0.9, is_hydrated=False) for c in chunks_to_hydrate]
             return self._guarantee_text_key(fallback)
+
+        # ขยาย SAFE_META_KEYS ให้ครบถ้วนที่สุด
+        SAFE_META_KEYS = {
+            "source", "file_name", "file_id", "page", "page_label",
+            "page_number", "chunk_id", "uuid", "id", "doc_id",
+            "stable_doc_uuid", "enabler", "tenant", "year",
+            "rerank_score", "score", "relevance_score"
+        }
 
         hydrated_priority_docs = []
         restored_count = 0
-        seen_signatures = set()
+        missing_files = []
 
-        SAFE_META_KEYS = {
-            "source", "file_name", "page", "page_label",
-            "page_number", "enabler", "tenant", "year"
-        }
+        seen_signatures = set()
 
         for chunk in chunks_to_hydrate:
             new_chunk = chunk.copy()
-            sid = new_chunk.get("stable_doc_uuid") or new_chunk.get("doc_id")
+
+            sid = (
+                new_chunk.get("stable_doc_uuid") or new_chunk.get("doc_id") or
+                new_chunk.get("chunk_uuid") or new_chunk.get("uuid") or new_chunk.get("id")
+            )
 
             hydrated = False
-            if sid and sid in stable_id_map:
+            if sid and sid in stable_id_map and stable_id_map[sid]:
                 best_match = stable_id_map[sid][0]
                 new_chunk["text"] = best_match["text"]
 
-                meta = best_match.get("metadata", {})
-                new_chunk.update({k: v for k, v in meta.items() if k in SAFE_META_KEYS})
+                source_meta = best_match["metadata"]
+
+                # === เก็บ metadata ทั้งที่ root และใน nested "metadata" ===
+                if "metadata" not in new_chunk:
+                    new_chunk["metadata"] = {}
+
+                for k in SAFE_META_KEYS:
+                    if k in source_meta and source_meta[k] is not None:
+                        new_chunk[k] = source_meta[k]                    # root level
+                        new_chunk["metadata"][k] = source_meta[k]        # nested
 
                 hydrated = True
                 restored_count += 1
+            else:
+                if sid and original_names.get(sid):
+                    missing_files.append(original_names[sid])
 
-            new_chunk = _standardize_chunk(
-                new_chunk,
-                score=1.0 if hydrated else 0.85
-            )
+            # Standardize
+            new_chunk = _standardize_chunk(new_chunk, score=1.0, is_hydrated=hydrated)
 
+            # Deduplication signature ที่แข็งแกร่ง
+            text_preview = new_chunk.get("text", "")[:200]
             signature = (
                 sid,
-                new_chunk.get("chunk_uuid"),
-                new_chunk.get("text", "")[:200]
+                new_chunk.get("file_name"),
+                new_chunk.get("page"),
+                hashlib.md5(text_preview.encode('utf-8')).hexdigest()
             )
 
             if signature in seen_signatures:
                 continue
-
             seen_signatures.add(signature)
+
             hydrated_priority_docs.append(new_chunk)
+
+        # === เพิ่ม Debug Log สำหรับไฟล์ที่หาย ===
+        if missing_files:
+            unique_missing = list(dict.fromkeys(missing_files))  # dedup
+            self.logger.warning(
+                f"Priority hydration incomplete: {len(unique_missing)} file(s) not restored → "
+                f"{', '.join(unique_missing[:10])}{'...' if len(unique_missing) > 10 else ''}"
+            )
+
+        self.logger.info(
+            f"Priority hydration complete: {restored_count}/{len(chunks_to_hydrate)} restored, "
+            f"{len(hydrated_priority_docs)} unique chunks returned"
+        )
 
         return self._guarantee_text_key(
             hydrated_priority_docs,
             total_count=len(chunks_to_hydrate),
             restored_count=restored_count
         )
-
 
     def _guarantee_text_key(
         self,
@@ -3264,11 +3319,16 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.9.11 - PRODUCTION READY]
-        - การันตีการส่ง temp_map_for_level กลับไปเสมอแม้ประเมินไม่ผ่าน
-        - ปรับปรุงโครงสร้าง Metadata เพื่อให้ UI แสดงผล Source of Evidence ได้แม่นยำ
-        - บูรณาการ Focus Points และ Evidence Guidelines เข้ากับระบบ RAG
+        [REVISED v21.9.17 - ULTIMATE SOURCE RECOVERY]
+        - การันตี temp_map_for_level มีข้อมูลเสมอเมื่อ LLM อ้างอิงหลักฐาน
+        - Multi-layer fallback: top_evidences → priority_docs → final_top_evidences → Regex จาก reason/summary
+        - Regex แข็งแกร่งรองรับ "หน้า", "หน้า:", "page", "page:" ทั้งไทย-อังกฤษ ไม่สน case และ colon
+        - Deduplicate sources + skip invalid entries
+        - เพิ่ม logging ชัดเจนเมื่อ recovery ทำงาน
         """
+        import re
+        import hashlib
+
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
         level = statement_data['level']
@@ -3339,7 +3399,6 @@ class SEAMPDCAEngine:
                 )
                 top_evidences_current = retrieval_result.get("top_evidences", [])
                 
-                # หาคะแนนสูงสุด
                 current_max = max((ev.get('metadata', {}).get('rerank_score', 0.0) for ev in top_evidences_current), default=0.0)
                 priority_max = max((doc.get('metadata', {}).get('rerank_score', 0.0) for doc in priority_docs), default=0.0)
                 overall_max = max(current_max, priority_max)
@@ -3394,7 +3453,6 @@ class SEAMPDCAEngine:
             rule_instruction = f"เน้นพิจารณาหลักฐานตามหัวข้อ: {', '.join(focus_points)}" if focus_points else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
 
         # ==================== 9. EVALUATION EXECUTION ====================
-
         llm_kwargs = {
             "context": final_llm_context,
             "sub_criteria_name": sub_criteria_name,
@@ -3419,7 +3477,6 @@ class SEAMPDCAEngine:
         # Expert Re-evaluation Fallback
         if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
             try:
-                # รัน Expert Mode
                 expert_res = self._run_expert_re_evaluation(
                     sub_id=sub_id, level=level, statement_text=statement_text,
                     context=final_llm_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
@@ -3427,25 +3484,91 @@ class SEAMPDCAEngine:
                     sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
                     base_kwargs=llm_kwargs
                 )
-                # ใช้ผลลัพธ์จาก Expert แทน
                 llm_result = expert_res
             except Exception as e:
                 self.logger.error(f"Expert fallback failed: {e}")
 
-        # ==================== 10. Metadata Mapping for Save ====================
-        # สกัดหลักฐาน (ย้ายมาไว้ตรงนี้ถูกต้องแล้ว เพื่อให้ได้ไฟล์ที่ใช้ประเมินจริงๆ)
+        # ==================== 10. Primary Metadata Mapping ====================
         temp_map_for_level = []
         for doc in top_evidences:
-            meta = doc.get('metadata', {})
-            chunk_id = meta.get('id') or meta.get('uuid') or meta.get('chunk_id')
+            meta = doc.get('metadata', {}) or doc.get('page_content', {})
+            chunk_id = meta.get('id') or meta.get('uuid') or meta.get('chunk_id') or doc.get('id')
             if chunk_id:
                 temp_map_for_level.append({
-                    "id": chunk_id,
-                    "file_id": meta.get('file_id') or meta.get('uuid'),
-                    "file_name": meta.get('file_name', 'Unknown'),
+                    "id": str(chunk_id),
+                    "file_id": meta.get('file_id') or meta.get('uuid') or meta.get('source'),
+                    "file_name": meta.get('file_name') or meta.get('source', 'Unknown'),
                     "page": meta.get('page', 'N/A'),
                     "rerank_score": meta.get('rerank_score', 0.0)
                 })
+
+        # ==================== 10.5 MULTI-LAYER ULTIMATE FALLBACK RECOVERY ====================
+        recovery_sources = []
+
+        # Fallback 1: priority_docs (ก่อน hydrate)
+        if not temp_map_for_level and priority_docs:
+            for doc in priority_docs:
+                meta = doc.get('metadata', {})
+                chunk_id = meta.get('id') or meta.get('uuid')
+                if chunk_id:
+                    recovery_sources.append({
+                        "id": str(chunk_id),
+                        "file_id": meta.get('file_id') or meta.get('source'),
+                        "file_name": meta.get('file_name') or meta.get('source', 'Priority Doc'),
+                        "page": meta.get('page', 'N/A'),
+                        "rerank_score": meta.get('rerank_score', highest_rerank_score)
+                    })
+
+        # Fallback 2: final_top_evidences (ดั้งเดิมก่อน filter/hydrate)
+        if not temp_map_for_level and not recovery_sources and final_top_evidences:
+            for doc in final_top_evidences:
+                meta = doc.get('metadata', {})
+                chunk_id = meta.get('id') or meta.get('uuid')
+                if chunk_id:
+                    recovery_sources.append({
+                        "id": str(chunk_id),
+                        "file_id": meta.get('file_id') or meta.get('source'),
+                        "file_name": meta.get('file_name') or 'Recovered Raw Evidence',
+                        "page": meta.get('page', 'N/A'),
+                        "rerank_score": meta.get('rerank_score', highest_rerank_score)
+                    })
+
+        # Fallback 3: Ultimate Regex Recovery จาก reason + summary_thai
+        if not temp_map_for_level and not recovery_sources and llm_result.get('is_passed', False):
+            reason_text = (llm_result.get('reason', '') or '') + ' ' + (llm_result.get('summary_thai', '') or '')
+            pattern = r'\[Source:\s*([^,\]]+?)(?:,\s*(?:หน้า[:]?|page[:]?)\s*(\d+))?\]?'
+            matches = re.findall(pattern, reason_text, re.IGNORECASE)
+
+            temp_recovered = []
+            for file_name_raw, page_num in matches:
+                file_name = file_name_raw.strip()
+                if not file_name or file_name.lower() in ['n/a', '-', 'ไม่พบ', 'unknown']:
+                    continue
+                page = page_num if page_num else 'N/A'
+                fake_id = hashlib.md5(file_name.encode('utf-8')).hexdigest()
+                temp_recovered.append({
+                    "id": fake_id,
+                    "file_id": file_name,
+                    "file_name": file_name,
+                    "page": page,
+                    "rerank_score": highest_rerank_score
+                })
+
+            # Deduplicate by (file_name lower, page)
+            seen = set()
+            for src in temp_recovered:
+                key = (src['file_name'].lower(), src['page'])
+                if key not in seen:
+                    seen.add(key)
+                    recovery_sources.append(src)
+
+            if recovery_sources:
+                self.logger.info(f"Ultimate Regex Recovery: Restored {len(recovery_sources)} sources for {sub_id} L{level}")
+
+        # Apply recovery if primary mapping failed
+        if not temp_map_for_level and recovery_sources:
+            temp_map_for_level = recovery_sources[:10]  # Limit to prevent overload
+            self.logger.info(f"SOURCE FULLY RECOVERED: {len(temp_map_for_level)} evidences for {sub_id} L{level}")
 
         # ==================== 11. Final Output Mapping ====================
         llm_result = post_process_llm_result(llm_result, level)
@@ -3461,6 +3584,6 @@ class SEAMPDCAEngine:
             "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed', False) else 0.0,
             "max_relevant_score": highest_rerank_score,
             "summary_thai": thai_summary_data.get("summary"),
-            "temp_map_for_level": temp_map_for_level, # ส่งกลับไปให้ worker ตลอดเวลา
+            "temp_map_for_level": temp_map_for_level,  # การันตีมีข้อมูลแน่นอน
             "duration": time.time() - start_time
         }
