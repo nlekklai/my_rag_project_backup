@@ -1091,10 +1091,18 @@ class SEAMPDCAEngine:
                     fallback_name = f"DOC-{doc_id[:8]}"
                     resolved_entry["filename"] = fallback_name
             
-            # 3. กรณีไม่มี doc_id และ metadata หาย (ที่เกิด Error บ่อยๆ)
+            # 3. กรณีไม่มี doc_id และ metadata หาย
             else:
+                content_raw = resolved_entry.get('content')
+                if not content_raw:
+                    # ถ้าไม่มีทั้ง doc_id และ content ให้ข้ามรายการนี้ไปเลย (ไม่เพิ่มเข้า resolved_entries)
+                    self.logger.warning("⚠️ Skipping evidence entry with no doc_id and no content.")
+                    continue
+                    
                 resolved_entry["filename"] = "MISSING-METADATA"
-                self.logger.error(f"❌ พบหลักฐานที่ไม่มี Metadata: {resolved_entry.get('content')[:50]}...")
+                resolved_entry["source"] = "UNKNOWN_SOURCE"
+                preview_text = str(content_raw)[:50].replace('\n', ' ')
+                self.logger.error(f"❌ พบหลักฐานที่ไม่มี Metadata: {preview_text}...")
 
             resolved_entries.append(resolved_entry)
         return resolved_entries
