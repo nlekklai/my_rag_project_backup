@@ -2267,20 +2267,34 @@ class SEAMPDCAEngine:
 
             # 🎯 4. สร้าง Evidence Entry
             page_val = (
-                meta.get("page_label") or 
                 chunk.get("page") or 
                 meta.get("page") or 
-                "N/A"
+                meta.get("page_label")
             )
+            
+            # 🛡️ ถ้ายังไม่มีเลขหน้า ให้พยายามดึงจากผลลัพธ์ของ LLM (Reason Extraction)
+            if not page_val or page_val == "N/A":
+                # ลองค้นหาเลขหน้าจากข้อความ reason เช่น "หน้า: 5" หรือ "หน้า 5"
+                import re
+                reason_text = llm_result.get("reason", "")
+                page_match = re.search(r"หน้า[:\s]*(\d+)", reason_text)
+                if page_match:
+                    page_val = page_match.group(1)
+                else:
+                    page_val = "N/A"
 
             # [PATCH v25.2] ดึงชื่อไฟล์ให้ครอบคลุมที่สุด (รองรับ file_name จาก recovery)
             source_display = (
                 chunk.get("file_name") or 
+                meta.get("file_name") or
                 chunk.get("source") or 
                 meta.get("source") or 
                 "N/A"
             )
-
+            
+            if len(str(source_display)) < 3 and isinstance(meta, dict):
+                source_display = meta.get("file_path", "").split("/")[-1] or source_display
+                
             evidence_entry = {
                 "sub_id": sub_id,
                 "level": level,
