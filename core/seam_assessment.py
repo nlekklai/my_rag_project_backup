@@ -334,35 +334,20 @@ def get_correct_pdca_required_score(level: int) -> int:
     return 8
 
 
-# 📌 แก้ไข Type Hint และ Arguments ของ Tuple ให้รวม config parameter ทั้งหมด (10 elements)
-def _static_worker_process(worker_input_tuple: Tuple[
-    Dict[str, Any], str, int, str, str, str, float, float, int, Optional[Dict[str, str]]
-]) -> Dict[str, Any]:
+def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     """
-    Static worker function for multiprocessing pool. 
-    It reconstructs SeamAssessment in the new process and executes the assessment 
-    for a single sub-criteria.
-    
-    Args:
-        worker_input_tuple: (sub_criteria_data, enabler: str, target_level: int, mock_mode: str, 
-                             evidence_map_path: str, model_name: str, temperature: float, 
-                             min_retry_score: float, max_retrieval_attempts: int,
-                             document_map: Optional[Dict[str, str]]) 
-
-    Returns:
-        Dict[str, Any]: Final result of the sub-criteria assessment.
+    Worker process function สำหรับการประเมินแบบ Parallel
+    รองรับการ Force Context (Tenant/Year) เพื่อป้องกัน Memory Isolation
     """
-    
-    # 🟢 NEW FIX: PATH SETUP สำหรับ Worker Process
-    # การตั้งค่า path ซ้ำเพื่อความมั่นใจว่า worker process เห็น package หลัก
+    # 1. 🟢 PATH SETUP (เพื่อให้ Worker มองเห็น Package ทั้งหมด)
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
         
     worker_logger = logging.getLogger(__name__)
 
+    # 2. 🟢 UNPACKING (ต้องรับให้ครบ 13 ตำแหน่งตามที่ตัวแม่ส่งมา)
     try:
-        # 🟢 FIX: Unpack ค่า Primitives ทั้ง 10 ตัว
         (
             sub_criteria_data, 
             enabler, 
@@ -371,75 +356,92 @@ def _static_worker_process(worker_input_tuple: Tuple[
             evidence_map_path, 
             model_name, 
             temperature,
-            min_retry_score,            # ⬅️ NEW CONFIG (8th element)
-            max_retrieval_attempts,     # ⬅️ NEW CONFIG (9th element)
-            document_map,                # (10th element)
-            action_plan_model
+            min_retry_score,            
+            max_retrieval_attempts,     
+            document_map,                
+            action_plan_model,
+            year,   # [12] ปีที่ส่งมาจาก Argument (เช่น 2567)
+            tenant  # [13] Tenant ที่ส่งมา (เช่น pea)
         ) = worker_input_tuple
+        
+        # Log ยืนยันว่าลูกได้รับปีที่ถูกต้อง
+        worker_logger.info(f"🛠️ Worker Spawned: Target {enabler} ({tenant}/{year})")
+        
     except ValueError as e:
-        # ใช้ len(worker_input_tuple) เพื่อให้ข้อมูลการ Debug ครบถ้วน
-        worker_logger.critical(f"Worker input tuple unpack failed (expected 10 elements, got {len(worker_input_tuple)}): {e}")
+        worker_logger.critical(f"❌ Worker unpack failed (Expected 13 elements, got {len(worker_input_tuple)}): {e}")
         return {"error": f"Invalid worker input: {e}"}
         
-    # 1. Reconstruct Config 
+    # 3. 🟢 RECONSTRUCT CONFIG (บังคับใช้ค่าจาก Tuple ไม่ใช้ Default)
     try:
-        # 🟢 FIX: สร้าง AssessmentConfig ใหม่ใน Worker Process พร้อมใส่ค่า config ใหม่
-        # (Tenant/Year จะใช้ค่า Default จาก AssessmentConfig)
+        # เนื่องจากเราแก้ AssessmentConfig ให้เป็น = None แล้ว 
+        # การส่งค่าเข้าไปตรงนี้จะทำให้ Worker มั่นใจว่าใช้ปี 2567 แน่นอน
         worker_config = AssessmentConfig(
             enabler=enabler,
+            tenant=tenant,
+            year=int(year) if year else None,     
             target_level=target_level,
             mock_mode=mock_mode,
             model_name=model_name, 
             temperature=temperature,
-            min_retry_score=min_retry_score,            # ⬅️ Pass new config
-            max_retrieval_attempts=max_retrieval_attempts # ⬅️ Pass new config
+            min_retry_score=min_retry_score,            
+            max_retrieval_attempts=max_retrieval_attempts 
         )
     except Exception as e:
-        worker_logger.critical(f"Failed to reconstruct AssessmentConfig in worker: {e}")
+        worker_logger.critical(f"❌ Failed to reconstruct AssessmentConfig in worker: {e}")
         return {
             "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
             "error": f"Config reconstruction failed: {e}"
         }
 
-    # 2. Re-instantiate SeamAssessment 
+    # 4. 🟢 RE-INSTANTIATE ENGINE
     try:
-        # 🟢 FIX (สำคัญ): ส่ง document_map และ worker_config เข้าไปใน SEAMPDCAEngine
-        # SEAMPDCAEngine จะใช้ worker_config ที่มีค่า min_retry_score และ max_retrieval_attempts
+        # ส่งต่อ document_map และ config ที่ถูกปีเข้าไป
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=None,              # LLM จะถูก Initialized ใน Engine หากไม่มี
-            vectorstore_manager=None,       # VSM จะถูก Initialized ใน Engine หากไม่มี
-            # doc_type ต้องถูก set ใน SEAMPDCAEngine constructor (สมมติว่ามีค่า Default)
+            llm_instance=None,              # จะถูก Init ใหม่ใน Worker
+            vectorstore_manager=None,       # จะถูก Init ใหม่ตามปีใน Config (2567)
             logger_instance=worker_logger,
-            document_map=document_map, # ⬅️ ส่ง document_map ที่เพิ่ง Unpack เข้ามา
+            document_map=document_map,      # ใช้ map ที่โหลดมาจากตัวแม่
             ActionPlanActions=action_plan_model
         )
     except Exception as e:
-        worker_logger.critical(f"FATAL: SEAMPDCAEngine instantiation failed in worker: {e}")
+        worker_logger.critical(f"❌ FATAL: SEAMPDCAEngine instantiation failed in worker: {e}")
         return {
             "sub_criteria_id": sub_criteria_data.get('sub_id', 'UNKNOWN'),
             "error": f"Engine initialization failed: {e}"
         }
     
-    # 3. Execute the worker logic
-    return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
+    # 5. 🟢 EXECUTE LOGIC
+    # ส่งต่อ sub_criteria_data (เช่น ข้อ 1.1) ให้ Worker ทำงาน
+    try:
+        return worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
+    except Exception as e:
+        worker_logger.error(f"❌ Worker execution failed for {sub_criteria_data.get('sub_id')}: {e}")
+        return {"error": str(e), "sub_criteria_id": sub_criteria_data.get('sub_id')}
 
-def merge_evidence_mappings(results_list: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def merge_evidence_mappings(results_list: List[Union[Tuple, Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
     """
-    รวม evidence_mapping dictionaries ที่ได้จาก Worker ทุกตัว 
+    รวม evidence_mapping ที่ได้จาก Worker (ซึ่งคืนค่าเป็น Tuple) เข้าด้วยกัน
     """
     merged_mapping = defaultdict(list)
-    for result in results_list:
-        # ตรวจสอบว่าผลลัพธ์จาก Worker มี Key 'evidence_mapping' หรือไม่
-        if 'evidence_mapping' in result and isinstance(result['evidence_mapping'], dict):
-            # วนลูปผ่าน Key/Value ของ Worker แต่ละตัว
-            for level_key, evidence_list in result['evidence_mapping'].items():
-                # ใช้ .extend() เพื่อผนวกรายการหลักฐานทั้งหมดอย่างปลอดภัย
-                if isinstance(evidence_list, list):
-                    merged_mapping[level_key].extend(evidence_list)
     
-    # แปลง defaultdict กลับเป็น dict ธรรมดา
+    for item in results_list:
+        # 1. กรณี Worker คืนค่าเป็น Tuple (Standard Engine Return)
+        # item[0] คือ sub_result, item[1] คือ temp_map (evidence)
+        if isinstance(item, tuple) and len(item) == 2:
+            worker_evidence_map = item[1]
+            if isinstance(worker_evidence_map, dict):
+                for level_key, evidence_list in worker_evidence_map.items():
+                    if isinstance(evidence_list, list):
+                        merged_mapping[level_key].extend(evidence_list)
+        
+        # 2. กรณี Worker คืนค่าเป็น Dict (Fallback หรือ Error case)
+        elif isinstance(item, dict) and 'evidence_mapping' in item:
+            worker_evidence_map = item['evidence_mapping']
+            for level_key, evidence_list in worker_evidence_map.items():
+                merged_mapping[level_key].extend(evidence_list)
+                
     return dict(merged_mapping)
 
 def get_pdca_keywords_str(phase: str) -> str:
@@ -590,9 +592,9 @@ class AssessmentConfig:
     """Configuration for the SEAM PDCA Assessment Run."""
     
     # ------------------ 1. Assessment Context ------------------
-    enabler: str = DEFAULT_ENABLER
-    tenant: str = DEFAULT_TENANT
-    year: int = DEFAULT_YEAR
+    enabler: str = None
+    tenant: str = None
+    year: int = None  # 👈 เปลี่ยนจาก DEFAULT_YEAR เป็น None
     target_level: int = MAX_LEVEL
     mock_mode: str = "none" # 'none', 'random', 'control'
     force_sequential: bool = field(default=False) # Flag เพื่อบังคับรันแบบ Sequential
@@ -2946,7 +2948,9 @@ class SEAMPDCAEngine:
                 getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
                 getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
-                self.ActionPlanActions  # <--- เพิ่มตัวนี้เป็นตัวที่ 11
+                self.ActionPlanActions,  # <--- เพิ่มตัวนี้เป็นตัวที่ 11
+                self.config.year,    # [ADDED] ตัวที่ 12
+                self.config.tenant   # [ADDED] ตัวที่ 13
             ) for sub_data in sub_criteria_list]
 
             try:
