@@ -3118,9 +3118,9 @@ class SEAMPDCAEngine:
 
             # 🟢 [CRITICAL FIX v25.7] บันทึกและดึงข้อมูลที่ซ่อมแล้วกลับมาใส่ JSON
             level_temp_map = result_to_process.get("temp_map_for_level", [])
+            # --- ค้นหาบรรทัดนี้ใน worker ---
             if level_temp_map:
                 highest_rerank = result_to_process.get('max_relevant_score', 0.0)
-                # เรียกเซฟและทำความสะอาดข้อมูล (เปลี่ยน K เป็นชื่อจริง / ดึงเลขหน้าจาก Regex)
                 max_evi_str = self._save_level_evidences_and_calculate_strength(
                     level_temp_map=level_temp_map,
                     sub_id=sub_id,
@@ -3129,16 +3129,28 @@ class SEAMPDCAEngine:
                     highest_rerank_score=highest_rerank 
                 )
                 
-                # 🔥 ดึงก้อนข้อมูลที่ "ซ่อมแล้ว" กลับมาใส่ result_to_process เพื่อให้ไฟล์ Export JSON ถูกต้อง
+                # ดึงก้อนข้อมูลที่เซฟแล้วมาใช้
                 map_key = f"{sub_id}.L{level}"
                 if map_key in self.temp_map_for_save:
-                    result_to_process['temp_map_for_level'] = self.temp_map_for_save[map_key]
+                    raw_evidence = self.temp_map_for_save[map_key]
+                    
+                    # 🎯 เพิ่ม: เรียก Resolve เพื่อ mapping ชื่อไฟล์จาก doc_id_to_filename_map
+                    resolved_evidence = self._resolve_evidence_filenames(raw_evidence)
+                    
+                    # 🎯 เพิ่ม: บังคับ fields ที่ UI ต้องการ (source, source_filename, doc_id)
+                    for evi in resolved_evidence:
+                        real_filename = evi.get("filename") or evi.get("file_name") or "Unknown_Document.pdf"
+                        evi["source"] = real_filename 
+                        evi["source_filename"] = real_filename
+                        evi["doc_id"] = evi.get("doc_id") or evi.get("stable_doc_uuid")  # ใช้ document UUID
 
-                if is_passed_llm and first_failed_level_local is None:
-                    result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
-                else:
-                    result_to_process['evidence_strength'] = 0.0
-                
+                    result_to_process['temp_map_for_level'] = resolved_evidence
+                    
+                    if is_passed_llm and first_failed_level_local is None:
+                        result_to_process['evidence_strength'] = round(min(max_evi_str, 10.0), 1)
+                    else:
+                        result_to_process['evidence_strength'] = 0.0
+
             # Sequential State Update
             if first_failed_level_local is not None:
                 act_pdca = result_to_process.get('pdca_breakdown', {"P": 0, "D": 0, "C": 0, "A": 0})
@@ -3446,14 +3458,24 @@ class SEAMPDCAEngine:
         temp_map_for_level = []
         for doc in top_evidences:
             meta = doc.get('metadata', {}) or doc.get('page_content', {})
-            chunk_id = meta.get('id') or meta.get('uuid') or meta.get('chunk_id') or doc.get('id')
-            if chunk_id:
+            
+            # 🎯 ดึงชื่อไฟล์จริง (ไม่ให้เป็น "K")
+            real_filename = meta.get('file_name') or meta.get('source') or "Unknown_Document.pdf"
+            
+            # 🎯 ดึง doc_id ที่เป็น UUID ของเอกสารจริง (ไม่ใช่ chunk hash) เพื่อ UI เปิดไฟล์ได้
+            document_uuid = meta.get('document_uuid') or meta.get('file_id') or meta.get('stable_doc_uuid') or doc.get('id')
+            
+            if document_uuid:
                 temp_map_for_level.append({
-                    "id": str(chunk_id),
-                    "file_id": meta.get('file_id') or meta.get('uuid') or meta.get('source'),
-                    "file_name": meta.get('file_name') or meta.get('source', 'Unknown'),
-                    "page": meta.get('page', 'N/A'),
-                    "rerank_score": meta.get('rerank_score', 0.0)
+                    "id": str(document_uuid),                  # Internal ID
+                    "doc_id": str(document_uuid),              # ✅ UI ใช้เปิดไฟล์ (ต้องเป็น document UUID)
+                    "stable_doc_uuid": str(document_uuid),     # สำรองสำหรับ mapping
+                    "source": real_filename,                   # ✅ UI แสดงผลจาก field นี้
+                    "source_filename": real_filename,          # ✅ UI แสดงผลจาก field นี้
+                    "filename": real_filename,                 # สำรอง
+                    "page": str(meta.get('page', 'N/A')),      # เปลี่ยนเป็น string เพื่อป้องกัน error
+                    "rerank_score": meta.get('rerank_score', 0.0),
+                    "text": doc.get('page_content', '')[:200]  # Snippet สำหรับ debug/UI preview
                 })
 
         # ==================== 10.5 MULTI-LAYER ULTIMATE FALLBACK RECOVERY ====================
