@@ -1070,46 +1070,34 @@ class SEAMPDCAEngine:
         for entry in evidence_entries:
             resolved_entry = deepcopy(entry)
             doc_id = resolved_entry.get("doc_id", "")
-            current_filename = resolved_entry.get("filename", "")
+            # ดึง page_label ที่เราทำไว้จาก ingest.py มาใช้
+            page_label = resolved_entry.get("page_label") or resolved_entry.get("page") or "N/A"
             
+            # 1. กรณีเป็น AI Generated Reference (มโนขึ้นมาเอง)
             if doc_id.startswith("UNKNOWN-"):
-                resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
-                # Also update source fields for consistency
-                resolved_entry["source"] = resolved_entry["filename"]
-                resolved_entry["source_filename"] = resolved_entry["filename"]
+                resolved_entry["filename"] = f"AI-GENERATED-REF"
+                resolved_entry["page"] = "N/A" # AI มโนมักไม่มีเลขหน้าจริง
                 resolved_entries.append(resolved_entry)
                 continue
 
+            # 2. กรณีมี doc_id (ควรเป็นเคสปกติ)
             if doc_id:
                 if doc_id in self.doc_id_to_filename_map:
                     mapped_name = self.doc_id_to_filename_map[doc_id]
                     resolved_entry["filename"] = mapped_name
-                    resolved_entry["source"] = mapped_name
-                    resolved_entry["source_filename"] = mapped_name
-                    resolved_entries.append(resolved_entry)
-                    continue
+                    # นำ page_label มาแสดงคู่กับชื่อไฟล์เพื่อให้ User ตรวจสอบง่าย
+                    resolved_entry["display_source"] = f"{mapped_name} (หน้า {page_label})"
                 else:
-                    is_generic_name = (
-                        not current_filename.strip() or 
-                        current_filename.lower() == "unknown" or
-                        re.match(r"^[0-9a-f]{64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
-                    )
-                    if is_generic_name:
-                        fallback_name = f"MAPPING-FAILED-{doc_id[:8]}..."
-                        resolved_entry["filename"] = fallback_name
-                        resolved_entry["source"] = fallback_name
-                        resolved_entry["source_filename"] = fallback_name
-                        self.logger.warning(f"Failed to map doc_id {doc_id[:8]}... to filename. Using fallback.")
+                    # ถ้าหาไม่เจอใน Map แต่มี doc_id ให้ใช้ fallback
+                    fallback_name = f"DOC-{doc_id[:8]}"
+                    resolved_entry["filename"] = fallback_name
             
-            elif not doc_id and (not current_filename.strip() or current_filename.lower() == "unknown"):
-                fallback_name = "MISSING-SOURCE-METADATA"
-                resolved_entry["filename"] = fallback_name
-                resolved_entry["source"] = fallback_name
-                resolved_entry["source_filename"] = fallback_name
-                self.logger.error("Evidence found with no doc_id and generic filename.")
-            
-            resolved_entries.append(resolved_entry)
+            # 3. กรณีไม่มี doc_id และ metadata หาย (ที่เกิด Error บ่อยๆ)
+            else:
+                resolved_entry["filename"] = "MISSING-METADATA"
+                self.logger.error(f"❌ พบหลักฐานที่ไม่มี Metadata: {resolved_entry.get('content')[:50]}...")
 
+            resolved_entries.append(resolved_entry)
         return resolved_entries
     
     # -------------------- Contextual Rules Handlers (FIXED) --------------------
