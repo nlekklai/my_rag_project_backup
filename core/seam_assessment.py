@@ -1023,61 +1023,6 @@ class SEAMPDCAEngine:
         return expanded_evidences
     
     
-    def _resolve_evidence_filenames(self, evidence_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        ฟังก์ชันสำหรับแก้ไขชื่อไฟล์ในรายการหลักฐานอ้างอิง
-        1. จัดการหลักฐานที่ doc_id ขึ้นต้นด้วย 'UNKNOWN-' (หลักฐานภายใน/ที่ไม่ใช่เอกสาร)
-        2. แปลง doc_id (ที่เป็น Hash/UUID) ให้เป็นชื่อไฟล์ที่มนุษย์อ่านได้ โดยใช้ doc_id_to_filename_map
-        """
-        
-        resolved_entries = []
-        
-        for entry in evidence_entries:
-            # ใช้ deepcopy เพื่อป้องกันการแก้ไขข้อมูลต้นฉบับ
-            resolved_entry = deepcopy(entry)
-            doc_id = resolved_entry.get("doc_id", "")
-            current_filename = resolved_entry.get("filename", "") # ชื่อเดิมจาก Metadata (ถ้ามี)
-            
-            # --- 1. จัดการกรณี UNKNOWN- (AI-GENERATED or Lost Source) ---
-            if doc_id.startswith("UNKNOWN-"):
-                resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
-                resolved_entries.append(resolved_entry)
-                continue
-
-            # --- 2. จัดการกรณี Doc ID (Hash/UUID) ที่ถูกต้อง ---
-            if doc_id:
-                # A. ลองค้นหาชื่อไฟล์จาก Map
-                if doc_id in self.doc_id_to_filename_map:
-                    resolved_entry["filename"] = self.doc_id_to_filename_map[doc_id]
-                    resolved_entries.append(resolved_entry)
-                    continue
-
-                # B. ถ้าค้นหาไม่เจอ (Map Fail)
-                else:
-                    # ตรวจสอบว่าชื่อไฟล์เดิมที่มากับ Metadata เป็นชื่อที่ไม่สื่อความหมายหรือไม่
-                    is_generic_name = (
-                        not current_filename.strip() or # ถ้าเป็น String ว่าง
-                        current_filename.lower() == "unknown" or
-                        # รองรับ Hash/UUID 64 ตัวอักษรอย่างเดียว หรือตามด้วยนามสกุล
-                        re.match(r"^[0-9a-f]{64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
-                    )
-                    
-                    if is_generic_name:
-                        # ใช้ชื่อไฟล์ Fallback ที่สื่อว่า Map ไม่สำเร็จ
-                        resolved_entry["filename"] = f"MAPPING-FAILED-{doc_id[:8]}..."
-                        self.logger.warning(f"Failed to map doc_id {doc_id[:8]}... to filename. Using fallback.")
-                        
-            # --- 3. กรณีไม่มี Doc ID หรือเข้าถึงชื่อไฟล์ไม่ได้เลย (เหลือเป็น Unknown) ---
-            elif not doc_id and (not current_filename.strip() or current_filename.lower() == "unknown"):
-                # โค้ดนี้จะทำงานเฉพาะเมื่อไม่มี doc_id และ filename เดิมก็เป็น Unknown/Empty
-                resolved_entry["filename"] = "MISSING-SOURCE-METADATA"
-                self.logger.error("Evidence found with no doc_id and generic filename.")
-            
-            # เพิ่ม entry เข้าไป (ไม่ว่าจะได้รับการแก้ไขหรือไม่)
-            resolved_entries.append(resolved_entry)
-
-        return resolved_entries
-    
     # -------------------- Contextual Rules Handlers (FIXED) --------------------
     def _load_contextual_rules_map(self) -> Dict[str, Dict[str, str]]:
         """
@@ -2978,6 +2923,47 @@ class SEAMPDCAEngine:
         return final_results
     
     
+    def _resolve_evidence_filenames(self, evidence_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        [FIXED v21.9.20] แก้ไขปัญหา Duplicate Entries และปรับปรุง Logic การ Mapping
+        """
+        
+        resolved_entries = []
+        for entry in evidence_entries:
+            resolved_entry = deepcopy(entry)
+            doc_id = resolved_entry.get("doc_id", "")
+            current_filename = resolved_entry.get("filename", "") or resolved_entry.get("source", "")
+
+            # --- 1. จัดการกรณี UNKNOWN- ---
+            if doc_id.startswith("UNKNOWN-"):
+                resolved_entry["filename"] = f"AI-GENERATED-REF-{doc_id.split('-')[-1]}"
+
+            # --- 2. จัดการกรณีมี Doc ID ให้ค้นหาใน Map ---
+            elif doc_id:
+                if doc_id in self.doc_id_to_filename_map:
+                    resolved_entry["filename"] = self.doc_id_to_filename_map[doc_id]
+                else:
+                    # ตรวจสอบว่าเป็นชื่อไฟล์ที่ "อ่านไม่ออก" หรือไม่
+                    is_generic = (
+                        not current_filename.strip() or 
+                        current_filename.lower() in ["unknown", "n/a", "-"] or
+                        re.match(r"^[0-9a-f]{8,64}(\.pdf|\.txt)?$", current_filename, re.IGNORECASE)
+                    )
+                    if is_generic:
+                        resolved_entry["filename"] = f"MAPPING-FAILED-{doc_id[:8]}"
+                        self.logger.warning(f"Failed to map doc_id {doc_id[:8]}...")
+                    # ถ้าไม่ใช่ generic (เช่น มีชื่อติดมาใน metadata อยู่แล้ว) ก็ใช้ชื่อเดิมนั้นไป
+
+            # --- 3. กรณีไม่มี Doc ID และชื่อเดิมก็ว่าง ---
+            elif not current_filename.strip() or current_filename.lower() == "unknown":
+                resolved_entry["filename"] = "MISSING-SOURCE-METADATA"
+                self.logger.error(f"Evidence for {resolved_entry.get('sub_criteria_id')} has no valid source.")
+
+            # ✅ Append แค่จุดเดียวที่นี่ เพื่อป้องกันข้อมูลซ้ำ
+            resolved_entries.append(resolved_entry)
+
+        return resolved_entries
+    
     def _run_sub_criteria_assessment_worker(
         self,
         sub_criteria: Dict[str, Any],
@@ -2988,8 +2974,6 @@ class SEAMPDCAEngine:
         - เพิ่ม Log ชัดเจนระหว่าง Official Level และ Potential Level
         - ป้องกันกรณี Forced FAIL จากระบบทั้งที่ AI วิเคราะห์ว่าผ่าน
         """
-        import time
-        from typing import Dict, List, Any, Tuple, Final, Set
 
         # 📌 โหลด Global Constants
         REQUIRED_PDCA: Final[Dict[int, Set[str]]] = globals().get('REQUIRED_PDCA', {
