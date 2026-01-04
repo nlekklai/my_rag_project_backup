@@ -183,11 +183,11 @@ from typing import Dict, Any, List
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันแก้ไขสมบูรณ์:
-    - ดึง Strength Summary จาก raw_results_ref
-    - ดึง Critical Gaps จาก action_plan
-    - ป้องกัน React Crash โดยการแปลง Step Object เป็น String
-    - รองรับ Key ภาษาอังกฤษตัวใหญ่ (Actions, Steps, Failed_Level) ตาม JSON จริง
+    เวอร์ชันแก้ไขสมบูรณ์ (Stable Version):
+    - แก้ไข Strength Summary & Gaps ให้ดึงจากโครงสร้าง JSON จริง
+    - แก้ไข PDCA Tag ให้ดึงจาก Metadata ของ Evidence
+    - ป้องกัน React Crash จาก Nested Objects ใน Roadmap Steps
+    - รองรับ Case-Insensitive keys (Actions/actions, Steps/steps)
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -195,7 +195,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     processed_sub_criteria = []
     radar_data = []
 
-    # --- 1. สกัดข้อมูล Overall (Header) ---
+    # --- 1. สกัดข้อมูล Overall (Header Section) ---
     enabler_name = (summary.get("enabler") or "KM").upper()
     overall_level = str(summary.get("Overall Maturity Level (Weighted)") or f"L{summary.get('highest_pass_level_overall', 0)}")
     
@@ -211,7 +211,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. PDCA Matrix & Coverage ---
+        # --- 2. PDCA Matrix & Coverage (สำหรับการคำนวณ Progress Bar) ---
         pdca_matrix = []
         pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)} 
         avg_conf_per_lv = {str(lv): 0 for lv in range(1, 6)}
@@ -246,7 +246,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             covered_count = sum(pdca_final.values())
             pdca_coverage[str(lv_idx)]["percentage"] = (covered_count / 4) * 100
 
-        # --- 3. Sources & Confidence ---
+        # --- 3. Sources & Confidence (จุดแก้ไข: PDCA Tag) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         all_scores = []
         
@@ -266,18 +266,21 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                         all_scores.append(score_val)
                         lv_scores.append(score_val)
 
+                    # ดึง PDCA Tag จาก root หรือ metadata
+                    raw_pdca = s.get("pdca_tag") or meta.get("pdca_tag") or "N/A"
+                    
                     grouped_sources[str(lv_idx)].append({
                         "filename": s.get('filename') or meta.get('source') or "Evidence Document",
                         "page": str(meta.get('page') or "1"),
                         "text": s.get("text", "")[:300],
                         "rerank_score": round(score_val * 100, 1),
                         "document_uuid": d_uuid,
-                        "pdca_tag": str(meta.get("pdca_tag", "N/A")).upper()
+                        "pdca_tag": str(raw_pdca).upper() # แปลงเป็น P, D, C, A ตัวใหญ่
                     })
             if lv_scores:
                 avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores)/len(lv_scores)*100)
 
-        # --- 4. Roadmap & Gap Extraction ---
+        # --- 4. Roadmap & Gap Extraction (จุดแก้ไข: Critical Gaps) ---
         ui_roadmap = []
         all_gaps = []
         raw_plans = res.get("action_plan") or []
@@ -288,9 +291,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 rec = act.get("Recommendation") or act.get("recommendation") or "ควรดำเนินการตามเกณฑ์"
                 lv_num = str(act.get("Failed_Level") or act.get("level") or (highest_pass + 1))
                 
-                # เก็บข้อมูล Gap ไว้แสดงผลในกล่อง Critical Gaps
+                # สะสมข้อมูล Gap สำหรับแสดงในกล่องสีส้ม
                 all_gaps.append(f"**L{lv_num}**: {rec}")
 
+                # ทำความสะอาด Steps ป้องกัน React Render Error
                 raw_steps = act.get("Steps") or act.get("steps") or []
                 clean_steps = [s.get("Description") or s.get("Step") or str(s) if isinstance(s, dict) else str(s) for s in raw_steps]
 
@@ -304,16 +308,16 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "actions": phase_actions
             })
 
-        # --- 5. Strength Summary Extraction ---
-        # ดึงเหตุผลจาก Level สูงสุดที่ผ่าน (is_passed = True) มาเป็นจุดแข็ง
+        # --- 5. Strength Summary Extraction (จุดแก้ไข: AI Summary) ---
+        # ค้นหาเหตุผลล่าสุดจากระดับที่ผ่าน (Pass) มาแสดงเป็นจุดแข็ง
         passed_reasons = [r.get("reason", "") for r in raw_levels_list if r.get("is_passed")]
         strength_summary = res.get("summary_thai") or ""
         if not strength_summary and passed_reasons:
-            strength_summary = passed_reasons[-1] # เอาข้อล่าสุดที่ผ่าน
+            strength_summary = passed_reasons[-1]
         elif not strength_summary:
-            strength_summary = "ดำเนินการได้ตามเกณฑ์มาตรฐานเบื้องต้น"
+            strength_summary = "สามารถดำเนินงานได้ตามเกณฑ์มาตรฐานที่กำหนด"
 
-        # --- 6. สรุปผลลัพธ์เกณฑ์ย่อย ---
+        # --- 6. สรุปผลลัพธ์เกณฑ์ย่อยส่งให้ UI ---
         potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass, 0])
         
         processed_sub_criteria.append({
@@ -327,8 +331,8 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "avg_confidence_per_level": avg_conf_per_lv,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
-            "summary_thai": strength_summary.strip(),
-            "gap": "\n\n".join(all_gaps) if all_gaps else "ไม่พบช่องว่างในการพัฒนาที่เด่นชัด",
+            "summary_thai": strength_summary.strip(), # ส่งเข้ากล่องเขียว
+            "gap": "\n\n".join(all_gaps) if all_gaps else "ไม่พบช่องว่างในการพัฒนาที่เด่นชัด", # ส่งเข้ากล่องส้ม
             "confidence_score": round((sum(all_scores)/len(all_scores)*100) if all_scores else 0, 1)
         })
         radar_data.append({"axis": cid, "value": highest_pass})
