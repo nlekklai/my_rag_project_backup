@@ -284,17 +284,17 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         for p in raw_plans:
             ui_roadmap.append({
                 "phase": p.get("phase", "แผนงานพัฒนา"),
-                "goal": p.get("goal", "เพื่อยกระดับตามเกณฑ์"),
-                "tasks": [
+                "goal": p.get("goal", ""),
+                "actions": [ # เปลี่ยนจาก tasks เป็น actions เพื่อให้ตรงกับ Schema/UI
                     {
                         "level": str(act.get("failed_level", highest_pass + 1)),
                         "recommendation": act.get("recommendation", ""),
                         "steps": [
                             {
-                                "step": str(s.get("step") or i+1),
+                                "step": s.get("step"),
                                 "description": s.get("description", ""),
                                 "responsible": s.get("responsible", "หน่วยงานหลัก")
-                            } for i, s in enumerate(act.get("steps", []))
+                            } for s in act.get("steps", [])
                         ]
                     } for act in p.get("actions", [])
                 ]
@@ -529,27 +529,31 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
             gap_p = doc.add_paragraph(item['gap'])
             gap_p.paragraph_format.left_indent = Inches(0.3)
 
-        # แผนการพัฒนา
+        # แผนการพัฒนา (ปรับปรุงใหม่ให้ตรงกับ Schema)
         if item.get('roadmap'):
             doc.add_paragraph("แผนการพัฒนาเชิงกลยุทธ์", style='Heading 3')
             for phase in item['roadmap']:
                 phase_p = doc.add_paragraph(phase['phase'])
                 set_thai_font(phase_p.runs[0], size=14, bold=True)
 
-                goal_p = doc.add_paragraph(phase['goal'])
-                goal_p.paragraph_format.left_indent = Inches(0.5)
+                if phase.get('goal'):
+                    goal_p = doc.add_paragraph(f"เป้าหมาย: {phase['goal']}")
+                    goal_p.paragraph_format.left_indent = Inches(0.5)
 
-                for task in phase.get('tasks', []):
+                # ✅ เปลี่ยนจาก 'tasks' เป็น 'actions'
+                for act in phase.get('actions', []):
                     task_p = doc.add_paragraph(
-                        f"• ระดับเป้าหมาย {task['level']}: {task['recommendation']}"
+                        f"• ระดับเป้าหมาย {act['level']}: {act['recommendation']}"
                     )
                     set_thai_font(task_p.runs[0], bold=True)
 
-                    for step in task.get('steps', []):
-                        resp = step.get('responsible', 'ไม่ระบุผู้รับผิดชอบ')
-                        step_p = doc.add_paragraph(
-                            f"   {step['step']}. {step['description']} ({resp})"
-                        )
+                    for step in act.get('steps', []):
+                        # จัดการเบอร์ step ให้สวยงาม
+                        s_idx = step.get('step', '-')
+                        s_desc = step.get('description', '')
+                        resp = step.get('responsible', 'หน่วยงานที่เกี่ยวข้อง')
+                        
+                        step_p = doc.add_paragraph(f"   {s_idx}. {s_desc} ({resp})")
                         step_p.paragraph_format.left_indent = Inches(1.0)
 
         # สรุปจำนวนหลักฐาน

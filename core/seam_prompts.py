@@ -366,9 +366,8 @@ QUALITY_REFINEMENT_PROMPT = PromptTemplate(
 
 ### [กฎเหล็ก JSON]
 1. ตอบเป็น JSON Array ของ Action Plan Phase เท่านั้น
-2. "statement_id" ต้องเป็น "{sub_id}"
-3. "failed_level" ให้ใช้ค่า {target_level}
-4. Steps: ต้องมีกิจกรรมที่เน้นการ "รวบรวมหลักฐาน" หรือ "ประเมินผล (Check)" เพิ่มเติม
+2. ใช้ key ตัวพิมพ์เล็กทั้งหมด
+3. Steps: ใช้ "step", "description", "responsible", "tools_templates", "verification_outcome"
 
 ### [ตัวอย่างโครงสร้าง JSON ที่ถูกต้อง]
 [
@@ -385,10 +384,10 @@ QUALITY_REFINEMENT_PROMPT = PromptTemplate(
         "steps": [
           {{
             "step": 1,
-            "Description": "รวบรวมบันทึกการประชุมหรือรายงานสรุปผลที่ยังตกหล่น",
-            "Responsible": "ทีมเลขานุการ KM",
-            "Tools_Templates": "Checklist รายการหลักฐาน",
-            "Verification_Outcome": "ชุดเอกสารหลักฐานที่สมบูรณ์"
+            "description": "รวบรวมบันทึกการประชุมหรือรายงานสรุปผลที่ยังตกหล่น",
+            "responsible": "ทีมเลขานุการ KM",
+            "tools_templates": "Checklist รายการหลักฐาน",
+            "verification_outcome": "ชุดเอกสารหลักฐานที่สมบูรณ์"
           }}
         ]
       }}

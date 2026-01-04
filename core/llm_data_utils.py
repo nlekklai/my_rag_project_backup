@@ -23,6 +23,8 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
 import os
+from pydantic import ValidationError
+
 # --- เตรียม JSON Schema ---
 try:
     from core.action_plan_schema import get_clean_action_plan_schema
@@ -1491,34 +1493,30 @@ def create_context_summary_llm(
         "suggestion_for_next_level": f"ตรวจสอบเกณฑ์ของ Level {next_level} ในคู่มือ"
     }
 
-
-# =================================================================
-# [REVISED] 1. Main Function: create_structured_action_plan
-# =================================================================
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
     sub_id: str,
     sub_criteria_name: str,
-    target_level: int = 5, # บังคับ Default เป็น 5 เพื่อสร้าง Roadmap
+    target_level: int = 5,
     llm_executor: Any = None,
     logger: logging.Logger = None,
     max_retries: int = 3,
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
-    """
-    สร้าง Action Plan แบบ Multi-Phase Roadmap (L1 -> L5)
-    """
-    
-    # --- 1. วิเคราะห์สถานะเพื่อเลือกโหมด ---
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    logger.info(f"Generating action plan for {sub_id} - {sub_criteria_name} (Target L{target_level})")
+
+    # --- วิเคราะห์สถานะ ---
     is_sustain_mode = not recommendation_statements
-    
     is_quality_refinement = False
     if not is_sustain_mode:
         types = [s.get('recommendation_type') for s in recommendation_statements]
         if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
             is_quality_refinement = True
 
-    # --- 2. การเลือก Prompt และการตั้งค่า Phase (DYNAMIC PHASING) ---
+    # --- เลือก prompt และ phase ---
     if is_sustain_mode:
         current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
         current_prompt_template = EXCELLENCE_ADVICE_PROMPT
@@ -1538,63 +1536,78 @@ def create_structured_action_plan(
         current_prompt_template = ACTION_PLAN_PROMPT
         advice_focus = f"การสร้าง Roadmap พัฒนาต่อเนื่องสู่ระดับ {target_level}"
         assessment_context = f"อยู่ระหว่างการพัฒนาสู่ความเป็นเลิศ (Target Level {target_level})"
-        # ปรับ Phase เป็น 2-3 ตามระยะห่างของเป้าหมาย
-        dynamic_max_phases = 3 if target_level >= 4 else 2 
+        dynamic_max_phases = 3 if target_level >= 4 else 2
         max_steps = 3
 
-    # --- 3. จัดเตรียมเนื้อหา Statements (Enrich with Target Goals) ---
-    unique_statements = {}
+    # --- จัดเตรียม statement content ---
     if is_sustain_mode:
         stmt_content = "บรรลุเกณฑ์มาตรฐานสูงสุดอย่างครบถ้วน"
     else:
+        unique_statements = {}
         for s in recommendation_statements:
             reason = (s.get('reason') or s.get('statement') or "").strip()
             lvl = s.get('level', 0)
             if not reason: continue
             if reason not in unique_statements or lvl > unique_statements[reason]:
                 unique_statements[reason] = lvl
-        
-        stmt_blocks = [f"- [Level {v}] {k}" for k, v in unique_statements.items()]
-        stmt_content = "\n".join(stmt_blocks)
+        stmt_content = "\n".join([f"- [Level {v}] {k}" for k, v in unique_statements.items()])
 
-    # --- 4. ประกอบ Human Prompt (ใช้ dynamic_max_phases) ---
+    # --- ประกอบ human prompt ---
     human_prompt = current_prompt_template.format(
-        sub_id=sub_id, 
-        sub_criteria_name=sub_criteria_name, 
+        sub_id=sub_id,
+        sub_criteria_name=sub_criteria_name,
         target_level=target_level,
         assessment_context=assessment_context,
-        advice_focus=advice_focus, 
+        advice_focus=advice_focus,
         recommendation_statements_list=stmt_content,
-        max_phases=dynamic_max_phases, # ปลดล็อกตรงนี้เพื่อให้พ่นหลาย Phase
-        max_steps=max_steps, 
+        max_phases=dynamic_max_phases,
+        max_steps=max_steps,
         max_words_per_step=150,
         language="ภาษาไทย"
     )
 
-    # --- 5. EXECUTION & VALIDATION LOOP (Same as before) ---
+    # --- Execution loop ---
     for attempt in range(1, max_retries + 1):
         try:
+            logger.debug(f"Attempt {attempt}/{max_retries} for {sub_id}")
+
             response = llm_executor.generate(
-                system=current_system_prompt, 
+                system=current_system_prompt,
                 prompts=[human_prompt],
-                temperature=0.2 
+                temperature=0.0  # นิ่งที่สุด
             )
-            raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response)
-            
+
+            raw_text = ""
+            if hasattr(response, 'generations') and response.generations:
+                raw_text = response.generations[0][0].text
+            elif hasattr(response, 'content'):
+                raw_text = response.content
+            else:
+                raw_text = str(response)
+
             items = _extract_json_array_for_action_plan(raw_text, logger)
-            if not items: continue
+            if not items:
+                logger.warning(f"Attempt {attempt}: No valid JSON extracted")
+                time.sleep(0.5 * attempt)
+                continue
 
             clean_items = action_plan_normalize_keys(items)
-            
-            # ตรวจสอบกับ Pydantic Schema (core/action_plan_schema.py)
-            from core.action_plan_schema import ActionPlanResult
-            validated_result = ActionPlanResult.model_validate(clean_items)
-            
-            return validated_result.model_dump(by_alias=True)
+
+            # Validate ด้วย Pydantic
+            try:
+                validated = ActionPlanResult.model_validate(clean_items)
+                logger.info(f"Action plan generated successfully for {sub_id}")
+                return validated.model_dump(by_alias=True)
+            except ValidationError as ve:
+                logger.warning(f"Validation failed on attempt {attempt}: {ve}")
+                time.sleep(0.5 * attempt)
+                continue
 
         except Exception as e:
-            if logger: logger.error(f"⚠️ Action Plan Attempt {attempt} failed for {sub_id}: {e}")
+            logger.error(f"Attempt {attempt} failed for {sub_id}: {str(e)}")
+            time.sleep(1 * attempt)
 
+    logger.warning(f"All attempts failed for {sub_id}, returning fallback plan")
     return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement)
 
 # =================================================================
