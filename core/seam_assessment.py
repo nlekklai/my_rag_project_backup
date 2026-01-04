@@ -44,7 +44,8 @@ try:
         PDCA_PHASE_MAP,        # ✅ ย้ายมาไว้ที่นี่ตามที่มีใน global_vars.py
         BASE_PDCA_KEYWORDS,
         PDCA_LEVEL_SYNONYMS,
-        TARGET_SCORE_THRESHOLD_MAP
+        TARGET_SCORE_THRESHOLD_MAP,
+        MAX_PARALLEL_WORKERS
     )
     
     # 2. Import Logic Functions

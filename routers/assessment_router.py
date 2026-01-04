@@ -179,7 +179,6 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
     return FileResponse(file_path, media_type="application/pdf")
 
-from typing import Dict, Any, List
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
