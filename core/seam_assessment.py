@@ -3327,10 +3327,9 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.2] 
-        - รองรับโครงสร้าง JSON Nested (L1-L5) ผ่าน Helper get_rule_content
-        - ปรับปรุงการดึง Keywords และ Specific Rules ให้ตรงตาม Level
-        - รักษา Logic PDCA และ Evidence Strength ตามมาตรฐานเดิม
+        [REVISED v21.3 - STABLE TAGGING] 
+        - แก้ไขปัญหา Tagging ค้างเป็น 'Other' โดยการ Sync ทั้ง Root และ Metadata
+        - รองรับโครงสร้าง JSON Nested (L1-L5) และ Specific Rules ราย Level
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
@@ -3346,18 +3345,16 @@ class SEAMPDCAEngine:
 
         self.logger.info(f"  > Starting assessment for {sub_id} L{level} (Attempt: {attempt})...")
 
-        # ==================== 1. PDCA & Keywords Setup (REVISED) ====================
+        # ==================== 1. PDCA & Keywords Setup ====================
         pdca_phase = self._get_pdca_phase(level)
         level_constraint = self._get_level_constraint_prompt(level)
         
-        # 🎯 ดึงข้อมูลจาก JSON แบบ Nested L1-L5 ผ่าน Helper
         must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
         must_include_keywords = ", ".join(must_list) if isinstance(must_list, list) else must_list
         
         avoid_list = self.get_rule_content(sub_id, level, "avoid_keywords")
         avoid_keywords = ", ".join(avoid_list) if isinstance(avoid_list, list) else avoid_list
         
-        # ดึง Plan Keywords เฉพาะ Level (สำหรับการคำนวณใน L1-L2)
         plan_keywords = self.get_rule_content(sub_id, level, "plan_keywords")
 
         # ==================== 2. Hybrid Retrieval Setup ====================
@@ -3369,7 +3366,7 @@ class SEAMPDCAEngine:
             chunks_to_hydrate=priority_unhydrated, vsm=vectorstore_manager, current_sub_id=sub_id
         )
 
-        # ==================== 3. Enhance Query (เรียกใช้ฟังก์ชันที่เราแก้ก่อนหน้า) ====================
+        # ==================== 3. Enhance Query ====================
         rag_query_list = self.enhance_query_for_statement(
             statement_text=statement_text, sub_id=sub_id, statement_id=statement_id,
             level=level, focus_hint=level_constraint,
@@ -3407,8 +3404,7 @@ class SEAMPDCAEngine:
                 self.logger.error(f"RAG retrieval failed at loop {loop_attempt}: {e}")
                 break
 
-        # ==================== 6. Adaptive Filtering with Fallback ====================
-        # --- [REVISED Step 6] Adaptive Filtering with Page Diversity ---
+        # ==================== 6. Adaptive Filtering ====================
         top_evidences = final_top_evidences if final_top_evidences else []
         sorted_evidences = sorted(top_evidences, key=lambda x: get_actual_score(x), reverse=True)
 
@@ -3416,11 +3412,9 @@ class SEAMPDCAEngine:
         pages_count = {}
 
         for doc in sorted_evidences:
-            # ดึงเลขหน้าจาก metadata (ใส่ default เป็น 1 กันเหนียว)
             page_num = doc.get('metadata', {}).get('page', 1)
             score = get_actual_score(doc)
             
-            # กรองเอาเฉพาะที่คะแนนถึงเกณฑ์ หรือเป็น Baseline
             if score < MIN_KEEP_SC and not doc.get('is_baseline', False):
                 continue
 
@@ -3428,21 +3422,17 @@ class SEAMPDCAEngine:
                 diverse_filtered.append(doc)
                 pages_count[page_num] = pages_count.get(page_num, 0) + 1
             
-            if len(diverse_filtered) >= 15: 
-                break
+            if len(diverse_filtered) >= 15: break
 
-        # --- Fallback Logic: ถ้ากรองแบบละเอียดแล้วไม่เหลือเลย ให้ถอยกลับไปเอา Top 10 ---
         if not diverse_filtered and level <= 2:
-            self.logger.warning(f"  ⚠️ L{level} Diversity Fallback: Using top 10 raw chunks.")
             diverse_filtered = sorted_evidences[:10]
 
         top_evidences = diverse_filtered
 
-        # ==================== 7. Context Building ====================
+        # ==================== 7. Context Building & 🔥 TAG SYNC (CRITICAL FIX) ====================
         previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
         flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
 
-        # 1. เรียกฟังก์ชันเดิม (ไม่ต้องแก้ข้างใน) เพื่อสร้าง Text Blocks ให้ AI
         plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
             top_evidences + flat_previous,
             baseline_evidences=previous_evidence,
@@ -3451,11 +3441,9 @@ class SEAMPDCAEngine:
             contextual_rules_map=self.contextual_rules_map
         )
 
-        # 2. 🔥 เพิ่มส่วนนี้: Sync Tag กลับเข้าไปที่ top_evidences ตัวจริง 
-        # เพื่อให้ค่า P, D, C, A ไหลลงไปใน JSON (temp_map_for_level)
+        # 🎯 SYNC PDCA TAG: แก้ไขจุดนี้เพื่อให้ JSON และ UI แสดงผลตรงกัน
         for doc in top_evidences:
             try:
-                # ใช้ฟังก์ชัน tagging เดิมที่คุณยืนยันว่าทำงานถูกต้องอยู่แล้ว
                 tag = classify_by_keyword(
                     text=doc.get("text", ""),
                     sub_id=sub_id,
@@ -3464,13 +3452,14 @@ class SEAMPDCAEngine:
                 )
                 final_tag = tag if tag in {"P", "D", "C", "A"} else "Other"
                 
-                # ฝังลงใน metadata ของ doc (ตัวแปรหลัก)
+                # เขียนทับทั้ง Root Level และ Metadata เพื่อความแน่นอน
+                doc["pdca_tag"] = final_tag
                 if "metadata" not in doc: doc["metadata"] = {}
                 doc["metadata"]["pdca_tag"] = final_tag
-            except Exception:
-                if "metadata" in doc: doc["metadata"]["pdca_tag"] = "Other"
+            except Exception as e:
+                doc["pdca_tag"] = "Other"
+                self.logger.warning(f"Tagging failed for doc: {e}")
 
-        # ส่วนที่เหลือรันต่อตามปกติ
         channels = build_multichannel_context_for_level(level, top_evidences, flat_previous)
         final_llm_context = "\n\n".join(filter(None, [
             f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{plan_blocks}\n{do_blocks}\n{check_blocks}\n{act_blocks}\n{other_blocks}",
@@ -3478,18 +3467,14 @@ class SEAMPDCAEngine:
             f"--- BASELINE SUMMARY ---\n{channels.get('baseline_summary')}"
         ]))
 
-        # ==================== 8. Evidence Strength Calculation ====================
+        # ==================== 8. Evidence Strength & Rule Logic ====================
         available_tags = {tag for tag, block in zip(['P', 'D', 'C', 'A'], [plan_blocks, do_blocks, check_blocks, act_blocks]) if block.strip()}
         evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, highest_rerank_score)
         max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
 
-        # ==================== 9. Contextual Rule Logic (REVISED) ====================
-        # 🎯 ดึงกฎเหล็ก (Rule Instruction) จาก JSON ตาม Level
-        rule_instruction = self.get_rule_content(sub_id, level, "specific_contextual_rule")
-        if not rule_instruction:
-            rule_instruction = "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
+        rule_instruction = self.get_rule_content(sub_id, level, "specific_contextual_rule") or "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน"
 
-        # ==================== 10. EVALUATION EXECUTION ====================
+        # ==================== 9. EVALUATION EXECUTION ====================
         llm_kwargs = {
             "context": final_llm_context,
             "sub_criteria_name": sub_criteria_name,
@@ -3500,7 +3485,7 @@ class SEAMPDCAEngine:
             "level_constraint": level_constraint,
             "must_include_keywords": must_include_keywords,
             "avoid_keywords": avoid_keywords,
-            "specific_contextual_rule": rule_instruction, # 🔥 กฎเฉพาะ L2/L3 ถูกส่งที่นี่
+            "specific_contextual_rule": rule_instruction,
             "max_rerank_score": highest_rerank_score,
             "max_evidence_strength": max_evi_str_for_prompt,
             "llm_executor": self.llm,
@@ -3511,9 +3496,8 @@ class SEAMPDCAEngine:
 
         llm_result = llm_evaluator_to_use(**llm_kwargs)
 
-        # Expert Re-evaluation (ถ้าจำเป็น)
+        # Expert Re-evaluation
         if not llm_result.get('is_passed', False) and highest_rerank_score >= 0.6:
-            self.logger.info(f"  !! Initiating Expert Re-evaluation for {sub_id} L{level}")
             try:
                 llm_result = self._run_expert_re_evaluation(
                     sub_id=sub_id, level=level, statement_text=statement_text,
@@ -3524,23 +3508,18 @@ class SEAMPDCAEngine:
                 )
             except Exception: pass
 
-        # ==================== 11. Post-Processing & Output ====================
+        # ==================== 10. Post-Processing & Output ====================
         llm_result = post_process_llm_result(llm_result, level)
-        
-        final_score = llm_result.get('score', 0.0)
-        final_pdca = llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0})
-        final_passed = llm_result.get('is_passed', False)
-
         thai_summary = create_context_summary_llm(final_llm_context, sub_criteria_name, level, sub_id, self.llm)
 
         return {
             "sub_criteria_id": sub_id,
             "level": level,
-            "is_passed": final_passed,
-            "score": final_score,
-            "pdca_breakdown": final_pdca,
+            "is_passed": llm_result.get('is_passed', False),
+            "score": llm_result.get('score', 0.0),
+            "pdca_breakdown": llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0}),
             "reason": llm_result.get('reason', "No reason provided"),
-            "evidence_strength": max_evi_str_for_prompt if final_passed else 0.0,
+            "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed') else 0.0,
             "max_relevant_score": highest_rerank_score,
             "temp_map_for_level": top_evidences,
             "summary_thai": thai_summary.get("summary"),
