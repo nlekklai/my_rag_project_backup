@@ -256,6 +256,12 @@ def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
     result["C_Check_Score"] = _safe_int_parse(data.get("C_Check_Score"))
     result["A_Act_Score"]   = _safe_int_parse(data.get("A_Act_Score"))
 
+    raw_summary = str(data.get("summary") or "").strip()
+    result["summary"] = raw_summary if len(raw_summary) > 5 else "ไม่พบข้อมูลสรุปที่ชัดเจนจากหลักฐาน"
+
+    raw_sug = str(data.get("suggestion_for_next_level") or "").strip()
+    result["suggestion_for_next_level"] = raw_sug if len(raw_sug) > 5 else "ตรวจสอบเกณฑ์การประเมินในระดับถัดไป"
+
     reason = data.get("reason") or data.get("explanation") or ""
     result["reason"] = str(reason).strip() or "ไม่พบเหตุผลจาก LLM"
 

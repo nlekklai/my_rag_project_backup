@@ -33,39 +33,17 @@ try:
 
     # 1. Import Constants จาก global_vars
     from config.global_vars import (
-        EXPORTS_DIR, MAX_LEVEL, INITIAL_LEVEL, QA_FINAL_K,
-        RUBRIC_FILENAME_PATTERN, DEFAULT_ENABLER,
-        EVIDENCE_DOC_TYPES, INITIAL_TOP_K,
-        EVIDENCE_MAPPING_FILENAME_SUFFIX,
-        LIMIT_CHUNKS_PER_PRIORITY_DOC,
-        IS_LOG_L3_CONTEXT,
-        PRIORITY_CHUNK_LIMIT,
-        DEFAULT_TENANT,
-        DEFAULT_YEAR,
+        MAX_LEVEL,
+        EVIDENCE_DOC_TYPES,
         RERANK_THRESHOLD,
         MAX_EVI_STR_CAP,
         DEFAULT_LLM_MODEL_NAME,
         LLM_TEMPERATURE,
-        MAX_PARALLEL_WORKERS,
-        MIN_RERANK_SCORE_TO_KEEP,
         MIN_RETRY_SCORE,
-        MIN_RELEVANCE_THRESHOLD,
-        OLLAMA_MAX_RETRIES,
-        CONTEXT_CAP_L3_PLUS,
-        CRITICAL_CA_THRESHOLD,
-        MAX_RETRIEVAL_ATTEMPTS,
-        HYBRID_VECTOR_WEIGHT,
-        HYBRID_BM25_WEIGHT,
-        CHUNK_SIZE,
-        CHUNK_OVERLAP,
         REQUIRED_PDCA,
-        CORRECT_PDCA_SCORES_MAP,
         PDCA_PHASE_MAP,        # ✅ ย้ายมาไว้ที่นี่ตามที่มีใน global_vars.py
-        PDCA_PRIORITY_ORDER,
         BASE_PDCA_KEYWORDS,
         PDCA_LEVEL_SYNONYMS,
-        ENABLE_HARD_FAIL_LOGIC,
-        ENABLE_CONTEXTUAL_RULE_OVERRIDE,
         TARGET_SCORE_THRESHOLD_MAP
     )
     
@@ -792,8 +770,10 @@ class SEAMPDCAEngine:
         focus_hint: str,
     ) -> List[str]:
         """
-        [Generic Version] สร้าง Query โดยดึงวัตถุดิบจาก JSON ตาม Enabler นั้นๆ
-        รองรับโครงสร้าง Nested L1-L5 และดึง Keywords แบบสะสม (Accumulative)
+        [Full Strategic Version] สร้าง Query โดยดึงวัตถุดิบจาก JSON Contextual Rules
+        - ป้องกัน Bias หน้าแรก: L3-L5 จะไม่ดึง plan_keywords เพื่อหนีจากเอกสารนโยบาย
+        - Targeted Search: เพิ่มคำระบุประเภทหลักฐาน (ภาคผนวก, รายงานผล) สำหรับ Maturity สูงๆ
+        - รองรับโครงสร้าง Nested: ดึงข้อมูลผ่าน get_rule_content
         """
         logger = logging.getLogger(__name__)
         enabler_id = self.enabler_id
@@ -801,53 +781,66 @@ class SEAMPDCAEngine:
         # --- 1. เตรียมวัตถุดิบ (Keywords จาก JSON) ---
         raw_keywords_collector = []
         
-        # ดึง Must Include เสมอ (ถ้ามีใน JSON ของ Enabler นั้น)
+        # ดึง Must Include เสมอ (กฎเหล็กของแต่ละข้อ)
         must_list = self.get_rule_content(sub_id, level, "must_include_keywords")
         if isinstance(must_list, list):
             raw_keywords_collector.extend(must_list)
         
-        # ดึง Keywords ตาม Level แบบสะสม (Accumulative)
-        if level >= 1:
+        # --- 🟢 Strategic Keyword Selection (หัวใจของการแก้ Bias หน้า 1-2) ---
+        if level <= 2:
+            # ระดับ L1-L2: เน้นหา 'แผน' และ 'แนวทาง' (มักอยู่หน้าแรกๆ)
             raw_keywords_collector.extend(self.get_rule_content(sub_id, 1, "plan_keywords"))
-        if level >= 2:
             raw_keywords_collector.extend(self.get_rule_content(sub_id, 2, "do_keywords"))
-        if level >= 3:
+        else:
+            # ระดับ L3-L5: เน้นหา 'การปฏิบัติจริง' และ 'ผลลัพธ์' 
+            # ❌ ไม่ดึง plan_keywords (เช่น วิสัยทัศน์, ยุทธศาสตร์) เพื่อไม่ให้ RAG วนกลับไปหน้า 1-2
+            raw_keywords_collector.extend(self.get_rule_content(sub_id, 2, "do_keywords"))
             raw_keywords_collector.extend(self.get_rule_content(sub_id, 3, "check_keywords"))
-        if level >= 4:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 4, "act_keywords"))
-        if level >= 5:
-            raw_keywords_collector.extend(self.get_rule_content(sub_id, 5, "act_keywords"))
+            if level >= 4:
+                raw_keywords_collector.extend(self.get_rule_content(sub_id, 4, "act_keywords"))
+            if level >= 5:
+                raw_keywords_collector.extend(self.get_rule_content(sub_id, 5, "act_keywords"))
 
         # ล้างข้อมูลและลดคำซ้ำ
         clean_keywords = [str(k).strip() for k in raw_keywords_collector if k]
         keywords_str = ", ".join(list(set(clean_keywords)))
 
-        # --- 2. สร้างชุด Queries แบบ Generic (ไม่ Fix เนื้อหา เพื่อรองรับทุก Enablers) ---
+        # --- 2. สร้างชุด Queries แบบกระจายเป้าหมาย (Diversified Queries) ---
         queries = []
 
-        # Query 1: Base Query (เน้นใจความสำคัญ + Keywords จาก JSON)
-        queries.append(f"**{statement_text}** {sub_id} L{level} {enabler_id} {keywords_str}")
+        # Query 1: Base Context Query (ใจความเกณฑ์ + Keywords + รหัสข้อ)
+        queries.append(f"{statement_text} {sub_id} {enabler_id} {keywords_str}")
 
-        # Query 2: Evidence Type Based (เน้นประเภทเอกสารตาม Maturity Level)
+        # Query 2: Evidence Type Targeting (ระบุประเภทเอกสารที่ควรพบในหน้านั้นๆ)
         if level <= 2:
-            # L1-L2 เน้นหา กติกา/แนวทาง
-            queries.append(f"ประกาศ คำสั่ง แนวทาง หลักเกณฑ์ ระเบียบปฏิบัติ {sub_id} {keywords_str}")
+            # เน้นหาประกาศ/คำสั่ง
+            queries.append(f"ประกาศ คำสั่ง แนวทาง หลักเกณฑ์ ระเบียบปฏิบัติ บันทึกแจ้งเวียน {sub_id} {keywords_str}")
         else:
-            # L3-L5 เน้นหา การปฏิบัติและผลลัพธ์
-            queries.append(f"รายงานสรุปผล การประเมินผล KPI การติดตาม การตรวจสอบ {sub_id} {keywords_str}")
+            # 🔥 บังคับ RAG ให้ไปหาหน้ากลาง/หน้าท้าย (รายงานผล, สถิติ, ภาคผนวก)
+            queries.append(f"รายงานสรุปผลการดำเนินงาน ผลการประเมิน KPI รายงานการติดตาม ตารางสถิติ {sub_id} {keywords_str}")
+            # Query พิเศษสำหรับส่วนท้ายเล่ม
+            queries.append(f"สรุปผลตัวชี้วัด รายงานการประชุมทบทวน ภาคผนวก รายละเอียดแนบท้าย {sub_id}")
 
-        # Query 3: PDCA Synonyms (ดึงจาก Constant กลาง)
-        current_synonyms = PDCA_LEVEL_SYNONYMS.get(level, "")
+        # Query 3: PDCA Synonyms (ช่วยขยายความกว้างในการค้นหา)
+        # ดึงจาก global_vars หรือ constants (ระวังเรื่องการเรียกใช้ให้ตรงกับที่คุณประกาศไว้)
+        current_synonyms = ""
+        try:
+            from config.global_vars import PDCA_LEVEL_SYNONYMS
+            current_synonyms = PDCA_LEVEL_SYNONYMS.get(level, "")
+        except:
+            pass
+            
         if current_synonyms:
             queries.append(f"{sub_id} {enabler_id} {current_synonyms} {keywords_str}")
 
-        # Query 4: Special Focus (สำหรับระดับสูง)
+        # Query 4: Special Focus สำหรับ L4-L5 (นวัตกรรม/Best Practice)
         if level >= 4:
-            queries.append(f"การปรับปรุง นวัตกรรม Best Practice แนวทางที่เป็นเลิศ {sub_id} {keywords_str}")
+            queries.append(f"การปรับปรุงกระบวนการ นวัตกรรม Best Practice บทเรียนที่ได้รับ Lesson Learned {sub_id} {keywords_str}")
 
-        # --- 3. จำกัดจำนวนและส่งออก ---
+        # --- 3. กรองและส่งออก ---
         final_queries = [q.strip() for q in queries if q.strip()][:5]
-        logger.info(f"Generated {len(final_queries)} generic queries for {enabler_id} - {sub_id} L{level}")
+        
+        logger.info(f"🚀 [Query Gen] {sub_id} L{level}: Generated {len(final_queries)} targeted queries for deep retrieval.")
         return final_queries
 
     def _initialize_llm_if_none(self):
@@ -3414,18 +3407,35 @@ class SEAMPDCAEngine:
                 break
 
         # ==================== 6. Adaptive Filtering with Fallback ====================
+        # --- [REVISED Step 6] Adaptive Filtering with Page Diversity ---
         top_evidences = final_top_evidences if final_top_evidences else []
-        filtered = [doc for doc in top_evidences if get_actual_score(doc) >= MIN_KEEP_SC or doc.get('is_baseline', False)]
-        
-        if not filtered and level <= 2:
-            self.logger.warning(f"  ⚠️ L{level} Fallback: Using top 10 raw chunks.")
-            filtered = sorted(top_evidences, key=lambda x: get_actual_score(x), reverse=True)[:10]
+        sorted_evidences = sorted(top_evidences, key=lambda x: get_actual_score(x), reverse=True)
 
-        top_evidences = filtered
+        diverse_filtered = []
+        pages_count = {}
 
-        if top_evidences and vectorstore_manager:
-            top_evidences = self._robust_hydrate_documents_for_priority_chunks(top_evidences, vectorstore_manager)
-            top_evidences = self._expand_context_with_neighbor_pages(top_evidences, f"evidence_{self.config.enabler.lower()}")
+        for doc in sorted_evidences:
+            # ดึงเลขหน้าจาก metadata (ใส่ default เป็น 1 กันเหนียว)
+            page_num = doc.get('metadata', {}).get('page', 1)
+            score = get_actual_score(doc)
+            
+            # กรองเอาเฉพาะที่คะแนนถึงเกณฑ์ หรือเป็น Baseline
+            if score < MIN_KEEP_SC and not doc.get('is_baseline', False):
+                continue
+
+            if pages_count.get(page_num, 0) < 3 or score > 0.85:
+                diverse_filtered.append(doc)
+                pages_count[page_num] = pages_count.get(page_num, 0) + 1
+            
+            if len(diverse_filtered) >= 15: 
+                break
+
+        # --- Fallback Logic: ถ้ากรองแบบละเอียดแล้วไม่เหลือเลย ให้ถอยกลับไปเอา Top 10 ---
+        if not diverse_filtered and level <= 2:
+            self.logger.warning(f"  ⚠️ L{level} Diversity Fallback: Using top 10 raw chunks.")
+            diverse_filtered = sorted_evidences[:10]
+
+        top_evidences = diverse_filtered
 
         # ==================== 7. Context Building ====================
         previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}

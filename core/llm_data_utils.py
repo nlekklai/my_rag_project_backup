@@ -43,17 +43,11 @@ except ImportError:
 # 1. Core Configuration (ต้องมีแน่นอน)
 # ===================================================================
 from config.global_vars import (
-    DEFAULT_ENABLER,
     INITIAL_TOP_K,
     MAX_EVAL_CONTEXT_LENGTH,
-    USE_HYBRID_SEARCH, 
-    HYBRID_VECTOR_WEIGHT, 
-    HYBRID_BM25_WEIGHT,
-    MAX_ACTION_PLAN_PHASES,
-    MAX_STEPS_PER_ACTION,
-    ACTION_PLAN_STEP_MAX_WORDS,
-    ACTION_PLAN_LANGUAGE,
-    QUERY_INITIAL_K
+    DEFAULT_EMBED_BATCH_SIZE,
+    RERANK_THRESHOLD,
+    ANALYSIS_FINAL_K
 )
 
 # ===================================================================
@@ -165,6 +159,7 @@ def _create_where_filter(
 
     return filters[0] if len(filters) == 1 else {"$and": filters}
 
+
 def retrieve_context_for_endpoint(
     vectorstore_manager,
     query: str = "",
@@ -175,18 +170,21 @@ def retrieve_context_for_endpoint(
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
     sub_topic: Optional[str] = None,
-    k_to_retrieve: int = 150, # 🚀 ดึงมาเยอะเพื่อให้ Reranker มีวัตถุดิบ
-    k_to_rerank: int = 30,    # 🚀 จำนวนสุดท้ายที่จะส่งให้ LLM
+    k_to_retrieve: int = 150, 
+    k_to_rerank: int = 30,    
     strict_filter: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    [REVISED] Retrieval with Anchor Support, Content-Based Dedup, and Batch Reranking.
+    [ULTIMATE REVISED] Retrieval for Search Endpoint
+    - ยึด Metadata เป็นหลักเพื่อความปลอดภัย (No Pydantic Error)
+    - ใช้ Deterministic MD5 Hash สำหรับ Deduplication
+    - รองรับ Anchor Chunks เพื่อสร้าง Context ที่มั่นคง
     """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # 1. Resolve collection & Check existence
+    # 1. Resolve collection
     clean_doc_type = str(doc_type or "document").strip().lower()
     collection_name = get_doc_type_collection_key(doc_type=clean_doc_type, enabler=enabler)
     
@@ -195,132 +193,124 @@ def retrieve_context_for_endpoint(
         logger.error(f"❌ Collection {collection_name} not found.")
         return {"top_evidences": [], "aggregated_context": "ไม่พบฐานข้อมูล", "retrieval_time": 0}
 
-    # 2. Create where_filter (ID Filter is CRITICAL for Level 5 accuracy)
+    # 2. Create where_filter
     where_filter = _create_where_filter(
-        stable_doc_ids=stable_doc_ids, subject=subject, sub_topic=sub_topic, year=year
+        stable_doc_ids=list(stable_doc_ids) if stable_doc_ids else None, 
+        subject=subject, 
+        sub_topic=sub_topic, 
+        year=year
     )
 
-    # 🎯 ใช้ Dictionary เก็บเพื่อทำ Deduplication ด้วย Content Hash
-    # ป้องกันกรณีที่ ID ต่างกันแต่เนื้อหาซ้ำ หรือ ID ซ้ำแต่เนื้อหาต่าง
+    # Dictionary สำหรับ Deduplication (ใช้ MD5 ของเนื้อหาเป็น Key)
     unique_map: Dict[str, LcDocument] = {}
 
     # =====================================================
-    # ⚓ 2.1 ANCHOR RETRIEVAL (Fetching Structure/Table of Contents)
+    # ⚓ 2.1 ANCHOR RETRIEVAL (โครงสร้างไฟล์)
     # =====================================================
     if stable_doc_ids:
-        logger.info(f"⚓ Fetching Anchor Chunks for structure from {len(stable_doc_ids)} files...")
-        # ดึงหน้าแรกๆ ของไฟล์มาเป็นบริบทพื้นฐาน
+        # ดึงหน้าแรกๆ ของแต่ละไฟล์มาเป็นพื้นฐาน
         anchors = chroma.get(where=where_filter, limit=10) 
         if anchors and anchors.get('documents'):
             for i in range(len(anchors['documents'])):
                 content = anchors['documents'][i]
                 md = anchors['metadatas'][i]
-                # สร้าง UID จากเนื้อหา
-                content_hash = str(hash(content))
-                uid = md.get("chunk_uuid") or f"anchor-{content_hash}"
+                
+                # Deterministic MD5 Hash
+                c_hash = hashlib.md5(content.encode()).hexdigest()
+                uid = md.get("chunk_uuid") or f"anchor-{c_hash}"
                 
                 if uid not in unique_map:
-                    unique_map[uid] = LcDocument(
-                        page_content=content,
-                        metadata={**md, "score": 0.9, "is_anchor": True}
-                    )
+                    # ฉีดคะแนนเริ่มต้นให้ Anchor เพื่อให้ติดอันดับต้นๆ หากเนื้อหาใกล้เคียง
+                    md["score"] = 0.5 
+                    md["is_anchor"] = True
+                    unique_map[uid] = LcDocument(page_content=content, metadata=md)
 
     # =====================================================
     # 🔍 2.2 SEMANTIC SEARCH
     # =====================================================
     search_query = query if (query and query != "*" and len(query) > 2) else ""
     
+    # ดึงข้อมูลดิบจาก Vector DB
     if search_query:
         docs = chroma.similarity_search(search_query, k=k_to_retrieve, filter=where_filter)
-        for d in docs:
-            content_hash = str(hash(d.page_content))
-            uid = d.metadata.get("chunk_uuid") or content_hash
-            if uid not in unique_map:
-                unique_map[uid] = d
-    elif not unique_map: 
-        # Fallback กรณีไม่มี Query ให้ดึงแบบกวาดตาม Filter
+    else:
+        # Fallback กรณีไม่มี Query ให้ดึงแบบกวาด
         docs = chroma.similarity_search("*", k=k_to_retrieve, filter=where_filter)
-        for d in docs:
-            content_hash = str(hash(d.page_content))
-            uid = d.metadata.get("chunk_uuid") or content_hash
-            if uid not in unique_map:
-                unique_map[uid] = d
+
+    for d in docs:
+        c_hash = hashlib.md5(d.page_content.encode()).hexdigest()
+        md = d.metadata or {}
+        uid = md.get("chunk_uuid") or c_hash
+        if uid not in unique_map:
+            unique_map[uid] = d
 
     candidates = list(unique_map.values())
 
-    # 🎯 Double Check Guardrail: กรองเฉพาะไฟล์ที่ระบุ (ถ้ามี)
-    if stable_doc_ids:
-        target_ids = {str(i).lower() for i in stable_doc_ids}
-        candidates = [
-            d for d in candidates 
-            if str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")).lower() in target_ids
-        ]
-
     # =====================================================
-    # 🚀 3. BATCH RERANKING (ป้องกัน CUDA OOM)
+    # 🚀 3. BATCH RERANKING
     # =====================================================
-    final_chunks = []
-    reranker = get_global_reranker()
+    final_scored_docs = []
+    reranker = getattr(vsm, "reranker", None)
     
     if reranker and candidates and search_query:
         try:
-            batch_size = 100 # แบ่ง Batch เพื่อความปลอดภัยของ VRAM
-            scored_candidates = []
-            
+            batch_size = 100 
             logger.info(f"🚀 Reranking {len(candidates)} candidates in batches...")
             for i in range(0, len(candidates), batch_size):
                 batch = candidates[i : i + batch_size]
-                # ทำ Rerank ทีละชุด
-                reranked_batch = reranker.compress_documents(documents=batch, query=search_query)
-                scored_candidates.extend(reranked_batch)
-            
-            # Sort ตามคะแนน และเลือกเอาตัวท็อป
-            scored_candidates = sorted(
-                scored_candidates, 
-                key=lambda x: getattr(x, "relevance_score", 0), 
-                reverse=True
-            )
-            
-            # เลือกเฉพาะ k_to_rerank ตัวแรก
-            for res in scored_candidates[:k_to_rerank]:
-                doc = res if isinstance(res, LcDocument) else res.document
-                score = getattr(res, "relevance_score", 0)
-                doc.metadata["rerank_score"] = score
-                final_chunks.append(doc)
-                
+                # ใช้ Reranker ของ LangChain (Compressor)
+                scored_batch = reranker.compress_documents(documents=batch, query=search_query)
+                final_scored_docs.extend(scored_batch)
         except Exception as e:
             logger.error(f"⚠️ Rerank failed: {e}")
-            final_chunks = candidates[:k_to_rerank]
+            final_scored_docs = candidates
     else:
-        final_chunks = candidates[:k_to_rerank]
+        final_scored_docs = candidates
 
     # =====================================================
-    # 4. RESPONSE BUILD
+    # 4. SORTING & SCORE INJECTION (หัวใจหลักที่แก้ 0.0000)
+    # =====================================================
+    def get_score(d) -> float:
+        m = d.metadata or {}
+        # ดึงคะแนนจากทึกที่เป็นไปได้
+        s = m.get("relevance_score") or m.get("score") or m.get("rerank_score") or 0.0
+        try: return float(s)
+        except: return 0.0
+
+    final_scored_docs.sort(key=get_score, reverse=True)
+
+    # =====================================================
+    # 5. RESPONSE BUILD
     # =====================================================
     top_evidences = []
     aggregated_parts = []
     
-    for doc in final_chunks:
+    for doc in final_scored_docs[:k_to_rerank]:
         md = doc.metadata or {}
         text = doc.page_content.strip()
-        s_uuid = md.get("stable_doc_uuid") or md.get("doc_id")
-        p_val = md.get("page_label") or md.get("page_number") or md.get("page") or "N/A"
+        score = get_score(doc)
         
-        # 🎯 Sync Score ให้ลงตัวแปรที่หลากหลายเพื่อให้ Logic ขั้นต่อไปหาเจอ
-        score = md.get("rerank_score") or md.get("score") or 0.0
+        # จัดการเลขหน้าและแหล่งที่มาให้ Robust
+        p_val = md.get("page") or md.get("page_label") or md.get("page_number") or "N/A"
+        source_name = md.get('source') or md.get('source_filename') or md.get('file_name') or 'Unknown'
+        s_uuid = md.get("stable_doc_uuid") or md.get("doc_id") or ""
         
-        top_evidences.append({
-            "doc_id": s_uuid,
-            "chunk_uuid": md.get("chunk_uuid"),
-            "source": md.get("source") or md.get("file_name") or "Unknown",
+        # SYNC SCORE กลับเข้า Metadata ทุกตัว
+        md["score"] = score
+        md["relevance_score"] = score
+        
+        evidence_item = {
+            "doc_id": str(s_uuid),
+            "chunk_uuid": str(md.get("chunk_uuid") or ""),
+            "source": source_name,
             "text": text,
             "page": str(p_val),
             "score": score,
             "pdca_tag": md.get("pdca_tag", "Other"),
-            "metadata": md # แนบ Metadata ตัวเต็มไปด้วยเพื่อความ Robust
-        })
+            "metadata": md
+        }
         
-        source_name = md.get('source') or md.get('file_name') or 'Unknown'
+        top_evidences.append(evidence_item)
         aggregated_parts.append(f"[ไฟล์: {source_name}, หน้า: {p_val}] {text}")
 
     retrieval_time = round(time.time() - start_time, 3)
@@ -328,15 +318,14 @@ def retrieve_context_for_endpoint(
 
     return {
         "top_evidences": top_evidences,
-        "aggregated_context": "\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูลที่เกี่ยวข้อง",
+        "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบข้อมูล",
         "retrieval_time": retrieval_time,
-        "used_chunk_uuids": [e["chunk_uuid"] for e in top_evidences if e.get("chunk_uuid")]
+        "total_candidates": len(candidates)
     }
 
 # ------------------------
 # Retrieval: retrieve_context_with_filter (Revised)
 # ------------------------
-
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
     doc_type: str,
@@ -344,7 +333,7 @@ def retrieve_context_with_filter(
     year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
     subject: Optional[str] = None,
-    vectorstore_manager: Optional[Any] = None, 
+    vectorstore_manager: Optional[Any] = None,
     mapped_uuids: Optional[List[str]] = None,
     stable_doc_ids: Optional[List[str]] = None,
     priority_docs_input: Optional[List[Any]] = None,
@@ -352,20 +341,20 @@ def retrieve_context_with_filter(
     sub_id: Optional[str] = None,
     level: Optional[int] = None,
     get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,
-    top_k: int = 150, # 🚀 แนะนำให้ใช้ 100-200 เพื่อให้ Reranker มีตัวเลือก
+    top_k: int = 150, 
 ) -> Dict[str, Any]:
     """
-    [FINAL ROBUST VERSION] Retrieval + Deduplication + Batch Reranking
-    แก้ไขปัญหาหลักฐานหาย (Deduplication Fix) และป้องกัน CUDA OOM (Batch Fix)
+    [FIXED VERSION] ยึดโครงสร้างเดิมที่ทำงานได้ (No Error) 
+    แต่เพิ่มการยัดคะแนนลง Metadata เพื่อแก้ปัญหา Rerank 0.0000
     """
     start_time = time.time()
-    
-    # 1. Setup Manager & Configuration
     manager = vectorstore_manager
     queries_to_run = [query] if isinstance(query, str) else list(query or [""])
+    
+    # 1. Resolve Collection & Filter
+    # ใช้ helper จาก utils เพื่อความแม่นยำของชื่อ collection
     collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
     
-    # 2. จัดการ Filter (Target IDs)
     target_ids = set()
     if stable_doc_ids: target_ids.update([str(i) for i in stable_doc_ids])
     if mapped_uuids: target_ids.update([str(i) for i in mapped_uuids])
@@ -377,131 +366,113 @@ def retrieve_context_with_filter(
         year=year
     )
 
-    # 3. รวบรวมข้อมูลเริ่มต้น (Base Chunks)
+    # 2. Collect Chunks
     all_source_chunks = []
 
-    # 3.1 Priority Docs (จาก Baseline หรือ Level ก่อนหน้า)
+    # 2.1 Priority Docs
     if priority_docs_input:
         for doc in priority_docs_input:
             if not doc: continue
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
-                meta['chunk_uuid'] = doc.get('chunk_uuid') or meta.get('chunk_uuid')
-                meta['stable_doc_uuid'] = doc.get('doc_id') or meta.get('stable_doc_uuid')
                 if pc.strip():
                     all_source_chunks.append(LcDocument(page_content=pc, metadata=meta))
             elif hasattr(doc, 'page_content'):
                 all_source_chunks.append(doc)
 
-    # 3.2 L3 Fallback (ดึงจาก L2)
-    if level == 3 and callable(get_previous_level_docs):
-        try:
-            fallback_chunks = get_previous_level_docs(level - 1, sub_id) or []
-            all_source_chunks.extend(fallback_chunks)
-            logger.info(f"L3 Fallback: Added {len(fallback_chunks)} chunks from L2")
-        except Exception as e:
-            logger.warning(f"L3 Fallback failed: {e}")
-
-    # 3.3 Vector Search Retrieval (ดึงจาก ChromaDB/Pinecone)
+    # 2.2 Vector Retrieval
     try:
         full_retriever = manager.get_retriever(collection_name=collection_name)
-        # ดึง Base Retriever เพื่อดึง Chunk จำนวนมากมา Rerank เอง
         base_retriever = getattr(full_retriever, "base_retriever", full_retriever)
         
-        search_kwargs = {"k": top_k} 
-        if where_filter: search_kwargs["where"] = where_filter
+        search_kwargs = {"k": top_k}
+        if where_filter: 
+            search_kwargs["where"] = where_filter
 
         for q in queries_to_run:
             if not q: continue
             docs = base_retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
-            all_source_chunks.extend(docs or [])
+            if docs: all_source_chunks.extend(docs)
     except Exception as e:
-        logger.error(f"Retrieval error for {collection_name}: {e}")
+        logger.error(f"Retrieval error: {e}")
 
-    # 4. Deduplicate (CRITICAL FIX: ป้องกันข้อมูลหายจาก ID ซ้ำ)
+    # 3. Deduplicate (ใช้ Hash เพื่อความแม่นยำ)
     unique_map: Dict[str, LcDocument] = {}
     for doc in all_source_chunks:
         if not doc or not doc.page_content.strip(): continue
         md = doc.metadata or {}
+        # ใช้ hashlib เพื่อให้ได้ ID ที่คงที่เหมือนกันทุกรอบ
+        c_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
+        uid = str(md.get("chunk_uuid") or f"{md.get('stable_doc_uuid', 'unknown')}-{c_hash}")
         
-        # 🎯 ใช้ Hash เนื้อหาผสมกับ ID เพื่อให้มั่นใจว่า Chunk ในไฟล์เดียวกันไม่โดนยุบรวมกัน
-        content_hash = str(hash(doc.page_content))
-        uid = str(md.get("chunk_uuid") or f"{md.get('stable_doc_uuid', 'unknown')}-{content_hash}")
-
         if uid not in unique_map:
-            if level == 3:
-                doc.page_content = doc.page_content[:1200] # เพิ่มความยาวเล็กน้อยให้ L3
             unique_map[uid] = doc
 
     candidates = list(unique_map.values())
 
-    # 5. [BATCH RERANKING] ป้องกัน OOM และจัดลำดับความสำคัญ
+    # 4. Batch Reranking
     final_scored_docs = []
-    batch_size = 150 # ค่าที่ปลอดภัยสำหรับ GPU 
-    
-    # พยายามดึง Reranker จาก Manager หรือ Global
-    reranker_compressor = getattr(manager, "reranker", None)
+    batch_size = 100 
+    reranker = getattr(manager, "reranker", None)
 
-    if reranker_compressor and len(candidates) > 0:
-        logger.info(f"🚀 Batch Reranking {len(candidates)} chunks in batches of {batch_size}")
+    if reranker and candidates:
+        main_query = queries_to_run[0]
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i : i + batch_size]
             try:
-                # รัน Reranker ราย Batch
-                scored_batch = reranker_compressor.compress_documents(batch, queries_to_run[0])
+                # 📌 กุญแจสำคัญ: Reranker จะคืนค่าพร้อมคะแนนใน metadata
+                scored_batch = reranker.compress_documents(batch, main_query)
                 final_scored_docs.extend(scored_batch)
             except Exception as e:
-                logger.error(f"Rerank Batch Error at index {i}: {e}")
+                logger.error(f"Rerank Error: {e}")
                 final_scored_docs.extend(batch)
     else:
         final_scored_docs = candidates
 
-    # 6. Sorting & Final Formatting
-    # เรียงลำดับตามคะแนน Rerank (พยายามดึงจากทุก Key ที่เป็นไปได้)
-    def get_score(d):
+    # 5. Sorting & Score Injection (จุดที่แก้ปัญหา 0.0000)
+    def get_score(d) -> float:
         m = d.metadata or {}
-        return float(getattr(d, "relevance_score", m.get("relevance_score", m.get("score", 0.0))))
+        # ไล่หาคะแนนจากทุกชื่อที่เป็นไปได้
+        s = m.get("relevance_score") or m.get("score") or m.get("rerank_score") or 0.0
+        try: return float(s)
+        except: return 0.0
 
-    final_scored_docs = sorted(final_scored_docs, key=get_score, reverse=True)
+    final_scored_docs.sort(key=get_score, reverse=True)
 
-    # คัดเลือกเฉพาะ K ตัวแรกที่ต้องการ (เช่น 12-15)
-    final_k = 15 
+    # 6. Final Formatting (คัดเลือก K ตัวแรก)
     top_evidences = []
     aggregated_parts = []
-    used_uuids = []
-    VALID_ID = re.compile(r"^[0-9a-f\-]{36}$|^[0-9a-f]{64}$", re.IGNORECASE)
+    final_k = ANALYSIS_FINAL_K # ใช้ค่าจาก config
 
     for doc in final_scored_docs[:final_k]:
+        score = get_score(doc)
+        # กรอง Threshold ตามที่ตั้งไว้ใน .env
+        if score < RERANK_THRESHOLD and RERANK_THRESHOLD > 0:
+            continue
+
         md = doc.metadata or {}
         text = doc.page_content.strip()
-        score = get_score(doc)
-
-        # จัดการ IDs สำหรับเชื่อมโยงไฟล์
-        c_uuid = str(md.get("chunk_uuid", ""))
-        s_uuid = str(md.get("stable_doc_uuid") or md.get("doc_id") or "")
-        best_id = s_uuid if VALID_ID.match(s_uuid) else (c_uuid if VALID_ID.match(c_uuid) else f"temp-{uuid.uuid4().hex[:8]}")
         
-        if not best_id.startswith("temp-"): used_uuids.append(best_id)
-            
+        # จัดการเลขหน้าให้ตรงกับ ingest.py
+        page = str(md.get("page_label") or md.get("page_number") or md.get("page") or "N/A")
         source = md.get("source") or md.get("source_filename") or "Unknown"
         pdca = md.get("pdca_tag", "Other")
-        page = str(md.get("page_label") or md.get("page_number") or md.get("page") or "N/A")
-        
-        # 🎯 Sync คะแนนกลับเข้าไปใน Metadata ทุก Key เพื่อให้ _run_single_assessment หาเจอ
+
+        # 🎯 SYNC SCORE เข้า Metadata (เพื่อให้ Loop อื่นๆ เรียกใช้แล้วไม่เจอ 0)
         md["score"] = score
         md["relevance_score"] = score
         md["rerank_score"] = score
 
         top_evidences.append({
-            "doc_id": s_uuid or best_id,
-            "chunk_uuid": c_uuid or best_id,
+            "doc_id": str(md.get("stable_doc_uuid") or md.get("doc_id") or ""),
+            "chunk_uuid": str(md.get("chunk_uuid") or ""),
             "source": source,
             "text": text,
             "page": page,
             "pdca_tag": pdca,
             "score": score,
-            "metadata": md # ส่ง metadata กลับไปให้ครบ
+            "metadata": md
         })
         aggregated_parts.append(f"[{pdca}] [ไฟล์: {source} หน้า: {page}] {text}")
 
@@ -509,9 +480,8 @@ def retrieve_context_with_filter(
         "top_evidences": top_evidences,
         "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบหลักฐาน",
         "retrieval_time": round(time.time() - start_time, 3),
-        "used_chunk_uuids": list(set(used_uuids))
+        "total_candidates": len(candidates)
     }
-
 
 # =====================================================================
 # 🛠 Helper: check_rubric_readiness (ปรับปรุงให้เงียบลง)
@@ -596,14 +566,22 @@ def retrieve_context_with_rubric(
             if anchors and anchors.get('documents'):
                 for i in range(len(anchors['documents'])):
                     content = anchors['documents'][i]
-                    md = anchors['metadatas'][i]
-                    content_hash = str(hash(content))
-                    uid = md.get("chunk_uuid") or f"anchor-{content_hash}"
+                    md = dict(anchors['metadatas'][i] or {}) # ป้องกัน metadata เป็น None
+                    
+                    # 🎯 แก้จุดที่ 1: ใช้ MD5 แทน hash() เพื่อให้ ID คงที่ (Deterministic)
+                    content_hash = hashlib.md5(content.encode()).hexdigest()
+                    uid = str(md.get("chunk_uuid") or f"anchor-{content_hash}")
                     
                     if uid not in unique_evidence_map:
+                        # 🎯 แก้จุดที่ 2: ฉีดคะแนนลงใน metadata โดยตรง (Safe Injection)
+                        # กำหนดให้ Anchor มีคะแนนสูง (0.95) เพื่อให้เป็นบริบทหลัก
+                        md["score"] = 0.95
+                        md["relevance_score"] = 0.95
+                        md["is_anchor"] = True
+                        
                         unique_evidence_map[uid] = LcDocument(
                             page_content=content,
-                            metadata={**md, "score": 0.95, "is_anchor": True}
+                            metadata=md
                         )
 
         # 🔍 3.2 Semantic Search (ค้นหาตามความหมาย)
@@ -851,7 +829,7 @@ def build_multichannel_context_for_level(
     baseline_evidence = previous_levels_evidence or [] 
 
     summarizable_baseline = [
-        item for item in baseline_evidence
+        item for item in baseline_evidence[:20] # จำกัดสูงสุด 20 chunks เพื่อความเร็ว
         if isinstance(item, dict) and (item.get("text") or item.get("content"))
     ]
     
@@ -1410,23 +1388,19 @@ def create_context_summary_llm(
 ) -> Dict[str, Any]:
     logger = logging.getLogger("AssessmentApp")
 
+    # 1. Validation เบื้องต้น
     if llm_executor is None: 
+        return {"summary": "ระบบ LLM ไม่พร้อมใช้งาน", "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ"}
+
+    context_safe = (context or "").strip()
+    if len(context_safe) < 50:
         return {
-            "summary": "ไม่สามารถสรุปได้เนื่องจากระบบ LLM ไม่พร้อมใช้งาน",
-            "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ LLM"
+            "summary": "หลักฐานที่พบมีเนื้อหาน้อยเกินกว่าจะสรุปได้ชัดเจน", 
+            "suggestion_for_next_level": "กรุณาเพิ่มเอกสารหลักฐานที่เกี่ยวข้องในระบบ"
         }
 
-    context_safe = context or ""
-    context_limited = context_safe.strip()
-    
-    if not context_limited or len(context_limited) < 50:
-        return {
-            "summary": "หลักฐานที่ค้นหาได้มีข้อความสั้นเกินไปหรือไม่พบข้อความที่เกี่ยวข้องชัดเจน",
-            "suggestion_for_next_level": "ตรวจสอบความครบถ้วนของหลักฐานในฐานข้อมูล"
-        }
-
-    # Cap context ให้เหมาะสมกับสถาปัตยกรรม Model (4000-8000 chars)
-    context_to_send = context_limited[:6000] 
+    # 2. เตรียม Prompt และ Parameter
+    context_to_send = context_safe[:6000] # ป้องกัน Token Overflow
     next_level = min(level + 1, 5)
 
     try:
@@ -1437,60 +1411,78 @@ def create_context_summary_llm(
             context=context_to_send
         )
     except Exception as e:
-        logger.error(f"Error formatting prompt: {e}")
-        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "Check template"}
+        logger.error(f"❌ Formatting Error: {e}")
+        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "N/A"}
 
-    # ปรับ System Instruction ให้ดุดันขึ้นเพื่อลด Invalid Format
+    # ปรับ System Instruction ให้เป็นแบบ "Zero-Tolerance"
     system_instruction = (
         f"{SYSTEM_EVIDENCE_DESCRIPTION_PROMPT}\n"
-        "STRICT RULE: ตอบในรูปแบบ JSON เท่านั้น ห้ามมี Markdown หรือคำเกริ่นนำ\n"
-        "EXPECTED FORMAT: {\"summary\": \"...\", \"suggestion_for_next_level\": \"...\"}"
+        "### IMPORTANT RULE ###\n"
+        "RETURN ONLY A VALID JSON OBJECT. NO MARKDOWN. NO PREAMBLE. NO EXPLANATION.\n"
+        "EXPECTED KEYS: \"summary\", \"suggestion_for_next_level\""
     )
 
+    # 3. Execution Loop with Advanced Parsing
     max_retries = 2
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"Generating Thai Summary for {sub_id} L{level} (Attempt {attempt})")
+            logger.info(f"🔄 Generating Summary {sub_id} L{level} (Attempt {attempt})")
             
-            raw_response_obj = llm_executor.generate(
+            # เรียก LLM (สมมติว่า llm_executor มีเมธอด generate)
+            raw_response = llm_executor.generate(
                 system=system_instruction, 
                 prompts=[human_prompt]
             )
 
-            # ดึง Text ออกจาก Response Object
-            raw_response_str = ""
-            if hasattr(raw_response_obj, 'generations'): 
-                raw_response_str = raw_response_obj.generations[0][0].text
-            elif hasattr(raw_response_obj, 'content'):   
-                raw_response_str = raw_response_obj.content
+            # --- 🎯 จุดที่แก้: Robust Text Extraction ---
+            res_text = ""
+            if hasattr(raw_response, 'generations'): 
+                res_text = raw_response.generations[0][0].text
+            elif hasattr(raw_response, 'content'):   
+                res_text = raw_response.content
             else:
-                raw_response_str = str(raw_response_obj)
+                res_text = str(raw_response)
 
-            # ใช้ Regex Extract JSON (เผื่อ LLM ใส่ข้อความแถมมา)
-            parsed = _extract_normalized_dict(raw_response_str)
+            # --- 🎯 จุดที่แก้: Cleaning & Regex Pre-processing ---
+            res_text = res_text.strip()
+            # ลบ Markdown Code Blocks ออกถ้าหลุดมา (เช่น ```json ... ```)
+            res_text = re.sub(r'```(?:json)?\n?|```', '', res_text).strip()
             
-            if parsed and isinstance(parsed, dict):
-                # ใช้ .get() พร้อม Default Value เพื่อป้องกัน KeyMissingError
-                sum_text = parsed.get("summary") or parsed.get("สรุป") or ""
-                sug_text = parsed.get("suggestion_for_next_level") or parsed.get("คำแนะนำ") or ""
+            # พยายามหา { ... } ก้อนแรกที่เจอ
+            match = re.search(r'\{.*\}', res_text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                try:
+                    parsed = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # ถ้า JSON พัง (เช่น มี " ซ้อนกัน) ให้ใช้ฟังก์ชัน Normalize ที่คุณมี
+                    parsed = _extract_normalized_dict(json_str)
+            else:
+                # ถ้าไม่เจอ { } เลย ให้ลองใช้ฟังก์ชัน Normalize กับ Text ทั้งหมด
+                parsed = _extract_normalized_dict(res_text)
 
-                if sum_text:
+            # 4. Final Value Validation
+            if parsed and isinstance(parsed, dict):
+                sum_text = parsed.get("summary") or parsed.get("สรุป")
+                sug_text = parsed.get("suggestion_for_next_level") or parsed.get("คำแนะนำ")
+
+                if sum_text and str(sum_text).strip() != "":
                     return {
                         "summary": str(sum_text).strip(),
-                        "suggestion_for_next_level": str(sug_text).strip() if sug_text else "พัฒนาตามเกณฑ์ถัดไป"
+                        "suggestion_for_next_level": str(sug_text).strip() if sug_text else "ดำเนินการพัฒนาตามเกณฑ์ระดับถัดไป"
                     }
             
-            logger.warning(f"Attempt {attempt}: LLM returned invalid summary format.")
-            # ถ้าเป็นรอบแรกแล้วพัง รอบสองเราจะย้ำ Force JSON เข้าไปอีกใน prompt
-            human_prompt += "\nReminder: Return ONLY JSON."
+            logger.warning(f"⚠️ Attempt {attempt}: Invalid format, retrying with force rule...")
+            human_prompt += "\n\nCRITICAL: You must return ONLY the JSON object. Do not say anything else."
             
         except Exception as e:
-            logger.error(f"Attempt {attempt} failed: {str(e)}")
-            time.sleep(0.5)
+            logger.error(f"❌ Attempt {attempt} Failed: {e}")
+            time.sleep(1.0) # Wait for local LLM to breathe
 
+    # 5. Fallback - ถ้าพังหมดจริงๆ ให้พยายามส่งคืนค่าที่เป็นประโยชน์ที่สุด
     return {
-        "summary": f"พบหลักฐานระดับ {level} แต่ระบบสรุปขัดข้อง (Parse Error)",
-        "suggestion_for_next_level": f"ตรวจสอบเกณฑ์ของ Level {next_level} ในคู่มือ"
+        "summary": f"ตรวจพบหลักฐานระดับ {level} (ระบบประมวลผลสรุปขัดข้อง)",
+        "suggestion_for_next_level": f"กรุณาตรวจสอบรายละเอียดเกณฑ์ของ Level {next_level} ในคู่มือมาตรฐาน"
     }
 
 def create_structured_action_plan(

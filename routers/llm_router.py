@@ -179,8 +179,13 @@ async def query_llm(
     # 🎯 ปลดล็อกค่า K ให้ทำงานตามสเปก Server
     logger.info(f"📖 Executing: General RAG Flow (K_Final={QA_FINAL_K}, K_Retrieval={RETRIEVAL_TOP_K})")
     
-    used_doc_types = doc_types or DEFAULT_DOC_TYPES
-    used_enabler = enabler or DEFAULT_ENABLER
+    used_doc_types = doc_types if doc_types else DEFAULT_DOC_TYPES
+
+    # 🎯 ปรับตรงนี้: ถ้าไม่ใช่ "evidence" ไม่ต้องส่ง enabler เข้าไป (ให้เป็น None)
+    # เพื่อป้องกัน VSM วิ่งไปผิด path
+    is_evidence_search = any(dt.lower() == "evidence" for dt in used_doc_types)
+    used_enabler = enabler if enabler else (DEFAULT_ENABLER if is_evidence_search else None)
+
     vsm = get_vectorstore_manager(tenant=current_user.tenant)
     stable_doc_ids = {str(idx).strip() for idx in doc_ids if str(idx).strip()} if doc_ids else None
 
@@ -203,8 +208,8 @@ async def query_llm(
         
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
-                f_name = ev.get('source_filename') or ev.get('source') or 'Unknown'
-                p_val = ev.get('page_label') or ev.get('page_number') or ev.get('page')
+                f_name = ev.get('source') or ev.get('source_filename') or ev.get('file_name') or 'Unknown'
+                p_val = ev.get('page') or ev.get('page_label') or ev.get('page_number')
                 p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
 
                 all_chunks.append(

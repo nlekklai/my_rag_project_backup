@@ -601,14 +601,20 @@ class VectorStoreManager:
         current_tenant = getattr(self, 'tenant', 'default_tenant')
         current_year = getattr(self, 'year', None)
         current_enabler = getattr(self, 'enabler', None)
-        current_doc_type = getattr(self, 'doc_type', EVIDENCE_DOC_TYPES) 
+        current_doc_type = getattr(self, 'doc_type', None) 
 
+        if not current_doc_type:
+            logger.debug("No doc_type specified for mapping, skipping pre-load.")
+            return
+        
         # 3. ตัดสินใจเลือก Path เดียว (Single Path Decision)
         target_path = None
         
-        # ใช้ _n() เพื่อป้องกันปัญหา NFD/NFC บน macOS และความแตกต่างของตัวพิมพ์
-        if _n(current_doc_type) == EVIDENCE_DOC_TYPES.lower():
-            # สาย Evidence: กฎใน path_utils บังคับว่าต้องมี year และ enabler
+        # ใช้ _n() เพื่อความปลอดภัย
+        clean_type = _n(current_doc_type)
+        
+        # 🎯 เช็คว่าเป็นสาย Evidence หรือไม่ (พวกที่ต้องระบุ Enabler/Year)
+        if clean_type == "evidence" or clean_type == EVIDENCE_DOC_TYPES.lower():
             try:
                 target_path = get_mapping_file_path(
                     doc_type=current_doc_type,
@@ -616,19 +622,18 @@ class VectorStoreManager:
                     year=current_year, 
                     enabler=current_enabler
                 )
-            except ValueError:
-                # กรณี year/enabler เป็น None จะไม่พ่น Warning แต่จะปล่อยให้ target_path เป็น None
+            except Exception:
                 target_path = None
         else:
-            # สาย Global (seam, faq, policy, etc.): ใช้ Path กลาง ไม่ต้องระบุปี
+            # สาย Document ทั่วไป หรือ Global อื่นๆ
             try:
                 target_path = get_mapping_file_path(
                     doc_type=current_doc_type,
                     tenant=current_tenant,
-                    year=None,
+                    year=None, # Global ไม่ต้องใช้ปี
                     enabler=None 
                 )
-            except ValueError:
+            except Exception:
                 target_path = None
 
         # 4. Validation: ตรวจสอบความมีอยู่ของไฟล์ก่อนอ่าน

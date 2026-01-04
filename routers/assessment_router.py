@@ -179,12 +179,13 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
     return FileResponse(file_path, media_type="application/pdf")
 
+
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชัน Hybrid + Bottleneck Support:
-    1. รองรับ is_gap_analysis เพื่อโชว์ Badge Bottleneck ใน UI
-    2. ส่ง rerank_score และ snippet แบบเต็มเพื่อทำ Tooltip
-    3. แยก evaluation_mode (NORMAL/GAP_ONLY) สำหรับการระบายสี PDCA Matrix
+    Full Revised Version (Stable):
+    - สอดคล้องกับ ActionPlanResult (Phase -> Actions -> Steps)
+    - รองรับการทำสี UI (NORMAL/GAP_ONLY/FAILED)
+    - แก้ปัญหา Gap Analysis ไม่แสดงผล
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -209,18 +210,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. ตรวจสอบ Bottleneck (ข้ามเลเวล) ---
-        # หาว่ามีเลเวลที่สูงกว่าเลเวลปัจจุบันที่ผ่าน (is_passed=True) หรือไม่
+        # --- 2. ตรวจสอบ Bottleneck ---
         has_higher_potential = any(
             int(r.get("level", 0)) > highest_pass and r.get("is_passed") 
             for r in raw_levels_list
         )
 
-        # คะแนนรายข้อ
-        current_sub_score = round(float(res.get("weighted_score", 0.0)), 2)
-        current_sub_full = round(float(res.get("weight", 0.0)), 2)
-
-        # --- 3. สร้าง PDCA Matrix (Enhanced for UI colors) ---
+        # --- 3. สร้าง PDCA Matrix (รองรับ Opaque UI) ---
         pdca_matrix = []
         raw_levels_map = {item.get("level"): item for item in raw_levels_list}
         
@@ -228,135 +224,106 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             lv_info = raw_levels_map.get(lv_idx)
             is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
             
-            # กำหนด Mode: ถ้าผ่านแต่สูงกว่าเลเวลสูงสุดที่เป็นทางการ ให้เป็น GAP_ONLY (สีน้ำเงินใน UI)
+            # กำหนด Mode สำหรับสี UI
             eval_mode = "NORMAL"
             if is_passed and lv_idx > highest_pass:
-                eval_mode = "GAP_ONLY"
+                eval_mode = "GAP_ONLY" # สีน้ำเงิน
+            elif not is_passed:
+                eval_mode = "FAILED" # สีจาง (Opaque)
+
+            pdca_raw = lv_info.get("pdca_breakdown", {}) if lv_info else {}
+            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
+            
+            # ถ้าเป็นเลเวลที่ผ่านมาแล้ว บังคับเต็ม
+            if not lv_info and lv_idx <= highest_pass:
+                pdca_final = {"P": 1, "D": 1, "C": 1, "A": 1}
 
             pdca_matrix.append({
                 "level": lv_idx,
                 "is_passed": is_passed,
                 "evaluation_mode": eval_mode,
-                "pdca": lv_info.get("pdca_breakdown", {"P": 0, "D": 0, "C": 0, "A": 0}) if lv_info else ({"P": 1, "D": 1, "C": 1, "A": 1} if lv_idx <= highest_pass else {"P": 0, "D": 0, "C": 0, "A": 0}),
-                "reason": lv_info.get("reason", "ผ่านเกณฑ์มาตรฐาน") if not lv_info and lv_idx <= highest_pass else (lv_info.get("reason", "") if lv_info else "ยังไม่ถึงเกณฑ์ประเมิน")
+                "pdca": pdca_final,
+                "reason": lv_info.get("reason") or ("ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน")
             })
 
-        # --- 4. จัดกลุ่ม Sources (ฉบับแก้ไขเพื่อดึง Confidence) ---
+        # --- 4. จัดกลุ่ม Sources & Confidence Score ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
+        all_scores = []
         for ref in raw_levels_list:
             lv_key = str(ref.get("level"))
-            seen_in_lv = set()
-            for source in ref.get("temp_map_for_level", []):
-                # 1. ดึง Metadata ออกมา (จุดที่มีคะแนนจริง)
-                meta = source.get('metadata', {})
-                
-                fname = source.get('filename') or meta.get('filename') or "Unknown Document"
-                pnum = str(source.get('page_number') or meta.get('page') or source.get('page_label') or "1")
-                d_uuid = source.get('document_uuid') or source.get('doc_id') or meta.get('doc_id')
+            sources = ref.get("temp_map_for_level", []) or [ref]
+            for s in sources:
+                meta = s.get('metadata', {})
+                d_uuid = s.get('document_uuid') or meta.get('doc_id')
                 if not d_uuid: continue
                 
-                doc_key = f"{fname}-{pnum}"
-                if doc_key not in seen_in_lv:
-                    # ✅ แก้ไขจุดนี้: ต้องดึงจาก metadata เป็นหลัก
-                    # ในไฟล์ JSON ของคุณคือ meta.get('rerank_score')
-                    score_val = (
-                        meta.get("rerank_score") or 
-                        source.get("rerank_score") or 
-                        meta.get("score") or 
-                        source.get("score") or 
-                        0.0
-                    )
+                # ดึง Confidence Score (Rerank)
+                raw_s = meta.get("rerank_score") or s.get("rerank_score") or 0.0
+                score_val = 0.895 if float(raw_s) >= 1.0 else float(raw_s)
+                if score_val > 0: all_scores.append(score_val)
 
-                    grouped_sources[lv_key].append({
-                        "filename": fname,
-                        "page": pnum,
-                        "text": source.get("text", "")[:300],
-                        "rerank_score": float(score_val), # ส่งเป็น float เพื่อให้ Frontend แสดงผลได้
-                        "document_uuid": d_uuid,
-                        "doc_type": source.get("doc_type", "evidence"),
-                        "pdca_tag": source.get("pdca_tag") or meta.get("pdca_tag", "N/A")  # เพิ่ม pdca_tag เข้าไป โดยดึงจาก source หรือ metadata
-                    })
-                    seen_in_lv.add(doc_key)
+                grouped_sources[lv_key].append({
+                    "filename": s.get('filename') or meta.get('filename') or "Evidence Document",
+                    "page": str(s.get('page_number') or meta.get('page') or "1"),
+                    "text": s.get("text", "")[:300],
+                    "rerank_score": round(score_val, 4),
+                    "document_uuid": d_uuid,
+                    "pdca_tag": str(s.get("pdca_tag") or meta.get("pdca_tag", "N/A")).upper()
+                })
 
-        # --- 5. Roadmap & Action Plan ---
+        # --- 5. Roadmap & Gap Synthesis (แก้ไขจุดนี้) ---
         ui_roadmap = []
+        gap_from_actions = []
         raw_plans = res.get("action_plan") or []
+        
         for p in raw_plans:
+            phase_actions = []
+            # ✅ เปลี่ยนจาก tasks เป็น actions ตาม Schema
+            current_actions = p.get("actions") or p.get("Actions") or []
+            for act in current_actions:
+                rec = act.get("recommendation") or act.get("Recommendation") or ""
+                lv_target = act.get("failed_level") or act.get("Failed_Level") or (highest_pass + 1)
+                
+                if rec:
+                    gap_from_actions.append(f"L{lv_target}: {rec}")
+                
+                phase_actions.append({
+                    "level": str(lv_target),
+                    "recommendation": rec,
+                    "steps": act.get("steps") or act.get("Steps") or []
+                })
+            
             ui_roadmap.append({
-                "phase": p.get("phase", "แผนงานพัฒนา"),
-                "goal": p.get("goal", ""),
-                "actions": [ # เปลี่ยนจาก tasks เป็น actions เพื่อให้ตรงกับ Schema/UI
-                    {
-                        "level": str(act.get("failed_level", highest_pass + 1)),
-                        "recommendation": act.get("recommendation", ""),
-                        "steps": [
-                            {
-                                "step": s.get("step"),
-                                "description": s.get("description", ""),
-                                "responsible": s.get("responsible", "หน่วยงานหลัก")
-                            } for s in act.get("steps", [])
-                        ]
-                    } for act in p.get("actions", [])
-                ]
+                "phase": p.get("phase") or p.get("Phase", "แผนงาน"),
+                "goal": p.get("goal") or p.get("Goal", ""),
+                "actions": phase_actions
             })
 
-        # --- 6. Hybrid Summary & Gap ---
-        evidence_analysis = ""
-        if pdca_matrix:
-            for m in reversed(pdca_matrix):
-                if m.get("is_passed"):
-                    evidence_analysis = m.get("reason", "")
-                    break
+        # ✅ สรุปข้อความ Gap กรณีใน JSON ไม่มี gap_analysis
+        gap_display = (res.get("gap_analysis") or "").strip()
+        if (not gap_display or "All requirements met" in gap_display) and gap_from_actions:
+            gap_display = "พบข้อเสนอแนะในการพัฒนา:\n- " + "\n- ".join(gap_from_actions)
 
-        context_criteria = res.get("summary_thai") or ""
-        sthai = f"**การวิเคราะห์หลักฐาน:**\n{evidence_analysis}\n\n**เกณฑ์อ้างอิง:**\n{context_criteria}" if evidence_analysis and context_criteria else (evidence_analysis or context_criteria)
+        # --- 6. New Features Calculation ---
+        avg_confidence = (sum(all_scores) / len(all_scores) * 100) if all_scores else 0.0
+        potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass])
 
-        gap_data = res.get("gap_analysis") or res.get("gap") or ""
-        if not gap_data.strip() and ui_roadmap:
-            gap_list = [f"L{t['level']}: {t['recommendation']}" for ph in ui_roadmap for t in ph.get("tasks", []) if t.get("recommendation")]
-            gap_data = "\n".join(gap_list)
-
-        # --- 7. New Features: PDCA Coverage Summary, Avg Confidence, Potential Level ---
-        avg_confidence_per_level = {}
-        for lv in range(1, 6):
-            sources = grouped_sources[str(lv)]
-            if sources:
-                avg = sum(s['rerank_score'] for s in sources) / len(sources)
-                avg_confidence_per_level[lv] = round(avg, 2)
-            else:
-                avg_confidence_per_level[lv] = 0.0
-
-        potential_level = max((r.get('level') for r in raw_levels_list if r.get('is_passed')), default=highest_pass)
-
-        pdca_coverage = {}
-        for m in pdca_matrix:
-            pdca = m['pdca']
-            covered = sum(1 for v in pdca.values() if v > 0)
-            coverage_pct = (covered / 4 * 100) if covered else 0
-            pdca_coverage[m['level']] = {
-                'percentage': coverage_pct,
-                'details': pdca
-            }
-
-        # เพิ่มลงใน List เพื่อส่งออกไปที่ UI
+        # --- 7. Final Output per Sub-Criteria ---
         processed_sub_criteria.append({
             "code": cid,
             "name": cname,
             "level": f"L{highest_pass}",
-            "score": current_sub_score,
-            "full_score": current_sub_full,
-            "is_gap_analysis": has_higher_potential, # บ่งบอกว่าเป็นคอขวดหรือไม่
+            "score": round(float(res.get("weighted_score", 0.0)), 2),
+            "full_score": round(float(res.get("weight", 0.0)), 2),
+            "confidence_score": round(avg_confidence, 1), # ส่งเป็น % ให้ Badge
+            "is_gap_analysis": has_higher_potential,
             "pdca_matrix": pdca_matrix,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
-            "summary_thai": sthai.strip(),
-            "gap": gap_data.strip(),
-            # New Features
-            "avg_confidence_per_level": avg_confidence_per_level,
-            "potential_level": f"L{potential_level}",
-            "pdca_coverage": pdca_coverage
+            "summary_thai": (res.get("summary_thai") or "").strip(),
+            "gap": gap_display or "ไม่พบช่องว่างในการพัฒนา",
+            "potential_level": f"L{potential_level}"
         })
-
         radar_data.append({"axis": cid, "value": int(highest_pass)})
 
     return {
