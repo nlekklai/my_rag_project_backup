@@ -257,7 +257,8 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                         "text": source.get("text", "")[:300],
                         "rerank_score": float(score_val), # ส่งเป็น float เพื่อให้ Frontend แสดงผลได้
                         "document_uuid": d_uuid,
-                        "doc_type": source.get("doc_type", "evidence")
+                        "doc_type": source.get("doc_type", "evidence"),
+                        "pdca_tag": source.get("pdca_tag") or meta.get("pdca_tag", "N/A")  # เพิ่ม pdca_tag เข้าไป โดยดึงจาก source หรือ metadata
                     })
                     seen_in_lv.add(doc_key)
 
