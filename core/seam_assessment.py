@@ -3441,6 +3441,7 @@ class SEAMPDCAEngine:
         previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
         flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
 
+        # 1. เรียกฟังก์ชันเดิม (ไม่ต้องแก้ข้างใน) เพื่อสร้าง Text Blocks ให้ AI
         plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
             top_evidences + flat_previous,
             baseline_evidences=previous_evidence,
@@ -3449,6 +3450,26 @@ class SEAMPDCAEngine:
             contextual_rules_map=self.contextual_rules_map
         )
 
+        # 2. 🔥 เพิ่มส่วนนี้: Sync Tag กลับเข้าไปที่ top_evidences ตัวจริง 
+        # เพื่อให้ค่า P, D, C, A ไหลลงไปใน JSON (temp_map_for_level)
+        for doc in top_evidences:
+            try:
+                # ใช้ฟังก์ชัน tagging เดิมที่คุณยืนยันว่าทำงานถูกต้องอยู่แล้ว
+                tag = classify_by_keyword(
+                    text=doc.get("text", ""),
+                    sub_id=sub_id,
+                    level=level,
+                    contextual_rules_map=self.contextual_rules_map
+                )
+                final_tag = tag if tag in {"P", "D", "C", "A"} else "Other"
+                
+                # ฝังลงใน metadata ของ doc (ตัวแปรหลัก)
+                if "metadata" not in doc: doc["metadata"] = {}
+                doc["metadata"]["pdca_tag"] = final_tag
+            except Exception:
+                if "metadata" in doc: doc["metadata"]["pdca_tag"] = "Other"
+
+        # ส่วนที่เหลือรันต่อตามปกติ
         channels = build_multichannel_context_for_level(level, top_evidences, flat_previous)
         final_llm_context = "\n\n".join(filter(None, [
             f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{plan_blocks}\n{do_blocks}\n{check_blocks}\n{act_blocks}\n{other_blocks}",
