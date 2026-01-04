@@ -300,6 +300,28 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             gap_list = [f"L{t['level']}: {t['recommendation']}" for ph in ui_roadmap for t in ph.get("tasks", []) if t.get("recommendation")]
             gap_data = "\n".join(gap_list)
 
+        # --- 7. New Features: PDCA Coverage Summary, Avg Confidence, Potential Level ---
+        avg_confidence_per_level = {}
+        for lv in range(1, 6):
+            sources = grouped_sources[str(lv)]
+            if sources:
+                avg = sum(s['rerank_score'] for s in sources) / len(sources)
+                avg_confidence_per_level[lv] = round(avg, 2)
+            else:
+                avg_confidence_per_level[lv] = 0.0
+
+        potential_level = max((r.get('level') for r in raw_levels_list if r.get('is_passed')), default=highest_pass)
+
+        pdca_coverage = {}
+        for m in pdca_matrix:
+            pdca = m['pdca']
+            covered = sum(1 for v in pdca.values() if v > 0)
+            coverage_pct = (covered / 4 * 100) if covered else 0
+            pdca_coverage[m['level']] = {
+                'percentage': coverage_pct,
+                'details': pdca
+            }
+
         # เพิ่มลงใน List เพื่อส่งออกไปที่ UI
         processed_sub_criteria.append({
             "code": cid,
@@ -312,7 +334,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
             "summary_thai": sthai.strip(),
-            "gap": gap_data.strip()
+            "gap": gap_data.strip(),
+            # New Features
+            "avg_confidence_per_level": avg_confidence_per_level,
+            "potential_level": f"L{potential_level}",
+            "pdca_coverage": pdca_coverage
         })
 
         radar_data.append({"axis": cid, "value": int(highest_pass)})
