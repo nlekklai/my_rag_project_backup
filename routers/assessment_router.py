@@ -179,7 +179,6 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
     return FileResponse(file_path, media_type="application/pdf")
 
-
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
     เวอร์ชันแก้ไขสมบูรณ์:
@@ -193,7 +192,8 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     processed_sub_criteria = []
     radar_data = []
 
-    # --- 1. สกัดข้อมูล Overall (แก้ไข enabler_name และ overall_level) ---
+    # --- 1. สกัดข้อมูล Overall ---
+    # แก้ไข enabler_name และ overall_level ที่เคยก่อปัญหา undefined
     enabler_name = (summary.get("enabler") or "N/A").upper()
     overall_level = summary.get("Overall Maturity Level (Weighted)") or f"L{summary.get('highest_pass_level_overall', 0)}"
     
@@ -209,7 +209,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. PDCA Matrix & Coverage Calculation ---
+        # --- 2. PDCA Matrix & Coverage Calculation (เพื่อแก้ปัญหา Accordion ค้าง) ---
         pdca_matrix = []
         pdca_coverage = {} 
         avg_conf_per_lv = {}
@@ -219,19 +219,18 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             lv_info = raw_levels_map.get(lv_idx)
             is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
             
-            # กำหนด Mode สีให้ UI
+            # กำหนด Mode สีให้ UI (NORMAL, GAP_ONLY, FAILED, INACTIVE)
             eval_mode = "NORMAL"
             if is_passed and lv_idx > highest_pass:
-                eval_mode = "GAP_ONLY" # สีน้ำเงิน Potential
+                eval_mode = "GAP_ONLY" 
             elif not is_passed and lv_info:
-                eval_mode = "FAILED" # สีเทาเข้ม (ตรวจแล้วตก)
+                eval_mode = "FAILED" 
             elif not is_passed:
-                eval_mode = "INACTIVE" # สีเทาจาง (ยังไม่ประเมิน)
+                eval_mode = "INACTIVE"
 
             pdca_raw = lv_info.get("pdca_breakdown", {}) if lv_info else {}
             pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             
-            # กรณีผ่านมาตรฐานไปแล้ว บังคับ PDCA เต็ม
             if not lv_info and lv_idx <= highest_pass:
                 pdca_final = {"P": 1, "D": 1, "C": 1, "A": 1}
 
@@ -243,7 +242,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "reason": lv_info.get("reason") or ("ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน")
             })
 
-            # คำนวณ % สำหรับ Progress Bar ในแต่ละเลเวล
+            # คำนวณ % สำหรับ Progress Bar (item.pdca_coverage ใน UI)
             covered_count = sum(pdca_final.values())
             pdca_coverage[str(lv_idx)] = {"percentage": (covered_count / 4) * 100}
 
@@ -271,15 +270,15 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                         "filename": s.get('filename') or meta.get('filename') or "Evidence Document",
                         "page": str(s.get('page_number') or meta.get('page') or "1"),
                         "text": s.get("text", "")[:300],
-                        "rerank_score": round(score_val * 100, 1), # ส่ง % ให้ UI
+                        "rerank_score": round(score_val * 100, 1),
                         "document_uuid": d_uuid,
                         "pdca_tag": str(s.get("pdca_tag") or meta.get("pdca_tag", "N/A")).upper()
                     })
             
-            # เฉลี่ยความมั่นใจรายเลเวล
+            # เฉลี่ยความมั่นใจรายเลเวล (item.avg_confidence_per_level ใน UI)
             avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores)/len(lv_scores)*100) if lv_scores else 0
 
-        # --- 4. Roadmap Structure ---
+        # --- 4. Roadmap Structure (ให้ตรงกับ actions.steps) ---
         ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
@@ -297,7 +296,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             })
 
         # --- 5. Final Sub-Criteria Logic ---
-        # หาเลเวลสูงสุดที่ "ตรวจพบข้อมูล" (แม้จะไม่ผ่านเป็นทางการ)
+        # วิเคราะห์ศักยภาพ (Potential)
         potential_levels = [r.get('level') for r in raw_levels_list if r.get('is_passed')]
         potential_level = max(potential_levels + [highest_pass])
 
