@@ -1,19 +1,20 @@
-# core/action_plan_schema.py
-
-from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict
-from typing import List, Any, Dict, Optional
+from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict, ValidationError
+from typing import List, Any, Dict, Optional, Union
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # 1. Step Detail: รายละเอียดขั้นตอนย่อย
 # -----------------------------
 class StepDetail(BaseModel):
     model_config = ConfigDict(
-        populate_by_name=True, # สำคัญ: ยอมรับทั้ง "step" และ "Step"
-        extra="ignore"         # ป้องกัน Error หาก LLM พ่นฟิลด์ขยะมา
+        populate_by_name=True,
+        extra="ignore"
     )
 
-    # ใช้ alias เป็นตัวใหญ่ตามมาตรฐานเดิม แต่ชื่อตัวแปรเป็นตัวเล็กตาม Prompt ใหม่
+    # รองรับทั้ง "step" (จาก Prompt) และ "Step" (จาก JSON Output เดิม)
     step: int = Field(..., alias="Step")
     description: str = Field(..., alias="Description")
     responsible: str = Field("หน่วยงานที่เกี่ยวข้อง", alias="Responsible")
@@ -36,7 +37,7 @@ class StepDetail(BaseModel):
         return str(v).strip() or "-"
 
 # -----------------------------
-# 2. Action Item: รายการแผนงาน (Statement level)
+# 2. Action Item: รายการแผนงาน
 # -----------------------------
 class ActionItem(BaseModel):
     model_config = ConfigDict(
@@ -54,24 +55,20 @@ class ActionItem(BaseModel):
     @field_validator("steps", mode="before")
     @classmethod
     def normalize_steps(cls, v: Any) -> List[Dict]:
-        """ยืดหยุ่นต่อรูปแบบ Steps ที่ LLM ส่งมา"""
         if isinstance(v, str):
             return [{"Step": 1, "Description": v.strip()}]
-        
         if not isinstance(v, list):
             v = [v] if v else []
-
+        
         normalized = []
         for i, item in enumerate(v):
             if isinstance(item, str):
                 normalized.append({"Step": i + 1, "Description": item.strip()})
             elif isinstance(item, dict):
-                # แมป key ตัวเล็กจาก Prompt ให้เข้ากับ Alias ตัวใหญ่ของ StepDetail
+                # Map keys ให้ตรงกับ Alias ของ StepDetail
                 mapping = {
-                    "step": "Step", 
-                    "description": "Description", 
-                    "responsible": "Responsible", 
-                    "tools_templates": "Tools_Templates", 
+                    "step": "Step", "description": "Description", 
+                    "responsible": "Responsible", "tools_templates": "Tools_Templates", 
                     "verification_outcome": "Verification_Outcome"
                 }
                 norm_item = {mapping.get(k.lower().replace(" ", ""), k): val for k, val in item.items()}
@@ -80,7 +77,7 @@ class ActionItem(BaseModel):
         return normalized
 
 # -----------------------------
-# 3. Phase: กลุ่มของ Action แบ่งตามช่วงเวลา (Roadmap)
+# 3. Phase: Roadmap Grouping
 # -----------------------------
 class ActionPlanActions(BaseModel):
     model_config = ConfigDict(
@@ -88,31 +85,51 @@ class ActionPlanActions(BaseModel):
         extra="ignore"
     )
 
-    # เพิ่ม Alias เพื่อรองรับ Prompt ใหม่ที่ใช้ตัวเล็ก (phase) และของเก่า (Phase)
     phase: str = Field(..., alias="Phase")
     goal: str = Field(..., alias="Goal")
     actions: List[ActionItem] = Field(default_factory=list, alias="Actions")
 
 # -----------------------------
-# 4. Root Result: ตัวรับข้อมูลหลัก (ฉบับแก้ไข Error)
+# 4. Root Result: แก้ไขให้รับข้อมูลได้ทุกลักษณะ
 # -----------------------------
 class ActionPlanResult(RootModel):
     """
-    ใช้ RootModel เพื่อรับ JSON Array [{}, {}] จาก LLM ได้โดยตรง
-    หมายเหตุ: RootModel ใน Pydantic V2 ไม่รองรับ model_config extra
+    RootModel สำหรับรับ List ของ ActionPlanActions
     """
     root: List[ActionPlanActions]
 
-    # ฟังก์ชันเสริมยังคงไว้ได้
+    @classmethod
+    def validate_flexible(cls, data: Any) -> "ActionPlanResult":
+        """
+        ฟังก์ชันอัจฉริยะสำหรับแกะข้อมูล JSON จาก LLM 
+        รองรับทั้ง:
+        1. [ {...}, {...} ] (List ตรงๆ)
+        2. { "root": [...] } (Dict ที่หุ้มด้วย root)
+        3. { "Phase": [...] } (กรณีพ่นออกมาเป็น Dict ชั้นเดียว)
+        """
+        # กรณี 1: ถ้ามาเป็น Dictionary
+        if isinstance(data, dict):
+            # ถ้ามี key 'root' ให้ดึงเฉพาะข้างในมาตรวจ
+            if "root" in data and isinstance(data["root"], list):
+                return cls.model_validate(data["root"])
+            # ถ้าไม่มี 'root' แต่เป็นข้อมูล Phase เดียวที่ถูกห่อมา
+            if "phase" in [k.lower() for k in data.keys()]:
+                return cls.model_validate([data])
+        
+        # กรณี 2: ถ้ามาเป็น List ตรงๆ (Best Case)
+        if isinstance(data, list):
+            return cls.model_validate(data)
+            
+        raise ValueError(f"Unsupported data format for ActionPlanResult: {type(data)}")
+
     def __iter__(self): return iter(self.root)
     def __getitem__(self, item): return self.root[item]
     def __len__(self): return len(self.root)
 
 # -----------------------------
-# 5. Helper: สำหรับ Prompt Engineering
+# 5. Helper สำหรับ Prompt
 # -----------------------------
 def get_clean_action_plan_schema() -> Dict[str, Any]:
-    """JSON Schema แบบ Flat สำหรับใส่ใน Prompt"""
     return {
         "type": "array",
         "items": {

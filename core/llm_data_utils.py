@@ -1485,16 +1485,6 @@ def create_context_summary_llm(
         "suggestion_for_next_level": f"กรุณาตรวจสอบรายละเอียดเกณฑ์ของ Level {next_level} ในคู่มือมาตรฐาน"
     }
 
-# core/seam_assessment.py (หรือไฟล์ที่ฟังก์ชันนี้สังกัดอยู่)
-
-import logging
-import time
-import re
-from typing import List, Dict, Any
-from pydantic import ValidationError
-
-# มั่นใจว่ามีการ import Schema ที่เราเพิ่งแก้ไปมาใช้งาน
-# from core.action_plan_schema import ActionPlanResult, action_plan_normalize_keys 
 
 def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
@@ -1508,48 +1498,39 @@ def create_structured_action_plan(
 ) -> List[Dict[str, Any]]:
     """
     สร้าง Strategic Roadmap (Action Plan) โดยวิเคราะห์จาก Gap ที่พบ
-    รองรับการทำงานร่วมกับ RootModel และ Prompt แบบหลาย Phase
+    รองรับการจัดการโครงสร้าง 'root' key อัตโนมัติสำหรับโมเดล 70B
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    logger.info(f"Generating action plan for {sub_id} - {sub_criteria_name} (Target L{target_level})")
+    logger.info(f"🚀 Generating Strategic Roadmap for {sub_id} (Target L{target_level})")
 
-    # --- 1. วิเคราะห์สถานะเพื่อเลือก Prompt ---
+    # --- 1. วิเคราะห์ Mode และจัดเตรียม Context สำหรับ Prompt ---
     is_sustain_mode = not recommendation_statements
     is_quality_refinement = False
+    
     if not is_sustain_mode:
         types = [s.get('recommendation_type') for s in recommendation_statements]
         if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
             is_quality_refinement = True
 
-    # เลือก Prompt และกำหนด Dynamic Phases ตามความเหมาะสมของเนื้อหา
+    # ตั้งค่า Dynamic Params ตามสถานะความสำเร็จ
     if is_sustain_mode:
-        current_system_prompt = SYSTEM_EXCELLENCE_PROMPT
-        current_prompt_template = EXCELLENCE_ADVICE_PROMPT
-        advice_focus = "การรักษาความเป็นเลิศและนวัตกรรมระดับสากล"
-        assessment_context = f"บรรลุเกณฑ์ระดับ 5 อย่างสมบูรณ์ในหัวข้อ {sub_criteria_name}"
+        advice_focus = "การรักษาความเป็นเลิศ นวัตกรรม และการเป็นต้นแบบ (Role Model)"
         dynamic_max_phases = 1
         max_steps = 5
     elif is_quality_refinement:
-        current_system_prompt = SYSTEM_QUALITY_PROMPT
-        current_prompt_template = QUALITY_REFINEMENT_PROMPT
-        advice_focus = "การเสริมความแกร่งของหลักฐานและวงจร PDCA ให้ครบ 100%"
-        assessment_context = f"ผ่านเกณฑ์ในระดับสูงแล้ว แต่ต้องเพิ่มความน่าเชื่อถือของหลักฐาน"
+        advice_focus = "การเสริมความแข็งแกร่งของหลักฐานเชิงประจักษ์และระบบการวัดผล (Check)"
         dynamic_max_phases = 1
         max_steps = 3
     else:
-        current_system_prompt = SYSTEM_ACTION_PLAN_PROMPT
-        current_prompt_template = ACTION_PLAN_PROMPT # Prompt ตัวล่าสุดที่คุณส่งมา
-        advice_focus = f"การสร้าง Roadmap พัฒนาต่อเนื่องสู่ระดับ {target_level}"
-        assessment_context = f"อยู่ระหว่างการพัฒนาสู่ความเป็นเลิศ (Target Level {target_level})"
-        # ถ้าเป้าหมายคือ L4-L5 ให้ทำ 3 Phase, ถ้าต่ำกว่านั้นทำ 2 Phase
+        advice_focus = f"การปิดช่องว่าง (Gap Remediation) เพื่อยกระดับสู่ Level {target_level}"
         dynamic_max_phases = 3 if target_level >= 4 else 2
         max_steps = 3
 
-    # --- 2. จัดเตรียมเนื้อหาช่องว่าง (Gap Statements) ---
+    # --- 2. รวบรวมรายการ Gap (Statement Content) ---
     if is_sustain_mode:
-        stmt_content = "บรรลุเกณฑ์มาตรฐานสูงสุดอย่างครบถ้วน"
+        stmt_content = "ทุกระดับผ่านเกณฑ์มาตรฐานสูงสุดแล้ว เน้นแผนการรักษามาตรฐานและสร้างนวัตกรรมต่อเนื่อง"
     else:
         unique_statements = {}
         for s in recommendation_statements:
@@ -1560,32 +1541,32 @@ def create_structured_action_plan(
                 unique_statements[reason] = lvl
         stmt_content = "\n".join([f"- [Level {v}] {k}" for k, v in unique_statements.items()])
 
-    # --- 3. ประกอบ Human Prompt ---
-    human_prompt = current_prompt_template.format(
+    # --- 3. ประกอบ Prompt (ใช้ Template ที่คุณส่งมา) ---
+    # หมายเหตุ: ACTION_PLAN_PROMPT คือชุดคำสั่งที่คุณนิยามไว้
+    human_prompt = ACTION_PLAN_PROMPT.format(
         sub_id=sub_id,
         sub_criteria_name=sub_criteria_name,
         target_level=target_level,
-        assessment_context=assessment_context,
-        advice_focus=advice_focus,
         recommendation_statements_list=stmt_content,
+        advice_focus=advice_focus,
         max_phases=dynamic_max_phases,
         max_steps=max_steps,
         max_words_per_step=150,
         language="ภาษาไทย"
     )
 
-    # --- 4. Execution Loop (พร้อมระบบ Retry และ Validation) ---
+    # --- 4. Execution Loop (พร้อมระบบป้องกัน JSON Error) ---
     for attempt in range(1, max_retries + 1):
         try:
             logger.debug(f"Attempt {attempt}/{max_retries} for {sub_id}")
 
             response = llm_executor.generate(
-                system=current_system_prompt,
+                system=SYSTEM_ACTION_PLAN_PROMPT,
                 prompts=[human_prompt],
-                temperature=0.0  # ใช้ 0.0 เพื่อให้ JSON ออกมานิ่งที่สุด
+                temperature=0.0 # ใช้ 0.0 เพื่อความแม่นยำสูงสุดของโครงสร้าง JSON
             )
 
-            # ดึงข้อความดิบจาก LLM Response
+            # 4.1 Extract Text
             raw_text = ""
             if hasattr(response, 'generations') and response.generations:
                 raw_text = response.generations[0][0].text
@@ -1594,39 +1575,38 @@ def create_structured_action_plan(
             else:
                 raw_text = str(response)
 
-            # กู้คืน JSON Array จากข้อความ
+            # 4.2 Extract JSON Array
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items:
-                logger.warning(f"Attempt {attempt}: No valid JSON extracted")
-                time.sleep(0.5 * attempt)
+                logger.warning(f"⚠️ Attempt {attempt}: JSON extraction failed.")
                 continue
 
-            # ทำความสะอาด Key (Normalize)
+            # 4.3 Normalize Keys (แปลงสารพัดชื่อ Key ให้เป็นมาตรฐานตัวเล็ก)
             clean_items = action_plan_normalize_keys(items)
 
-            # [CRITICAL FIX] Validate ด้วย Pydantic RootModel
+            # 4.4 [CRITICAL FIX] Flexible Validation
             try:
-                # เนื่องจาก ActionPlanResult เป็น RootModel ที่เก็บ List[ActionPlanActions]
-                # เราต้องห่อ List ด้วย dict ที่มี key 'root' เพื่อให้ Pydantic ตรวจสอบได้ถูกโครงสร้าง
-                validated = ActionPlanResult.model_validate({"root": clean_items})
+                # ใช้ฟังก์ชัน validate_flexible ที่เราเพิ่มใน ActionPlanResult
+                # เพื่อแก้ปัญหา LLM พ่น {"root": [...]} หรือ [...] มาสลับกัน
+                validated = ActionPlanResult.validate_flexible(clean_items)
                 
-                logger.info(f"Action plan generated successfully for {sub_id}")
+                logger.info(f"✅ Action plan generated and validated for {sub_id}")
                 
-                # ใช้ by_alias=True เพื่อให้ชื่อ Key ในผลลัพธ์สุดท้ายเป็นตัวใหญ่ (Step, Phase) 
-                # ตามรูปแบบมาตรฐานของไฟล์ JSON ผลลัพธ์เดิมของคุณ
+                # คืนค่าเป็น List ของ Dictionary โดยใช้ Alias (Phase, Goal, Actions) 
+                # เพื่อให้ไฟล์ DOCX นำไปแสดงผลได้สวยงาม
                 return validated.model_dump(by_alias=True)
                 
             except ValidationError as ve:
-                logger.warning(f"Validation failed on attempt {attempt}: {ve}")
-                time.sleep(0.5 * attempt)
+                logger.error(f"❌ Validation Error (Attempt {attempt}): {ve}")
+                # ส่ง Error กลับไปใน Prompt สำหรับการ Retry (ถ้าจำเป็น)
                 continue
 
         except Exception as e:
-            logger.error(f"Attempt {attempt} failed for {sub_id}: {str(e)}")
-            time.sleep(1 * attempt)
+            logger.error(f"💥 Critical Error in Attempt {attempt}: {str(e)}")
+            time.sleep(0.5 * attempt)
 
-    # --- 5. กรณีล้มเหลวทุกครั้ง ให้ใช้แผนสำรอง (Emergency Fallback) ---
-    logger.warning(f"All attempts failed for {sub_id}, returning fallback plan")
+    # --- 5. Fallback Plan (ถ้าพังครบทุกครั้ง) ---
+    logger.warning(f"🚨 All attempts failed for {sub_id}. Returning Emergency Fallback.")
     return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement)
 
 # =================================================================
