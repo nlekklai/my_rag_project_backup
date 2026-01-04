@@ -179,12 +179,15 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
     return FileResponse(file_path, media_type="application/pdf")
 
+from typing import Dict, Any, List
+
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
     เวอร์ชันแก้ไขสมบูรณ์:
+    - ดึง Strength Summary จาก raw_results_ref
+    - ดึง Critical Gaps จาก action_plan
     - ป้องกัน React Crash โดยการแปลง Step Object เป็น String
     - รองรับ Key ภาษาอังกฤษตัวใหญ่ (Actions, Steps, Failed_Level) ตาม JSON จริง
-    - แก้ไขปัญหาตัวแปร undefined (enabler_name, overall_level)
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -208,7 +211,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. PDCA Matrix & Coverage (สำหรับ Progress Bar ใน UI) ---
+        # --- 2. PDCA Matrix & Coverage ---
         pdca_matrix = []
         pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)} 
         avg_conf_per_lv = {str(lv): 0 for lv in range(1, 6)}
@@ -218,19 +221,17 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             lv_info = raw_levels_map.get(lv_idx)
             is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
             
-            # กำหนดสถานะสีให้ UI
             eval_mode = "NORMAL"
             if is_passed and lv_idx > highest_pass:
-                eval_mode = "GAP_ONLY" # สีฟ้า
+                eval_mode = "GAP_ONLY" 
             elif not is_passed and lv_info:
-                eval_mode = "FAILED"   # สีเทาเข้ม
+                eval_mode = "FAILED"   
             elif not is_passed:
-                eval_mode = "INACTIVE" # สีเทาจาง
+                eval_mode = "INACTIVE" 
 
             pdca_raw = lv_info.get("pdca_breakdown", {}) if lv_info else {}
             pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             
-            # ถ้าผ่านเลเวลนั้นไปแล้ว ให้ PDCA เต็ม
             if not lv_info and lv_idx <= highest_pass:
                 pdca_final = {"P": 1, "D": 1, "C": 1, "A": 1}
 
@@ -245,7 +246,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             covered_count = sum(pdca_final.values())
             pdca_coverage[str(lv_idx)]["percentage"] = (covered_count / 4) * 100
 
-        # --- 3. Sources & Confidence (อ้างอิงตาม JSON e5e26f9f4d31) ---
+        # --- 3. Sources & Confidence ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         all_scores = []
         
@@ -256,7 +257,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 sources = ref.get("temp_map_for_level", []) or [ref]
                 for s in sources:
                     meta = s.get('metadata', {})
-                    # ใช้ stable_doc_uuid ตามโครงสร้างใหม่
                     d_uuid = s.get('document_uuid') or meta.get('stable_doc_uuid')
                     if not d_uuid: continue
                     
@@ -277,36 +277,44 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             if lv_scores:
                 avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores)/len(lv_scores)*100)
 
-        # --- 4. Roadmap Structure (แก้ปัญหา Step เป็น Object ที่ทำให้ React พัง) ---
+        # --- 4. Roadmap & Gap Extraction ---
         ui_roadmap = []
+        all_gaps = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
             phase_actions = []
             actions_list = p.get("Actions") or p.get("actions") or []
             for act in actions_list:
-                # แปลง Steps จาก Object {Step, Description...} เป็น String Array
+                rec = act.get("Recommendation") or act.get("recommendation") or "ควรดำเนินการตามเกณฑ์"
+                lv_num = str(act.get("Failed_Level") or act.get("level") or (highest_pass + 1))
+                
+                # เก็บข้อมูล Gap ไว้แสดงผลในกล่อง Critical Gaps
+                all_gaps.append(f"**L{lv_num}**: {rec}")
+
                 raw_steps = act.get("Steps") or act.get("steps") or []
-                clean_steps = []
-                for s in raw_steps:
-                    if isinstance(s, dict):
-                        # ดึง Description หรือข้อมูลที่สำคัญออกมาเป็น String
-                        desc = s.get("Description") or s.get("Step") or str(s)
-                        clean_steps.append(desc)
-                    else:
-                        clean_steps.append(str(s))
+                clean_steps = [s.get("Description") or s.get("Step") or str(s) if isinstance(s, dict) else str(s) for s in raw_steps]
 
                 phase_actions.append({
-                    "level": str(act.get("Failed_Level") or act.get("level") or (highest_pass + 1)),
-                    "recommendation": act.get("Recommendation") or act.get("recommendation") or "ควรดำเนินการตามเกณฑ์",
-                    "steps": clean_steps # บังคับเป็น List[str] เพื่อให้ React render ได้
+                    "level": lv_num,
+                    "recommendation": rec,
+                    "steps": clean_steps
                 })
             ui_roadmap.append({
                 "phase": p.get("Phase") or p.get("phase") or "ระยะการพัฒนา",
                 "actions": phase_actions
             })
 
-        # --- 5. สรุปท้ายเกณฑ์ย่อย ---
-        potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass])
+        # --- 5. Strength Summary Extraction ---
+        # ดึงเหตุผลจาก Level สูงสุดที่ผ่าน (is_passed = True) มาเป็นจุดแข็ง
+        passed_reasons = [r.get("reason", "") for r in raw_levels_list if r.get("is_passed")]
+        strength_summary = res.get("summary_thai") or ""
+        if not strength_summary and passed_reasons:
+            strength_summary = passed_reasons[-1] # เอาข้อล่าสุดที่ผ่าน
+        elif not strength_summary:
+            strength_summary = "ดำเนินการได้ตามเกณฑ์มาตรฐานเบื้องต้น"
+
+        # --- 6. สรุปผลลัพธ์เกณฑ์ย่อย ---
+        potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass, 0])
         
         processed_sub_criteria.append({
             "code": cid,
@@ -319,8 +327,8 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "avg_confidence_per_level": avg_conf_per_lv,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
-            "summary_thai": (res.get("summary_thai") or "").strip(),
-            "gap": (res.get("gap_analysis") or "ไม่พบช่องว่างในการพัฒนาที่เด่นชัด").strip(),
+            "summary_thai": strength_summary.strip(),
+            "gap": "\n\n".join(all_gaps) if all_gaps else "ไม่พบช่องว่างในการพัฒนาที่เด่นชัด",
             "confidence_score": round((sum(all_scores)/len(all_scores)*100) if all_scores else 0, 1)
         })
         radar_data.append({"axis": cid, "value": highest_pass})
@@ -353,7 +361,7 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     section.left_margin = Inches(1.0)
     section.right_margin = Inches(1.0)
 
-    # --- ฟังก์ชันช่วยตั้งฟอนต์ภาษาไทยให้ถูกต้อง ---
+    # --- ฟังก์ชันช่วยตั้งฟอนต์ภาษาไทย ---
     def set_thai_font(run, name='TH Sarabun New', size=14, bold=False, color=None):
         run.font.name = name
         run._element.rPr.rFonts.set(qn('w:eastAsia'), name)
@@ -362,180 +370,100 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         if color:
             run.font.color.rgb = color
 
-    # --- สไตล์หัวข้อหลัก ---
-    if 'Report Title' not in doc.styles:
-        title_style = doc.styles.add_style('Report Title', WD_STYLE_TYPE.PARAGRAPH)
-        title_style.font.name = 'TH Sarabun New'
-        title_style._element.rPr.rFonts.set(qn('w:eastAsia'), 'TH Sarabun New')
-        title_style.font.size = Pt(28)
-        title_style.font.bold = True
-        title_style.font.color.rgb = RGBColor(30, 58, 138)
-        title_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title_style.paragraph_format.space_after = Pt(30)
-
     # --- หัวรายงานหลัก ---
-    title_p = doc.add_paragraph(f"{ui_data['enabler']} ASSESSMENT REPORT", style='Report Title')
+    # ตรวจสอบสไตล์ก่อนเพิ่ม
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title_p.add_run(f"{ui_data.get('enabler', 'KM')} ASSESSMENT REPORT")
+    set_thai_font(run, size=24, bold=True, color=RGBColor(30, 58, 138))
 
-    # --- สรุปภาพรวม (แบบตารางสวย ๆ) ---
-    summary_table = doc.add_table(rows=5, cols=2)
+    # --- สรุปภาพรวม (Table) ---
+    summary_table = doc.add_table(rows=0, cols=2)
     summary_table.style = 'Table Grid'
-    summary_table.autofit = False
-    summary_table.columns[0].width = Inches(2.5)
-    summary_table.columns[1].width = Inches(4.0)
-
+    
     summary_data = [
-        ("Record ID", ui_data['record_id']),
-        ("หน่วยงาน", ui_data['tenant']),
-        ("ปีงบประมาณ", ui_data['year']),
-        ("ระดับความสามารถโดยรวม", ui_data['level']),
-        ("คะแนนรวม / คะแนนเต็ม", f"{ui_data['score']} / {ui_data['full_score']}"),
-        ("ความครบถ้วนของเกณฑ์", f"{ui_data['metrics']['completion_rate']:.1f}%")
+        ("Record ID", ui_data.get('record_id', '-')),
+        ("หน่วยงาน", ui_data.get('tenant', '-')),
+        ("ปีงบประมาณ", ui_data.get('year', '-')),
+        ("ระดับความสามารถโดยรวม", ui_data.get('level', '-')),
+        ("คะแนนรวม / คะแนนเต็ม", f"{ui_data.get('score', 0)} / {ui_data.get('full_score', 40)}"),
+        ("ความครบถ้วนของเกณฑ์", f"{ui_data.get('metrics', {}).get('completion_rate', 0):.1f}%")
     ]
 
     for label, value in summary_data:
         row = summary_table.add_row().cells
         row[0].text = label
-        row[1].text = value
-        set_thai_font(row[0].paragraphs[0].runs[0], size=13, bold=True)
-        set_thai_font(row[1].paragraphs[0].runs[0], size=13)
+        row[1].text = str(value)
+        set_thai_font(row[0].paragraphs[0].runs[0], size=14, bold=True)
+        set_thai_font(row[1].paragraphs[0].runs[0], size=14)
 
     doc.add_page_break()
 
-    sub_criteria = ui_data['sub_criteria']
+    sub_criteria = ui_data.get('sub_criteria', [])
 
-    # --- กรณีเป็นการประเมิน ALL sub-criteria ---
-    if len(sub_criteria) > 1 or (len(sub_criteria) == 1 and sub_criteria[0]['code'] == "ALL"):
-        # หน้าแรก: สรุปภาพรวมทั้งหมด
-        doc.add_heading("สรุปผลการประเมินโดยรวม (ทุกเกณฑ์ย่อย)", level=1)
-        set_thai_font(doc.paragraphs[-1].runs[0], size=20, bold=True, color=RGBColor(30, 58, 138))
+    # --- หน้าสรุปภาพรวมทุกเกณฑ์ ---
+    if len(sub_criteria) > 0:
+        p = doc.add_paragraph()
+        run = p.add_run("สรุปผลการประเมินโดยรวม (ทุกเกณฑ์ย่อย)")
+        set_thai_font(run, size=18, bold=True, color=RGBColor(30, 58, 138))
 
-        # ตารางสรุประดับของแต่ละเกณฑ์
-        overall_table = doc.add_table(rows=1, cols=5)
+        overall_table = doc.add_table(rows=1, cols=4) # ตัดช่อง Score ออกเพราะข้อมูลรายข้อไม่มี score แยก
         overall_table.style = 'Table Grid'
         hdr = overall_table.rows[0].cells
-        headers = ['รหัสเกณฑ์', 'ชื่อเกณฑ์', 'ระดับปัจจุบัน', 'ศักยภาพ', 'คะแนน']
+        headers = ['รหัสเกณฑ์', 'ชื่อเกณฑ์', 'ระดับปัจจุบัน', 'ศักยภาพ']
         for cell, text in zip(hdr, headers):
             cell.text = text
-            run = cell.paragraphs[0].runs[0]
-            set_thai_font(run, size=12, bold=True)
-            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            set_thai_font(cell.paragraphs[0].runs[0], size=12, bold=True)
 
         for item in sub_criteria:
             row = overall_table.add_row().cells
-            row[0].text = item['code']
-            row[1].text = item['name']
-            row[2].text = item['level']
-            row[3].text = item['potential_level'] if item['potential_level'] != item['level'] else "-"
-            row[4].text = f"{item['score']} / {item['full_score']}"
+            row[0].text = item.get('code', '-')
+            row[1].text = item.get('name', '-')
+            row[2].text = item.get('level', '-')
+            row[3].text = item.get('potential_level', '-') if item.get('potential_level') != item.get('level') else "-"
+            # ตั้งฟอนต์ให้ทุุก Cell ในแถว
+            for c in row: set_thai_font(c.paragraphs[0].runs[0], size=12)
 
         doc.add_page_break()
 
     # --- รายละเอียดแต่ละเกณฑ์ย่อย ---
     for item in sub_criteria:
-        # หัวข้อเกณฑ์
-        heading = doc.add_heading(f"{item['code']} {item['name']}", level=1)
-        set_thai_font(heading.runs[0], size=18, bold=True, color=RGBColor(30, 58, 138))
+        heading = doc.add_paragraph()
+        run = heading.add_run(f"{item.get('code', '')} {item.get('name', '')}")
+        set_thai_font(run, size=16, bold=True, color=RGBColor(30, 58, 138))
 
-        # ระดับ + Potential + Bottleneck
-        level_text = f"ระดับปัจจุบัน: {item['level']}"
-        if item['potential_level'] != item['level']:
-            level_text += f" → {item['potential_level']} (มีศักยภาพสูงกว่า)"
-        if item['is_gap_analysis']:
-            level_text += " ⚠️ มีจุดติดขัด (Bottleneck)"
+        # ระดับ + Potential
+        level_text = f"ระดับปัจจุบัน: {item.get('level', '-')}"
+        if item.get('potential_level') != item.get('level'):
+            level_text += f" → {item.get('potential_level')} (มีศักยภาพสูงกว่า)"
+        
+        lp = doc.add_paragraph(level_text)
+        set_thai_font(lp.runs[0], size=14, bold=True)
 
-        level_p = doc.add_paragraph(level_text)
-        set_thai_font(level_p.runs[0], size=14, bold=True)
-        level_p.paragraph_format.space_after = Pt(15)
-
-        # ตาราง PDCA Coverage + Confidence
-        doc.add_paragraph("ความครอบคลุม PDCA และความน่าเชื่อถือของหลักฐานตามระดับ", style='Heading 3')
-
-        table = doc.add_table(rows=1, cols=4)
-        table.style = 'Table Grid'
-
-        hdr_cells = table.rows[0].cells
-        headers = ['ระดับ', 'ความครอบคลุม PDCA', 'สถานะ', 'ความน่าเชื่อถือเฉลี่ย']
-        for cell, text in zip(hdr_cells, headers):
-            cell.text = text
-            run = cell.paragraphs[0].runs[0]
-            set_thai_font(run, size=12, bold=True)
-            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        current_lvl = int(item['level'].replace('L', ''))
-        for lvl in range(1, 6):
-            cov = item['pdca_coverage'].get(lvl, {'percentage': 0})
-            pct = round(cov['percentage'])
-            avg_conf = item['avg_confidence_per_level'].get(lvl, 0)
-            conf_pct = round(avg_conf * 100) if avg_conf > 0 else 0
-
-            status = ""
-            if lvl == current_lvl:
-                status = "ระดับปัจจุบัน"
-            elif lvl > current_lvl and pct > 0:
-                status = "มีศักยภาพ"
-
-            row_cells = table.add_row().cells
-            row_cells[0].text = f"L{lvl}"
-            row_cells[1].text = f"{pct}%"
-            row_cells[2].text = status
-            row_cells[3].text = f"{conf_pct}%" if avg_conf > 0 else "ไม่มีหลักฐาน"
-
-        doc.add_paragraph()
-
-        # สรุปจุดแข็ง
-        if item.get('summary_thai'):
-            doc.add_paragraph("สรุปจุดแข็งจาก AI", style='Heading 3')
-            summary_p = doc.add_paragraph(item['summary_thai'])
-            summary_p.paragraph_format.left_indent = Inches(0.3)
-
-        # จุดที่ต้องพัฒนา
-        if item.get('gap'):
-            doc.add_paragraph("จุดที่ต้องพัฒนา (Critical Gaps)", style='Heading 3')
-            gap_p = doc.add_paragraph(item['gap'])
-            gap_p.paragraph_format.left_indent = Inches(0.3)
-
-        # แผนการพัฒนา (ปรับปรุงใหม่ให้ตรงกับ Schema)
+        # แผนการพัฒนา (Roadmap)
         if item.get('roadmap'):
-            doc.add_paragraph("แผนการพัฒนาเชิงกลยุทธ์", style='Heading 3')
+            doc.add_paragraph().add_run("แผนการพัฒนาเชิงกลยุทธ์").bold = True
             for phase in item['roadmap']:
-                phase_p = doc.add_paragraph(phase['phase'])
-                set_thai_font(phase_p.runs[0], size=14, bold=True)
+                phase_p = doc.add_paragraph()
+                run = phase_p.add_run(f"ระยะ: {phase.get('phase', 'แผนพัฒนา')}")
+                set_thai_font(run, size=14, bold=True)
 
-                if phase.get('goal'):
-                    goal_p = doc.add_paragraph(f"เป้าหมาย: {phase['goal']}")
-                    goal_p.paragraph_format.left_indent = Inches(0.5)
-
-                # ✅ เปลี่ยนจาก 'tasks' เป็น 'actions'
                 for act in phase.get('actions', []):
-                    task_p = doc.add_paragraph(
-                        f"• ระดับเป้าหมาย {act['level']}: {act['recommendation']}"
-                    )
-                    set_thai_font(task_p.runs[0], bold=True)
+                    act_p = doc.add_paragraph(style='List Bullet')
+                    run = act_p.add_run(f"เป้าหมายเลเวล {act.get('level', '-')}: {act.get('recommendation', '')}")
+                    set_thai_font(run, size=13, bold=True)
 
-                    for step in act.get('steps', []):
-                        # จัดการเบอร์ step ให้สวยงาม
-                        s_idx = step.get('step', '-')
-                        s_desc = step.get('description', '')
-                        resp = step.get('responsible', 'หน่วยงานที่เกี่ยวข้อง')
-                        
-                        step_p = doc.add_paragraph(f"   {s_idx}. {s_desc} ({resp})")
-                        step_p.paragraph_format.left_indent = Inches(1.0)
+                    # ✅ แก้ไขตรงนี้: เนื่องจากตอนนี้ steps เป็น List ของ String แล้ว
+                    for step_text in act.get('steps', []):
+                        step_p = doc.add_paragraph(style='List Bullet 2')
+                        run = step_p.add_run(str(step_text))
+                        set_thai_font(run, size=12)
 
-        # สรุปจำนวนหลักฐาน
-        doc.add_paragraph("จำนวนหลักฐานที่สนับสนุน", style='Heading 3')
-        total = sum(len(files) for files in item['grouped_sources'].values() if files)
-        total_p = doc.add_paragraph(f"รวมทั้งหมด: {total} เอกสาร")
-        set_thai_font(total_p.runs[0], bold=True)
-
-        for lv, files in item['grouped_sources'].items():
-            if files:
-                doc.add_paragraph(f"• Level {lv}: {len(files)} เอกสาร")
-
-        # เว้นหน้าหลังแต่ละเกณฑ์
-        if item != sub_criteria[-1]:  # ไม่เว้นหน้าหลังเกณฑ์สุดท้าย
+        if item != sub_criteria[-1]:
             doc.add_page_break()
 
     return doc
+
 # ------------------- API Endpoints -------------------
 @assessment_router.get("/status/{record_id}")
 async def get_assessment_status(record_id: str, current_user: UserMe = Depends(get_current_user)):
