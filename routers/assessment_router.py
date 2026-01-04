@@ -15,14 +15,30 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import tempfile
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.style import WD_STYLE_TYPE
+
+from docx.shared import Pt, RGBColor, Inches
+from docx.oxml.ns import qn
+
 from routers.auth_router import UserMe, get_current_user
-from utils.path_utils import _n, get_tenant_year_export_root, load_doc_id_mapping, get_document_file_path, get_vectorstore_collection_path
+from utils.path_utils import (
+    _n, 
+    get_tenant_year_export_root, 
+    load_doc_id_mapping, 
+    get_document_file_path,
+    get_vectorstore_collection_path,
+    get_vectorstore_tenant_root_path
+    )
+
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
 from models.llm import create_llm_instance
 from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_LLM_MODEL_NAME, DEFAULT_YEAR
 import pytz
-
 
 logger = logging.getLogger(__name__)
 assessment_router = APIRouter(prefix="/api/assess", tags=["Assessment"])
@@ -361,6 +377,196 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "sub_criteria": processed_sub_criteria
     }
 
+
+def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
+    doc = Document()
+
+    # --- ตั้งค่าหน้ากระดาษ ---
+    section = doc.sections[0]
+    section.top_margin = Inches(0.8)
+    section.bottom_margin = Inches(0.8)
+    section.left_margin = Inches(1.0)
+    section.right_margin = Inches(1.0)
+
+    # --- ฟังก์ชันช่วยตั้งฟอนต์ภาษาไทยให้ถูกต้อง ---
+    def set_thai_font(run, name='TH Sarabun New', size=14, bold=False, color=None):
+        run.font.name = name
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), name)
+        run.font.size = Pt(size)
+        run.bold = bold
+        if color:
+            run.font.color.rgb = color
+
+    # --- สไตล์หัวข้อหลัก ---
+    if 'Report Title' not in doc.styles:
+        title_style = doc.styles.add_style('Report Title', WD_STYLE_TYPE.PARAGRAPH)
+        title_style.font.name = 'TH Sarabun New'
+        title_style._element.rPr.rFonts.set(qn('w:eastAsia'), 'TH Sarabun New')
+        title_style.font.size = Pt(28)
+        title_style.font.bold = True
+        title_style.font.color.rgb = RGBColor(30, 58, 138)
+        title_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_style.paragraph_format.space_after = Pt(30)
+
+    # --- หัวรายงานหลัก ---
+    title_p = doc.add_paragraph(f"{ui_data['enabler']} ASSESSMENT REPORT", style='Report Title')
+
+    # --- สรุปภาพรวม (แบบตารางสวย ๆ) ---
+    summary_table = doc.add_table(rows=5, cols=2)
+    summary_table.style = 'Table Grid'
+    summary_table.autofit = False
+    summary_table.columns[0].width = Inches(2.5)
+    summary_table.columns[1].width = Inches(4.0)
+
+    summary_data = [
+        ("Record ID", ui_data['record_id']),
+        ("หน่วยงาน", ui_data['tenant']),
+        ("ปีงบประมาณ", ui_data['year']),
+        ("ระดับความสามารถโดยรวม", ui_data['level']),
+        ("คะแนนรวม / คะแนนเต็ม", f"{ui_data['score']} / {ui_data['full_score']}"),
+        ("ความครบถ้วนของเกณฑ์", f"{ui_data['metrics']['completion_rate']:.1f}%")
+    ]
+
+    for label, value in summary_data:
+        row = summary_table.add_row().cells
+        row[0].text = label
+        row[1].text = value
+        set_thai_font(row[0].paragraphs[0].runs[0], size=13, bold=True)
+        set_thai_font(row[1].paragraphs[0].runs[0], size=13)
+
+    doc.add_page_break()
+
+    sub_criteria = ui_data['sub_criteria']
+
+    # --- กรณีเป็นการประเมิน ALL sub-criteria ---
+    if len(sub_criteria) > 1 or (len(sub_criteria) == 1 and sub_criteria[0]['code'] == "ALL"):
+        # หน้าแรก: สรุปภาพรวมทั้งหมด
+        doc.add_heading("สรุปผลการประเมินโดยรวม (ทุกเกณฑ์ย่อย)", level=1)
+        set_thai_font(doc.paragraphs[-1].runs[0], size=20, bold=True, color=RGBColor(30, 58, 138))
+
+        # ตารางสรุประดับของแต่ละเกณฑ์
+        overall_table = doc.add_table(rows=1, cols=5)
+        overall_table.style = 'Table Grid'
+        hdr = overall_table.rows[0].cells
+        headers = ['รหัสเกณฑ์', 'ชื่อเกณฑ์', 'ระดับปัจจุบัน', 'ศักยภาพ', 'คะแนน']
+        for cell, text in zip(hdr, headers):
+            cell.text = text
+            run = cell.paragraphs[0].runs[0]
+            set_thai_font(run, size=12, bold=True)
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        for item in sub_criteria:
+            row = overall_table.add_row().cells
+            row[0].text = item['code']
+            row[1].text = item['name']
+            row[2].text = item['level']
+            row[3].text = item['potential_level'] if item['potential_level'] != item['level'] else "-"
+            row[4].text = f"{item['score']} / {item['full_score']}"
+
+        doc.add_page_break()
+
+    # --- รายละเอียดแต่ละเกณฑ์ย่อย ---
+    for item in sub_criteria:
+        # หัวข้อเกณฑ์
+        heading = doc.add_heading(f"{item['code']} {item['name']}", level=1)
+        set_thai_font(heading.runs[0], size=18, bold=True, color=RGBColor(30, 58, 138))
+
+        # ระดับ + Potential + Bottleneck
+        level_text = f"ระดับปัจจุบัน: {item['level']}"
+        if item['potential_level'] != item['level']:
+            level_text += f" → {item['potential_level']} (มีศักยภาพสูงกว่า)"
+        if item['is_gap_analysis']:
+            level_text += " ⚠️ มีจุดติดขัด (Bottleneck)"
+
+        level_p = doc.add_paragraph(level_text)
+        set_thai_font(level_p.runs[0], size=14, bold=True)
+        level_p.paragraph_format.space_after = Pt(15)
+
+        # ตาราง PDCA Coverage + Confidence
+        doc.add_paragraph("ความครอบคลุม PDCA และความน่าเชื่อถือของหลักฐานตามระดับ", style='Heading 3')
+
+        table = doc.add_table(rows=1, cols=4)
+        table.style = 'Table Grid'
+
+        hdr_cells = table.rows[0].cells
+        headers = ['ระดับ', 'ความครอบคลุม PDCA', 'สถานะ', 'ความน่าเชื่อถือเฉลี่ย']
+        for cell, text in zip(hdr_cells, headers):
+            cell.text = text
+            run = cell.paragraphs[0].runs[0]
+            set_thai_font(run, size=12, bold=True)
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        current_lvl = int(item['level'].replace('L', ''))
+        for lvl in range(1, 6):
+            cov = item['pdca_coverage'].get(lvl, {'percentage': 0})
+            pct = round(cov['percentage'])
+            avg_conf = item['avg_confidence_per_level'].get(lvl, 0)
+            conf_pct = round(avg_conf * 100) if avg_conf > 0 else 0
+
+            status = ""
+            if lvl == current_lvl:
+                status = "ระดับปัจจุบัน"
+            elif lvl > current_lvl and pct > 0:
+                status = "มีศักยภาพ"
+
+            row_cells = table.add_row().cells
+            row_cells[0].text = f"L{lvl}"
+            row_cells[1].text = f"{pct}%"
+            row_cells[2].text = status
+            row_cells[3].text = f"{conf_pct}%" if avg_conf > 0 else "ไม่มีหลักฐาน"
+
+        doc.add_paragraph()
+
+        # สรุปจุดแข็ง
+        if item.get('summary_thai'):
+            doc.add_paragraph("สรุปจุดแข็งจาก AI", style='Heading 3')
+            summary_p = doc.add_paragraph(item['summary_thai'])
+            summary_p.paragraph_format.left_indent = Inches(0.3)
+
+        # จุดที่ต้องพัฒนา
+        if item.get('gap'):
+            doc.add_paragraph("จุดที่ต้องพัฒนา (Critical Gaps)", style='Heading 3')
+            gap_p = doc.add_paragraph(item['gap'])
+            gap_p.paragraph_format.left_indent = Inches(0.3)
+
+        # แผนการพัฒนา
+        if item.get('roadmap'):
+            doc.add_paragraph("แผนการพัฒนาเชิงกลยุทธ์", style='Heading 3')
+            for phase in item['roadmap']:
+                phase_p = doc.add_paragraph(phase['phase'])
+                set_thai_font(phase_p.runs[0], size=14, bold=True)
+
+                goal_p = doc.add_paragraph(phase['goal'])
+                goal_p.paragraph_format.left_indent = Inches(0.5)
+
+                for task in phase.get('tasks', []):
+                    task_p = doc.add_paragraph(
+                        f"• ระดับเป้าหมาย {task['level']}: {task['recommendation']}"
+                    )
+                    set_thai_font(task_p.runs[0], bold=True)
+
+                    for step in task.get('steps', []):
+                        resp = step.get('responsible', 'ไม่ระบุผู้รับผิดชอบ')
+                        step_p = doc.add_paragraph(
+                            f"   {step['step']}. {step['description']} ({resp})"
+                        )
+                        step_p.paragraph_format.left_indent = Inches(1.0)
+
+        # สรุปจำนวนหลักฐาน
+        doc.add_paragraph("จำนวนหลักฐานที่สนับสนุน", style='Heading 3')
+        total = sum(len(files) for files in item['grouped_sources'].values() if files)
+        total_p = doc.add_paragraph(f"รวมทั้งหมด: {total} เอกสาร")
+        set_thai_font(total_p.runs[0], bold=True)
+
+        for lv, files in item['grouped_sources'].items():
+            if files:
+                doc.add_paragraph(f"• Level {lv}: {len(files)} เอกสาร")
+
+        # เว้นหน้าหลังแต่ละเกณฑ์
+        if item != sub_criteria[-1]:  # ไม่เว้นหน้าหลังเกณฑ์สุดท้าย
+            doc.add_page_break()
+
+    return doc
 # ------------------- API Endpoints -------------------
 @assessment_router.get("/status/{record_id}")
 async def get_assessment_status(record_id: str, current_user: UserMe = Depends(get_current_user)):
@@ -481,9 +687,6 @@ async def start_assessment(
 
     # 2. ตรวจสอบสิทธิ์
     check_user_permission(current_user, request.tenant, enabler_uc)
-
-    # --- [ERROR DETECTION: Enhanced Pre-flight Check] ---
-    from utils.path_utils import get_vectorstore_collection_path, get_vectorstore_tenant_root_path
 
     # หา Path ที่ระบบคาดหวัง
     vs_path = get_vectorstore_collection_path(
@@ -634,20 +837,55 @@ async def run_assessment_engine_task(
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = f"Internal Server Error: {str(e)}"
 
+
 @assessment_router.get("/download/{record_id}/{file_type}")
-async def download_assessment_file(record_id: str, file_type: str, current_user: UserMe = Depends(get_current_user)):
-    file_path = _find_assessment_file(record_id, current_user)
+async def download_assessment_file(
+    record_id: str,
+    file_type: str,
+    current_user: UserMe = Depends(get_current_user)
+):
+    logger.info(f"Download request: record_id={record_id}, file_type={file_type}")
 
-    expected_ext = f".{file_type.lower()}"
-    if file_type.lower() == "word":
-        expected_ext = ".docx"
+    # 1. หาไฟล์ JSON
+    json_path = _find_assessment_file(record_id, current_user)
 
-    if not file_path.endswith(expected_ext):
-        raise HTTPException(status_code=404, detail="ประเภทไฟล์ไม่ถูกต้อง")
-
-    with open(file_path, "r", encoding="utf-8") as f:
+    # 2. อ่านข้อมูล
+    with open(json_path, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
-        enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
-        check_user_permission(current_user, current_user.tenant, enabler)
 
-    return FileResponse(path=file_path, filename=os.path.basename(file_path))
+    # 3. ตรวจ permission
+    enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
+    check_user_permission(current_user, current_user.tenant, enabler)
+
+    file_type = file_type.lower()
+
+    # 4. JSON
+    if file_type == "json":
+        return FileResponse(
+            path=json_path,
+            filename=f"assessment-{record_id}.json",
+            media_type="application/json"
+        )
+
+    # 5. Word Report
+    elif file_type in ["word", "docx"]:
+        logger.info(f"Generating on-the-fly Word report for {record_id}")
+
+        ui_data = _transform_result_for_ui(raw_data)
+        doc = create_docx_report_similar_to_ui(ui_data)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            doc.save(tmp.name)
+            temp_path = tmp.name
+
+        logger.info(f"Word report generated: {os.path.basename(temp_path)}")
+
+        return FileResponse(
+            path=temp_path,
+            filename=f"{ui_data['enabler']}_Assessment_Report_{record_id}.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            background=lambda: os.remove(temp_path)  # ✅ ถูกต้อง ไม่ต้อง import BackgroundTask
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail="รองรับเฉพาะ json และ word")
