@@ -180,22 +180,15 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     return FileResponse(file_path, media_type="application/pdf")
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
-    """
-    เวอร์ชันแก้ไขสมบูรณ์:
-    - นิยาม enabler_name และ overall_level ให้ถูกต้อง
-    - คำนวณ pdca_coverage และ avg_confidence_per_level ให้ UI นำไปกาง Accordion ได้
-    - จัดโครงสร้าง Roadmap (Actions/Steps) ให้ตรงตาม UI
-    """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
 
     processed_sub_criteria = []
     radar_data = []
 
-    # --- 1. สกัดข้อมูล Overall ---
-    # แก้ไข enabler_name และ overall_level ที่เคยก่อปัญหา undefined
-    enabler_name = (summary.get("enabler") or "N/A").upper()
-    overall_level = summary.get("Overall Maturity Level (Weighted)") or f"L{summary.get('highest_pass_level_overall', 0)}"
+    # --- 1. สกัดข้อมูล Overall (ใช้ Key จาก JSON จริงของคุณ) ---
+    enabler_name = (summary.get("enabler") or "KM").upper()
+    overall_level = summary.get("Overall Maturity Level (Weighted)") or "L0"
     
     total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
     full_score_all = round(float(summary.get("Total Possible Weight") or 40.0), 2)
@@ -209,26 +202,27 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. PDCA Matrix & Coverage Calculation (เพื่อแก้ปัญหา Accordion ค้าง) ---
+        # --- 2. PDCA Matrix & Coverage ---
         pdca_matrix = []
-        pdca_coverage = {} 
-        avg_conf_per_lv = {}
+        pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)} 
+        avg_conf_per_lv = {str(lv): 0 for lv in range(1, 6)}
+        
         raw_levels_map = {item.get("level"): item for item in raw_levels_list}
         
         for lv_idx in range(1, 6):
             lv_info = raw_levels_map.get(lv_idx)
             is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
             
-            # กำหนด Mode สีให้ UI (NORMAL, GAP_ONLY, FAILED, INACTIVE)
             eval_mode = "NORMAL"
             if is_passed and lv_idx > highest_pass:
                 eval_mode = "GAP_ONLY" 
             elif not is_passed and lv_info:
-                eval_mode = "FAILED" 
+                eval_mode = "FAILED"
             elif not is_passed:
                 eval_mode = "INACTIVE"
 
             pdca_raw = lv_info.get("pdca_breakdown", {}) if lv_info else {}
+            # ใน JSON ของคุณค่าเป็น 1.0 หรือ 0.0
             pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             
             if not lv_info and lv_idx <= highest_pass:
@@ -239,14 +233,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "is_passed": is_passed,
                 "evaluation_mode": eval_mode,
                 "pdca": pdca_final,
-                "reason": lv_info.get("reason") or ("ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่ถึงเกณฑ์ประเมิน")
+                "reason": lv_info.get("reason") or ("ผ่านเกณฑ์มาตรฐาน" if lv_idx <= highest_pass else "ยังไม่มีข้อมูล")
             })
 
-            # คำนวณ % สำหรับ Progress Bar (item.pdca_coverage ใน UI)
             covered_count = sum(pdca_final.values())
-            pdca_coverage[str(lv_idx)] = {"percentage": (covered_count / 4) * 100}
+            pdca_coverage[str(lv_idx)]["percentage"] = (covered_count / 4) * 100
 
-        # --- 3. Sources & Confidence per Level ---
+        # --- 3. Sources (แก้จุด rerank_score จาก JSON จริง) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         all_scores = []
         
@@ -257,48 +250,47 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 sources = ref.get("temp_map_for_level", []) or [ref]
                 for s in sources:
                     meta = s.get('metadata', {})
-                    d_uuid = s.get('document_uuid') or meta.get('doc_id')
+                    d_uuid = s.get('document_uuid') or meta.get('stable_doc_uuid') # ใช้ stable_doc_uuid ตาม JSON
                     if not d_uuid: continue
                     
-                    raw_s = meta.get("rerank_score") or s.get("rerank_score") or 0.0
-                    score_val = 0.895 if float(raw_s) >= 1.0 else float(raw_s)
+                    # ดึง rerank_score จากก้อน metadata หรือ s ตรงๆ
+                    raw_s = s.get("rerank_score") or meta.get("rerank_score") or 0.0
+                    score_val = float(raw_s)
                     if score_val > 0: 
                         all_scores.append(score_val)
                         lv_scores.append(score_val)
 
                     grouped_sources[str(lv_idx)].append({
-                        "filename": s.get('filename') or meta.get('filename') or "Evidence Document",
-                        "page": str(s.get('page_number') or meta.get('page') or "1"),
+                        "filename": s.get('filename') or meta.get('source') or "Evidence Document",
+                        "page": str(meta.get('page', "1")),
                         "text": s.get("text", "")[:300],
                         "rerank_score": round(score_val * 100, 1),
                         "document_uuid": d_uuid,
-                        "pdca_tag": str(s.get("pdca_tag") or meta.get("pdca_tag", "N/A")).upper()
+                        "pdca_tag": str(meta.get("pdca_tag", "N/A")).upper()
                     })
-            
-            # เฉลี่ยความมั่นใจรายเลเวล (item.avg_confidence_per_level ใน UI)
-            avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores)/len(lv_scores)*100) if lv_scores else 0
+            if lv_scores:
+                avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores) / len(lv_scores)) * 100
 
-        # --- 4. Roadmap Structure (ให้ตรงกับ actions.steps) ---
+        # --- 4. Roadmap (รองรับทั้ง actions และ Actions) ---
         ui_roadmap = []
         raw_plans = res.get("action_plan") or []
         for p in raw_plans:
             phase_actions = []
-            current_actions = p.get("actions") or p.get("Actions") or []
-            for act in current_actions:
+            # ดึง Actions จากก้อน Phase
+            acts = p.get("actions") or p.get("Actions") or []
+            for act in acts:
                 phase_actions.append({
                     "level": str(act.get("level") or act.get("failed_level") or (highest_pass + 1)),
                     "recommendation": act.get("recommendation") or act.get("Recommendation") or "",
                     "steps": act.get("steps") or act.get("Steps") or []
                 })
             ui_roadmap.append({
-                "phase": p.get("phase") or p.get("Phase") or "แผนงานพัฒนา",
+                "phase": p.get("phase") or p.get("Phase") or "แผนงาน",
                 "actions": phase_actions
             })
 
-        # --- 5. Final Sub-Criteria Logic ---
-        # วิเคราะห์ศักยภาพ (Potential)
-        potential_levels = [r.get('level') for r in raw_levels_list if r.get('is_passed')]
-        potential_level = max(potential_levels + [highest_pass])
+        # --- 5. Potential & Gap ---
+        potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass])
 
         processed_sub_criteria.append({
             "code": cid,
@@ -320,8 +312,8 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     return {
         "status": "COMPLETED",
         "record_id": raw_data.get("record_id", "unknown"),
-        "tenant": str(summary.get("tenant", "PEA")).upper(),
-        "year": str(summary.get("year", "2568")),
+        "tenant": str(summary.get("tenant", "pea")).upper(),
+        "year": str(summary.get("year", "2567")),
         "enabler": enabler_name,
         "level": overall_level,
         "score": total_score,
