@@ -45,7 +45,8 @@ try:
         BASE_PDCA_KEYWORDS,
         PDCA_LEVEL_SYNONYMS,
         TARGET_SCORE_THRESHOLD_MAP,
-        MAX_PARALLEL_WORKERS
+        MAX_PARALLEL_WORKERS,
+        PDCA_PRIORITY_ORDER
     )
     
     # 2. Import Logic Functions
@@ -259,7 +260,6 @@ def classify_by_keyword(
 
     # --- Step 4: Fallback สุดท้าย ---
     try:
-        from config.global_vars import PDCA_PRIORITY_ORDER, BASE_PDCA_KEYWORDS
         tag_map = {"Plan": "P", "Do": "D", "Check": "C", "Act": "A"}
         for full_tag in PDCA_PRIORITY_ORDER: 
             patterns = BASE_PDCA_KEYWORDS.get(full_tag, [])
@@ -445,121 +445,92 @@ def get_pdca_keywords_str(phase: str) -> str:
 
 def post_process_llm_result(llm_output: Dict[str, Any], level: int) -> Dict[str, Any]:
     """
-    FINAL DETERMINISTIC POST-PROCESSOR v21.7.1 — DYNAMIC HEURISTIC & MAPPING SAFE
-    - เชื่อมโยงกับ BASE_PDCA_KEYWORDS ใน global_vars.py โดยตรง
-    - ใช้ Mapping เพื่อแปลง Extraction_X เป็น Plan/Do/Check/Act ให้ตรงกับ Global Vars
-    - ป้องกันปัญหา Unicode และการริบคะแนนภาษาไทยผิดพลาดด้วย Heuristic Pass
+    FINAL DETERMINISTIC POST-PROCESSOR [AUDIT-GRADE v25.2]
+    - เพิ่มการตรวจสอบ Consistency Check จาก LLM
+    - เพิ่ม Hard-Fail Logic และ Heuristic Override ตามมาตรฐาน SE-AM
     """
     logger = logging.getLogger(__name__)
 
-    # 1. นิยามความสัมพันธ์ระหว่างช่องข้อมูลและคะแนน
+    # 1. นิยามความสัมพันธ์
     extraction_map = {
         "Extraction_P": "P_Plan_Score",
         "Extraction_D": "D_Do_Score",
         "Extraction_C": "C_Check_Score",
         "Extraction_A": "A_Act_Score"
     }
-
-    # 2. นิยาม Mapping เพื่อดึงคีย์จาก BASE_PDCA_KEYWORDS ให้ถูกต้อง
-    phase_map = {
-        "Extraction_P": "Plan",
-        "Extraction_D": "Do",
-        "Extraction_C": "Check",
-        "Extraction_A": "Act"
-    }
+    phase_map = {"Extraction_P": "Plan", "Extraction_D": "Do", "Extraction_C": "Check", "Extraction_A": "Act"}
 
     reason_text = llm_output.get("reason", "")
+    
+    # 🎯 [Pillar 2: Consistency Check] 
+    # ตรวจสอบว่า LLM พบความขัดแย้งของเนื้อหาหรือไม่ (ดึงจาก JSON ที่ LLM ตอบมา)
+    is_consistent = llm_output.get("consistency_check", True)
 
     for ext_key, score_key in extraction_map.items():
-        val = llm_output.get(ext_key, "-")
-        if val is None: val = "-"
-        
-        # --- ก. จัดการ Unicode & String Cleaning ---
+        val = llm_output.get(ext_key, "-") or "-"
         raw_val = str(val).strip()
-        try:
-            if "\\u" in raw_val:
-                raw_val = json.loads(f'"{raw_val}"')
-        except:
-            pass
-
-        # --- ข. กรองเฉพาะเนื้อหาสำคัญ (ลบสัญลักษณ์พิเศษ) ---
-        content_only = re.sub(r'[^\u0e00-\u0e7fa-zA-Z0-9]', '', raw_val)
         
-        # --- ค. ตรวจสอบสถานะค่าว่าง/คำปฏิเสธ ---
+        # --- ก. ทำความสะอาดข้อมูล ---
+        content_only = re.sub(r'[^\u0e00-\u0e7fa-zA-Z0-9]', '', raw_val)
         is_negative = raw_val in ["-", "N/A", "n/a", "ไม่พบ", "ไม่มี", "ไม่ปรากฏ", "ไม่ระบุ"]
         is_empty = (not content_only) or is_negative
         
         current_score = float(llm_output.get(score_key, 0))
         
         if is_empty and current_score > 0:
-            # --- ง. [DYNAMIC HEURISTIC OVERRIDE] ---
-            # ดึงชื่อ Phase เต็ม (เช่น 'Plan') เพื่อไปหาใน BASE_PDCA_KEYWORDS
+            # --- ข. [DYNAMIC HEURISTIC OVERRIDE] ---
             phase_full_name = phase_map.get(ext_key)
-            
-            # ดึงคำสำคัญจาก Global Vars และล้างสัญลักษณ์ Regex ออก
             raw_keywords = BASE_PDCA_KEYWORDS.get(phase_full_name, [])
             clean_keywords = [re.sub(r'[\\^$r"\']', '', kw) for kw in raw_keywords]
             
-            # ตรวจสอบว่าในช่อง Reason มีคำสำคัญเหล่านี้หรือไม่ (ความยาวคำต้อง > 1 เพื่อกัน noise)
             found_keyword = any(kw in reason_text for kw in clean_keywords if len(kw) > 1)
             
             if found_keyword:
-                logger.info(f" 🛡️ [Heuristic Pass] L{level}: {ext_key} is empty but found '{phase_full_name}' evidence in Reason text.")
+                logger.info(f" 🛡️ [Heuristic Pass] L{level}: {ext_key} empty but found keyword in Reason.")
                 continue 
                 
-            # ถ้าไม่ผ่าน Heuristic จริงๆ ถึงจะทำการริบคะแนน (Revoke)
-            logger.warning(
-                f" 🚨 [Safeguard] L{level}: {score_key} revoked. "
-                f"No evidence found in {ext_key} (Content: '{content_only}') and no keywords in Reason."
-            )
+            # ริบคะแนนหากไม่มีหลักฐานจริง
+            logger.warning(f" 🚨 [Revoke] L{level}: {score_key} revoked. No evidence in {ext_key}")
             llm_output[score_key] = 0.0
 
-    # 3. Normalize Scores (Cap ไม่ให้เกิน 2.0 ต่อมิติ)
+    # 2. Normalize & PDCA Integrity
     p = round(min(float(llm_output.get("P_Plan_Score", 0)), 2.0), 1)
     d = round(min(float(llm_output.get("D_Do_Score", 0)), 2.0), 1)
     c = round(min(float(llm_output.get("C_Check_Score", 0)), 2.0), 1)
     a = round(min(float(llm_output.get("A_Act_Score", 0)), 2.0), 1)
-
-    # 4. PDCA Integrity Check (บวกคะแนนใหม่ให้แม่นยำ)
     pdca_sum = round(p + d + c + a, 1)
     
-    # 5. Threshold & Hard-Fail Logic ตามมาตรฐาน SE-AM
+    # 3. Threshold & Hard-Fail Logic (SE-AM Standard)
     threshold_map = {1: 1, 2: 2, 3: 4, 4: 6, 5: 8}
     threshold = threshold_map.get(level, 2)
     is_passed = pdca_sum >= threshold
 
-    # กฎบังคับตก (Hard-Fail) เฉพาะระดับ
+    # กฎบังคับตก (Hard-Fail)
+    fail_reason = ""
     if is_passed:
-        if level == 3 and c <= 0:
-            logger.critical(f" 🚨 [L3 Hard-Fail] Score {pdca_sum} >= {threshold} but C_Score is 0.0!")
+        if not is_consistent:
+            logger.critical(f" 🚨 [Consistency Fail] L{level}: Evidence conflict detected!")
             is_passed = False
+            fail_reason = "พบความขัดแย้งของข้อมูลหลักฐาน"
+        elif level == 3 and c <= 0:
+            is_passed = False
+            fail_reason = "ระดับ 3 บังคับต้องมีผลการวัด (C)"
         elif level == 4 and a <= 0:
-            logger.critical(f" 🚨 [L4 Hard-Fail] Score {pdca_sum} >= {threshold} but A_Score is 0.0!")
             is_passed = False
-        elif level == 5:
-            if c < 2.0 or a < 2.0:
-                logger.critical(f" 🚨 [L5 Hard-Fail] Level 5 requires full C & A scores (2.0 each).")
-                is_passed = False
+            fail_reason = "ระดับ 4 บังคับต้องมีการปรับปรุง (A)"
+        elif level == 5 and (c < 2.0 or a < 2.0):
+            is_passed = False
+            fail_reason = "ระดับ 5 ต้องการคะแนน C และ A เต็ม (2.0)"
 
-    # 6. Final Object Update
+    # 4. Final Object Update
     llm_output.update({
         "score": pdca_sum,
-        "P_Plan_Score": p,
-        "D_Do_Score": d,
-        "C_Check_Score": c,
-        "A_Act_Score": a,
         "pdca_breakdown": {"P": p, "D": d, "C": c, "A": a},
         "is_passed": is_passed,
-        "pass_threshold": threshold,
-        "normalized": True
+        "fail_reason": fail_reason,
+        "consistency_check": is_consistent,
+        "pass_threshold": threshold
     })
-
-    # 7. Logging ผลลัพธ์สุดท้าย
-    status_str = "PASSED" if is_passed else "FAILED"
-    logger.info(
-        f" ✅ [Post-Process] L{level} Result: {status_str} | Score: {pdca_sum}/{threshold} "
-        f"(P:{p} D:{d} C:{c} A:{a})"
-    )
 
     return llm_output
 
@@ -1448,61 +1419,73 @@ class SEAMPDCAEngine:
             return [self._clean_map_for_json(v) for v in data]
         return data
 
-    def _clean_temp_entries(self, evidence_map: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
+    def _clean_temp_entries(self, evidence_map: Dict[str, List[Any]]) -> Dict[str, List[Dict]]:
         """
         กรอง TEMP-, HASH-, และ Unknown ออกจาก evidence map ทั้งหมด
-        ใช้ทั้งตอน merge และก่อน save เพื่อความสะอาด 100%
+        พร้อมระบบป้องกัน 'str' object has no attribute 'get' และการซ่อมแซมข้อมูล
         """
-        if not evidence_map:
+        if not evidence_map or not isinstance(evidence_map, dict):
             return {}
 
         cleaned_map = {}
         total_removed = 0
         total_unknown_fixed = 0
+        total_invalid_type = 0
 
         for key, entries in evidence_map.items():
+            if not isinstance(entries, list):
+                continue
+                
             valid_entries = []
             for entry in entries:
-                doc_id = entry.get("doc_id", "")
+                # 🛡️ Defense: ตรวจสอบประเภทข้อมูล
+                if not isinstance(entry, dict):
+                    if isinstance(entry, str) and entry.strip():
+                        # พยายามกู้คืนข้อมูลถ้าเป็น string
+                        entry = {"doc_id": entry, "filename": "Unknown", "relevance_score": 0.0}
+                    else:
+                        total_invalid_type += 1
+                        continue
 
-                # 1. กรอง TEMP- และ HASH- ออกเด็ดขาด
-                if str(doc_id).startswith("TEMP-") or str(doc_id).startswith("HASH-"):
+                doc_id = entry.get("doc_id")
+                if doc_id is None:
+                    total_removed += 1
+                    continue
+                
+                doc_id_str = str(doc_id)
+
+                # 1. กรอง TEMP- และ HASH-
+                if doc_id_str.startswith("TEMP-") or doc_id_str.startswith("HASH-"):
                     total_removed += 1
                     continue
 
-                # 2. ถ้า doc_id ว่าง หรือไม่มีเลย → ทิ้ง
-                if not doc_id or doc_id == "Unknown":
+                # 2. กรอง Unknown
+                if not doc_id_str or doc_id_str.lower() == "unknown":
                     total_removed += 1
                     continue
 
-                # 3. แก้ filename ที่เป็น Unknown / None / ว่าง
-                filename = entry.get("filename", "").strip()
-                if not filename or filename == "Unknown" or filename.lower() == "unknown_file.pdf":
-                    # ใช้ doc_id สั้น ๆ ตั้งชื่อชั่วคราว (ดูดีกว่าว่างเปล่า)
-                    short_id = doc_id[:8]
+                # 3. จัดการ Filename
+                filename = str(entry.get("filename", "")).strip()
+                if not filename or filename.lower() in ["unknown", "none", "unknown_file.pdf", "n/a"]:
+                    short_id = doc_id_str[:8]
                     entry["filename"] = f"เอกสารอ้างอิง_{short_id}.pdf"
                     total_unknown_fixed += 1
                 else:
-                    # เอา path ออก ให้เหลือแค่ชื่อไฟล์
-                    entry["filename"] = os.path.basename(filename)
+                    try:
+                        entry["filename"] = os.path.basename(filename)
+                    except:
+                        entry["filename"] = filename
 
                 valid_entries.append(entry)
 
             if valid_entries:
                 cleaned_map[key] = valid_entries
-            else:
-                logger.debug(f"[CLEAN] Key {key} กลายเป็นว่างหลังกรอง → ถูกลบออก")
-
-        logger.info(f"[CLEANUP] ลบ TEMP-/HASH- ออก {total_removed} รายการ | "
-                    f"แก้ Unknown filename {total_unknown_fixed} รายการ | "
-                    f"เหลือ {len(cleaned_map)} keys")
 
         return cleaned_map
-    
+
     def _save_evidence_map(self, map_to_save: Optional[Dict[str, List[Dict[str, Any]]]] = None):
         """
-        บันทึก evidence map อย่างปลอดภัย 100% - Atomic Write + FileLock + Cleanup + Raw LLM Data
-        รองรับการบันทึก raw_llm_pdca เพื่อความโปร่งใสและการตรวจสอบย้อนกลับ
+        บันทึก evidence map อย่างปลอดภัย 100% - Atomic Write + FileLock + Cleanup + Robust Merge
         """
         try:
             map_file_path = get_evidence_mapping_file_path(
@@ -1511,7 +1494,7 @@ class SEAMPDCAEngine:
                 enabler=self.enabler_id
             )
         except Exception as e:
-            self.logger.critical(f"[EVIDENCE] FATAL: ไม่สามารถกำหนด Evidence Map Path ได้: {e}")
+            self.logger.critical(f"[EVIDENCE] FATAL: ไม่สามารถกำหนด Path ได้: {e}")
             raise
 
         lock_path = map_file_path + ".lock"
@@ -1523,8 +1506,6 @@ class SEAMPDCAEngine:
             os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
             with FileLock(lock_path, timeout=60):
-                self.logger.debug("[EVIDENCE] File lock acquired.")
-
                 # === Merge Logic ===
                 if map_to_save is not None:
                     final_map_to_write = map_to_save
@@ -1534,29 +1515,33 @@ class SEAMPDCAEngine:
                     final_map_to_write = existing_map
 
                     for key, new_entries in runtime_map.items():
-                        entry_map = {
-                            e.get("chunk_uuid", e.get("doc_id", "N/A")): e
-                            for e in final_map_to_write.setdefault(key, [])
-                        }
+                        # 🛡️ Robust Merge: ตรวจสอบข้อมูลเดิมก่อน Get
+                        current_entries = final_map_to_write.setdefault(key, [])
+                        entry_map = {}
+                        for e in current_entries:
+                            if isinstance(e, dict):
+                                eid = e.get("chunk_uuid", e.get("doc_id", "N/A"))
+                                entry_map[eid] = e
+                        
                         for new_entry in new_entries:
+                            if not isinstance(new_entry, dict): continue
+                            
                             entry_id = new_entry.get("chunk_uuid", new_entry.get("doc_id", "N/A"))
-                            if entry_id == "N/A" or not entry_id:
-                                continue
+                            if entry_id == "N/A" or not entry_id: continue
 
                             new_score = new_entry.get("relevance_score", 0.0)
 
                             if entry_id not in entry_map:
                                 entry_map[entry_id] = new_entry
                             else:
-                                # Update ถ้า score สูงกว่า หรือถ้ามี raw_llm_pdca ที่ละเอียดกว่า
                                 old_entry = entry_map[entry_id]
                                 old_score = old_entry.get("relevance_score", 0.0)
-
+                                
+                                # เก็บข้อมูล Page เดิมถ้าตัวใหม่ไม่มี
                                 if "page" not in new_entry or new_entry["page"] in ["N/A", None]:
-                                    if "page" in old_entry:
-                                        new_entry["page"] = old_entry["page"]
+                                    new_entry["page"] = old_entry.get("page")
                                         
-                                if new_score > old_score:
+                                if new_score >= old_score:
                                     entry_map[entry_id] = new_entry
 
                         final_map_to_write[key] = list(entry_map.values())
@@ -1568,12 +1553,14 @@ class SEAMPDCAEngine:
                 # === Cleanup + Sort ===
                 final_map_to_write = self._clean_temp_entries(final_map_to_write)
                 for key, entries in final_map_to_write.items():
+                    # Sort ตามคะแนนความเกี่ยวข้อง
                     entries.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
 
-                # === Atomic Write ===
+                # === Atomic Write (ใช้ไฟล์ชั่วคราวก่อนย้ายจริง) ===
                 with tempfile.NamedTemporaryFile(
                     mode='w', delete=False, encoding="utf-8", dir=os.path.dirname(map_file_path)
                 ) as tmp_file:
+                    # _clean_map_for_json คือฟังก์ชันล้างข้อมูลที่ไม่ใช่ JSON-serializable
                     cleaned_data = self._clean_map_for_json(final_map_to_write)
                     json.dump(cleaned_data, tmp_file, indent=4, ensure_ascii=False)
                     tmp_path = tmp_file.name
@@ -1581,34 +1568,20 @@ class SEAMPDCAEngine:
                 shutil.move(tmp_path, map_file_path)
                 tmp_path = None
 
-                # === Stats ===
-                total_keys = len(final_map_to_write)
-                total_items = sum(len(v) for v in final_map_to_write.values())
-                file_size_kb = os.path.getsize(map_file_path) / 1024
-                self.logger.info(
-                    f"[EVIDENCE] SAVED SUCCESSFULLY! "
-                    f"Keys: {total_keys} | Items: {total_items} | Size: ~{file_size_kb:.1f} KB | Path: {map_file_path}"
-                )
+                self.logger.info(f"[EVIDENCE] SAVED SUCCESSFULLY! Keys: {len(final_map_to_write)}")
 
         except Exception as e:
             self.logger.critical("[EVIDENCE] FATAL ERROR DURING SAVE")
             self.logger.exception(e)
             raise
-
         finally:
-            # === Cleanup lock & temp file (Double Safety) ===
+            # Cleanup
             if os.path.exists(lock_path):
-                try:
-                    os.unlink(lock_path)
-                    self.logger.debug(f"[EVIDENCE] Removed lock file: {lock_path}")
-                except Exception as e:
-                    self.logger.warning(f"[EVIDENCE] Failed to remove lock: {e}")
-
+                try: os.unlink(lock_path)
+                except: pass
             if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
+                try: os.unlink(tmp_path)
+                except: pass
 
     def _load_evidence_map(self, is_for_merge: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -1934,7 +1907,7 @@ class SEAMPDCAEngine:
         self.logger.info(f"PRIORITY HYDRATED → {len(priority_chunks)} chunks ready for L{level} (with full text + baseline flag)")
 
         return mapped_stable_ids, priority_chunks
-
+    
     # -------------------- Calculation Helpers (ADDED) --------------------
     def _calculate_weighted_score(self, highest_full_level: int, weight: int) -> float:
         """
@@ -2329,7 +2302,96 @@ class SEAMPDCAEngine:
         self.logger.info(f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | Strength: {final_evi_str}")
         
         return final_evi_str
+    
+    def calculate_audit_confidence(self, matched_chunks: List[Any]) -> Dict[str, Any]:
+        """
+        [REVISED v2] ประเมินความมั่นใจโดยการกรองคุณภาพหลักฐาน (Quality-First)
+        - กรองเฉพาะ Chunk ที่มีความเกี่ยวข้องสูง (Score Guard)
+        - ตรวจสอบความหลากหลายของประเภทไฟล์
+        - คำนวณ Traceability แบบละเอียด
+        """
+        if not matched_chunks:
+            return {
+                "level": "NONE", "reason": "ไม่พบหลักฐานที่เกี่ยวข้อง",
+                "source_count": 0, "coverage_ratio": 0, "traceability_score": 0
+            }
+
+        # 0. 🛡️ Quality Filter: พิจารณาเฉพาะหลักฐานที่มีน้ำหนัก (Score > 0.45)
+        # (สมมติว่า metadata มีคะแนน rerank_score หรือคล้ายกัน)
+        valid_chunks = [
+            doc for doc in matched_chunks 
+            if doc.metadata.get('rerank_score', 1.0) >= 0.40 
+        ]
         
+        if not valid_chunks:
+            return {
+                "level": "LOW", "reason": "พบข้อมูลที่เกี่ยวข้องแต่ความมั่นใจในเนื้อหาต่ำเกินไป",
+                "source_count": 0, "coverage_ratio": 0, "traceability_score": 0
+            }
+
+        # 1. 📂 Independence (Source Diversity):
+        # ใช้ Set เพื่อหาจำนวนไฟล์ที่ไม่ซ้ำกันจริง ๆ
+        unique_sources = set()
+        for doc in valid_chunks:
+            m = doc.metadata
+            src = m.get('source_filename') or m.get('filename') or m.get('source')
+            if src:
+                unique_sources.add(os.path.basename(str(src)))
+        
+        independence_score = len(unique_sources)
+        
+        # 2. 🧩 Coverage (PDCA Dimensions):
+        # ตรวจสอบว่ามีหลักฐานครบวงจร PDCA หรือไม่
+        pdca_map = {"P": False, "D": False, "C": False, "A": False}
+        for doc in valid_chunks:
+            tag = str(doc.metadata.get('pdca_tag', '')).upper()
+            if tag in pdca_map:
+                pdca_map[tag] = True
+        
+        found_tags_count = sum(pdca_map.values())
+        coverage_ratio = found_tags_count / 4
+        
+        # 3. 🔍 Traceability (ความโปร่งใส): 
+        # ต้องมีทั้งชื่อไฟล์และเลขหน้า ถึงจะถือว่า Traceable สมบูรณ์
+        traceable_count = 0
+        for doc in valid_chunks:
+            m = doc.metadata
+            has_page = m.get('page_label') or m.get('page') or m.get('page_number')
+            has_file = m.get('source_filename') or m.get('filename')
+            if has_page is not None and has_file:
+                traceable_count += 1
+        
+        traceability_score = traceable_count / len(valid_chunks)
+
+        # 4. ⚖️ Decision Matrix (Audit Logic)
+        # ใช้เกณฑ์ขั้นบันได (Gated Logic)
+        if coverage_ratio <= 0.25 or independence_score < 1:
+            confidence = "LOW"
+            desc = "หลักฐานจำกัด (ขาดความหลากหลายของแหล่งข้อมูล หรือขาดมิติ PDCA ที่สำคัญ)"
+        elif independence_score < 3 or coverage_ratio < 0.75:
+            confidence = "MEDIUM"
+            desc = "หลักฐานมีความน่าเชื่อถือปานกลาง พบแหล่งข้อมูลสนับสนุน แต่ยังขาดความครบถ้วนในบางมิติ"
+        else:
+            confidence = "HIGH"
+            desc = "หลักฐานมีความเชื่อมั่นสูง ครบถ้วนตามวงจร PDCA และมีการยืนยันจากแหล่งข้อมูลที่หลากหลาย"
+
+        # 🚨 Penalty Logic: ถ้ามีหลักฐานแต่ระบุที่มา (เลขหน้า) ไม่ได้เกินครึ่ง ให้ลดขั้น
+        if traceability_score < 0.50 and confidence != "LOW":
+            confidence = "MEDIUM" if confidence == "HIGH" else "LOW"
+            desc += " (หมายเหตุ: ความแม่นยำในการระบุตำแหน่งเอกสารต่ำ)"
+
+        # บันทึก Log เพื่อใช้ Debug ในภายหลัง
+        self.logger.info(f"📊 Confidence Calc: {confidence} | PDCA: {found_tags_count}/4 | Sources: {independence_score} | Trace: {traceability_score:.2f}")
+
+        return {
+            "level": confidence, 
+            "reason": desc, 
+            "source_count": independence_score,
+            "coverage_ratio": coverage_ratio,
+            "traceability_score": round(traceability_score, 2),
+            "pdca_found": [k for k, v in pdca_map.items() if v] # บอกด้วยว่าเจอตัวไหนบ้าง
+        }
+
     def _calculate_evidence_strength_cap(
         self,
         top_evidences: List[Union[Dict[str, Any], Any]],
@@ -2761,55 +2823,63 @@ class SEAMPDCAEngine:
             pdca_groups_full[full_label].append(c)
 
         # ------------------------------------------------------------------
-        # 5) Helpers สำหรับการสร้างข้อความ
+        # 5) Helpers สำหรับการสร้างข้อความ (REVISED v25.3.1)
         # ------------------------------------------------------------------
         def _normalize_meta(c: Dict) -> Tuple[str, str]:
             """
-            ดึงชื่อไฟล์และเลขหน้าจาก Chunk โดยใช้ Fallback Logic 
-            เพื่อให้ตรงกับระบบ Ingest ใหม่และเก่า (source_filename, page_label)
-            รองรับกรณีค่าเป็น 0 หรือ Metadata กระจัดกระจาย
+            [REVISED] ดึงชื่อไฟล์และเลขหน้าด้วยระบบ Priority Fallback
+            - ป้องกันปัญหาเลขหน้า 0 หาย (Index-based)
+            - รองรับโครงสร้างข้อมูลที่ซับซ้อนทั้งจาก Ingest ใหม่ และ Reranker Output
+            - เน้น page_label สำหรับการแสดงผลบน UI
             """
-            # ดึง metadata มาไว้ก่อน เผื่อต้องใช้หาหลายรอบ
-            meta = c.get("metadata", {}) or {}
-            
-            # 1. 🔍 ลำดับการหาชื่อไฟล์ (Source)
-            # พยายามหาจากชั้นนอกสุดก่อน แล้วค่อยไล่เข้าไปใน metadata
-            source = (
-                c.get("source_filename") or 
-                c.get("filename") or 
-                meta.get("source_filename") or 
-                meta.get("source") or 
-                meta.get("file_name") or 
-                None  # ใช้ None เพื่อไปเช็คต่อที่ clean_source
-            )
-            
-            # 2. 🔍 ลำดับการหาเลขหน้า (Page)
-            # สำคัญมาก: ต้องแยกเช็คเลข 0 เพราะ Python มอง 0 เป็น False
-            page = None
-            page_keys = ["page_label", "page", "page_number"]
-            
-            # ลองหาจาก Root ของ Chunk ก่อน
-            for key in page_keys:
-                val = c.get(key)
-                if val is not None:
-                    page = val
-                    break
-                    
-            # ถ้ายังไม่เจอ ลองหาใน metadata
-            if page is None:
-                for key in page_keys:
-                    val = meta.get(key)
-                    if val is not None:
-                        page = val
-                        break
+            if not isinstance(c, dict):
+                return "Unknown Source", "N/A"
 
-            # 3. ✨ ทำความสะอาดข้อมูล (Cleaning)
-            # จัดการชื่อไฟล์
-            clean_source = str(source).strip() if source is not None else "Unknown"
+            # ดึง metadata มาเตรียมไว้ (ต้องรองรับทั้งกรณี None หรือ Dict)
+            meta = c.get("metadata") or {}
             
-            # จัดการเลขหน้า: ป้องกันเลข 0 หาย และจัดการพวก 'n/a'
-            if page is not None:
-                page_str = str(page).strip()
+            # 1. 🔍 ลำดับการหาชื่อไฟล์ (Source Name Priority)
+            # เราให้ความสำคัญกับค่าที่มาจาก Ingest ล่าสุดก่อน
+            source_priority = [
+                c.get("source_filename"),
+                meta.get("source_filename"),
+                c.get("filename"),
+                meta.get("source"),
+                meta.get("file_name"),
+                c.get("id") # สุดท้ายใช้ ID เป็น Reference ถ้าหาชื่อไฟล์ไม่เจอจริง ๆ
+            ]
+            
+            source = "Unknown"
+            for s in source_priority:
+                if s and str(s).strip():
+                    source = str(s).strip()
+                    break
+            
+            # 2. 🔍 ลำดับการหาเลขหน้า (Page Label Priority)
+            # สำคัญ: ต้องเช็คด้วย "is not None" เพื่อป้องกันเลข 0 (หน้าแรก) ถูกมองเป็น False
+            page_keys = ["page_label", "page", "page_number"]
+            found_page = None
+            
+            # ค้นหาแบบ Deep Search: เช็คใน Root ก่อน แล้วค่อยเช็คใน Metadata
+            for key in page_keys:
+                # ลองดึงจาก Root
+                val_root = c.get(key)
+                if val_root is not None and str(val_root).strip().lower() != "n/a":
+                    found_page = val_root
+                    break
+                # ลองดึงจาก Metadata
+                val_meta = meta.get(key)
+                if val_meta is not None and str(val_meta).strip().lower() != "n/a":
+                    found_page = val_meta
+                    break
+
+            # 3. ✨ Final Cleaning & UI Formatting
+            clean_source = os.path.basename(source) if "/" in source or "\\" in source else source
+            
+            if found_page is not None:
+                # แปลงเป็น String และลบช่องว่าง
+                page_str = str(found_page).strip()
+                # ถ้าเป็นเลขโดด ๆ ให้คงไว้ ถ้าเป็น n/a ให้เปลี่ยนเป็น N/A
                 clean_page = page_str if page_str.lower() != "n/a" else "N/A"
             else:
                 clean_page = "N/A"
@@ -2847,6 +2917,7 @@ class SEAMPDCAEngine:
 
         return (plan_text, do_text, check_text, act_text, other_text)
     
+    
     def run_assessment(
         self,
         target_sub_id: str = "all",
@@ -2854,97 +2925,63 @@ class SEAMPDCAEngine:
         vectorstore_manager: Optional['VectorStoreManager'] = None,
         sequential: bool = False,
         document_map: Optional[Dict[str, str]] = None,
-        record_id: str = None,  # [ADDED] รองรับ ID จาก Router
+        record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        Main runner ของ Assessment Engine
-        รองรับทั้ง Parallel และ Sequential 100%
-        บันทึก Evidence Map เสมอ (แม้รัน sub เดียว)
+        [REVISED] Main runner ของ Assessment Engine 
+        รองรับระบบ Metadata Normalization และบันทึก Evidence Map อย่างเป็นระบบ
         """
         start_ts = time.time()
         self.is_sequential = sequential
-        # เก็บ record_id ไว้ใน instance เพื่อใช้อ้างอิงในการทำ Log หรือตั้งชื่อไฟล์
         self.current_record_id = record_id 
 
-        # ============================== 1. Filter Rubric ==============================
+        # ============================== 1. เตรียมเกณฑ์การประเมิน (Rubric Filter) ==============================
         all_statements = self._flatten_rubric_to_statements()
         
-        # ค้นหา Sub-Criteria ที่ต้องการ
-        if target_sub_id.lower() == "all":
+        if str(target_sub_id).lower() == "all":
             sub_criteria_list = all_statements
             self.logger.info(f"📋 Assessing ALL criteria ({len(sub_criteria_list)} items)")
         else:
-            # ค้นหาแบบยืดหยุ่น ป้องกันปัญหาเว้นวรรคหรือตัวเล็กตัวใหญ่
             sub_criteria_list = [
                 s for s in all_statements 
                 if str(s.get('sub_id')).strip().lower() == str(target_sub_id).strip().lower()
             ]
 
-        # 🚨 กรณีหา ID ไม่เจอ (เช่น เคส 1.3 ที่เป็นปัญหา)
         if not sub_criteria_list:
-            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric (ไฟล์มีแค่: {', '.join([s.get('sub_id') for s in all_statements])})"
+            error_msg = f"ไม่พบรหัสเกณฑ์ '{target_sub_id}' ในไฟล์ Rubric"
             self.logger.error(f"❌ {error_msg}")
-            
-            # คืนค่าโครงสร้างผลลัพธ์แบบ FAILED เพื่อให้ Router/Frontend แสดงผลได้ ไม่ค้างที่ 404
-            return {
-                "record_id": record_id,
-                "status": "FAILED",
-                "error_message": error_msg,
-                "summary": {
-                    "score": 0.0, 
-                    "level": "L0",
-                    "total_weighted_score": 0.0,
-                    "max_weight": 0.0
-                },
-                "sub_criteria_results": [],
-                "run_time_seconds": round(time.time() - start_ts, 2),
-                "timestamp": datetime.now().isoformat()
-            }
+            return self._create_failed_result(record_id, error_msg, start_ts)
 
-        # Reset states สำหรับการรันใหม่
-        self.logger.info(f"🎯 Target Assessment for: {target_sub_id}")
+        self.logger.info(f"🎯 Target Assessment: {target_sub_id} | Record ID: {record_id}")
         self.raw_llm_results = []
         self.final_subcriteria_results = []
 
-        # โหลด evidence map เก่าถ้ามี (Resumption Logic)
+        # ============================== 2. ระบบ Resumption (โหลดข้อมูลเดิม) ==============================
+        self.evidence_map = {}
         if os.path.exists(self.evidence_map_path):
             try:
-                loaded = self._load_evidence_map()
-                self.evidence_map = loaded if loaded else {}
-                if self.evidence_map:
-                    self.logger.info(f"Resumed from existing evidence map: {len(self.evidence_map)} keys")
+                loaded_data = self._load_evidence_map()
+                # โหลดข้อมูลเฉพาะที่ตรงกับ record_id ปัจจุบัน (เพื่อความปลอดภัย)
+                if isinstance(loaded_data, dict) and loaded_data.get("record_id") == record_id:
+                    self.evidence_map = loaded_data.get("evidence_map", {})
+                    self.logger.info(f"🔄 Resumed Evidence Map: {len(self.evidence_map)} keys")
             except Exception as e:
-                self.logger.warning(f"Could not load existing evidence map: {e}")
-                self.evidence_map = {}
-        else:
-            self.evidence_map = {}
+                self.logger.warning(f"⚠️ Could not resume evidence map: {e}")
 
-        # --------------------- กำหนด Max Workers ---------------------
+        # ============================== 3. ขั้นตอนการประเมิน (Execution) ==============================
         max_workers = globals().get('MAX_PARALLEL_WORKERS', 4)
-        if not isinstance(max_workers, int) or max_workers <= 0:
-            max_workers = 4
-            self.logger.warning(f"Invalid MAX_PARALLEL_WORKERS in config → using safe default: {max_workers}")
-        self.logger.info(f"Using max_workers = {max_workers}")
+        run_parallel = (str(target_sub_id).lower() == "all") and not sequential
 
-        run_parallel = (target_sub_id.lower() == "all") and not sequential
-
-        # ============================== 2. Run Assessment ==============================
         if run_parallel:
-            self.logger.info(f"Starting Parallel Assessment with {max_workers} processes")
+            # --- โหมดรันขนาน (Parallel) ---
+            self.logger.info(f"🚀 Starting Parallel Assessment (Workers: {max_workers})")
             worker_args = [(
-                sub_data,
-                self.config.enabler,
-                self.config.target_level,
-                self.config.mock_mode,
-                self.evidence_map_path,
-                self.config.model_name,
-                self.config.temperature,
+                sub_data, self.config.enabler, self.config.target_level, self.config.mock_mode,
+                self.evidence_map_path, self.config.model_name, self.config.temperature,
                 getattr(self.config, 'MIN_RETRY_SCORE', 0.50),
                 getattr(self.config, 'MAX_RETRIEVAL_ATTEMPTS', 3),
                 document_map or self.document_map,
-                self.ActionPlanActions,  # <--- เพิ่มตัวนี้เป็นตัวที่ 11
-                self.config.year,    # [ADDED] ตัวที่ 12
-                self.config.tenant   # [ADDED] ตัวที่ 13
+                self.ActionPlanActions, self.config.year, self.config.tenant
             ) for sub_data in sub_criteria_list]
 
             try:
@@ -2954,88 +2991,56 @@ class SEAMPDCAEngine:
                 self.logger.critical(f"Multiprocessing failed: {e}")
                 raise
 
+            # รวมผลลัพธ์จาก Worker
             for result_tuple in results_list:
-                if not isinstance(result_tuple, tuple) or len(result_tuple) != 2:
-                    continue
-                sub_result, temp_map_from_worker = result_tuple
+                if not (isinstance(result_tuple, tuple) and len(result_tuple) == 2): continue
+                sub_result, temp_map = result_tuple
 
-                if isinstance(temp_map_from_worker, dict):
-                    for level_key, evidence_list in temp_map_from_worker.items():
-                        for ev in evidence_list:
-                            # ตรวจสอบว่ามีเลขหน้าหรือไม่ ถ้าไม่มีให้ดึงจาก metadata
-                            if "page" not in ev:
-                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
-                                
-                        current_list = self.evidence_map.setdefault(level_key, [])
-                        current_list.extend(evidence_list)
-
-                raw_refs = sub_result.get("raw_results_ref", [])
-                self.raw_llm_results.extend(raw_refs if isinstance(raw_refs, list) else [])
-                self.final_subcriteria_results.append(sub_result)
-
-        else:
-            # --------------------- SEQUENTIAL MODE ---------------------
-            mode_desc = target_sub_id if target_sub_id != "all" else "All Sub-Criteria"
-            self.logger.info(f"Starting Sequential Assessment: {mode_desc}")
-
-            local_vsm = vectorstore_manager or (
-                load_all_vectorstores(
-                    doc_types=[self.doc_type],
-                    enabler_filter=self.config.enabler,
-                    tenant=self.config.tenant,
-                    year=self.config.year,
-                ) if self.config.mock_mode == "none" else None
-            )
-            self.vectorstore_manager = local_vsm
-
-            if self.vectorstore_manager:
-                self.vectorstore_manager.logger = self.logger
-                self.logger.info("Assigned Engine logger to VectorStoreManager")
-
-            for sub_criteria in sub_criteria_list:
-                sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria)
-                for level_key, evidence_list in final_temp_map.items():
-                    resolved_list = self._resolve_evidence_filenames(evidence_list)
-                    self.evidence_map[level_key] = resolved_list
-                    
-                # เพิ่ม Log เพื่อตรวจสอบข้อมูลที่ได้จาก Worker
-                if final_temp_map:
-                    found_count = sum(len(v) for v in final_temp_map.values())
-                    self.logger.info(f"🔍 Found {found_count} evidence items for {sub_criteria.get('sub_id')}")
-                    
-                    for level_key, evidence_list in final_temp_map.items():
-                        # ตรวจสอบเลขหน้า (Page)
-                        for ev in evidence_list:
-                            if "page" not in ev:
-                                ev["page"] = ev.get("metadata", {}).get("page", "N/A")
-                        
-                        # ตรวจสอบว่ามีข้อมูลซ้ำหรือไม่ก่อน extend
-                        current_list = self.evidence_map.setdefault(level_key, [])
-                        current_list.extend(evidence_list)
-                else:
-                    # หากจุดนี้ทำงาน แสดงว่า Worker ไม่ได้ส่ง Map กลับมาเลย
-                    self.logger.warning(f"⚠️ No evidence data extracted for {sub_criteria.get('sub_id')}")
+                if isinstance(temp_map, dict):
+                    for level_key, evidence_list in temp_map.items():
+                        # ✨ Normalize Metadata ทันทีหลังได้รับข้อมูลจาก Worker
+                        self._normalize_evidence_metadata(evidence_list)
+                        self.evidence_map.setdefault(level_key, []).extend(evidence_list)
 
                 self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
                 self.final_subcriteria_results.append(sub_result)
 
-        # ============================== 3. บันทึก Evidence Map ==============================
-        self.logger.info(f"DEBUG: Evidence Map current keys: {list(self.evidence_map.keys())}")
-        if self.evidence_map and len(self.evidence_map) > 0:
+        else:
+            # --- โหมดรันทีละขั้นตอน (Sequential) ---
+            self.logger.info(f"🧵 Starting Sequential Assessment: {target_sub_id}")
+            self.vectorstore_manager = vectorstore_manager or self._init_local_vsm()
+
+            for sub_criteria in sub_criteria_list:
+                sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria)
+                
+                if final_temp_map:
+                    for level_key, evidence_list in final_temp_map.items():
+                        # Resolve ชื่อไฟล์จาก UUID และ Normalize Metadata
+                        resolved_list = self._resolve_evidence_filenames(evidence_list)
+                        self._normalize_evidence_metadata(resolved_list)
+                        self.evidence_map.setdefault(level_key, []).extend(resolved_list)
+
+                self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
+                self.final_subcriteria_results.append(sub_result)
+
+        # ============================== 4. บันทึกผลและสรุป (Export & Save) ==============================
+        if self.evidence_map:
             try:
-                self._save_evidence_map(map_to_save=self.evidence_map)
-                total_items = sum(len(v) for v in self.evidence_map.values() if isinstance(v, list))
-                self.logger.info(f"✅ Evidence Map SAVED | Items: {total_items} | Path: {self.evidence_map_path}")
+                # บันทึกโครงสร้างใหม่ที่มี record_id กำกับ
+                save_payload = {
+                    "record_id": record_id,
+                    "evidence_map": self.evidence_map,
+                    "timestamp": datetime.now().isoformat()
+                }
+                self._save_evidence_map(map_to_save=save_payload)
+                self.logger.info(f"✅ Evidence Map Saved (ID: {record_id})")
             except Exception as e:
                 self.logger.error(f"❌ Failed to save evidence map: {e}")
-        else:
-            self.logger.warning("⚠️ Evidence Map is EMPTY. Skipping save process.")
 
-        # ============================== 4. สรุปผล & Export ==============================
         self._calculate_overall_stats(target_sub_id)
 
         final_results = {
-            "record_id": record_id, # [ADDED] ใส่ ID ลงในข้อมูลเพื่อใช้อ้างอิงภายหลัง
+            "record_id": record_id,
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "raw_llm_results": self.raw_llm_results,
@@ -3044,17 +3049,42 @@ class SEAMPDCAEngine:
         }
 
         if export:
-            # ส่ง record_id ผ่าน kwargs เพื่อให้ฟังก์ชัน export เอาไปตั้งชื่อไฟล์
             export_path = self._export_results(
                 results=final_results,
-                sub_criteria_id=target_sub_id if target_sub_id != "all" else "ALL",
-                record_id=record_id # <--- ส่ง record_id ผ่าน kwargs
+                sub_criteria_id=target_sub_id,
+                record_id=record_id
             )
             final_results["export_path_used"] = export_path
             final_results["evidence_map_snapshot"] = deepcopy(self.evidence_map)
 
         return final_results
-    
+
+    # ------------------------------------------------------------------
+    # Helper Methods สำหรับจัดระเบียบข้อมูล
+    # ------------------------------------------------------------------
+    def _normalize_evidence_metadata(self, evidence_list: List[Dict]):
+        """ซ่อมแซมและจัดระเบียบ Metadata (เลขหน้า/ชื่อไฟล์) ให้พร้อมใช้งานทันที"""
+        for ev in evidence_list:
+            meta = ev.get("metadata", {})
+            # ลำดับการหาเลขหน้า: 1. page (root) -> 2. page_label -> 3. page (meta) -> 4. N/A
+            if "page" not in ev or str(ev["page"]).lower() == "n/a":
+                ev["page"] = meta.get("page_label") or meta.get("page") or meta.get("page_number") or "N/A"
+            
+            # ลำดับการหาชื่อไฟล์: 1. source_filename -> 2. source -> 3. Unknown
+            if "source_filename" not in ev:
+                ev["source_filename"] = meta.get("source_filename") or ev.get("source") or "Unknown"
+
+    def _create_failed_result(self, record_id: str, message: str, start_ts: float) -> Dict:
+        """สร้าง Output กรณีเกิดข้อผิดพลาด"""
+        return {
+            "record_id": record_id,
+            "status": "FAILED",
+            "error_message": message,
+            "summary": {"score": 0.0, "level": "L0", "total_weighted_score": 0.0, "max_weight": 0.0},
+            "sub_criteria_results": [],
+            "run_time_seconds": round(time.time() - start_ts, 2),
+            "timestamp": datetime.now().isoformat()
+        }
     
     def _run_sub_criteria_assessment_worker(
         self,
@@ -3267,9 +3297,10 @@ class SEAMPDCAEngine:
         attempt: int = 1
     ) -> Dict[str, Any]:
         """
-        [REVISED v21.3 - STABLE TAGGING] 
-        - แก้ไขปัญหา Tagging ค้างเป็น 'Other' โดยการ Sync ทั้ง Root และ Metadata
-        - รองรับโครงสร้าง JSON Nested (L1-L5) และ Specific Rules ราย Level
+        [REVISED v25.3 - STABLE TAGGING]
+        - แก้ไข Tagging failed โดยการทำ Robust Object Inspection
+        - บูรณาการ 4 เสาหลัก (Independence, Coverage, Traceability, Consistency)
+        - เชื่อมต่อ calculate_audit_confidence และส่งเป็น Hint ให้ LLM
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
@@ -3352,10 +3383,10 @@ class SEAMPDCAEngine:
         pages_count = {}
 
         for doc in sorted_evidences:
-            page_num = doc.get('metadata', {}).get('page', 1)
+            page_num = doc.get('metadata', {}).get('page', 1) if isinstance(doc, dict) else getattr(doc, 'metadata', {}).get('page', 1)
             score = get_actual_score(doc)
             
-            if score < MIN_KEEP_SC and not doc.get('is_baseline', False):
+            if score < MIN_KEEP_SC and not (isinstance(doc, dict) and doc.get('is_baseline', False)):
                 continue
 
             if pages_count.get(page_num, 0) < 3 or score > 0.85:
@@ -3369,9 +3400,48 @@ class SEAMPDCAEngine:
 
         top_evidences = diverse_filtered
 
-        # ==================== 7. Context Building & 🔥 TAG SYNC (CRITICAL FIX) ====================
+        # ==================== 7. Context Building & 🔥 TAG SYNC (STABLE VERSION) ====================
         previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
         flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
+
+        processed_lc_docs = []
+
+        # [REVISED] Robust Inspection for Tagging
+        for doc in top_evidences:
+            if doc is None: continue
+            try:
+                # 1. Normalize Data Structure
+                if isinstance(doc, dict):
+                    text = doc.get("text") or doc.get("page_content", "")
+                    meta = doc.get("metadata")
+                    if meta is None: doc["metadata"] = meta = {} # Auto-fix missing meta
+                else:
+                    text = getattr(doc, "page_content", "")
+                    meta = getattr(doc, "metadata", None)
+                    if meta is None: continue # Skip objects without metadata
+                
+                # 2. Re-classify PDCA for consistency
+                tag = classify_by_keyword(
+                    text=text,
+                    sub_id=sub_id,
+                    level=level,
+                    contextual_rules_map=self.contextual_rules_map
+                )
+                final_tag = tag if tag in {"P", "D", "C", "A"} else "Other"
+                
+                # 3. Sync PDCA Tag back to Object/Dict
+                if isinstance(doc, dict):
+                    doc["pdca_tag"] = final_tag
+                    doc["metadata"]["pdca_tag"] = final_tag
+                else:
+                    doc.metadata["pdca_tag"] = final_tag
+                
+                # 4. Prepare for Confidence Logic
+                processed_lc_docs.append(LcDocument(page_content=text, metadata=meta))
+
+            except Exception as e:
+                # Log detailed error instead of just 'metadata'
+                self.logger.debug(f"⚠️ Tagging skipped for a chunk: {str(e)}")
 
         plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = self._get_pdca_blocks_from_evidences(
             top_evidences + flat_previous,
@@ -3381,25 +3451,6 @@ class SEAMPDCAEngine:
             contextual_rules_map=self.contextual_rules_map
         )
 
-        # 🎯 SYNC PDCA TAG: แก้ไขจุดนี้เพื่อให้ JSON และ UI แสดงผลตรงกัน
-        for doc in top_evidences:
-            try:
-                tag = classify_by_keyword(
-                    text=doc.get("text", ""),
-                    sub_id=sub_id,
-                    level=level,
-                    contextual_rules_map=self.contextual_rules_map
-                )
-                final_tag = tag if tag in {"P", "D", "C", "A"} else "Other"
-                
-                # เขียนทับทั้ง Root Level และ Metadata เพื่อความแน่นอน
-                doc["pdca_tag"] = final_tag
-                if "metadata" not in doc: doc["metadata"] = {}
-                doc["metadata"]["pdca_tag"] = final_tag
-            except Exception as e:
-                doc["pdca_tag"] = "Other"
-                self.logger.warning(f"Tagging failed for doc: {e}")
-
         channels = build_multichannel_context_for_level(level, top_evidences, flat_previous)
         final_llm_context = "\n\n".join(filter(None, [
             f"--- DIRECT EVIDENCE (L{level} | PDCA Structured)---\n{plan_blocks}\n{do_blocks}\n{check_blocks}\n{act_blocks}\n{other_blocks}",
@@ -3407,8 +3458,9 @@ class SEAMPDCAEngine:
             f"--- BASELINE SUMMARY ---\n{channels.get('baseline_summary')}"
         ]))
 
-        # ==================== 8. Evidence Strength & Rule Logic ====================
-        available_tags = {tag for tag, block in zip(['P', 'D', 'C', 'A'], [plan_blocks, do_blocks, check_blocks, act_blocks]) if block.strip()}
+        # ==================== 8. Evidence Strength & 🛡️ Confidence Guardrail ====================
+        confidence_result = self.calculate_audit_confidence(processed_lc_docs)
+        
         evi_cap_data = self._calculate_evidence_strength_cap(top_evidences, level, highest_rerank_score)
         max_evi_str_for_prompt = evi_cap_data['max_evi_str_for_prompt']
 
@@ -3429,7 +3481,8 @@ class SEAMPDCAEngine:
             "max_rerank_score": highest_rerank_score,
             "max_evidence_strength": max_evi_str_for_prompt,
             "llm_executor": self.llm,
-            "ai_confidence": "HIGH" if len(available_tags) >= 2 else "MEDIUM",
+            "ai_confidence": confidence_result["level"],
+            "confidence_reason": confidence_result["reason"],
             "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2),
             "planning_keywords": plan_keywords if level <= 2 else "N/A"
         }
@@ -3457,6 +3510,13 @@ class SEAMPDCAEngine:
             "level": level,
             "is_passed": llm_result.get('is_passed', False),
             "score": llm_result.get('score', 0.0),
+            "audit_confidence": {
+                "level": confidence_result["level"],
+                "reason": confidence_result["reason"],
+                "source_count": confidence_result["source_count"],
+                "traceability_score": confidence_result.get("traceability_score", 0),
+                "consistency_check": llm_result.get("consistency_check", True)
+            },
             "pdca_breakdown": llm_result.get('pdca_breakdown', {'P': 0, 'D': 0, 'C': 0, 'A': 0}),
             "reason": llm_result.get('reason', "No reason provided"),
             "evidence_strength": max_evi_str_for_prompt if llm_result.get('is_passed') else 0.0,
