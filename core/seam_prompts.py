@@ -121,90 +121,65 @@ USER_LOW_LEVEL_PROMPT = PromptTemplate(
 )
 
 # =================================================================
-# 4. [REVISED] ACTION PLAN PROMPT (ROADMAP TO LEVEL 5)
+# 1. SYSTEM_ACTION_PLAN_PROMPT (Expert Logic)
 # =================================================================
 
-# SYSTEM PROMPT: เน้นการสร้าง Roadmap และการปิดวงจร PDCA
 SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
-คุณคือผู้เชี่ยวชาญด้าน State Enterprise Assessment Model (SE-AM) 
-และที่ปรึกษาอาวุโสด้านการพัฒนาระบบการจัดการความรู้ (KM) มาตรฐาน ISO 30401
+คุณคือที่ปรึกษาอาวุโสด้าน SE-AM (State Enterprise Assessment Model) และการพัฒนาองค์กรระดับมืออาชีพ
+หน้าที่ของคุณคือสร้าง "Strategic Roadmap" เพื่อยกระดับ Enabler: {enabler} โดยมีกฎเหล็กดังนี้:
 
-หน้าที่ของคุณคือ:
-1. วิเคราะห์ช่องว่าง (Gap) และสร้าง "Strategic Roadmap" เพื่อเลื่อนระดับ Maturity จนถึง Level 5
-2. แบ่งแผนงานเป็นลำดับขั้น (Phases) ตามระดับที่ยังไม่บรรลุ โดยเน้นการปิดวงจร PDCA (Do-Check-Act)
-3. ใช้ภาษาที่เป็นทางการ กระชับ และมุ่งเน้นผลลัพธ์ (Action-Oriented)
+1. [PROGRESSIVE LOGIC]: ในการขยับสู่ระดับสูง (L4-L5) คุณต้องตรวจสอบรากฐานใน Level 2 (เช่น คณะทำงาน, นโยบายหลัก) เสมอ หากรากฐานยังไม่แน่น แผน Phase 1 ต้องระบุการซ่อมแซมรากฐานก่อน
+2. [PDCA INTEGRATION]: 
+   - Phase 1 (Foundation): เน้นกระบวนการ นโยบาย และบทบาทหน้าที่ (Plan-Do)
+   - Phase 2 (Integration): เน้นการเชื่อมโยงยุทธศาสตร์และระบบการวัดผล (Check)
+   - Phase 3 (Innovation): เน้นนวัตกรรมและการปรับปรุงเชิงระบบสู่ความเป็นเลิศ (Act)
+3. [SPECIFICITY]: ทุก Action ต้องเจาะจงกับหัวข้อ "{sub_criteria_name}" ของ {enabler} เท่านั้น ไม่ใช้คำพูดกว้างๆ
+4. [STRICT JSON]: ตอบเป็น JSON Array เท่านั้น ห้ามมีเนื้อหาเกริ่นนำหรือปิดท้าย
 
-### [STRATEGIC ROADMAP LOGIC]
-• สู่ Level 3: เน้น "การปฏิบัติงาน (Do)" - สร้างรายงานกิจกรรมและหลักฐานการทำงานจริง
-• สู่ Level 4: เน้น "การวัดผล (Check)" - สร้าง KPI และประเมินประสิทธิภาพทรัพยากร
-• สู่ Level 5: เน้น "การปรับปรุง/ยั่งยืน (Act)" - สร้างนวัตกรรมและการปรับปรุงเชิงระบบจากผลประเมิน
-
-### [STRICT DATA TYPE RULES]
-- "failed_level" และ "Step": ต้องเป็น Integer เท่านั้น
-- JSON Only: ห้ามมีข้อความเกริ่นนำหรือปิดท้าย
+### [TARGET LOGIC PER LEVEL]
+- Level 3: เน้น "การปฏิบัติงาน (Do)" - สร้างรายงานกิจกรรมและหลักฐานการทำงานจริง
+- Level 4: เน้น "การวัดผล (Check)" - สร้าง KPI และประเมินประสิทธิภาพ
+- Level 5: เน้น "การปรับปรุง/ยั่งยืน (Act)" - สร้างนวัตกรรมและการปรับปรุงจากผลประเมิน
 """
 
-# HUMAN PROMPT: บังคับการสร้างหลาย Phase และระบุหลักฐาน (Verification Outcome)
 # =================================================================
-# 4. [REVISED] ACTION_PLAN_TEMPLATE (FULL CODE)
+# 2. ACTION_PLAN_TEMPLATE (Human Context & Template)
 # =================================================================
 
 ACTION_PLAN_TEMPLATE: Final[str] = """
-### [ข้อมูลวิเคราะห์]
-- รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
-- ระดับเป้าหมายสูงสุด: Level {target_level}
-- จุดเน้น: {advice_focus}
+### [ข้อมูลวิเคราะห์เชิงลึก]
+- Enabler: {enabler} | รหัสเกณฑ์: {sub_id} | ชื่อเกณฑ์: {sub_criteria_name}
+- เป้าหมายสูงสุด: Level {target_level} 
+- จุดเน้นกลยุทธ์ (Advice Focus): {advice_focus}
 
-### [รายการช่องว่างที่ตรวจพบ]
+### [รายการช่องว่าง (Gaps) ที่ตรวจพบจากระบบประเมิน]
 {recommendation_statements_list}
 
-### [กฎเหล็กที่ต้องทำตามเป๊ะ ๆ]
-1. จงสร้างแผนงานแบบ Roadmap ต่อเนื่อง โดยแบ่งเป็น **{max_phases} Phase**
-2. แต่ละ Phase ต้องระบุเป้าหมายการเลื่อนระดับที่ชัดเจน (เช่น Phase 1 สู่ L3, Phase 2 สู่ L4-L5)
-3. **ใช้ Key ตัวพิมพ์เล็กทั้งหมดตามตัวอย่าง** (สำคัญมากต่อการประมวลผล)
-4. ใน "verification_outcome" ให้ระบุ "ชื่อไฟล์หลักฐานที่ควรมี" ให้ชัดเจน
+### [คำสั่งการสร้างแผนงาน]
+1. จงสร้าง Roadmap จำนวน {max_phases} Phase โดยใช้ภาษาไทยที่ทางการ
+2. ระบุขั้นตอน (steps) ไม่เกิน {max_steps} ขั้นต่อ Action และจำกัดคำต่อขั้นไม่เกิน {max_words_per_step} คำ
+3. ใน "verification_outcome" ให้ระบุชื่อไฟล์หลักฐานที่สอดคล้องกับงานรัฐวิสาหกิจ (เช่น รายงานผล KPI_ปี67.pdf)
+4. **สำคัญมาก**: ใช้ Key ตัวพิมพ์เล็ก (snake_case) ตามโครงสร้างตัวอย่างด้านล่างเป๊ะๆ
 
-### [ตัวอย่างโครงสร้าง JSON ที่ถูกต้อง]
+### [โครงสร้าง JSON ตัวอย่าง]
 [
   {{
-    "phase": "Phase 1: การวางรากฐานและการปฏิบัติงาน (Target Level 3)",
-    "goal": "เพื่อปิดช่องว่างด้านการปฏิบัติงานและรวบรวมหลักฐานสรุปผลให้ครบถ้วน",
+    "phase": "Phase 1: เสริมรากฐานและระบบปฏิบัติการ {sub_criteria_name} (Target L2-L3)",
+    "goal": "เพื่อปิดช่องว่างพื้นฐานและสร้างกลไกการขับเคลื่อน {sub_criteria_name} ให้เข้มแข็ง",
     "actions": [
       {{
         "statement_id": "{sub_id}",
         "failed_level": 3,
-        "recommendation": "จัดทำรายงานสรุปผลการดำเนินงาน KM ประจำไตรมาส",
-        "target_evidence_type": "Activity Report",
-        "key_metric": "ความครบถ้วนของรายงาน 4 ไตรมาส",
+        "recommendation": "คำแนะนำการปิด Gap ที่เจาะจง",
+        "target_evidence_type": "ประเภทของหลักฐาน (เช่น Report, Policy, Minutes)",
+        "key_metric": "ตัวชี้วัดความสำเร็จ",
         "steps": [
           {{
             "step": 1,
-            "description": "รวบรวมข้อมูลและภาพถ่ายกิจกรรมจากทุกสายงาน",
-            "responsible": "คณะทำงาน KM",
-            "tools_templates": "Template รายงาน KM",
-            "verification_outcome": "รายงานสรุปกิจกรรม_KM_67.pdf"
-          }}
-        ]
-      }}
-    ]
-  }},
-  {{
-    "phase": "Phase 2: การวัดผลและการปรับปรุงสู่ความเป็นเลิศ (Target Level 4-5)",
-    "goal": "เพื่อสร้างระบบประเมินประสิทธิภาพและนวัตกรรมที่เป็นแบบอย่างได้",
-    "actions": [
-      {{
-        "statement_id": "{sub_id}",
-        "failed_level": 5,
-        "recommendation": "พัฒนาระบบ Dashboard ติดตามผล KM แบบ Real-time",
-        "target_evidence_type": "Digital Dashboard",
-        "key_metric": "ร้อยละความพึงพอใจของผู้ใช้งาน > 85%",
-        "steps": [
-          {{
-            "step": 1,
-            "description": "วิเคราะห์ข้อมูลจากระบบ IT และประมวลผลผ่าน BI Tool",
-            "responsible": "แผนก IT / คณะทำงาน KM",
-            "tools_templates": "Power BI / Tableau",
-            "verification_outcome": "KM_Performance_Dashboard.png"
+            "description": "ขั้นตอนปฏิบัติงาน",
+            "responsible": "คณะทำงาน {enabler} / หน่วยงานที่เกี่ยวข้อง",
+            "tools_templates": "ชื่อเครื่องมือหรือเทมเพลต",
+            "verification_outcome": "ชื่อไฟล์หลักฐานที่ต้องจัดทำ.pdf"
           }}
         ]
       }}
@@ -212,12 +187,16 @@ ACTION_PLAN_TEMPLATE: Final[str] = """
   }}
 ]
 
-เริ่มตอบ JSON Array ทันที (ภาษา {language}):
+เริ่มวิเคราะห์และตอบเป็น JSON สำหรับ {enabler} (ภาษา {language}) ทันที:
 """
 
-# FINAL PROMPT DEFINITION
+# =================================================================
+# 3. PROMPT CONFIGURATION
+# =================================================================
+
 ACTION_PLAN_PROMPT = PromptTemplate(
     input_variables=[
+        "enabler",
         "sub_id",
         "sub_criteria_name",
         "target_level",

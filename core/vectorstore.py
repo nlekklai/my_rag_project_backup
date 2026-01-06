@@ -1442,7 +1442,7 @@ def get_vectorstore_manager(
     return VectorStoreManager(
         # doc_type=doc_type,
         tenant=tenant,
-        # year=year or DEFAULT_YEAR,
+        year=year or DEFAULT_YEAR,
         # enabler=enabler
     )
 

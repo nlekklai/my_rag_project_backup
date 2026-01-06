@@ -28,7 +28,8 @@ from config.global_vars import (
     DEFAULT_DOC_TYPES,  # เช่น ["document"]
     RETRIEVAL_TOP_K,      # 🎯 ดึงจาก .env (Mac: 150, Server: 500)
     ANALYSIS_FINAL_K,     # 🎯 ดึงจาก .env (Mac: 12, Server: 30)
-    QA_FINAL_K
+    QA_FINAL_K,
+    DEFAULT_YEAR
 )
 from models.llm import create_llm_instance
 from routers.auth_router import UserMe, get_current_user
@@ -118,8 +119,16 @@ async def query_llm(
     # 🎯 0. Setup พื้นฐาน
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
-    effective_year = year or str(current_user.year)
-    
+   
+    # แก้ไข Logic การเลือกปีใหม่ (ลบ current_user.year ออก)
+    if year and year.strip() and year != "undefined":
+        effective_year = year
+    else:
+        # หากไม่มีการส่งมาจาก UI ให้ใช้ค่ากลางของระบบทันที
+        effective_year = str(DEFAULT_YEAR) 
+
+    logger.info(f"📅 [System] Active Year: {effective_year} (Override by UI: {year is not None})")
+        
     logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
     # 🎯 1. ตรวจสอบประวัติและเจตนา (Intent Detection)
@@ -186,7 +195,7 @@ async def query_llm(
     is_evidence_search = any(dt.lower() == "evidence" for dt in used_doc_types)
     used_enabler = enabler if enabler else (DEFAULT_ENABLER if is_evidence_search else None)
 
-    vsm = get_vectorstore_manager(tenant=current_user.tenant)
+    vsm = get_vectorstore_manager(tenant=current_user.tenant, year=int(effective_year))
     stable_doc_ids = {str(idx).strip() for idx in doc_ids if str(idx).strip()} if doc_ids else None
 
     all_chunks = []
@@ -379,7 +388,18 @@ async def analysis_llm(
 ):
     start_time = time.time()
     conv_id = conversation_id or str(uuid.uuid4())
-    effective_year = year or str(current_user.year)
+
+    # แก้ไข Logic การเลือกปีใหม่ (ลบ current_user.year ออก)
+    if year and year.strip() and year != "undefined":
+        effective_year = year
+    else:
+        # หากไม่มีการส่งมาจาก UI ให้ใช้ค่ากลางของระบบทันที
+        effective_year = str(DEFAULT_YEAR) 
+
+    logger.info(f"📅 [System] Active Year: {effective_year} (Override by UI: {year is not None})")
+        
+    logger.info(f"📅 [Query] User Selected: {year} | Final Decision: {effective_year}")
+    logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
 
     # 🛠️ 1. Data Type Normalization
     stable_doc_ids = []
@@ -477,7 +497,7 @@ async def analysis_llm(
     # 🎯 5. PDCA Assessment Engine (จัดกลุ่มข้อมูลเข้า P-D-C-A)
     engine_config = AssessmentConfig(
         tenant=current_user.tenant,
-        year=int(effective_year) if effective_year.isdigit() else current_user.year,
+        year=int(effective_year) if effective_year.isdigit() else DEFAULT_YEAR,
         enabler=used_enabler,
         target_level=5
     )
