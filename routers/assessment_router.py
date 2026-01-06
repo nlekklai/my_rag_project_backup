@@ -360,17 +360,17 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "sub_criteria": processed_sub_criteria
     }
 
+
 def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     doc = Document()
 
     # --- ตั้งค่าหน้ากระดาษ ---
     section = doc.sections[0]
-    section.top_margin = Inches(0.8)
-    section.bottom_margin = Inches(0.8)
-    section.left_margin = Inches(1.0)
-    section.right_margin = Inches(1.0)
+    section.top_margin = Inches(0.5)
+    section.bottom_margin = Inches(0.5)
+    section.left_margin = Inches(0.8)
+    section.right_margin = Inches(0.8)
 
-    # --- ฟังก์ชันช่วยตั้งฟอนต์ภาษาไทย ---
     def set_thai_font(run, name='TH Sarabun New', size=14, bold=False, color=None):
         run.font.name = name
         run._element.rPr.rFonts.set(qn('w:eastAsia'), name)
@@ -379,100 +379,101 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         if color:
             run.font.color.rgb = color
 
-    # --- หัวรายงานหลัก ---
-    # ตรวจสอบสไตล์ก่อนเพิ่ม
+    # --- 1. หน้าปก / หัวรายงาน ---
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title_p.add_run(f"{ui_data.get('enabler', 'KM')} ASSESSMENT REPORT")
+    run = title_p.add_run(f"{ui_data.get('enabler', 'KM')} ASSESSMENT REPORT\n")
     set_thai_font(run, size=24, bold=True, color=RGBColor(30, 58, 138))
-
-    # --- สรุปภาพรวม (Table) ---
+    
+    # สรุปภาพรวม
     summary_table = doc.add_table(rows=0, cols=2)
-    summary_table.style = 'Table Grid'
+    summary_table.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     summary_data = [
         ("Record ID", ui_data.get('record_id', '-')),
         ("หน่วยงาน", ui_data.get('tenant', '-')),
         ("ปีงบประมาณ", ui_data.get('year', '-')),
-        ("ระดับความสามารถโดยรวม", ui_data.get('level', '-')),
+        ("ระดับความสามารถโดยรวม", f"L{ui_data.get('level', '0')}"),
         ("คะแนนรวม / คะแนนเต็ม", f"{ui_data.get('score', 0)} / {ui_data.get('full_score', 40)}"),
-        ("ความครบถ้วนของเกณฑ์", f"{ui_data.get('metrics', {}).get('completion_rate', 0):.1f}%")
+        ("ความครบถ้วน (Completion)", f"{ui_data.get('metrics', {}).get('completion_rate', 0):.1f}%")
     ]
 
     for label, value in summary_data:
         row = summary_table.add_row().cells
-        row[0].text = label
-        row[1].text = str(value)
-        set_thai_font(row[0].paragraphs[0].runs[0], size=14, bold=True)
-        set_thai_font(row[1].paragraphs[0].runs[0], size=14)
+        set_thai_font(row[0].paragraphs[0].add_run(label), size=14, bold=True)
+        set_thai_font(row[1].paragraphs[0].add_run(str(value)), size=14)
 
     doc.add_page_break()
 
+    # --- 2. รายละเอียดรายเกณฑ์ย่อย ---
     sub_criteria = ui_data.get('sub_criteria', [])
-
-    # --- หน้าสรุปภาพรวมทุกเกณฑ์ ---
-    if len(sub_criteria) > 0:
-        p = doc.add_paragraph()
-        run = p.add_run("สรุปผลการประเมินโดยรวม (ทุกเกณฑ์ย่อย)")
+    for item in sub_criteria:
+        # หัวข้อเกณฑ์
+        h = doc.add_paragraph()
+        run = h.add_run(f"เกณฑ์ย่อย {item.get('code', '')}: {item.get('name', '')}")
         set_thai_font(run, size=18, bold=True, color=RGBColor(30, 58, 138))
 
-        overall_table = doc.add_table(rows=1, cols=4) # ตัดช่อง Score ออกเพราะข้อมูลรายข้อไม่มี score แยก
-        overall_table.style = 'Table Grid'
-        hdr = overall_table.rows[0].cells
-        headers = ['รหัสเกณฑ์', 'ชื่อเกณฑ์', 'ระดับปัจจุบัน', 'ศักยภาพ']
-        for cell, text in zip(hdr, headers):
-            cell.text = text
-            set_thai_font(cell.paragraphs[0].runs[0], size=12, bold=True)
+        # --- ส่วนที่เพิ่ม: Audit Confidence Metrics (เหมือนบน UI) ---
+        conf_table = doc.add_table(rows=1, cols=3)
+        conf_table.style = 'Table Grid'
+        cells = conf_table.rows[0].cells
+        
+        # กล่อง 1: Independence
+        p1 = cells[0].paragraphs[0]
+        p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_thai_font(p1.add_run("Independence"), size=10, bold=True)
+        p1.add_run(f"\n{item.get('audit_confidence', {}).get('source_count', 0)} Files").font.size = Pt(14)
+        
+        # กล่อง 2: Traceability
+        p2 = cells[1].paragraphs[0]
+        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_thai_font(p2.add_run("Traceability"), size=10, bold=True)
+        trace_val = int(item.get('audit_confidence', {}).get('traceability_score', 0) * 100)
+        p2.add_run(f"\n{trace_val}%").font.size = Pt(14)
+        
+        # กล่อง 3: Consistency
+        p3 = cells[2].paragraphs[0]
+        p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_thai_font(p3.add_run("Consistency"), size=10, bold=True)
+        consist_txt = "VERIFIED" if item.get('audit_confidence', {}).get('consistency_check') else "CONFLICT"
+        p3.add_run(f"\n{consist_txt}").font.size = Pt(14)
 
-        for item in sub_criteria:
-            row = overall_table.add_row().cells
-            row[0].text = item.get('code', '-')
-            row[1].text = item.get('name', '-')
-            row[2].text = item.get('level', '-')
-            row[3].text = item.get('potential_level', '-') if item.get('potential_level') != item.get('level') else "-"
-            # ตั้งฟอนต์ให้ทุุก Cell ในแถว
-            for c in row: set_thai_font(c.paragraphs[0].runs[0], size=12)
+        doc.add_paragraph() # เว้นบรรทัด
+
+        # สรุปผลของ AI (Strength & Gap)
+        # Strength
+        s_title = doc.add_paragraph()
+        set_thai_font(s_title.add_run("บทสรุปจุดแข็ง (AI Strength Summary):"), size=14, bold=True, color=RGBColor(22, 101, 52))
+        set_thai_font(doc.add_paragraph(item.get('summary_thai', '-')).runs[0], size=13)
+
+        # Gap
+        g_title = doc.add_paragraph()
+        set_thai_font(g_title.add_run("ข้อเสนอแนะเพื่อการปรับปรุง (Critical Gaps):"), size=14, bold=True, color=RGBColor(154, 52, 18))
+        set_thai_font(doc.add_paragraph(item.get('gap', 'ไม่พบข้อบกพร่องที่สำคัญ')).runs[0], size=13)
+
+        # Roadmap (ถ้ามี)
+        if item.get('roadmap'):
+            r_title = doc.add_paragraph()
+            set_thai_font(r_title.add_run("Roadmap การพัฒนาเชิงกลยุทธ์:"), size=14, bold=True, color=RGBColor(30, 58, 138))
+            
+            for phase in item['roadmap']:
+                p_text = f"ระยะ: {phase.get('phase', '')}"
+                phase_p = doc.add_paragraph(style='List Bullet')
+                set_thai_font(phase_p.add_run(p_text), size=13, bold=True)
+
+                for act in phase.get('actions', []):
+                    # Recommendation
+                    act_p = doc.add_paragraph(style='List Bullet 2')
+                    set_thai_font(act_p.add_run(f"เป้าหมาย L{act.get('level')}: {act.get('recommendation')}"), size=12, bold=True)
+                    
+                    # Steps
+                    for step in act.get('steps', []):
+                        step_p = doc.add_paragraph(style='List Bullet 3')
+                        set_thai_font(step_p.add_run(str(step)), size=11)
 
         doc.add_page_break()
 
-    # --- รายละเอียดแต่ละเกณฑ์ย่อย ---
-    for item in sub_criteria:
-        heading = doc.add_paragraph()
-        run = heading.add_run(f"{item.get('code', '')} {item.get('name', '')}")
-        set_thai_font(run, size=16, bold=True, color=RGBColor(30, 58, 138))
-
-        # ระดับ + Potential
-        level_text = f"ระดับปัจจุบัน: {item.get('level', '-')}"
-        if item.get('potential_level') != item.get('level'):
-            level_text += f" → {item.get('potential_level')} (มีศักยภาพสูงกว่า)"
-        
-        lp = doc.add_paragraph(level_text)
-        set_thai_font(lp.runs[0], size=14, bold=True)
-
-        # แผนการพัฒนา (Roadmap)
-        if item.get('roadmap'):
-            doc.add_paragraph().add_run("แผนการพัฒนาเชิงกลยุทธ์").bold = True
-            for phase in item['roadmap']:
-                phase_p = doc.add_paragraph()
-                run = phase_p.add_run(f"ระยะ: {phase.get('phase', 'แผนพัฒนา')}")
-                set_thai_font(run, size=14, bold=True)
-
-                for act in phase.get('actions', []):
-                    act_p = doc.add_paragraph(style='List Bullet')
-                    run = act_p.add_run(f"เป้าหมายเลเวล {act.get('level', '-')}: {act.get('recommendation', '')}")
-                    set_thai_font(run, size=13, bold=True)
-
-                    # ✅ แก้ไขตรงนี้: เนื่องจากตอนนี้ steps เป็น List ของ String แล้ว
-                    for step_text in act.get('steps', []):
-                        step_p = doc.add_paragraph(style='List Bullet 2')
-                        run = step_p.add_run(str(step_text))
-                        set_thai_font(run, size=12)
-
-        if item != sub_criteria[-1]:
-            doc.add_page_break()
-
     return doc
-
 # ------------------- API Endpoints -------------------
 @assessment_router.get("/status/{record_id}")
 async def get_assessment_status(record_id: str, current_user: UserMe = Depends(get_current_user)):
