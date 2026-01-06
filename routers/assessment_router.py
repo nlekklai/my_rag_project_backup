@@ -179,13 +179,12 @@ async def view_document(filename: str, page: Optional[str] = "1", current_user: 
     # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
     return FileResponse(file_path, media_type="application/pdf")
 
-
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    เวอร์ชันปรับปรุง (Stable UI Sync):
-    - แก้ไข PDCA Tag ให้ดึงจาก Root Priority (ที่แก้จาก Backend)
-    - ปรับปรุงการสกัด Roadmap และ Gap Analysis ให้แม่นยำขึ้น
-    - รองรับการแสดงผล Strength Summary (กล่องเขียว) และ Gap (กล่องส้ม)
+    [FULL STABLE VERSION] สำหรับส่งข้อมูลให้ React Frontend:
+    - เพิ่มการส่ง audit_confidence (Independence, Traceability, Consistency)
+    - ปรับปรุง PDCA Tag Priority และ Coverage Matrix
+    - สรุป Roadmap และ Gap Analysis สำหรับ UI
     """
     summary = raw_data.get("summary", {})
     sub_results = raw_data.get("sub_criteria_results", [])
@@ -209,7 +208,23 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         highest_pass = int(res.get("highest_full_level") or 0)
         raw_levels_list = res.get("raw_results_ref", [])
         
-        # --- 2. PDCA Matrix & Coverage ---
+        # --- 2. ดึง Audit Confidence (ค่าความมั่นใจสำหรับโชว์ 3 กล่อง) ---
+        # ดึงจากระดับ Sub-criteria ตรงๆ (ที่คำนวณจาก Logic v2)
+        raw_audit_conf = res.get("audit_confidence") or {}
+        
+        # กรณีใน Root ไม่มี ให้พยายามหาจาก Level ล่าสุดที่ประเมิน
+        if not raw_audit_conf and raw_levels_list:
+            raw_audit_conf = raw_levels_list[-1].get("audit_confidence") or {}
+
+        ui_audit_confidence = {
+            "level": raw_audit_conf.get("level", "LOW"),
+            "source_count": int(raw_audit_conf.get("source_count", 0)),
+            "traceability_score": float(raw_audit_conf.get("traceability_score", 0.0)),
+            "consistency_check": bool(raw_audit_conf.get("consistency_check", True)),
+            "reason": raw_audit_conf.get("reason", "")
+        }
+
+        # --- 3. PDCA Matrix & Coverage ---
         pdca_matrix = []
         pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)} 
         avg_conf_per_lv = {str(lv): 0 for lv in range(1, 6)}
@@ -219,7 +234,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             lv_info = raw_levels_map.get(lv_idx)
             is_passed = lv_info.get("is_passed", False) if lv_info else (lv_idx <= highest_pass)
             
-            # กำหนดสถานะการประเมิน
+            # กำหนดสถานะการประเมิน (NORMAL, GAP_ONLY, FAILED)
             eval_mode = "NORMAL"
             if is_passed and lv_idx > highest_pass:
                 eval_mode = "GAP_ONLY" 
@@ -228,11 +243,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             elif not is_passed:
                 eval_mode = "INACTIVE" 
 
-            # ดึงคะแนนราย PDCA
+            # ดึงคะแนนราย PDCA (ถ้าผ่านแบบมาตรฐาน Base Level ให้เต็ม 1)
             pdca_raw = lv_info.get("pdca_breakdown", {}) if lv_info else {}
             pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             
-            # ถ้าผ่านแบบมาตรฐาน (Base Level) ให้เต็ม
             if not lv_info and lv_idx <= highest_pass:
                 pdca_final = {"P": 1, "D": 1, "C": 1, "A": 1}
 
@@ -247,7 +261,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             covered_count = sum(pdca_final.values())
             pdca_coverage[str(lv_idx)]["percentage"] = (covered_count / 4) * 100
 
-        # --- 3. Evidence Sources (🔥 แก้ไข PDCA Tag Priority) ---
+        # --- 4. Evidence Sources (Grouped by Level) ---
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         all_scores = []
         
@@ -266,14 +280,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                         all_scores.append(score_val)
                         lv_scores.append(score_val)
 
-                    # 🎯 ดึง PDCA Tag (Priority: Root -> Metadata)
                     raw_pdca = s.get("pdca_tag")
                     if not raw_pdca or str(raw_pdca).upper() == "OTHER":
                         raw_pdca = meta.get("pdca_tag") or "OTHER"
                     
                     grouped_sources[str(lv_idx)].append({
                         "filename": s.get('filename') or meta.get('source') or "Evidence Document",
-                        "page": str(meta.get('page') or "1"),
+                        "page": str(meta.get('page') or meta.get('page_label') or "1"),
                         "text": s.get("text", "")[:300],
                         "rerank_score": round(score_val * 100, 1),
                         "document_uuid": d_uuid,
@@ -282,7 +295,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             if lv_scores:
                 avg_conf_per_lv[str(lv_idx)] = (sum(lv_scores)/len(lv_scores)*100)
 
-        # --- 4. Roadmap & Gap Analysis ---
+        # --- 5. Roadmap & Gap Analysis ---
         ui_roadmap = []
         all_gaps = []
         raw_plans = res.get("action_plan") or []
@@ -292,7 +305,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             for act in actions_list:
                 rec = act.get("Recommendation") or act.get("recommendation") or "ควรดำเนินการตามเกณฑ์"
                 lv_num = str(act.get("Failed_Level") or act.get("level") or (highest_pass + 1))
-                
                 all_gaps.append(f"**L{lv_num}**: {rec}")
 
                 raw_steps = act.get("Steps") or act.get("steps") or []
@@ -308,7 +320,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "actions": phase_actions
             })
 
-        # --- 5. สรุปผลรายเกณฑ์ย่อย ---
+        # --- 6. Sub-Criteria Summary ---
         potential_level = max([r.get('level') for r in raw_levels_list if r.get('is_passed')] + [highest_pass, 0])
         strength_summary = res.get("summary_thai") or (raw_levels_list[-1].get("reason") if raw_levels_list else "ดำเนินงานได้ตามเกณฑ์")
 
@@ -321,6 +333,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "pdca_matrix": pdca_matrix,
             "pdca_coverage": pdca_coverage,
             "avg_confidence_per_level": avg_conf_per_lv,
+            "audit_confidence": ui_audit_confidence, # 🔥 ส่งให้ UI ตรงนี้
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
             "summary_thai": strength_summary.strip(),
