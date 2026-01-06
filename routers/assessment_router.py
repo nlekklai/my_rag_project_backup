@@ -730,11 +730,11 @@ async def run_assessment_engine_task(
             ACTIVE_TASKS[record_id]["status"] = "FAILED"
             ACTIVE_TASKS[record_id]["error_message"] = f"Internal Server Error: {str(e)}"
 
-
 @assessment_router.get("/download/{record_id}/{file_type}")
 async def download_assessment_file(
     record_id: str,
     file_type: str,
+    background_tasks: BackgroundTasks, # 1. เพิ่มตัวนี้เข้ามาใน Parameter
     current_user: UserMe = Depends(get_current_user)
 ):
     logger.info(f"Download request: record_id={record_id}, file_type={file_type}")
@@ -773,11 +773,14 @@ async def download_assessment_file(
 
         logger.info(f"Word report generated: {os.path.basename(temp_path)}")
 
+        # 2. ใช้ background_tasks.add_task แทน lambda
+        background_tasks.add_task(os.remove, temp_path)
+
+        # 3. ส่ง FileResponse โดยเอาพารามิเตอร์ background ออก
         return FileResponse(
             path=temp_path,
             filename=f"{ui_data['enabler']}_Assessment_Report_{record_id}.docx",
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            background=lambda: os.remove(temp_path)  # ✅ ถูกต้อง ไม่ต้อง import BackgroundTask
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
     else:
