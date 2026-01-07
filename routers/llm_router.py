@@ -9,7 +9,7 @@ import asyncio
 from typing import List, Optional, Set, Dict, Any
 from collections import defaultdict
 
-from fastapi import APIRouter, Form, HTTPException, Depends
+from fastapi import APIRouter, Form, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -73,7 +73,15 @@ class QueryResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
 
 
+from fastapi import Request
+from typing import Optional
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
 def generate_source_url(
+    request: Request,
     doc_id: str, 
     page: int, 
     doc_type: str, 
@@ -81,33 +89,51 @@ def generate_source_url(
     year: str, 
     enabler: Optional[str] = None
 ) -> str:
+    """
+    สร้าง URL สำหรับเปิดไฟล์ PDF แบบ Dynamic ตาม Host ที่เรียกเข้ามา
+    รองรับทั้ง localhost, IP Server, หรือ Domain Name
+    """
+    # 1. Validation เบื้องต้น
     if not doc_id or doc_id == "unknown":
+        logger.warning("⚠️ Cannot generate URL: doc_id is missing or unknown")
         return ""
 
-    # 🔥 FIX จุดเดียว: ชี้ไปที่ Backend โดยตรง
-    BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
-    url = f"{BACKEND_BASE_URL}/api/files/view/{doc_id}"
+    # 2. ดึง Base URL จาก Request (จุดตายของปัญหา Local vs Server)
+    # ผลลัพธ์จะได้เช่น http://localhost:8000 หรือ http://192.168.19.41:8000
+    base_url = str(request.base_url).rstrip("/") 
+    
+    # 3. กำหนด Path สำหรับ Endpoint ดูไฟล์
+    # มั่นใจว่า Router ของคุณมี prefix='/api' และ endpoint='/files/view/{document_uuid}'
+    endpoint_path = f"/api/files/view/{doc_id}"
+    url = f"{base_url}{endpoint_path}"
 
+    # 4. เตรียม Query Parameters
     params = [
-        f"page={page}",
+        f"page={max(1, page)}",           # ป้องกันกรณี page < 1
         f"doc_type={doc_type.lower()}",
         f"tenant={tenant}",
     ]
 
+    # 5. Logic พิเศษสำหรับเอกสารประเภท Evidence (ปี และ Enabler)
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
+        # ตรวจสอบค่าปีให้ปลอดภัย
         safe_year = (
-            year if year and str(year) not in ("None", "undefined")
+            year if year and str(year).lower() not in ("none", "undefined", "") 
             else str(DEFAULT_YEAR)
         )
         params.append(f"year={safe_year}")
 
-        if enabler:
+        # ตรวจสอบค่า Enabler
+        if enabler and str(enabler).lower() not in ("none", "undefined", ""):
             params.append(f"enabler={enabler}")
         elif DEFAULT_ENABLER:
             params.append(f"enabler={DEFAULT_ENABLER}")
 
-    final_url = url + "?" + "&".join(params)
-    logger.info(f"🔗 Generated source URL: {final_url}")
+    # 6. ประกอบร่างเป็น Final URL
+    final_url = f"{url}?{'&'.join(params)}"
+    
+    # 7. Log เพื่อตรวจสอบ (สำคัญมากตอน Debug บน Server)
+    logger.info(f"🔗 Generated dynamic source URL: {final_url}")
 
     return final_url
 
@@ -116,13 +142,13 @@ def generate_source_url(
 # Revised Helper: _map_sources
 # =====================================================================
 def _map_sources(
+    request: Request,
     chunks: List[LcDocument], 
     tenant: str, 
     doc_type: str, 
     year: str = None, 
     enabler: str = None
 ) -> List[QuerySource]:
-    """รับพารามิเตอร์เพิ่มเพื่อสร้าง URL ที่ถูกต้องตามบริบทของ Chunk นั้นๆ"""
     return [
         QuerySource(
             source_id=str(c.metadata.get("doc_id", "unknown")),
@@ -130,13 +156,25 @@ def _map_sources(
             chunk_text=c.page_content[:500],
             chunk_id=c.metadata.get("chunk_uuid"),
             score=float(c.metadata.get("score", 0)),
-            document_uuid=str(c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")),
-            page_number=int(c.metadata.get("page", 1)) if str(c.metadata.get("page")).isdigit() else 1,
+            document_uuid=str(
+                c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")
+            ),
+            page_number=(
+                int(c.metadata.get("page", 1))
+                if str(c.metadata.get("page")).isdigit()
+                else 1
+            ),
             page_display=f"p. {c.metadata.get('page', '1')}",
-            # 🔥 สร้าง URL สำเร็จรูปจากตรงนี้เลย
             url=generate_source_url(
-                doc_id=str(c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")),
-                page=int(c.metadata.get("page", 1)) if str(c.metadata.get("page")).isdigit() else 1,
+                request=request,   # ✅ สำคัญที่สุด
+                doc_id=str(
+                    c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")
+                ),
+                page=(
+                    int(c.metadata.get("page", 1))
+                    if str(c.metadata.get("page")).isdigit()
+                    else 1
+                ),
                 doc_type=doc_type,
                 tenant=tenant,
                 year=year,
@@ -145,6 +183,7 @@ def _map_sources(
         )
         for c in chunks
     ]
+
 
 def load_all_chunks_by_doc_ids(
     vectorstore_manager,
@@ -164,6 +203,7 @@ def load_all_chunks_by_doc_ids(
 # =====================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
+    request: Request,  # 👈 เพิ่มบรรทัดนี้
     question: str = Form(...),
     conversation_id: Optional[str] = Form(None),
     doc_types: List[str] = Form(default=[]),  
@@ -260,6 +300,7 @@ async def query_llm(
             page_number=p_num,
             page_display=f"p. {c.metadata['page']}",
             url=generate_source_url(
+                request=request,   # 👈 จุดตายของระบบ
                 doc_id=str(c.metadata["doc_id"]),
                 page=p_num,
                 doc_type=c.metadata["doc_type"],
@@ -278,6 +319,7 @@ async def query_llm(
 # =====================================================================
 @llm_router.post("/compare", response_model=QueryResponse)
 async def compare_llm(
+    request: Request,          # 👈 เพิ่ม
     question: str = Form(...),
     doc_ids: List[str] = Form(...),
     doc_types: Optional[List[str]] = Form(None),
@@ -353,6 +395,7 @@ async def compare_llm(
     return QueryResponse(
         answer=answer.strip(), 
         sources=_map_sources(
+            request=request,     # 👈 ต้องส่ง
             chunks=all_chunks[:10],
             tenant=current_user.tenant,
             doc_type=used_doc_types[0],
@@ -384,6 +427,7 @@ def enhance_analysis_query(question: str, subject_id: str, rubric_data: dict) ->
 # =====================================================================
 @llm_router.post("/analysis", response_model=QueryResponse)
 async def analysis_llm(
+    request: Request,  # 👈 เพิ่ม
     question: str = Form(...),
     doc_ids: Any = Form(None),      
     doc_types: Any = Form(None),    
@@ -570,6 +614,7 @@ async def analysis_llm(
             page_number=p_num,
             page_display=f"p. {p_val}", # 🟢 จุดนี้จะทำให้ N/A หายไป
             url=generate_source_url(    # 🟢 จุดนี้จะทำให้มีลิงก์กดได้
+                request=request,   # 👈 สำคัญที่สุด
                 doc_id=d_uuid,
                 page=p_num,
                 doc_type=current_dt,
