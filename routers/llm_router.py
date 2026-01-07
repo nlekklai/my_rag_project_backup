@@ -44,9 +44,10 @@ from core.rag_prompts import (
     REVERSE_MAPPING_PROMPT_TEMPLATE,     # <--- เพิ่มอันนี้
     SUMMARY_PROMPT_TEMPLATE
 )
-from utils.path_utils import get_rubric_file_path, get_doc_type_collection_key
+from utils.path_utils import get_rubric_file_path, get_doc_type_collection_key, get_document_file_path
 import json, os
 import time
+from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
 llm_router = APIRouter(prefix="/api", tags=["LLM"])
@@ -54,13 +55,16 @@ llm_router = APIRouter(prefix="/api", tags=["LLM"])
 # =====================================================================
 # Response Models
 # =====================================================================
-
 class QuerySource(BaseModel):
     source_id: str
     file_name: str
     chunk_text: str
     chunk_id: Optional[str] = None
     score: float
+    document_uuid: Optional[str] = None
+    page_number: Optional[int] = 1
+    page_display: Optional[str] = None
+    url: Optional[str] = None # มั่นใจว่ามีบรรทัดนี้
 
 class QueryResponse(BaseModel):
     answer: str
@@ -69,10 +73,39 @@ class QueryResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
 
 
+def generate_source_url(
+    doc_id: str, 
+    page: int, 
+    doc_type: str, 
+    tenant: str, 
+    year: str, 
+    enabler: Optional[str] = None
+) -> str:
+    if not doc_id or doc_id == "unknown":
+        return ""
+    
+    # พื้นฐาน URL
+    url = f"/api/files/view/{doc_id}?page={page}&doc_type={doc_type}"
+    
+    # 🎯 ใส่ Year/Enabler เฉพาะกรณีที่เป็น Evidence เท่านั้น
+    if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
+        url += f"&year={year}"
+        if enabler:
+            url += f"&enabler={enabler}"
+            
+    return url
+
 # =====================================================================
-# Helper: _map_sources
+# Revised Helper: _map_sources
 # =====================================================================
-def _map_sources(chunks: List[LcDocument]) -> List[QuerySource]:
+def _map_sources(
+    chunks: List[LcDocument], 
+    tenant: str, 
+    doc_type: str, 
+    year: str = None, 
+    enabler: str = None
+) -> List[QuerySource]:
+    """รับพารามิเตอร์เพิ่มเพื่อสร้าง URL ที่ถูกต้องตามบริบทของ Chunk นั้นๆ"""
     return [
         QuerySource(
             source_id=str(c.metadata.get("doc_id", "unknown")),
@@ -80,14 +113,22 @@ def _map_sources(chunks: List[LcDocument]) -> List[QuerySource]:
             chunk_text=c.page_content[:500],
             chunk_id=c.metadata.get("chunk_uuid"),
             score=float(c.metadata.get("score", 0)),
+            document_uuid=str(c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")),
+            page_number=int(c.metadata.get("page", 1)) if str(c.metadata.get("page")).isdigit() else 1,
+            page_display=f"p. {c.metadata.get('page', '1')}",
+            # 🔥 สร้าง URL สำเร็จรูปจากตรงนี้เลย
+            url=generate_source_url(
+                doc_id=str(c.metadata.get("stable_doc_uuid") or c.metadata.get("doc_id")),
+                page=int(c.metadata.get("page", 1)) if str(c.metadata.get("page")).isdigit() else 1,
+                doc_type=doc_type,
+                tenant=tenant,
+                year=year,
+                enabler=enabler
+            )
         )
         for c in chunks
     ]
 
-
-# =====================================================================
-# Helper: load_all_chunks_by_doc_ids (สำหรับ /compare)
-# =====================================================================
 def load_all_chunks_by_doc_ids(
     vectorstore_manager,
     collection_name: str,
@@ -101,9 +142,8 @@ def load_all_chunks_by_doc_ids(
     docs = chroma.similarity_search(query="*", k=9999, filter=where_filter)
     return [d for d in docs if getattr(d, "page_content", "").strip()]
 
-
 # =====================================================================
-# 1. /query — Smart General RAG with Intent Detection & Auto-Routing
+# 1. /query — Smart General RAG (Revise Sources with URL)
 # =====================================================================
 @llm_router.post("/query", response_model=QueryResponse)
 async def query_llm(
@@ -116,82 +156,31 @@ async def query_llm(
     year: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
-    # 🎯 0. Setup พื้นฐาน
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
    
-    # แก้ไข Logic การเลือกปีใหม่ (ลบ current_user.year ออก)
     if year and year.strip() and year != "undefined":
         effective_year = year
     else:
-        # หากไม่มีการส่งมาจาก UI ให้ใช้ค่ากลางของระบบทันที
         effective_year = str(DEFAULT_YEAR) 
 
-    logger.info(f"📅 [System] Active Year: {effective_year} (Override by UI: {year is not None})")
-        
-    logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
-
-    # 🎯 1. ตรวจสอบประวัติและเจตนา (Intent Detection)
     history = await get_recent_history(current_user.id, conv_id, limit=6)
     intent = detect_intent(question, user_context=history)
 
-    # 🧠 ดึงบริบทจาก History มาใช้หากไม่ได้ระบุมาใน Form
-    if intent.get("sub_topic") and not subject:
-        subject = intent["sub_topic"]
-        logger.info(f"🧠 Auto-detected Subject: {subject}")
-
-    if intent.get("enabler_hint") and not enabler:
-        enabler = intent["enabler_hint"]
-        logger.info(f"🧠 Auto-detected Enabler: {enabler}")
-
-    # 🔍 SMART ROUTE OVERRIDE
-    analysis_keywords = ["pdca", "comply", "compliance", "เกณฑ์", "ผ่านระดับ", "level", "จุดแข็ง", "ช่องว่าง", "ประเมิน", "สอดคล้อง"]
+    # Smart Routing Logic
+    analysis_keywords = ["pdca", "เกณฑ์", "ระดับ", "วิเคราะห์", "พิกัด", "เลขหน้า", "หลักฐาน"]
     is_forcing_analysis = any(kw in question.lower() for kw in analysis_keywords) or subject is not None
     
-    # --- [BRANCH 1] Greeting & Capabilities (Bypass Retrieval) ---
-    if intent.get("is_greeting") or intent.get("is_capabilities"):
-        logger.info(f"🎭 Route -> Self-Introduction")
-        full_prompt = build_prompt(context="", question=question, intent=intent, user_context=history)
-        messages = [{"role": "user", "content": full_prompt}]
-        raw = await asyncio.to_thread(llm.invoke, messages)
-        answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
-        
-        await async_save_message(current_user.id, conv_id, "user", question)
-        await async_save_message(current_user.id, conv_id, "ai", answer)
-        return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
-
-    # --- [BRANCH 2] Comparison (Redirect) ---
-    if intent.get("is_comparison"):
-        logger.info("🔀 Route -> Comparison")
-        return await compare_llm(
-            question=question, doc_ids=doc_ids or [],
-            doc_types=doc_types, enabler=enabler, current_user=current_user
-        )
-
-    # --- [BRANCH 3] SE-AM Analysis (Redirect) ---
-    if intent.get("is_analysis") or intent.get("is_criteria_query") or is_forcing_analysis:
+    if intent.get("is_analysis") or is_forcing_analysis:
         if doc_ids:
-            logger.info(f"🚀 Route -> Analysis")
             return await analysis_llm(
                 question=question, doc_ids=doc_ids, doc_types=doc_types,
                 enabler=enabler, subject=subject, conversation_id=conv_id,
                 current_user=current_user, year=effective_year,
             )
-        else:
-            if is_forcing_analysis:
-                answer = "🔍 ผมเห็นว่าคุณต้องการให้วิเคราะห์เกณฑ์ SE-AM/PDCA รบกวนช่วยเลือกไฟล์เอกสารที่ต้องการให้ผมตรวจสอบที่ด้านข้างก่อนนะครับ"
-                await async_save_message(current_user.id, conv_id, "user", question)
-                await async_save_message(current_user.id, conv_id, "ai", answer)
-                return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
 
-    # --- [BRANCH 4] RAG Flow (General QA & Summary) ---
-    # 🎯 ปลดล็อกค่า K ให้ทำงานตามสเปก Server
-    logger.info(f"📖 Executing: General RAG Flow (K_Final={QA_FINAL_K}, K_Retrieval={RETRIEVAL_TOP_K})")
-    
+    # General RAG Flow
     used_doc_types = doc_types if doc_types else DEFAULT_DOC_TYPES
-
-    # 🎯 ปรับตรงนี้: ถ้าไม่ใช่ "evidence" ไม่ต้องส่ง enabler เข้าไป (ให้เป็น None)
-    # เพื่อป้องกัน VSM วิ่งไปผิด path
     is_evidence_search = any(dt.lower() == "evidence" for dt in used_doc_types)
     used_enabler = enabler if enabler else (DEFAULT_ENABLER if is_evidence_search else None)
 
@@ -200,78 +189,72 @@ async def query_llm(
 
     all_chunks = []
     for dt in used_doc_types:
-        # 🚀 แก้ไขจุดเรียก: ส่งค่า K จาก Global Vars เข้าไปเพื่อให้ Retrieval ดึงข้อมูลมาเพียงพอ
         res = await asyncio.to_thread(
             retrieve_context_for_endpoint,
-            vectorstore_manager=vsm, 
-            query=question, 
-            doc_type=dt,
-            enabler=used_enabler, 
-            stable_doc_ids=stable_doc_ids,
-            tenant=current_user.tenant, 
-            year=effective_year, 
-            subject=subject,
-            k_to_retrieve=RETRIEVAL_TOP_K, # 🎯 ดึงจาก DB ตาม .env (เช่น 500)
-            k_to_rerank=QA_FINAL_K         # 🎯 คัดตัวท็อปตาม .env (เช่น 30)
+            vectorstore_manager=vsm, query=question, doc_type=dt,
+            enabler=used_enabler, stable_doc_ids=stable_doc_ids,
+            tenant=current_user.tenant, year=effective_year, subject=subject,
+            k_to_retrieve=RETRIEVAL_TOP_K, k_to_rerank=QA_FINAL_K
         )
         
         if isinstance(res, dict) and "top_evidences" in res:
             for ev in res.get("top_evidences", []):
-                f_name = ev.get('source') or ev.get('source_filename') or ev.get('file_name') or 'Unknown'
-                p_val = ev.get('page') or ev.get('page_label') or ev.get('page_number')
-                p_display = str(p_val).strip() if p_val and str(p_val).lower() != 'n/a' else "N/A"
-
+                # 🎯 แก้ไขการดึงเลขหน้าที่แม่นยำขึ้น
+                p_val = ev.get('page_label') or ev.get('page') or "1"
+                d_uuid = ev.get("doc_id") or ev.get("stable_doc_uuid")
+                
                 all_chunks.append(
                     LcDocument(
                         page_content=ev["text"],
                         metadata={
                             "score": ev.get("rerank_score") or ev.get("score") or 0.0,
-                            "doc_id": ev.get("doc_id"),
-                            "source": f_name,
-                            "page": p_display,
+                            "doc_id": d_uuid,
+                            "source": ev.get('source_filename') or ev.get('source') or 'Unknown',
+                            "page": p_val,
                             "chunk_uuid": ev.get("chunk_uuid"),
+                            "doc_type": dt
                         }
                     )
                 )
 
-    # จัดลำดับความสำคัญและตัดเหลือ K สุดท้าย
     all_chunks.sort(key=lambda c: c.metadata.get("score", 0), reverse=True)
     final_chunks = all_chunks[:QA_FINAL_K]
 
     if not final_chunks:
-        answer = "ขออภัยครับ ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกครับ"
-        return QueryResponse(answer=answer, sources=[], conversation_id=conv_id)
+        return QueryResponse(answer="ไม่พบเนื้อหาที่เกี่ยวข้องครับ", sources=[], conversation_id=conv_id)
 
-    # รวม Context และเตรียมคำตอบ
-    context_text = "\n\n".join([
-        f"[ไฟล์: {c.metadata['source']}, หน้า: {c.metadata['page']}]\n{c.page_content}" 
-        for c in final_chunks
-    ])
-
+    # Inference
+    context_text = "\n\n".join([f"[ไฟล์: {c.metadata['source']}, หน้า: {c.metadata['page']}]\n{c.page_content}" for c in final_chunks])
     full_prompt = build_prompt(context=context_text, question=question, intent=intent, user_context=history)
-    messages = [{"role": "user", "content": full_prompt}]
-    
-    raw = await asyncio.to_thread(llm.invoke, messages)
+    raw = await asyncio.to_thread(llm.invoke, [{"role": "user", "content": full_prompt}])
     answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    # บันทึกประวัติ
-    await async_save_message(current_user.id, conv_id, "user", question)
-    await async_save_message(current_user.id, conv_id, "ai", answer)
-
-    # เตรียม Sources สำหรับ UI
-    sources = [
-        QuerySource(
+    # 🎯 สร้าง Sources พร้อม URL (FIXED)
+    sources = []
+    for c in final_chunks:
+        p_num = int(c.metadata["page"]) if str(c.metadata["page"]).isdigit() else 1
+        sources.append(QuerySource(
             source_id=str(c.metadata["doc_id"]),
-            file_name=f"{c.metadata['source']} (หน้า {c.metadata['page']})",
+            file_name=c.metadata['source'],
             chunk_text=c.page_content[:500],
             chunk_id=c.metadata["chunk_uuid"],
             score=float(c.metadata["score"]),
-        )
-        for c in final_chunks
-    ]
+            document_uuid=str(c.metadata["doc_id"]),
+            page_number=p_num,
+            page_display=f"p. {c.metadata['page']}",
+            url=generate_source_url(
+                doc_id=str(c.metadata["doc_id"]),
+                page=p_num,
+                doc_type=c.metadata["doc_type"],
+                tenant=current_user.tenant,
+                year=effective_year,
+                enabler=used_enabler
+            )
+        ))
 
+    await async_save_message(current_user.id, conv_id, "user", question)
+    await async_save_message(current_user.id, conv_id, "ai", answer)
     return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)
-
 
 # =====================================================================
 # 2. /compare — Document Comparison (Revised for Llama 3:70B)
@@ -349,9 +332,16 @@ async def compare_llm(
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
+    # 🎯 ปรับการส่ง Sources: ใช้ Helper ที่เจน URL ให้เสร็จสรรพ
     return QueryResponse(
         answer=answer.strip(), 
-        sources=_map_sources(all_chunks[:10]), 
+        sources=_map_sources(
+            chunks=all_chunks[:10],
+            tenant=current_user.tenant,
+            doc_type=used_doc_types[0],
+            year=str(DEFAULT_YEAR), # หรือดึงจาก context
+            enabler=used_enabler
+        ), 
         conversation_id=conv_id
     )
 
@@ -435,7 +425,10 @@ async def analysis_llm(
         logger.error(f"Failed to load rubric JSON: {e}")
 
     # 🎯 3. Determine Mode & Search Query
-    consultant_keywords = ["เหมาะ", "หลักฐาน", "ประเมินหรือไม่", "สอดคล้อง", "หัวข้อไหน", "เกณฑ์ไหน", "ระดับไหน", "ขาดอะไร"]
+    consultant_keywords = [
+        "เหมาะ", "หลักฐาน", "ประเมินหรือไม่", "สอดคล้อง", "หัวข้อไหน", 
+        "เกณฑ์ไหน", "ระดับไหน", "ขาดอะไร", "พิกัด", "เลขหน้า" # <--- เพิ่มตรงนี้
+    ]
     is_consultant_mode = any(kw in question.lower() for kw in consultant_keywords) or (not subject and len(stable_doc_ids) <= 2)
 
     search_query = question
@@ -538,16 +531,35 @@ async def analysis_llm(
     raw_response = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw_response.content if hasattr(raw_response, "content") else str(raw_response))
 
-    # 🎯 7. Map Sources for UI
+    # 🎯 7. Map Sources for UI (REVISED & FIXED)
     sources = []
     for ev in final_evidences[:10]:
-        f_name = ev.get('source_filename') or 'Document'
-        p_val = ev.get('page_label') or "N/A"
+        # ดึง UUID ให้ชัวร์
+        d_uuid = str(ev.get("doc_id") or ev.get("stable_doc_uuid"))
+        
+        # ดึงเลขหน้ามาทำหน้าแสดงผล (Page Display)
+        p_val = ev.get('page_label') or ev.get('page') or "1"
+        p_num = int(p_val) if str(p_val).isdigit() else 1
+        
+        # ระบุประเภทเอกสารเพื่อสร้าง URL
+        current_dt = used_doc_types[0] if used_doc_types else "evidence_doc"
+
         sources.append(QuerySource(
-            source_id=str(ev.get("doc_id", "unknown")),
-            file_name=f"{f_name} (หน้า {p_val})",
+            source_id=d_uuid,
+            file_name=ev.get('source_filename') or ev.get('source') or 'Document',
             chunk_text=ev.get("text", "")[:500],
-            score=float(ev.get("rerank_score") or 0.0)
+            score=float(ev.get("rerank_score") or 0.0),
+            document_uuid=d_uuid,
+            page_number=p_num,
+            page_display=f"p. {p_val}", # 🟢 จุดนี้จะทำให้ N/A หายไป
+            url=generate_source_url(    # 🟢 จุดนี้จะทำให้มีลิงก์กดได้
+                doc_id=d_uuid,
+                page=p_num,
+                doc_type=current_dt,
+                tenant=current_user.tenant,
+                year=effective_year,
+                enabler=used_enabler
+            )
         ))
 
     await async_save_message(current_user.id, conv_id, "user", question)
@@ -557,5 +569,45 @@ async def analysis_llm(
         answer=answer.strip(), 
         sources=sources, 
         conversation_id=conv_id,
-        result={"process_time": round(time.time() - start_time, 2), "mode": mode_label.lower()}
+        result={"process_time": round(time.time() - start_time, 2)}
+    )
+
+@llm_router.get("/files/view/{document_uuid}")
+async def view_document_llm(
+    document_uuid: str, 
+    page: Optional[int] = 1, 
+    doc_type: Optional[str] = "document", 
+    year: Optional[str] = None, 
+    enabler: Optional[str] = None, 
+    current_user: UserMe = Depends(get_current_user)
+):
+
+    # 🎯 Logic การคัดกรองมิติของ Path
+    is_evidence = (doc_type.lower() == EVIDENCE_DOC_TYPES.lower())
+    
+    # ถ้าเป็น evidence ต้องมีปี (ถ้าไม่ส่งมาใช้ default)
+    # ถ้าไม่ใช่ evidence (เช่น document, seam) ให้เป็น None เพื่อให้ path_utils หาในโฟลเดอร์ตรงๆ
+    effective_year = year if (year and year != "undefined") else (str(DEFAULT_YEAR) if is_evidence else None)
+    effective_enabler = enabler if is_evidence else None
+
+    logger.info(f"📂 Request View: UUID={document_uuid} | Type={doc_type} | Year={effective_year} | Enabler={effective_enabler}")
+
+    # 🎯 เรียกใช้ตัวคุมกฎ Path ของทั้งโปรเจกต์
+    file_info = get_document_file_path(
+        document_uuid=document_uuid,
+        tenant=current_user.tenant,
+        year=effective_year, 
+        enabler=effective_enabler,
+        doc_type_name=doc_type
+    )
+
+    if not file_info:
+        logger.error(f"❌ File Not Found on Disk: UUID={document_uuid} Type={doc_type}")
+        raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์ประเภท {doc_type} ในระบบ")
+
+    return FileResponse(
+        path=file_info["file_path"],
+        media_type="application/pdf",
+        filename=file_info["original_filename"],
+        content_disposition_type="inline"
     )

@@ -1,6 +1,27 @@
 # utils/path_utils.py
 # Production Final Version – 11 ธ.ค. 2568 (Path Matching Fixes)
 
+"""
+📌 PROJECT FILE STRUCTURE & MAPPING LOGIC (Updated: 2026)
+-------------------------------------------------------
+ระบบจัดการไฟล์แบ่งออกเป็น 2 รูปแบบหลัก ตามประเภทของ doc_type:
+
+1. GLOBAL DOCUMENTS (document, faq, seam)
+   - โครงสร้าง: data_store/{tenant}/data/{doc_type}/{filename}
+   - การ Mapping: อยู่ที่ root ของ mapping folder เสมอ
+   - ไฟล์ JSON: {tenant}_{doc_type}_doc_id_mapping.json 
+   - หมายเหตุ: ไม่ใช้ year และ enabler ในการหาไฟล์
+
+2. YEARLY EVIDENCE (evidence)
+   - โครงสร้าง: data_store/{tenant}/data/evidence/{year}/{enabler}/{filename}
+   - การ Mapping: แยกตามปีและกลุ่มข้อมูล
+   - ไฟล์ JSON: mapping/{year}/{tenant}_{year}_{enabler}_doc_id_mapping.json
+   - หมายเหตุ: ต้องมี year และ enabler ครบถ้วนในการระบุตำแหน่ง
+
+การหาไฟล์ใช้ระบบ Fuzzy Scan (NFKC Normalization) เพื่อรองรับปัญหาชื่อไฟล์ภาษาไทย 
+และการจัดเก็บไฟล์ที่อาจมีความต่างของ Case-sensitive บน macOS/Linux
+"""
+
 import os
 import json
 import logging
