@@ -83,17 +83,34 @@ def generate_source_url(
 ) -> str:
     if not doc_id or doc_id == "unknown":
         return ""
-    
-    # พื้นฐาน URL
-    url = f"/api/files/view/{doc_id}?page={page}&doc_type={doc_type}"
-    
-    # 🎯 ใส่ Year/Enabler เฉพาะกรณีที่เป็น Evidence เท่านั้น
+
+    # 🔥 FIX จุดเดียว: ชี้ไปที่ Backend โดยตรง
+    BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
+    url = f"{BACKEND_BASE_URL}/api/files/view/{doc_id}"
+
+    params = [
+        f"page={page}",
+        f"doc_type={doc_type.lower()}",
+        f"tenant={tenant}",
+    ]
+
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
-        url += f"&year={year}"
+        safe_year = (
+            year if year and str(year) not in ("None", "undefined")
+            else str(DEFAULT_YEAR)
+        )
+        params.append(f"year={safe_year}")
+
         if enabler:
-            url += f"&enabler={enabler}"
-            
-    return url
+            params.append(f"enabler={enabler}")
+        elif DEFAULT_ENABLER:
+            params.append(f"enabler={DEFAULT_ENABLER}")
+
+    final_url = url + "?" + "&".join(params)
+    logger.info(f"🔗 Generated source URL: {final_url}")
+
+    return final_url
+
 
 # =====================================================================
 # Revised Helper: _map_sources
@@ -572,42 +589,40 @@ async def analysis_llm(
         result={"process_time": round(time.time() - start_time, 2)}
     )
 
+# =====================================================================
+# 4. /files/view — PDF File Viewer Endpoint (เพิ่มส่วนนี้เข้าไป)
+# =====================================================================
 @llm_router.get("/files/view/{document_uuid}")
 async def view_document_llm(
-    document_uuid: str, 
-    page: Optional[int] = 1, 
-    doc_type: Optional[str] = "document", 
-    year: Optional[str] = None, 
-    enabler: Optional[str] = None, 
-    current_user: UserMe = Depends(get_current_user)
+    document_uuid: str,
+    tenant: str = "pea",
+    year: Optional[str] = None,
+    enabler: Optional[str] = None,
+    doc_type: str = "document",
+    page: int = 1
 ):
-
-    # 🎯 Logic การคัดกรองมิติของ Path
-    is_evidence = (doc_type.lower() == EVIDENCE_DOC_TYPES.lower())
-    
-    # ถ้าเป็น evidence ต้องมีปี (ถ้าไม่ส่งมาใช้ default)
-    # ถ้าไม่ใช่ evidence (เช่น document, seam) ให้เป็น None เพื่อให้ path_utils หาในโฟลเดอร์ตรงๆ
-    effective_year = year if (year and year != "undefined") else (str(DEFAULT_YEAR) if is_evidence else None)
-    effective_enabler = enabler if is_evidence else None
-
-    logger.info(f"📂 Request View: UUID={document_uuid} | Type={doc_type} | Year={effective_year} | Enabler={effective_enabler}")
-
-    # 🎯 เรียกใช้ตัวคุมกฎ Path ของทั้งโปรเจกต์
     file_info = get_document_file_path(
         document_uuid=document_uuid,
-        tenant=current_user.tenant,
-        year=effective_year, 
-        enabler=effective_enabler,
+        tenant=tenant,
+        year=year,
+        enabler=enabler,
         doc_type_name=doc_type
     )
 
     if not file_info:
-        logger.error(f"❌ File Not Found on Disk: UUID={document_uuid} Type={doc_type}")
-        raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์ประเภท {doc_type} ในระบบ")
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูลไฟล์")
 
+    file_path = file_info["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บนเซิร์ฟเวอร์")
+
+    # 🎯 หัวใจสำคัญสำหรับ Mac:
+    # 1. ห้ามใส่ filename= ใน FileResponse (เพราะมันจะเติม 'attachment' ให้ทันที)
+    # 2. ใส่ Content-Disposition: inline เพียวๆ ใน headers
     return FileResponse(
-        path=file_info["file_path"],
+        path=file_path,
         media_type="application/pdf",
-        filename=file_info["original_filename"],
-        content_disposition_type="inline"
+        headers={
+            "Content-Disposition": "inline"
+        }
     )

@@ -209,9 +209,12 @@ def get_document_file_path(
     doc_type_name: str
 ) -> Optional[Dict[str, str]]:
     try:
+        # 1. ค้นหา Mapping (ต้องส่งค่าให้ get_mapping_file_path ถูกต้องด้วย)
+        # ถ้าเป็น document/seam/faq มักจะไม่อยู่ในโฟลเดอร์ปี
         mapping_path = get_mapping_file_path(doc_type_name, tenant, year, enabler)
+        
         if not os.path.exists(mapping_path):
-            logger.warning(f"Mapping not found: {mapping_path}")
+            logger.warning(f"❌ Mapping JSON not found: {mapping_path}")
             return None
 
         with open(mapping_path, "r", encoding="utf-8") as f:
@@ -221,48 +224,43 @@ def get_document_file_path(
         if not entry:
             return None
 
-        raw_path = entry.get("filepath", "")
-        filename = os.path.basename(raw_path)
+        filename = os.path.basename(entry.get("filepath", ""))
         
-        # 1. เตรียม Root Directory (Normalize ให้อยู่ในรูปแบบ NFKC สำหรับ Mac)
-        # เราจะลองหาในโฟลเดอร์ที่น่าจะเป็นไปได้ทั้งหมด
+        # 🟢 FIX: แยกโครงสร้าง Path ตามผล ls -la ของคุณ
         tenant_clean = _n(tenant)
-        doc_type_clean = _n(doc_type_name)
-        enabler_clean = _n(enabler or "")
-        year_str = str(year) if year else ""
-
-        # สร้าง base path: data_store/pea/data/evidence/2568
-        # ใช้ glob เพื่อให้มันหาได้ทั้ง km, KM หรือ Km
-        base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", doc_type_clean, year_str)
+        doc_type_clean = _n(doc_type_name).lower()
         
+        if doc_type_clean == "evidence":
+            # สาย Evidence: data_store/pea/data/evidence/2567/
+            year_val = str(year) if year and str(year) != "None" else ""
+            base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", "evidence", year_val)
+        else:
+            # สาย Document/Seam/FAQ: data_store/pea/data/document/ (ไม่มีปี)
+            base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", doc_type_clean)
+
+        logger.info(f"🔎 Scanning in: {base_search_path} for file: {filename}")
+
         if not os.path.exists(base_search_path):
-            logger.error(f"❌ Base search path not found: {base_search_path}")
+            logger.error(f"❌ Base path does not exist: {base_search_path}")
             return None
 
-        # 2. ค้นหาไฟล์แบบ Case-Insensitive และ Encoding-Insensitive
-        # วนลูปหาในทุก sub-folder (เช่น km หรือ KM)
-        normalized_target_filename = unicodedata.normalize('NFKC', filename).lower()
-
+        # 2. Fuzzy Scan ค้นหาไฟล์ (เหมือนเดิม)
+        target_fn_norm = unicodedata.normalize('NFKC', filename).lower()
         for root, dirs, files in os.walk(base_search_path):
-            # ตรวจสอบว่าอยู่ใน folder enabler ที่ถูกต้องหรือไม่ (แบบไม่สนเล็กใหญ่)
-            if enabler_clean and enabler_clean not in _n(root):
-                continue
-                
+            # กรอง enabler สำหรับ evidence เท่านั้น
+            if doc_type_clean == "evidence" and enabler:
+                if _n(enabler).lower() not in _n(root).lower():
+                    continue
+            
             for f in files:
-                # เทียบชื่อไฟล์แบบ NFKC และ Lowercase
-                if unicodedata.normalize('NFKC', f).lower() == normalized_target_filename:
-                    final_abs_path = os.path.join(root, f)
-                    logger.info(f"✅ Found file: {final_abs_path}")
-                    return {
-                        "file_path": final_abs_path,
-                        "original_filename": f
-                    }
+                if unicodedata.normalize('NFKC', f).lower() == target_fn_norm:
+                    final_path = os.path.join(root, f)
+                    logger.info(f"✅ File Located: {final_path}")
+                    return {"file_path": final_path, "original_filename": f}
 
-        logger.error(f"❌ File not found after fuzzy scan: {filename}")
         return None
-        
     except Exception as e:
-        logger.error(f"Error resolving path: {e}")
+        logger.error(f"🔴 Path Resolver Error: {e}")
         return None
 
 # ==================== 8. OTHER PATHS ====================
