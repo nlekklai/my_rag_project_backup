@@ -505,7 +505,7 @@ async def get_assessment_status(record_id: str, current_user: UserMe = Depends(g
 @assessment_router.get("/history")
 async def get_assessment_history(
     tenant: str, 
-    year: Optional[str] = Query(None), # แก้จาก Union เป็น Optional และให้ default เป็น None
+    year: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
 ):
     # 1. ตรวจสอบสิทธิ์องค์กร
@@ -514,32 +514,43 @@ async def get_assessment_history(
 
     history_list = []
     
-    # 2. จัดการเรื่อง "ปี" ที่ต้องการค้นหา
-    # ถ้า Frontend ไม่ส่งมา หรือส่งมาเป็น "all" ให้สแกนทุกปี
-    search_years = []
+    # 2. สร้าง Path แบบ Dynamic (ไม่ Hardcode)
+    # เราจะลองหาจาก DATA_STORE_ROOT ในหลายๆ รูปแบบ
+    from config.global_vars import DATA_STORE_ROOT
     
-    # หา Root Path ของ Tenant เพื่อดูว่ามีโฟลเดอร์ปีไหนบ้าง
-    # โดยอ้างอิงจากตำแหน่งของโฟลเดอร์ปี 2568 (หรือปีใดก็ได้)
-    sample_path = get_tenant_year_export_root(tenant, "2568")
-    tenant_export_root = os.path.dirname(sample_path)
+    # กำหนดความน่าจะเป็นของ Path (รองรับทั้ง Docker และ Local)
+    base_candidates = [
+        os.path.join(DATA_STORE_ROOT, _n(tenant), "exports"),
+        os.path.join("data_store", _n(tenant), "exports"),
+        os.path.join(DATA_STORE_ROOT, tenant, "exports") # เผื่อกรณี Folder เป็นตัวพิมพ์ใหญ่
+    ]
+    
+    tenant_export_root = None
+    for cand in base_candidates:
+        if os.path.exists(cand):
+            tenant_export_root = cand
+            break
+    
+    if not tenant_export_root:
+        logger.error(f"❌ [History] ไม่พบ Folder exports ของ tenant: {tenant}")
+        return {"items": []}
 
+    # 3. ระบุปีที่ต้องการค้นหา
+    search_years = []
     if not year or str(year).lower() == "all":
-        if os.path.exists(tenant_export_root):
-            # ดึงชื่อโฟลเดอร์ย่อยที่เป็นตัวเลข (ปีงบประมาณ) ทั้งหมด
-            search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
-        else:
-            search_years = []
+        # ดึงโฟลเดอร์ปีทั้งหมดที่มีใน exports ของ tenant นั้น
+        search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
     else:
         search_years = [str(year)]
 
-    # 3. เริ่มสแกนไฟล์ JSON ตามรายการปีที่เจอ
+    # 4. Scan ไฟล์ JSON
     for y in search_years:
-        export_root = get_tenant_year_export_root(tenant, y)
-        
-        if not os.path.exists(export_root):
+        year_path = os.path.join(tenant_export_root, y)
+        if not os.path.exists(year_path):
             continue
 
-        for root, _, files in os.walk(export_root):
+        # os.walk จะช่วยให้หาเจอทุกไฟล์ JSON ไม่ว่า enabler จะเป็น km หรือ im
+        for root, _, files in os.walk(year_path):
             for f in files:
                 if f.lower().endswith(".json"):
                     try:
@@ -549,28 +560,28 @@ async def get_assessment_history(
                             summary = data.get("summary", {})
                             enabler = (summary.get("enabler") or "KM").upper()
                             
-                            # เช็คสิทธิ์ราย Enabler (ถ้าพังให้ข้ามไฟล์นี้ไป)
+                            # ตรวจสอบสิทธิ์ (ต้องมีสิทธิ์ใน Enabler นั้นๆ)
                             try:
                                 check_user_permission(current_user, tenant, enabler)
                             except:
                                 continue
 
                             history_list.append({
-                                "record_id": data.get("record_id") or summary.get("record_id") or f.rsplit('.', 1)[0],
+                                "record_id": data.get("record_id") or f.replace(".json", ""),
                                 "date": parse_safe_date(summary.get("export_timestamp"), file_path),
                                 "tenant": tenant,
                                 "year": y,
                                 "enabler": enabler,
-                                "scope": summary.get("sub_criteria_id", "ALL"),
-                                "level": f"L{summary.get('highest_pass_level_overall', summary.get('highest_pass_level', 0))}",
-                                "score": round(float(summary.get("Total Weighted Score Achieved", summary.get("achieved_weight", 0.0))), 2),
+                                "scope": (summary.get("sub_criteria_id") or "ALL").upper(),
+                                "level": f"L{summary.get('highest_pass_level_overall', 0)}",
+                                "score": round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2),
                                 "status": "COMPLETED"
                             })
                     except Exception as e:
-                        logger.error(f"Error reading history file {f} in year {y}: {e}")
+                        logger.error(f"❌ Error reading {f}: {e}")
 
-    # 4. เรียงลำดับตามวันที่ (ใหม่ไปเก่า)
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
+
 
 @assessment_router.post("/start")
 async def start_assessment(

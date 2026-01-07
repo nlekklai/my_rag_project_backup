@@ -116,18 +116,18 @@ def set_mock_control_mode(enable: bool):
     _MOCK_FLAG = bool(enable)
     logger.info(f"Mock control mode: {_MOCK_FLAG}")
 
-# แก้ไขใน core/llm_data_utils.py
-
 def _create_where_filter(
     stable_doc_ids: Optional[Union[Set[str], List[str]]] = None,
     subject: Optional[str] = None,
-    sub_topic: Optional[str] = None,  # 👈 เพิ่มบรรทัดนี้เพื่อรองรับค่าที่ส่งมา
+    sub_topic: Optional[str] = None,
     year: Optional[Union[int, str]] = None,
     enabler: Optional[str] = None,
-    **kwargs  # 👈 หรือเพิ่ม **kwargs ไว้เพื่อกันเหนียวในอนาคต
+    tenant: Optional[str] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
-    สร้าง Filter สำหรับ ChromaDB ที่ยืดหยุ่น:
+    [PRODUCTION VERSION] สร้าง Filter สำหรับ ChromaDB ที่แม่นยำ
+    แก้ปัญหาเรื่อง Data Type Mismatch (Int/Str) และรองรับ Multi-tenant
     """
     filters: List[Dict[str, Any]] = []
 
@@ -136,27 +136,46 @@ def _create_where_filter(
         ids_list = [str(i).strip() for i in (stable_doc_ids if isinstance(stable_doc_ids, (list, set)) else [stable_doc_ids]) if i]
         if ids_list:
             if len(ids_list) == 1:
+                # กรณีเลือกไฟล์เดียว ไม่ต้องใช้ $and
                 return {"stable_doc_uuid": ids_list[0]}
             else:
                 return {"stable_doc_uuid": {"$in": ids_list}}
 
-    # --- 2. การจัดการ Metadata อื่นๆ ---
-    if year and str(year).strip():
-        filters.append({"year": str(year).strip()})
+    # --- 2. การจัดการ Year (จุดที่ทำให้ Local Mac หาไม่เจอ) ---
+    if year is not None:
+        year_str = str(year).strip()
+        if year_str and year_str.lower() != "none":
+            # 🎯 แก้ไข: ส่งทั้งแบบ Int และ Str หรือพยายามแปลงเป็น Int ตามข้อมูลที่ Peek เจอใน Mac
+            try:
+                # ถ้าแปลงเป็นตัวเลขได้ ให้ส่งแบบ Integer (ChromaDB Local มักเก็บเป็น Int)
+                val_year = int(year_str)
+                filters.append({"year": val_year})
+            except (ValueError, TypeError):
+                # ถ้าแปลงไม่ได้จริงๆ ให้ส่งแบบ String
+                filters.append({"year": year_str})
     
+    # --- 3. การจัดการ Tenant (ป้องกันข้ามบริษัท) ---
+    effective_tenant = tenant or kwargs.get("tenant")
+    if effective_tenant and str(effective_tenant).strip():
+        filters.append({"tenant": str(effective_tenant).strip()})
+
+    # --- 4. การจัดการ Enabler (KM, IM, etc.) ---
     if enabler and str(enabler).strip():
         filters.append({"enabler": enabler.strip().upper()})
 
+    # --- 5. การจัดการ Subject (หัวข้อเกณฑ์) ---
     if subject and str(subject).strip():
         filters.append({"subject": str(subject).strip()})
 
-    # --- 3. การจัดการ sub_topic (ถ้ามีส่งมา) ---
+    # --- 6. การจัดการ Sub Topic ---
     if sub_topic and str(sub_topic).strip():
         filters.append({"sub_topic": str(sub_topic).strip()})
 
+    # --- สรุปผลการสร้าง Filter ---
     if not filters:
         return {}
 
+    # ถ้ามีเงื่อนไขเดียวส่งคืนได้เลย ถ้ามีหลายอันต้องเชื่อมด้วย $and
     return filters[0] if len(filters) == 1 else {"$and": filters}
 
 
