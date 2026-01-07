@@ -52,25 +52,51 @@ USERS: Dict[str, UserDB] = {
 CURRENT_SESSION_USER: Optional[str] = None
 
 # ------------------- Utility/Mock Dependencies -------------------
+# ------------------- Utility/Mock Dependencies -------------------
 
 async def get_current_user() -> UserMe:
     """
-    แก้ไข: คืนค่า User ตามที่ Login ไว้จริงใน Session
+    ดึงข้อมูล User ปัจจุบันจาก Session ในหน่วยความจำ (Global Variable)
+    และตรวจสอบสิทธิ์ก่อนอนุญาตให้เข้าถึง API
     """
     global CURRENT_SESSION_USER
     
-    # ถ้ายังไม่ได้ Login อะไรเลย ให้ Default ไปที่ TCG เพื่อให้คุณเทสได้ง่าย
-    email = CURRENT_SESSION_USER or "admin@tcg.or.th"
-
+    # 🎯 1. ตรวจสอบว่ามี User Login อยู่ในระบบจริงหรือไม่
+    # เราลบ "or admin@tcg.or.th" ออก เพื่อป้องกันการสวมรอย Identity อัตโนมัติ
+    if not CURRENT_SESSION_USER:
+        logger.warning("🚫 [Auth] Access denied: No active session found.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="เซสชันหมดอายุหรือยังไม่ได้เข้าสู่ระบบ กรุณา Login ใหม่อีกครั้ง",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    email = CURRENT_SESSION_USER
+    
+    # 🎯 2. ตรวจสอบว่า Email ใน Session มีอยู่ใน Database หรือไม่
     if email in USERS:
-        user = USERS[email]
-        return UserMe(**user.model_dump(exclude={"password"}))
+        user_db = USERS[email]
+        
+        # ตรวจสอบว่าบัญชีถูกระงับหรือไม่
+        if not user_db.is_active:
+            logger.error(f"❌ [Auth] User account is inactive: {email}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="บัญชีผู้ใช้นี้ถูกระงับการใช้งาน"
+            )
+            
+        # คืนค่าเป็น UserMe Object (ตัด Password ออก)
+        logger.info(f"✅ [Auth] Identity Verified: {email} (Tenant: {user_db.tenant})")
+        return UserMe(**user_db.model_dump(exclude={"password"}))
 
+    # 🎯 3. กรณีมี Session แต่หา User ไม่เจอใน DB (เช่น มีการแก้โค้ด USERS)
+    logger.error(f"❌ [Auth] Session exists for {email} but user not found in DB.")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="ไม่พบข้อมูลผู้ใช้ในระบบ",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
 
 # ------------------- Router Setup -------------------
 auth_router = APIRouter(prefix="/api/auth", tags=["Auth"])

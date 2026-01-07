@@ -194,6 +194,9 @@ async def query_llm(
     year: Optional[str] = Form(None),
     current_user: UserMe = Depends(get_current_user),
 ):
+    
+    logger.info(f"🚨 [DEBUG Identity] User Data: {current_user}")
+
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
     conv_id = conversation_id or str(uuid.uuid4())
    
@@ -212,6 +215,7 @@ async def query_llm(
     if intent.get("is_analysis") or is_forcing_analysis:
         if doc_ids:
             return await analysis_llm(
+                request=request, 
                 question=question, doc_ids=doc_ids, doc_types=doc_types,
                 enabler=enabler, subject=subject, conversation_id=conv_id,
                 current_user=current_user, year=effective_year,
@@ -296,57 +300,85 @@ async def query_llm(
     return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)
 
 # =====================================================================
-# 2. /compare — Document Comparison (Revised for Llama 3:70B)
+# 2. /compare — Document Comparison (Revised & Fixed Version)
 # =====================================================================
 @llm_router.post("/compare", response_model=QueryResponse)
 async def compare_llm(
-    request: Request,          # 👈 เพิ่ม
+    request: Request,
     question: str = Form(...),
-    doc_ids: List[str] = Form(...),
-    doc_types: Optional[List[str]] = Form(None),
+    doc_ids: Any = Form(...),           # รับได้ทั้ง List และ Comma-separated string
+    doc_types: Optional[Any] = Form(None),
     enabler: Optional[str] = Form(None),
+    year: Optional[str] = Form(None),    # 🎯 เพิ่มการรับปีจาก Frontend
     current_user: UserMe = Depends(get_current_user),
 ):
-    if len(doc_ids) < 2:
+    conv_id = str(uuid.uuid4())
+    
+    logger.info(f"🚨 [DEBUG Identity] User Data: {current_user}")
+    
+    # 1. 🎯 จัดการเรื่อง "ปี" ให้แม่นยำ (หัวใจสำคัญที่ทำให้หาไฟล์เจอ)
+    if year and year.strip() and year != "undefined":
+        effective_year = year
+    else:
+        effective_year = str(DEFAULT_YEAR)
+
+    # 2. Normalize doc_ids (รองรับทั้ง array และ string จาก form)
+    stable_doc_ids = []
+    if isinstance(doc_ids, list):
+        stable_doc_ids = [str(idx).strip() for idx in doc_ids if str(idx).strip()]
+    elif isinstance(doc_ids, str):
+        stable_doc_ids = [idx.strip() for idx in doc_ids.split(",") if idx.strip()]
+
+    if len(stable_doc_ids) < 2:
         raise HTTPException(400, "ต้องเลือกอย่างน้อย 2 เอกสารเพื่อเปรียบเทียบ")
 
-    used_doc_types = doc_types or ["document"]
+    # 3. กำหนด Doc Type และ Enabler
+    if not doc_types:
+        used_doc_types = ["document"]
+    else:
+        used_doc_types = [doc_types] if isinstance(doc_types, str) else doc_types
+
     is_evidence = any(dt.lower() == EVIDENCE_DOC_TYPES.lower() for dt in used_doc_types)
     used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
 
     if is_evidence and not used_enabler:
-        raise HTTPException(400, "สำหรับ compare เอกสาร evidence ต้องระบุ enabler")
+        raise HTTPException(400, "สำหรับเปรียบเทียบเอกสารหลักฐาน (Evidence) ต้องระบุ Enabler ด้วยครับ")
 
+    # 4. 🎯 เรียก Vectorstore Manager โดยล็อค Tenant และ Year ให้ตรงกัน
+    # เพิ่มการส่ง year เข้าไปเพื่อให้ VSM หา Path ของ PEA/2568 เจอ
+    vsm = get_vectorstore_manager(tenant=current_user.tenant, year=int(effective_year))
     collection_name = get_doc_type_collection_key(used_doc_types[0], used_enabler)
-    vsm = get_vectorstore_manager(tenant=current_user.tenant)
     
-    # สำหรับ Comparison แนะนำ Temperature ต่ำ (0.1) เพื่อลดอาการหลุดภาษาอังกฤษของ Llama 3
-    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.1)
+    logger.info(f"📊 [Compare] Tenant: {current_user.tenant} | Year: {effective_year} | Coll: {collection_name}")
 
-    all_chunks = load_all_chunks_by_doc_ids(vsm, collection_name, set(doc_ids))
+    # 5. Load chunks จากเอกสารที่เลือก
+    all_chunks = load_all_chunks_by_doc_ids(vsm, collection_name, set(stable_doc_ids))
     if not all_chunks:
-        raise HTTPException(400, "ไม่พบข้อมูลในเอกสารที่เลือก")
+        return QueryResponse(answer="ไม่พบข้อมูลในเอกสารที่เลือกเพื่อนำมาเปรียบเทียบครับ", sources=[], conversation_id=conv_id)
 
+    # จัดกลุ่ม chunks ตามเอกสาร
     doc_groups = defaultdict(list)
     for d in all_chunks:
         doc_key = str(d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id"))
         doc_groups[doc_key].append(d)
 
     doc_blocks = []
-    for idx, doc_id in enumerate(doc_ids, start=1):
-        chunks = doc_groups.get(str(doc_id), [])
+    for idx, d_id in enumerate(stable_doc_ids, start=1):
+        chunks = doc_groups.get(str(d_id), [])
         if not chunks:
-            block = f"### เอกสารที่ {idx}\n(ไม่พบข้อมูลในเอกสารนี้)"
+            block = f"### เอกสารที่ {idx}\n(ไม่พบข้อมูลเนื้อหาในฐานข้อมูล)"
         else:
-            fname = chunks[0].metadata.get("source", f"ID:{doc_id}")
-            # Llama 3:70B รับ context ได้เยอะ แต่จำกัด 15 chunks เพื่อความคมของเนื้อหา
+            fname = chunks[0].metadata.get("source", f"ID:{d_id}")
+            # จำกัด 15 chunks เพื่อความแม่นยำของ Llama 3:70B
             body = "\n".join(f"- {c.page_content}" for c in chunks[:15]) 
             block = f"### เอกสารที่ {idx}: {fname}\n{body}"
         doc_blocks.append(block)
 
-    # --- [Llama 3 Language Enforcement Strategy] ---
-    # บังคับ Prompt ให้ดุขึ้นและระบุภาษาชัดเจนในระดับ Message
-    thai_enforcement = "\n\n(IMPORTANT: สรุปเป็นภาษาไทยสละสลวยเท่านั้น ห้ามตอบเป็นภาษาอังกฤษเด็ดขาด)"
+    # 6. Prepare LLM & Inference
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.1)
+    
+    # บังคับ Prompt ให้ตอบไทยสละสลวย (Llama 3 Friendly)
+    thai_enforcement = "\n\n(ย้ำ: สรุปผลการเปรียบเทียบเป็นภาษาไทยสละสลวยเท่านั้น ห้ามตอบเป็นภาษาอังกฤษ)"
     full_query = f"{question}{thai_enforcement}"
     
     prompt_text = COMPARE_PROMPT_TEMPLATE.format(
@@ -356,35 +388,27 @@ async def compare_llm(
 
     messages = [
         SystemMessage(content=SYSTEM_COMPARE_INSTRUCTION),
-        # เพิ่ม HumanMessage ตัวที่สองเพื่อย้ำคำสั่ง (Llama 3 จะให้ความสำคัญกับข้อความท้ายๆ)
         HumanMessage(content=prompt_text),
-        HumanMessage(content="จงเปรียบเทียบข้อมูลด้านบนและตอบกลับในรูปแบบตารางภาษาไทยเท่านั้น")
+        HumanMessage(content="จงสรุปความแตกต่างและเปรียบเทียบข้อมูลด้านบนในรูปแบบตารางภาษาไทยที่อ่านง่าย")
     ]
 
-    # เรียกใช้งาน LLM
     raw = await asyncio.to_thread(llm.invoke, messages)
-    raw_content = raw.content if hasattr(raw, "content") else str(raw)
-    
-    # ตรวจสอบความเรียบร้อยของภาษาผ่าน Guardrails
-    answer = enforce_thai_primary_language(raw_content)
+    answer = enforce_thai_primary_language(raw.content if hasattr(raw, "content") else str(raw))
 
-    conv_id = str(uuid.uuid4())
+    # 7. 🎯 สร้าง Sources พร้อม URL ที่ถูกต้อง (ล็อค Year และ Tenant)
+    sources = _map_sources(
+        request=request,
+        chunks=all_chunks[:10],
+        tenant=current_user.tenant,
+        doc_type=used_doc_types[0],
+        year=effective_year,    # ✅ ใช้ปีที่เลือกจริง ไม่ใช้ค่า Default
+        enabler=used_enabler
+    )
+
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
-    # 🎯 ปรับการส่ง Sources: ใช้ Helper ที่เจน URL ให้เสร็จสรรพ
-    return QueryResponse(
-        answer=answer.strip(), 
-        sources=_map_sources(
-            request=request,     # 👈 ต้องส่ง
-            chunks=all_chunks[:10],
-            tenant=current_user.tenant,
-            doc_type=used_doc_types[0],
-            year=str(DEFAULT_YEAR), # หรือดึงจาก context
-            enabler=used_enabler
-        ), 
-        conversation_id=conv_id
-    )
+    return QueryResponse(answer=answer.strip(), sources=sources, conversation_id=conv_id)
 
 
 def enhance_analysis_query(question: str, subject_id: str, rubric_data: dict) -> str:
@@ -404,11 +428,11 @@ def enhance_analysis_query(question: str, subject_id: str, rubric_data: dict) ->
     return enhanced
 
 # =====================================================================
-# 3. /analysis — PDCA-focused SE-AM analysis (Revise Standard)
+# 3. /analysis — PDCA-focused SE-AM analysis (REVISED FINAL)
 # =====================================================================
 @llm_router.post("/analysis", response_model=QueryResponse)
 async def analysis_llm(
-    request: Request,  # 👈 เพิ่ม
+    request: Request,
     question: str = Form(...),
     doc_ids: Any = Form(None),      
     doc_types: Any = Form(None),    
@@ -421,19 +445,16 @@ async def analysis_llm(
     start_time = time.time()
     conv_id = conversation_id or str(uuid.uuid4())
 
-    # แก้ไข Logic การเลือกปีใหม่ (ลบ current_user.year ออก)
-    if year and year.strip() and year != "undefined":
-        effective_year = year
+    # 1. 🎯 จัดการเรื่อง Year ให้เด็ดขาด (ป้องกัน Vectorstore Not Found)
+    if year and str(year).strip().lower() not in ("undefined", "none", ""):
+        effective_year = str(year).strip()
     else:
-        # หากไม่มีการส่งมาจาก UI ให้ใช้ค่ากลางของระบบทันที
-        effective_year = str(DEFAULT_YEAR) 
+        effective_year = str(DEFAULT_YEAR)
 
-    logger.info(f"📅 [System] Active Year: {effective_year} (Override by UI: {year is not None})")
-        
-    logger.info(f"📅 [Query] User Selected: {year} | Final Decision: {effective_year}")
-    logger.info(f"📩 Query received: '{question}' from user {current_user.id}")
+    # 🕵️ บรรทัดนี้จะช่วยตอบคำถามว่าทำไม Login PEA แต่ได้ TCG
+    logger.info(f"🔍 [Check In] User: {current_user.id} | Tenant: {current_user.tenant} | Year: {effective_year}")
 
-    # 🛠️ 1. Data Type Normalization
+    # 🛠️ 2. Data Type Normalization
     stable_doc_ids = []
     if doc_ids:
         if isinstance(doc_ids, list):
@@ -441,7 +462,7 @@ async def analysis_llm(
         elif isinstance(doc_ids, str):
             stable_doc_ids = [idx.strip() for idx in doc_ids.split(",") if idx.strip()]
 
-    # กำหนด Doc Type และ Enabler
+    # 3. กำหนด Doc Type และ Enabler
     if not doc_types:
         used_doc_types = [EVIDENCE_DOC_TYPES]
     else:
@@ -450,11 +471,17 @@ async def analysis_llm(
     is_evidence = any(dt.lower() == EVIDENCE_DOC_TYPES.lower() for dt in used_doc_types)
     used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
 
-    # Initialize Manager & LLM
-    vsm = get_vectorstore_manager(tenant=current_user.tenant)
+    # 4. 🎯 Initialize Manager & LLM (ล็อคค่าจาก User ที่ Login เท่านั้น)
+    # หาก Log ยังเป็น TCG ให้เช็คใน get_vectorstore_manager ว่ามี Hardcode หรือไม่
+    try:
+        vsm = get_vectorstore_manager(tenant=current_user.tenant, year=int(effective_year))
+    except ValueError:
+        logger.error(f"❌ Invalid year format: {effective_year}")
+        vsm = get_vectorstore_manager(tenant=current_user.tenant, year=DEFAULT_YEAR)
+
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
 
-    # 🎯 2. Load Rubric JSON (โครงสร้างเกณฑ์จากไฟล์ Config)
+    # 🎯 5. Load Rubric JSON
     rubric_data = {}
     rubric_json_str = "{}"
     try:
@@ -464,22 +491,19 @@ async def analysis_llm(
                 rubric_data = json.load(f)
                 rubric_json_str = json.dumps(rubric_data, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"Failed to load rubric JSON: {e}")
+        logger.error(f"⚠️ Failed to load rubric JSON for {current_user.tenant}: {e}")
 
-    # 🎯 3. Determine Mode & Search Query
-    consultant_keywords = [
-        "เหมาะ", "หลักฐาน", "ประเมินหรือไม่", "สอดคล้อง", "หัวข้อไหน", 
-        "เกณฑ์ไหน", "ระดับไหน", "ขาดอะไร", "พิกัด", "เลขหน้า" # <--- เพิ่มตรงนี้
-    ]
+    # 🎯 6. Determine Mode & Search Query
+    consultant_keywords = ["เหมาะ", "หลักฐาน", "ประเมินหรือไม่", "สอดคล้อง", "หัวข้อไหน", "เกณฑ์ไหน", "ระดับไหน", "ขาดอะไร", "พิกัด", "เลขหน้า"]
     is_consultant_mode = any(kw in question.lower() for kw in consultant_keywords) or (not subject and len(stable_doc_ids) <= 2)
 
     search_query = question
     if subject:
         search_query = enhance_analysis_query(question, subject, rubric_data)
     elif is_consultant_mode:
-        search_query = f"ผลการดำเนินงาน ตัวชี้วัด เป้าหมาย {used_enabler} PDCA {question}"
+        search_query = f"ผลการดำเนินงาน ตัวชี้วัด {used_enabler} {question}"
 
-    # 🎯 4. Hybrid Retrieval (ดึงทั้งคู่มือเกณฑ์ และ หลักฐาน)
+    # 🎯 7. Hybrid Retrieval (ดึงทั้งคู่มือเกณฑ์ และ หลักฐาน)
     all_evidences = []
     all_rubric_chunks = []
     
@@ -498,38 +522,31 @@ async def analysis_llm(
             k_to_rerank=QA_FINAL_K
         )
         
-        # เก็บเนื้อหาจากคลังความรู้ (SE-AM Manual/Guideline)
         if "rubric_context" in retrieval_res:
             all_rubric_chunks.extend(retrieval_res["rubric_context"])
 
-        # ตรวจสอบหลักฐาน (Evidence) - ถ้าไม่พอให้ Retry ด้วยคำถามเดิม
         ev_list = retrieval_res.get("top_evidences", [])
+        # Retry logic: ถ้าเจอหลักฐานน้อยกว่า 5 ชิ้น ให้ใช้คำถามเดิม (Original Question) ค้นหาซ้ำ
         if len(ev_list) < 5:
-            logger.info("♻️ Enhanced Query yields low results. Retrying with original question...")
+            logger.info("♻️ Low evidence count. Retrying with original question...")
             retry_res = await asyncio.to_thread(
                 retrieve_context_with_rubric,
-                vectorstore_manager=vsm,
-                query=question,
-                doc_type=dt,
-                enabler=used_enabler,
-                stable_doc_ids=stable_doc_ids,
-                tenant=current_user.tenant,
-                year=effective_year,
-                subject=subject,
+                vectorstore_manager=vsm, query=question, doc_type=dt,
+                enabler=used_enabler, stable_doc_ids=stable_doc_ids,
+                tenant=current_user.tenant, year=effective_year,
                 top_k=RETRIEVAL_TOP_K
             )
             ev_list = retry_res.get("top_evidences", [])
-
         all_evidences.extend(ev_list)
 
-    # ขจัดตัวซ้ำและคัดเลือกตัวที่ดีที่สุด
+    # 🎯 8. Deduplicate & Sort Evidences
     unique_evidences = {ev['text']: ev for ev in all_evidences}.values()
     final_evidences = sorted(unique_evidences, key=lambda x: x.get("rerank_score", 0), reverse=True)[:ANALYSIS_FINAL_K]
 
     if not final_evidences:
-        return QueryResponse(answer="ไม่พบเนื้อหาที่เกี่ยวข้องในเอกสารที่เลือกเพื่อนำมาวิเคราะห์ครับ", sources=[], conversation_id=conv_id)
+        return QueryResponse(answer="ขออภัยครับ ไม่พบหลักฐานในระบบที่เกี่ยวข้องกับหัวข้อที่ท่านเลือกครับ", sources=[], conversation_id=conv_id)
 
-    # 🎯 5. PDCA Assessment Engine (จัดกลุ่มข้อมูลเข้า P-D-C-A)
+    # 🎯 9. PDCA Assessment Engine
     engine_config = AssessmentConfig(
         tenant=current_user.tenant,
         year=int(effective_year) if effective_year.isdigit() else DEFAULT_YEAR,
@@ -538,54 +555,36 @@ async def analysis_llm(
     )
     engine = SEAMPDCAEngine(config=engine_config, llm_instance=llm, vectorstore_manager=vsm, doc_type=used_doc_types[0])
 
-    # กรอง Blocks ข้อมูลตามโครงสร้าง PDCA
     plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks = engine._get_pdca_blocks_from_evidences(
         evidences=final_evidences, baseline_evidences={}, level=5, sub_id=subject or "all", contextual_rules_map=engine.contextual_rules_map
     )
     pdca_context = "\n\n".join(filter(None, [plan_blocks, do_blocks, check_blocks, act_blocks, other_blocks]))
-    
-    # รวมเนื้อหาเกณฑ์จากคลังความรู้ (Manual/Rubrics) เพื่อส่งให้ AI
     rubric_manual_context = "\n".join([r['text'] for r in all_rubric_chunks])
 
-    # 🎯 6. Final Inference
+    # 🎯 10. Final Inference
     if is_consultant_mode:
-        sys_msg_content = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_CONSULTANT_INSTRUCTION
-        # ส่งทั้งเกณฑ์ใน JSON และเนื้อหาจากคู่มือ PDF (Rubric Manual)
+        sys_msg = SYSTEM_CONSULTANT_INSTRUCTION
         prompt_text = REVERSE_MAPPING_PROMPT_TEMPLATE.format(
-            rubric_json=rubric_json_str,
-            rubric_manual=rubric_manual_context,
-            documents_content=pdca_context
+            rubric_json=rubric_json_str, rubric_manual=rubric_manual_context, documents_content=pdca_context
         )
-        mode_label = "Consultant"
     else:
-        sys_msg_content = "ALWAYS ANSWER IN THAI.\n" + SYSTEM_ANALYSIS_INSTRUCTION
+        sys_msg = SYSTEM_ANALYSIS_INSTRUCTION
         prompt_text = ANALYSIS_PROMPT_TEMPLATE.format(
-            rubric_json=rubric_json_str,
-            rubric_manual=rubric_manual_context,
-            documents_content=pdca_context,
-            question=question 
+            rubric_json=rubric_json_str, rubric_manual=rubric_manual_context, 
+            documents_content=pdca_context, question=question 
         )
-        mode_label = "Auditor"
 
-    logger.info(f"🚀 Analysis Mode: {mode_label} | Rubrics: {len(all_rubric_chunks)} chks | Evidence: {len(final_evidences)} chks")
-
-    messages = [SystemMessage(content=sys_msg_content), HumanMessage(content=prompt_text)]
+    messages = [SystemMessage(content="ALWAYS ANSWER IN THAI.\n" + sys_msg), HumanMessage(content=prompt_text)]
     raw_response = await asyncio.to_thread(llm.invoke, messages)
     answer = enforce_thai_primary_language(raw_response.content if hasattr(raw_response, "content") else str(raw_response))
 
-    # 🎯 7. Map Sources for UI (REVISED & FIXED)
+    # 🎯 11. Map Sources with Verified URLs
     sources = []
     for ev in final_evidences[:10]:
-        # ดึง UUID ให้ชัวร์
         d_uuid = str(ev.get("doc_id") or ev.get("stable_doc_uuid"))
-        
-        # ดึงเลขหน้ามาทำหน้าแสดงผล (Page Display)
         p_val = ev.get('page_label') or ev.get('page') or "1"
         p_num = int(p_val) if str(p_val).isdigit() else 1
         
-        # ระบุประเภทเอกสารเพื่อสร้าง URL
-        current_dt = used_doc_types[0] if used_doc_types else "evidence_doc"
-
         sources.append(QuerySource(
             source_id=d_uuid,
             file_name=ev.get('source_filename') or ev.get('source') or 'Document',
@@ -593,14 +592,14 @@ async def analysis_llm(
             score=float(ev.get("rerank_score") or 0.0),
             document_uuid=d_uuid,
             page_number=p_num,
-            page_display=f"p. {p_val}", # 🟢 จุดนี้จะทำให้ N/A หายไป
-            url=generate_source_url(    # 🟢 จุดนี้จะทำให้มีลิงก์กดได้
-                request=request,   # 👈 สำคัญที่สุด
-                doc_id=d_uuid,
-                page=p_num,
-                doc_type=current_dt,
-                tenant=current_user.tenant,
-                year=effective_year,
+            page_display=f"p. {p_val}",
+            url=generate_source_url(
+                request=request, 
+                doc_id=d_uuid, 
+                page=p_num, 
+                doc_type=used_doc_types[0],
+                tenant=current_user.tenant, 
+                year=effective_year, 
                 enabler=used_enabler
             )
         ))
@@ -609,24 +608,32 @@ async def analysis_llm(
     await async_save_message(current_user.id, conv_id, "ai", answer)
 
     return QueryResponse(
-        answer=answer.strip(), 
-        sources=sources, 
-        conversation_id=conv_id,
+        answer=answer.strip(), sources=sources, conversation_id=conv_id,
         result={"process_time": round(time.time() - start_time, 2)}
     )
 
 # =====================================================================
 # 4. /files/view — PDF File Viewer Endpoint (เพิ่มส่วนนี้เข้าไป)
 # =====================================================================
+# =====================================================================
+# 4. /files/view — PDF File Viewer Endpoint (Full Production Version)
+# =====================================================================
 @llm_router.get("/files/view/{document_uuid}")
 async def view_document_llm(
     document_uuid: str,
-    tenant: str = "pea",
-    year: Optional[str] = None,
+    tenant: str,               # ✅ บังคับส่งเพื่อแยกโฟลเดอร์ตามบริษัท
+    year: Optional[str] = None, # ส่งมาเพื่อให้ get_document_file_path หาไฟล์ปีนั้นๆ เจอ
     enabler: Optional[str] = None,
     doc_type: str = "document",
     page: int = 1
 ):
+    """
+    Endpoint สำหรับดึงไฟล์ PDF จาก Storage มาแสดงผลบน Browser (Inline)
+    รองรับการแยกโครงสร้าง Folder ตาม Tenant และ Year
+    """
+    
+    # 1. ค้นหา Path ของไฟล์จาก Database หรือ Logic การจัดเก็บ
+    # ฟังก์ชันนี้จะคืนค่า dict ที่มี 'file_path' ตามโครงสร้าง data_store/{tenant}/{year}/...
     file_info = get_document_file_path(
         document_uuid=document_uuid,
         tenant=tenant,
@@ -636,19 +643,27 @@ async def view_document_llm(
     )
 
     if not file_info:
-        raise HTTPException(status_code=404, detail="ไม่พบข้อมูลไฟล์")
+        logger.error(f"❌ [File View] Info not found in DB for UUID: {document_uuid} (Tenant: {tenant})")
+        raise HTTPException(status_code=404, detail="ไม่พบข้อมูลไฟล์ในระบบ")
 
-    file_path = file_info["file_path"]
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บนเซิร์ฟเวอร์")
+    file_path = file_info.get("file_path")
+    
+    # 2. ตรวจสอบว่ามีไฟล์อยู่จริงบน Disk หรือไม่
+    if not file_path or not os.path.exists(file_path):
+        logger.error(f"❌ [File View] Physical file missing at: {file_path}")
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บนเซิร์ฟเวอร์ (File Not Found)")
 
-    # 🎯 หัวใจสำคัญสำหรับ Mac:
-    # 1. ห้ามใส่ filename= ใน FileResponse (เพราะมันจะเติม 'attachment' ให้ทันที)
-    # 2. ใส่ Content-Disposition: inline เพียวๆ ใน headers
+    # 3. บันทึก Log การเข้าถึงไฟล์ (Audit Log)
+    logger.info(f"📂 [File View] Serving: {os.path.basename(file_path)} for Tenant: {tenant} (Page: {page})")
+
+    # 4. 🎯 ส่งไฟล์กลับไปในรูปแบบ Inline (หัวใจสำคัญสำหรับ Mac/Browser)
+    # - Media Type ต้องเป็น application/pdf
+    # - Content-Disposition ต้องเป็น inline เท่านั้น (ห้ามมี filename= เพราะจะกลายเป็นดาวน์โหลดทันที)
     return FileResponse(
         path=file_path,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": "inline"
+            "Content-Disposition": "inline",
+            "Cache-Control": "public, max-age=3600" # เพิ่ม Cache เพื่อประสิทธิภาพ
         }
     )
