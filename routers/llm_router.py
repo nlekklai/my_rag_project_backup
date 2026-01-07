@@ -49,6 +49,8 @@ import json, os
 import time
 from fastapi.responses import FileResponse
 
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL")
+
 logger = logging.getLogger(__name__)
 llm_router = APIRouter(prefix="/api", tags=["LLM"])
 
@@ -73,69 +75,39 @@ class QueryResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
 
 
-from fastapi import Request
-from typing import Optional
-import os
-import logging
-
-logger = logging.getLogger(__name__)
-
 def generate_source_url(
     request: Request,
-    doc_id: str, 
-    page: int, 
-    doc_type: str, 
-    tenant: str, 
-    year: str, 
-    enabler: Optional[str] = None
+    doc_id: str,
+    page: int,
+    doc_type: str,
+    tenant: str,
+    year: str,
+    enabler: str | None = None,
 ) -> str:
-    """
-    สร้าง URL สำหรับเปิดไฟล์ PDF แบบ Dynamic ตาม Host ที่เรียกเข้ามา
-    รองรับทั้ง localhost, IP Server, หรือ Domain Name
-    """
-    # 1. Validation เบื้องต้น
     if not doc_id or doc_id == "unknown":
-        logger.warning("⚠️ Cannot generate URL: doc_id is missing or unknown")
         return ""
 
-    # 2. ดึง Base URL จาก Request (จุดตายของปัญหา Local vs Server)
-    # ผลลัพธ์จะได้เช่น http://localhost:8000 หรือ http://192.168.19.41:8000
-    base_url = str(request.base_url).rstrip("/") 
-    
-    # 3. กำหนด Path สำหรับ Endpoint ดูไฟล์
-    # มั่นใจว่า Router ของคุณมี prefix='/api' และ endpoint='/files/view/{document_uuid}'
-    endpoint_path = f"/api/files/view/{doc_id}"
-    url = f"{base_url}{endpoint_path}"
+    # ⭐ logic กลาง
+    base_url = (
+        PUBLIC_BASE_URL.rstrip("/")
+        if PUBLIC_BASE_URL
+        else str(request.base_url).rstrip("/")
+    )
 
-    # 4. เตรียม Query Parameters
+    url = f"{base_url}/api/files/view/{doc_id}"
+
     params = [
-        f"page={max(1, page)}",           # ป้องกันกรณี page < 1
+        f"page={max(1, page)}",
         f"doc_type={doc_type.lower()}",
         f"tenant={tenant}",
     ]
 
-    # 5. Logic พิเศษสำหรับเอกสารประเภท Evidence (ปี และ Enabler)
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
-        # ตรวจสอบค่าปีให้ปลอดภัย
-        safe_year = (
-            year if year and str(year).lower() not in ("none", "undefined", "") 
-            else str(DEFAULT_YEAR)
-        )
-        params.append(f"year={safe_year}")
-
-        # ตรวจสอบค่า Enabler
-        if enabler and str(enabler).lower() not in ("none", "undefined", ""):
+        params.append(f"year={year}")
+        if enabler:
             params.append(f"enabler={enabler}")
-        elif DEFAULT_ENABLER:
-            params.append(f"enabler={DEFAULT_ENABLER}")
 
-    # 6. ประกอบร่างเป็น Final URL
-    final_url = f"{url}?{'&'.join(params)}"
-    
-    # 7. Log เพื่อตรวจสอบ (สำคัญมากตอน Debug บน Server)
-    logger.info(f"🔗 Generated dynamic source URL: {final_url}")
-
-    return final_url
+    return f"{url}?{'&'.join(params)}"
 
 
 # =====================================================================
