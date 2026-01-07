@@ -77,38 +77,47 @@ class QueryResponse(BaseModel):
 
 def generate_source_url(
     request: Request,
-    doc_id: str,
-    page: int,
-    doc_type: str,
-    tenant: str,
-    year: str,
-    enabler: str | None = None,
+    doc_id: str, 
+    page: int, 
+    doc_type: str, 
+    tenant: str, 
+    year: str, 
+    enabler: Optional[str] = None
 ) -> str:
     if not doc_id or doc_id == "unknown":
         return ""
 
-    # ⭐ logic กลาง
-    base_url = (
-        PUBLIC_BASE_URL.rstrip("/")
-        if PUBLIC_BASE_URL
-        else str(request.base_url).rstrip("/")
-    )
+    # 1. กำหนด Base URL
+    if PUBLIC_BASE_URL:
+        base_url = PUBLIC_BASE_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
 
-    url = f"{base_url}/api/files/view/{doc_id}"
+    # 2. 🎯 ปรับ Endpoint Path ให้รองรับทั้ง Local และ Server
+    # ถ้าเป็น Server (มี /ask-ai) ให้เติม /llm
+    # ถ้าเป็น Mac/Local (localhost) ให้ใช้ /api/files/view ปกติ
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        endpoint_path = f"/api/files/view/{doc_id}"
+    else:
+        # สำหรับ Server ที่ใช้ Proxy ผ่าน /ask-ai
+        endpoint_path = f"/api/llm/files/view/{doc_id}"
+    
+    url = f"{base_url}{endpoint_path}"
 
-    params = [
-        f"page={max(1, page)}",
-        f"doc_type={doc_type.lower()}",
-        f"tenant={tenant}",
-    ]
+    # 3. เตรียม Query Parameters (เหมือนเดิม)
+    p_num = max(1, int(page) if str(page).isdigit() else 1)
+    params = [f"page={p_num}", f"doc_type={doc_type.lower()}", f"tenant={tenant}"]
 
+    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_YEAR, DEFAULT_ENABLER
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
-        params.append(f"year={year}")
-        if enabler:
+        safe_year = year if year and str(year).lower() not in ("none", "undefined", "") else str(DEFAULT_YEAR)
+        params.append(f"year={safe_year}")
+        if enabler and str(enabler).lower() not in ("none", "undefined", ""):
             params.append(f"enabler={enabler}")
+        elif DEFAULT_ENABLER:
+            params.append(f"enabler={DEFAULT_ENABLER}")
 
     return f"{url}?{'&'.join(params)}"
-
 
 # =====================================================================
 # Revised Helper: _map_sources
