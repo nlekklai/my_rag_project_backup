@@ -40,7 +40,7 @@ services:
       - RAG_RUN_MODE=PRODUCTION
       - LLM_BACKEND=OLLAMA
       - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
-      - DEVICE=cuda
+      # - DEVICE=cuda
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
     depends_on:

@@ -110,9 +110,13 @@ def _detect_system():
 def _detect_torch_device():
     try:
         import torch
-        # ตัด ENV_DISABLE_ACCEL ออกเพื่อให้ระบบตัดสินใจจาก Hardware จริง
         if torch.cuda.is_available():
-            return "cuda"
+            num_gpus = torch.cuda.device_count()
+            # ใช้สุ่มเพื่อกระจายโหลดในระดับ Worker Process
+            import random
+            selected_gpu = random.randint(0, num_gpus - 1)
+            return f"cuda:{selected_gpu}"
+            
         if platform.system().lower() == "darwin":
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 return "mps"
@@ -123,24 +127,27 @@ def _detect_torch_device():
 # -------------------- HuggingFace Embeddings --------------------
 def get_hf_embeddings(device_hint: Optional[str] = None):
     global _CACHED_EMBEDDINGS
+    
+    # บังคับให้ตรวจหา Device ใหม่ทุกครั้งถ้ายังไม่มี Cache ใน Process นี้
     device = device_hint or _detect_torch_device()
 
     if _CACHED_EMBEDDINGS is None:
         with _EMBED_LOCK:
             if _CACHED_EMBEDDINGS is None:
                 model_name = EMBEDDING_MODEL_NAME
-                logger.info(f"Loading HF Embedding: {model_name} on {device}")
+                # เปลี่ยนจาก Loading เป็น 🚀 [GPU-ASSIGN] เพื่อให้คุณสังเกตง่ายใน Log
+                logger.info(f"🚀 [GPU-ASSIGN] Worker using: {device} for {model_name}")
                 try:
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
                         model_name=model_name,
-                        model_kwargs={"device": device},
+                        model_kwargs={"device": device}, # ใช้ device ที่สุ่มมา
                         encode_kwargs={"normalize_embeddings": True}
                     )
                 except Exception as e:
-                    logger.error(f"Failed to load {model_name}: {e}")
-                    logger.warning("Falling back to paraphrase-multilingual-MiniLM-L12-v2")
+                    logger.error(f"Failed to load {model_name} on {device}: {e}")
+                    # ถ้าพัง ให้ลองย้ายไป CPU
                     _CACHED_EMBEDDINGS = HuggingFaceEmbeddings(
-                        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        model_name=model_name,
                         model_kwargs={"device": "cpu"}
                     )
     return _CACHED_EMBEDDINGS
@@ -454,79 +461,80 @@ class UltimateHybridRetriever(BaseRetriever):
 # -------------------- VECTORSTORE MANAGER (SINGLETON) --------------------
 class VectorStoreManager:
     _instance = None
-    _is_initialized = False
     _lock = threading.Lock()
 
-    # ใช้ default_factory แทนการใส่ {} หรือ None ตรงๆ
-    _chroma_cache: Dict[str, Chroma] = PrivateAttr(default_factory=dict)
-    _multi_doc_retriever: Optional['MultiDocRetriever'] = PrivateAttr(default=None)
-    
-    tenant: str = PrivateAttr(default=DEFAULT_TENANT)
-    year: int = PrivateAttr(default=DEFAULT_YEAR)
-
+    # ใช้ PrivateAttr สำหรับ Pydantic compatibility (ถ้าใช้ BaseModel)
+    _chroma_cache: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _multi_doc_retriever: Optional[Any] = PrivateAttr(default=None)
     _doc_id_mapping: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
     _uuid_to_doc_id: Dict[str, str] = PrivateAttr(default_factory=dict)
-
     _embeddings: Any = PrivateAttr(default=None)
-
-    # สำคัญที่สุด: ต้องใช้ default_factory=dict หรือ default=None เท่านั้น!
     _client: Optional[chromadb.PersistentClient] = PrivateAttr(default=None)
-
 
     def __new__(cls, *args, **kwargs):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super(VectorStoreManager, cls).__new__(cls)
+                # กำหนดสถานะเริ่มต้นที่ instance เดียวเท่านั้น
+                cls._instance._is_initialized = False 
         return cls._instance
 
     def __init__(self, base_path: str = "", tenant: str = DEFAULT_TENANT, 
                  year: Optional[int] = None, enabler: Optional[str] = None, 
                  doc_type: str = EVIDENCE_DOC_TYPES):
-        if not self._is_initialized:
+        
+        target_year = year if year is not None else DEFAULT_YEAR
+        target_tenant = tenant.lower()
+
+        # 🎯 หัวใจสำคัญ: ตรวจสอบว่ามีการเปลี่ยน Year หรือ Tenant หรือไม่
+        # ถ้าเปลี่ยน ต้องล้าง Cache และโหลดใหม่เพื่อให้ชี้ไปที่ Path ถูกต้อง
+        should_reinit = (
+            not getattr(self, "_is_initialized", False) or 
+            getattr(self, "year", None) != target_year or 
+            getattr(self, "tenant", None) != target_tenant
+        )
+
+        if should_reinit:
             with self._lock:
-                if not self._is_initialized:
-                    # --- Basic Setup ---
+                # ตรวจสอบซ้ำอีกครั้งใน lock (Double-checked locking)
+                if not getattr(self, "_is_initialized", False) or self.year != target_year or self.tenant != target_tenant:
+                    
+                    self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+                    self.logger.info(f"🔄 VSM Context: Switching to Tenant={target_tenant}, Year={target_year}")
+
+                    # --- Update State ---
                     self._base_path = base_path
-                    self.tenant = tenant.lower()
-                    self.year = year if year is not None else DEFAULT_YEAR    
+                    self.tenant = target_tenant
+                    self.year = target_year
                     self.doc_type = doc_type
                     self.enabler = enabler.upper() if enabler else DEFAULT_ENABLER 
 
-                    # --- Caches ---
-                    self._chroma_cache: Dict[str, Any] = {}
-                    self._multi_doc_retriever: Optional[Any] = None
-                    self._doc_id_mapping: Dict[str, Dict[str, Any]] = {}
-                    self._uuid_to_doc_id: Dict[str, str] = {}
-                    self._hybrid_retriever_cache: Dict[str, Any] = {}
-                    self._bm25_docs_cache: Dict[str, List[Document]] = {}
+                    # --- Clear Caches (ล้างของเก่าเมื่อเปลี่ยนปี) ---
+                    self._chroma_cache = {}
+                    self._doc_id_mapping = {}
+                    self._uuid_to_doc_id = {}
+                    self._hybrid_retriever_cache = {}
+                    self._bm25_docs_cache = {}
 
                     # --- Core Components ---
-                    self._embeddings = get_hf_embeddings()
-                    self._client: Optional[chromadb.PersistentClient] = None
+                    if self._embeddings is None:
+                        self._embeddings = get_hf_embeddings()
 
-                    # --- Logger (สำคัญ!) ---
-                    self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-                    self.logger.info(f"VectorStoreManager initialized for tenant={self.tenant}, year={self.year}")
-
-                    # --- Initialize Client ---
+                    # --- Re-initialize Client ---
                     try:
-                        client_base_path = self._get_chroma_client_base_path(tenant, year)
+                        client_base_path = self._get_chroma_client_base_path(self.tenant, self.year)
                         self._client = chromadb.PersistentClient(path=client_base_path)
-                        self.logger.info(f"ChromaDB Client initialized at: {client_base_path}")
+                        self.logger.info(f"✅ ChromaDB Client updated at: {client_base_path}")
                     except Exception as e:
-                        self.logger.error(f"Failed to initialize ChromaDB client: {e}")
+                        self.logger.error(f"❌ Failed to initialize ChromaDB client: {e}")
                         self._client = None
 
-                    # --- Load Mapping ---
-                    try:
-                        self._load_doc_id_mapping()
-                        self.logger.info(f"Loaded doc_id_mapping: {len(self._doc_id_mapping)} documents")
-                    except Exception as e:
-                        self.logger.error(f"Failed to load doc_id_mapping: {e}")
+                    # --- Load Mapping (ดึงไฟล์ .json ของปีนั้นๆ) ---
+                    self._load_doc_id_mapping()
 
-                    self._is_initialized = True  # ← ใช้ instance variable
-                    self.logger.info(f"VectorStoreManager fully initialized (Tenant: {self.tenant})")
-    
+                    self._is_initialized = True
+                    self.logger.info(f"🚀 VectorStoreManager ready for {self.tenant} / {self.year}")
+
     def _get_chroma_client_base_path(self, tenant: str, year: Optional[int]) -> str:
         """
         Determines the base path for the Chroma PersistentClient.
