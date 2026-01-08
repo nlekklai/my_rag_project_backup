@@ -13,6 +13,7 @@ services:
       # ปรับให้ Ollama รองรับการประมวลผล 4 ข้อพร้อมกัน (Parallel)
       - OLLAMA_NUM_PARALLEL=4      
       - OLLAMA_MAX_LOADED_MODELS=1 
+      - OLLAMA_SCHED_SPREAD=true    # <--- เพิ่มบรรทัดนี้เพื่อกระจายโหลดลง 8 GPU
     deploy:
       resources:
         reservations:
