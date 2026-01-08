@@ -1,0 +1,7 @@
+ollama_data/
+data_store/
+venv/
+.git/
+__pycache__/
+*.pyc
+.env
