@@ -26,7 +26,6 @@ class UserDB(UserMe):
     password: str
 
 # ------------------- In-memory DB (simulation) -------------------
-# ------------------- In-memory DB (simulation) -------------------
 # ประกาศและใส่ข้อมูลลงไปทันทีในขั้นตอนเดียว
 USERS: Dict[str, UserDB] = {
     "dev.admin@pea.com": UserDB(
@@ -51,7 +50,6 @@ USERS: Dict[str, UserDB] = {
 # 🟢 ตัวแปรจำลอง Session (เพราะรัน Local และยังไม่มีระบบ Token จริงที่ซับซ้อน)
 CURRENT_SESSION_USER: Optional[str] = None
 
-# ------------------- Utility/Mock Dependencies -------------------
 # ------------------- Utility/Mock Dependencies -------------------
 
 async def get_current_user() -> UserMe:

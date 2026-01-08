@@ -9,12 +9,16 @@ services:
       - ./ollama_data:/root/.ollama
     ports:
       - "11434:11434"
+    environment:
+      # ปรับให้ Ollama รองรับการประมวลผล 4 ข้อพร้อมกัน (Parallel)
+      - OLLAMA_NUM_PARALLEL=4      
+      - OLLAMA_MAX_LOADED_MODELS=1 
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: all          # ใช้ GPU ทั้ง 8 ใบ
               capabilities: [gpu]
     restart: unless-stopped
 
@@ -27,13 +31,15 @@ services:
       - ./data_store:/app/data_store
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
+    # ใช้ env_file เพื่อดึงค่าจาก .env มาใช้โดยไม่ต้องประกาศซ้ำ
+    env_file:
+      - .env
     environment:
       - OLLAMA_BASE_URL=http://ollama_service:11434
       - RAG_RUN_MODE=PRODUCTION
       - LLM_BACKEND=OLLAMA
       - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
       - DEVICE=cuda
-      # --- เพิ่มค่านี้เพื่อป้องกัน VRAM Fragmentation และช่วยให้จอง Memory ได้ยืดหยุ่นขึ้น ---
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
     depends_on:
