@@ -41,7 +41,7 @@ USERS: Dict[str, UserDB] = {
         tenant="pea",
         is_active=True,
         password="P@ssword2568",
-        enablers=["KM", "IM", "SP", "SCM", "CG"],
+        enablers=["IM", "KM"],
         year=str(DEFAULT_YEAR)
     ),
     "admin@tcg.or.th": UserDB(
@@ -51,7 +51,7 @@ USERS: Dict[str, UserDB] = {
         tenant="tcg",
         is_active=True,
         password="P@ssword2568",
-        enablers=SUPPORTED_ENABLERS, # ให้สิทธิ์ทุกตัวที่มีในระบบ
+        enablers=["IM", "KM"], # ให้สิทธิ์ทุกตัวที่มีในระบบ
         year=str(DEFAULT_YEAR)
     )
 }
