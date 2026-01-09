@@ -257,6 +257,24 @@ def get_global_reranker() -> Optional[HuggingFaceCrossEncoderCompressor]:
                 _global_reranker_instance = None
         return _global_reranker_instance
 
+_CHROMA_CLIENT_CACHE = {}
+_CHROMA_LOCK = threading.Lock()
+
+def get_shared_chroma_client(db_path: str):
+    global _CHROMA_CLIENT_CACHE
+    with _CHROMA_LOCK:
+        if db_path not in _CHROMA_CLIENT_CACHE:
+            logging.info(f"🆕 [SharedClient] Initializing new Chroma Client at: {db_path}")
+            _CHROMA_CLIENT_CACHE[db_path] = chromadb.PersistentClient(
+                path=db_path,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    is_persistent=True,
+                    allow_reset=True
+                )
+            )
+        return _CHROMA_CLIENT_CACHE[db_path]
+    
 # -------------------- Path Helper Function (REVISED to use Path Utility) --------------------
 
 def get_vectorstore_path(
@@ -537,27 +555,27 @@ class VectorStoreManager:
 
     def _get_chroma_client_base_path(self, tenant: str, year: Optional[int]) -> str:
         """
-        Determines the base path for the Chroma PersistentClient.
-        - Global Docs (document, seam): ชี้ไปที่ root ของ vectorstore
-        - Evidence Docs (KM): ชี้ไปที่โฟลเดอร์ปี (เช่น vectorstore/2568)
+        Confirmed Logic: แยก Path ระหว่าง Evidence (รายปี) และ Global (ส่วนกลาง)
         """
-        # ดึง root path ของ tenant (เช่น .../data_store/pea/vectorstore)
         root_path = get_vectorstore_tenant_root_path(tenant) 
-        
-        # ดึงค่า doc_type มา normalize เพื่อเปรียบเทียบ
         current_dt = _n(getattr(self, 'doc_type', EVIDENCE_DOC_TYPES))
         evidence_type = _n(EVIDENCE_DOC_TYPES)
 
-        # 🎯 FIX LOGIC:
-        # เฉพาะกรณีที่เป็น Evidence และมีการระบุปีเท่านั้น ถึงจะชี้เข้าโฟลเดอร์ปี
-        if current_dt == evidence_type and year is not None:
+        # 🎯 เป้าหมาย: แยกโฟลเดอร์ให้เด็ดขาด เพื่อป้องกันการแย่งไฟล์ lock
+        if current_dt == evidence_type and year:
             target_path = os.path.join(root_path, str(year))
-            self.logger.info(f"📂 VSM Path Mode: YEARLY -> {target_path}")
-            return target_path
+            mode = "YEARLY"
+        else:
+            # แนะนำ: ให้ Global Docs อยู่ในโฟลเดอร์ย่อย 'global' หรือตาม doc_type 
+            # แทนการวางไว้ที่ root_path ตรงๆ เพื่อไม่ให้ทับกับโฟลเดอร์ปี
+            target_path = os.path.join(root_path, current_dt) 
+            mode = "GLOBAL"
+
+        # สร้างโฟลเดอร์ถ้ายังไม่มี
+        os.makedirs(target_path, exist_ok=True)
         
-        # นอกเหนือจากนั้น (เช่น document, seam) ให้ใช้ Root Path เสมอ
-        self.logger.info(f"📂 VSM Path Mode: GLOBAL -> {root_path}")
-        return root_path
+        self.logger.info(f"📂 [CONFIRMED] VSM Path Mode: {mode} -> {target_path}")
+        return target_path
     
     # -------------------- START FIXES (3 Functions) --------------------
     
@@ -1488,24 +1506,20 @@ class VectorStoreExecutorSingleton:
             self._executor.shutdown(wait=True)
             VectorStoreExecutorSingleton._is_initialized = False
 
-def get_vectorstore(
-    collection_name: str, 
-    tenant: str, 
-    year: Optional[int],
-    # 💡 เพิ่ม Argument ที่จำเป็นทั้งหมดเพื่อสร้าง Chroma Client ที่ถูกต้อง
-    # ถ้าคุณใช้ Embedding Model ภายใน VectorStoreExecutorSingleton
-    # อาจจะต้องเพิ่ม embedding_function หรืออื่นๆ ด้วย
-) -> VectorStoreExecutorSingleton:
-    """
-    Wrapper function สำหรับเรียกใช้ VectorStoreExecutorSingleton 
-    และส่งผ่าน Argument ที่จำเป็นในการระบุ Path และ Collection Name.
-    """
+def get_vectorstore(collection_name: str, tenant: str, year: Optional[int]) -> Chroma:
+    # 1. เรียกใช้ Manager เพื่อหา Path (Logic ที่คุณ Confirm มา)
+    manager = VectorStoreManager(tenant=tenant, year=year)
+    db_path = manager._get_chroma_client_base_path(tenant, year)
     
-    # 🎯 FIX: ส่งผ่าน Argument ไปยัง Constructor ของคลาสหลัก
-    return VectorStoreExecutorSingleton(
-        collection_name=collection_name, 
-        tenant=tenant, 
-        year=year
+    # 2. 🟢 จุดสำคัญ: ดึง Client จาก Cache กลาง (ห้ามสร้างใหม่เอง)
+    # ใช้ฟังก์ชัน get_shared_chroma_client ที่ผมเคยส่งให้ก่อนหน้า
+    shared_client = get_shared_chroma_client(db_path)
+    
+    # 3. สร้าง Object Chroma โดยใช้ client อ้างอิง
+    return Chroma(
+        client=shared_client,
+        collection_name=collection_name,
+        embedding_function=manager.embeddings
     )
 
 # -------------------- Custom Retriever for Chroma --------------------
