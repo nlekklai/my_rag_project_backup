@@ -499,7 +499,7 @@ async def get_assessment_status(record_id: str, current_user: UserMe = Depends(g
 async def get_assessment_history(
     tenant: str, 
     year: Optional[str] = Query(None),
-    enabler: Optional[str] = Query(None), # 🎯 รับค่าจากการเปลี่ยน selector บน UI
+    enabler: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
 ):
     # 1. ตรวจสอบสิทธิ์องค์กรเบื้องต้น
@@ -521,9 +521,7 @@ async def get_assessment_history(
         return {"items": []}
 
     # 3. เตรียม Filter
-    # กรองเฉพาะ Enabler ที่ User มีสิทธิ์
     user_allowed_enablers = [e.upper() for e in current_user.enablers]
-    # กรองตามที่ UI เลือกมา (เช่น SP, SCM, KM)
     target_enabler = enabler.upper() if enabler else None
 
     # 4. กำหนดช่วงปี
@@ -545,7 +543,10 @@ async def get_assessment_history(
                         with open(file_path, "r", encoding="utf-8") as jf:
                             data = json.load(jf)
                             summary = data.get("summary", {})
+                            
+                            # ดึงข้อมูลเบื้องต้น
                             file_enabler = (summary.get("enabler") or "KM").upper()
+                            scope = (summary.get("sub_criteria_id") or "ALL").upper()
                             
                             # 🛡️ เช็คชั้นที่ 1: User มีสิทธิ์ใน Enabler นี้ไหม?
                             if file_enabler not in user_allowed_enablers:
@@ -555,21 +556,34 @@ async def get_assessment_history(
                             if target_enabler and file_enabler != target_enabler:
                                 continue
 
+                            # --- 🛠️ Logic การจัดการ Level & Score ---
+                            # กรณีเป็น ALL (ประเมินทุกข้อ) ไม่ควรแสดง Level ของข้อใดข้อหนึ่ง
+                            if scope == "ALL":
+                                display_level = "-"
+                            else:
+                                # กรณีระบุ Sub-criteria ให้ดึง Level ที่ผ่านสูงสุดมาแสดง
+                                raw_level = summary.get('highest_pass_level_overall', 0)
+                                display_level = f"L{raw_level}"
+                            
+                            # ดึงคะแนนและปัดเศษ 2 ตำแหน่ง
+                            total_score = round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2)
+                            # ---------------------------------------
+
                             history_list.append({
                                 "record_id": data.get("record_id") or f.replace(".json", ""),
                                 "date": parse_safe_date(summary.get("export_timestamp"), file_path),
                                 "tenant": tenant,
                                 "year": y,
                                 "enabler": file_enabler,
-                                "scope": (summary.get("sub_criteria_id") or "ALL").upper(),
-                                "level": f"L{summary.get('highest_pass_level_overall', 0)}",
-                                "score": round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2),
+                                "scope": scope,
+                                "level": display_level,
+                                "score": total_score,
                                 "status": "COMPLETED"
                             })
                     except Exception as e:
                         logger.error(f"❌ Error parsing {f}: {e}")
 
-    # เรียงจากใหม่ไปเก่า
+    # เรียงลำดับจากวันที่ล่าสุดขึ้นก่อน
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 
