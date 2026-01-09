@@ -9,7 +9,7 @@ import asyncio
 from typing import List, Optional, Set, Dict, Any
 from collections import defaultdict
 
-from fastapi import APIRouter, Form, HTTPException, Depends, Request
+from fastapi import APIRouter, Form, HTTPException, Depends, Request, Query
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -44,10 +44,20 @@ from core.rag_prompts import (
     REVERSE_MAPPING_PROMPT_TEMPLATE,     # <--- เพิ่มอันนี้
     SUMMARY_PROMPT_TEMPLATE
 )
-from utils.path_utils import get_rubric_file_path, get_doc_type_collection_key, get_document_file_path
+from utils.path_utils import (
+    get_rubric_file_path, 
+    get_doc_type_collection_key, 
+    get_document_file_path,
+    _n
+)
+
 import json, os
 import time
 from fastapi.responses import FileResponse
+from urllib.parse import quote
+import unicodedata, mimetypes
+
+
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL")
 
@@ -74,50 +84,6 @@ class QueryResponse(BaseModel):
     conversation_id: str
     result: Optional[Dict[str, Any]] = None
 
-
-def generate_source_url(
-    request: Request,
-    doc_id: str, 
-    page: int, 
-    doc_type: str, 
-    tenant: str, 
-    year: str, 
-    enabler: Optional[str] = None
-) -> str:
-    if not doc_id or doc_id == "unknown":
-        return ""
-
-    # 1. กำหนด Base URL
-    if PUBLIC_BASE_URL:
-        base_url = PUBLIC_BASE_URL.rstrip("/")
-    else:
-        base_url = str(request.base_url).rstrip("/")
-
-    # 2. 🎯 ปรับ Endpoint Path ให้รองรับทั้ง Local และ Server
-    # ถ้าเป็น Server (มี /ask-ai) ให้เติม /llm
-    # ถ้าเป็น Mac/Local (localhost) ให้ใช้ /api/files/view ปกติ
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        endpoint_path = f"/api/files/view/{doc_id}"
-    else:
-        # สำหรับ Server ที่ใช้ Proxy ผ่าน /ask-ai
-        endpoint_path = f"/api/llm/files/view/{doc_id}"
-    
-    url = f"{base_url}{endpoint_path}"
-
-    # 3. เตรียม Query Parameters (เหมือนเดิม)
-    p_num = max(1, int(page) if str(page).isdigit() else 1)
-    params = [f"page={p_num}", f"doc_type={doc_type.lower()}", f"tenant={tenant}"]
-
-    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_YEAR, DEFAULT_ENABLER
-    if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
-        safe_year = year if year and str(year).lower() not in ("none", "undefined", "") else str(DEFAULT_YEAR)
-        params.append(f"year={safe_year}")
-        if enabler and str(enabler).lower() not in ("none", "undefined", ""):
-            params.append(f"enabler={enabler}")
-        elif DEFAULT_ENABLER:
-            params.append(f"enabler={DEFAULT_ENABLER}")
-
-    return f"{url}?{'&'.join(params)}"
 
 # =====================================================================
 # Revised Helper: _map_sources
@@ -612,56 +578,123 @@ async def analysis_llm(
         result={"process_time": round(time.time() - start_time, 2)}
     )
 
+# =====================================================================
+# Revised Helper: generate_source_url (หัวใจของการเชื่อมโยงไฟล์)
+# =====================================================================
+def generate_source_url(
+    request: Request, # รับ request มาเพื่อดึง Token
+    doc_id: str, 
+    page: int, 
+    doc_type: str, 
+    tenant: str, 
+    year: str, 
+    enabler: Optional[str] = None
+) -> str:
+    if not doc_id or doc_id == "unknown":
+        return ""
+
+    # ดึง Token จาก Header ปัจจุบัน
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header else ""
+
+    if PUBLIC_BASE_URL:
+        base_url = PUBLIC_BASE_URL.rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    # เลือก Path ตาม environment
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        endpoint_path = f"/api/files/view/{doc_id}"
+    else:
+        endpoint_path = f"/api/llm/files/view/{doc_id}"
+    
+    # 🎯 แปะ Token ลงไปใน URL Query String
+    params = [
+        f"page={page}", 
+        f"doc_type={doc_type.lower()}", 
+        f"tenant={tenant}",
+        f"year={year}",
+        f"token={token}" # <--- หัวใจสำคัญที่ทำให้เปิดผ่าน
+    ]
+
+    if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() and enabler:
+        params.append(f"enabler={enabler}")
+
+    return f"{base_url}{endpoint_path}?{'&'.join(params)}"
 
 # =====================================================================
-# 4. /files/view — PDF File Viewer Endpoint (Full Production Version)
+# 4. /files/view — PDF File Viewer Endpoint (Revised เพื่อความแม่นยำ)
 # =====================================================================
 @llm_router.get("/files/view/{document_uuid}")
 async def view_document_llm(
     document_uuid: str,
-    tenant: str,               # ✅ บังคับส่งเพื่อแยกโฟลเดอร์ตามบริษัท
-    year: Optional[str] = None, # ส่งมาเพื่อให้ get_document_file_path หาไฟล์ปีนั้นๆ เจอ
+    tenant: str,               
+    year: Optional[str] = None, 
     enabler: Optional[str] = None,
     doc_type: str = "document",
-    page: int = 1
+    page: int = 1,
+    # 🟢 เพิ่ม token ตรงนี้เพื่อรับจาก URL (เพราะ window.open ส่ง header ไม่ได้)
+    token: Optional[str] = Query(None) 
 ):
     """
-    Endpoint สำหรับดึงไฟล์ PDF จาก Storage มาแสดงผลบน Browser (Inline)
-    รองรับการแยกโครงสร้าง Folder ตาม Tenant และ Year
+    เวอร์ชันปรับปรุงตาม upload_router.py ที่ใช้งานได้จริง
     """
     
-    # 1. ค้นหา Path ของไฟล์จาก Database หรือ Logic การจัดเก็บ
-    # ฟังก์ชันนี้จะคืนค่า dict ที่มี 'file_path' ตามโครงสร้าง data_store/{tenant}/{year}/...
-    file_info = get_document_file_path(
-        document_uuid=document_uuid,
-        tenant=tenant,
-        year=year,
-        enabler=enabler,
-        doc_type_name=doc_type
-    )
+    # 🕵️ หมายเหตุ: หากระบบคุณเข้มงวดเรื่อง Security 
+    # คุณควรนำ token ไปตรวจสอบความถูกต้องก่อนตรงนี้
+    # if not token: raise HTTPException(status_code=401)
 
-    if not file_info:
-        logger.error(f"❌ [File View] Info not found in DB for UUID: {document_uuid} (Tenant: {tenant})")
-        raise HTTPException(status_code=404, detail="ไม่พบข้อมูลไฟล์ในระบบ")
-
-    file_path = file_info.get("file_path")
+    dt_clean = _n(doc_type)
     
-    # 2. ตรวจสอบว่ามีไฟล์อยู่จริงบน Disk หรือไม่
-    if not file_path or not os.path.exists(file_path):
-        logger.error(f"❌ [File View] Physical file missing at: {file_path}")
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์บนเซิร์ฟเวอร์ (File Not Found)")
+    # 1. กำหนดปีที่จะค้นหา (เลียนแบบ Logic ใน upload_router)
+    from config.global_vars import EVIDENCE_DOC_TYPES, DEFAULT_YEAR
+    if dt_clean != _n(EVIDENCE_DOC_TYPES):
+        search_year = None
+    else:
+        # พยายามแปลง year เป็น int เหมือนใน upload_router
+        try:
+            search_year = int(year) if year and year != "undefined" else DEFAULT_YEAR
+        except:
+            search_year = DEFAULT_YEAR
 
-    # 3. บันทึก Log การเข้าถึงไฟล์ (Audit Log)
-    logger.info(f"📂 [File View] Serving: {os.path.basename(file_path)} for Tenant: {tenant} (Page: {page})")
+    # 2. ค้นหา Path (ใช้ get_document_file_path เหมือนกัน)
+    resolved = get_document_file_path(document_uuid, tenant, search_year, enabler, doc_type)
+    
+    if not resolved:
+         logger.error(f"❌ View failed: Mapping not found for {document_uuid}")
+         raise HTTPException(status_code=404, detail="ไม่พบรหัสไฟล์ในฐานข้อมูล")
 
-    # 4. 🎯 ส่งไฟล์กลับไปในรูปแบบ Inline (หัวใจสำคัญสำหรับ Mac/Browser)
-    # - Media Type ต้องเป็น application/pdf
-    # - Content-Disposition ต้องเป็น inline เท่านั้น (ห้ามมี filename= เพราะจะกลายเป็นดาวน์โหลดทันที)
+    # 3. จัดการ Path ภาษาไทย (Logic เดียวกับ upload_router เป๊ะๆ)
+    target_path = resolved["file_path"]
+    normalized_path = unicodedata.normalize('NFC', target_path)
+    
+    if not os.path.exists(normalized_path):
+        normalized_path = unicodedata.normalize('NFD', target_path)
+        if not os.path.exists(normalized_path):
+            logger.error(f"❌ File missing on disk: {target_path}")
+            raise HTTPException(status_code=404, detail="ไม่พบไฟล์จริงบนดิสก์")
+
+    # 4. ระบุ MIME Type
+    m_type, _ = mimetypes.guess_type(normalized_path)
+    file_ext = normalized_path.lower()
+    if not m_type:
+        if file_ext.endswith('.pdf'): m_type = 'application/pdf'
+        elif file_ext.endswith('.png'): m_type = 'image/png'
+        else: m_type = 'application/octet-stream'
+
+    # 5. สร้าง Headers เหมือน upload_router
+    filename = resolved["original_filename"]
+    encoded_filename = quote(filename)
+    
+    headers = {
+        "Content-Disposition": f"inline; filename=\"{encoded_filename}\"; filename*=UTF-8''{encoded_filename}",
+        "Cache-Control": "no-cache"
+    }
+
+    logger.info(f"✅ [Chat View] Serving: {filename} as {m_type}")
+
     return FileResponse(
-        path=file_path,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=3600" # เพิ่ม Cache เพื่อประสิทธิภาพ
-        }
+        path=normalized_path,
+        media_type=m_type,
+        headers=headers
     )

@@ -36,6 +36,9 @@ from config.global_vars import (
     DOCUMENT_ID_MAPPING_FILENAME_SUFFIX
 )
 
+import mimetypes
+
+
 # ตั้งค่า Environment สำหรับ Torch
 os.environ["TORCH_LOAD_WEIGHTS_ONLY"] = "FALSE"
 
@@ -296,10 +299,7 @@ async def reingest_file(
 # =========================
 # 3. GET/DELETE: Download & Remove
 # =========================
-# =========================
-# 3. GET/DELETE: Download & View & Remove (Revised for Preview)
-# =========================
-import mimetypes # เพิ่มการ import standard library นี้ที่ด้านบนของไฟล์ด้วยครับ
+from urllib.parse import quote
 
 @upload_router.get("/download/{doc_type}/{doc_id}")
 async def download_file(
@@ -310,47 +310,59 @@ async def download_file(
     current_user: UserMe = Depends(get_current_user)
 ):
     dt_clean = _n(doc_type)
-    search_year = None if dt_clean != _n(EVIDENCE_DOC_TYPES) else (year or getattr(current_user, "year", DEFAULT_YEAR))
     
+    # 1. กำหนดปีที่จะค้นหา
+    if dt_clean != _n(EVIDENCE_DOC_TYPES):
+        search_year = None
+    else:
+        search_year = year or getattr(current_user, "year", DEFAULT_YEAR)
+    
+    # 2. ค้นหา Path จาก Mapping
     resolved = get_document_file_path(doc_id, current_user.tenant, search_year, enabler, doc_type)
     
     if not resolved:
          raise HTTPException(status_code=404, detail="ไม่พบรหัสไฟล์ในฐานข้อมูล")
 
-    # --- ส่วนจัดการ Path และ Unicode (NFC) ---
+    # 3. จัดการ Path ภาษาไทย (NFC)
     target_path = resolved["file_path"]
     normalized_path = unicodedata.normalize('NFC', target_path)
     
     if not os.path.exists(normalized_path):
         normalized_path = unicodedata.normalize('NFD', target_path)
         if not os.path.exists(normalized_path):
-            logger.error(f"❌ File not found on disk: {target_path}")
-            raise HTTPException(status_code=404, detail="ไม่พบไฟล์จริงบนระบบ")
+            logger.error(f"❌ File not found: {target_path}")
+            raise HTTPException(status_code=404, detail="ไม่พบไฟล์จริงบนดิสก์")
 
-    # --- วิเคราะห์ Media Type (MIME Type) ---
-    # ใช้ mimetypes library เพื่อความแม่นยำสูงขึ้น
+    # 4. ระบุ MIME Type ให้แม่นยำ
+    # บังคับเช็ค mimetypes และ fallback ตามนามสกุล
     m_type, _ = mimetypes.guess_type(normalized_path)
+    file_ext = normalized_path.lower()
     
-    # Fallback กรณีพิเศษ
     if not m_type:
-        file_ext = normalized_path.lower()
-        if file_ext.endswith('.pdf'):
-            m_type = 'application/pdf'
-        elif file_ext.endswith('.docx'):
-            m_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        else:
-            m_type = 'application/octet-stream'
+        if file_ext.endswith('.pdf'): m_type = 'application/pdf'
+        elif file_ext.endswith('.png'): m_type = 'image/png'
+        elif file_ext.endswith(('.jpg', '.jpeg')): m_type = 'image/jpeg'
+        elif file_ext.endswith('.docx'): m_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        else: m_type = 'application/octet-stream'
 
-    logger.info(f"📁 Serving file: {normalized_path} as {m_type}")
+    # 5. สร้าง Header พิเศษเพื่อบังคับ Preview (Inline) 
+    # ใช้การเข้ารหัสชื่อไฟล์แบบ UTF-8 สำหรับภาษาไทย
+    filename = resolved["original_filename"]
+    encoded_filename = quote(filename)
+    
+    # สำคัญมาก: ถ้าใส่ filename ใน FileResponse บางครั้ง FastAPI จะแอบใส่ 'attachment' ให้
+    # เราจึงคุมผ่าน headers เองทั้งหมด
+    headers = {
+        "Content-Disposition": f"inline; filename=\"{encoded_filename}\"; filename*=UTF-8''{encoded_filename}",
+        "Cache-Control": "no-cache" # ป้องกันเบราว์เซอร์จำค่าเก่าที่เคยสั่ง download
+    }
 
-    # ส่ง FileResponse
-    # การตั้ง filename ใน FileResponse บางครั้งทำให้ Browser บังคับโหลด 
-    # ถ้าอยากให้ Preview ภาพ/PDF ได้ดีที่สุด ให้ใช้พารามิเตอร์ตามนี้ครับ
+    logger.info(f"📁 Serving Inline: {filename} as {m_type}")
+
     return FileResponse(
         path=normalized_path,
         media_type=m_type,
-        filename=resolved["original_filename"],
-        content_disposition_type="inline" # 🟢 พยายาม Preview บน Browser
+        headers=headers
     )
 
 @upload_router.delete("/{doc_type}/{doc_id}")
