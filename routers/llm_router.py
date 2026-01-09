@@ -582,7 +582,7 @@ async def analysis_llm(
 # Revised Helper: generate_source_url (หัวใจของการเชื่อมโยงไฟล์)
 # =====================================================================
 def generate_source_url(
-    request: Request, # รับ request มาเพื่อดึง Token
+    request: Request,
     doc_id: str, 
     page: int, 
     doc_type: str, 
@@ -593,7 +593,6 @@ def generate_source_url(
     if not doc_id or doc_id == "unknown":
         return ""
 
-    # ดึง Token จาก Header ปัจจุบัน
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "") if auth_header else ""
 
@@ -602,25 +601,25 @@ def generate_source_url(
     else:
         base_url = str(request.base_url).rstrip("/")
 
-    # เลือก Path ตาม environment
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        endpoint_path = f"/api/files/view/{doc_id}"
-    else:
-        endpoint_path = f"/api/llm/files/view/{doc_id}"
+    # 🎯 ปรับให้เหมือน Local: ตัดเงื่อนไขแยก /api/llm ออก
+    # เพราะ Log ยืนยันว่าหน้าจัดการไฟล์เรียกผ่าน /api/... โดยตรงแล้วผ่าน
+    endpoint_path = f"/api/files/view/{doc_id}"
     
-    # 🎯 แปะ Token ลงไปใน URL Query String
+    url = f"{base_url}{endpoint_path}"
+
+    p_num = max(1, int(page) if str(page).isdigit() else 1)
     params = [
-        f"page={page}", 
+        f"page={p_num}", 
         f"doc_type={doc_type.lower()}", 
         f"tenant={tenant}",
         f"year={year}",
-        f"token={token}" # <--- หัวใจสำคัญที่ทำให้เปิดผ่าน
+        f"token={token}"
     ]
 
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower() and enabler:
         params.append(f"enabler={enabler}")
 
-    return f"{base_url}{endpoint_path}?{'&'.join(params)}"
+    return f"{url}?{'&'.join(params)}"
 
 # =====================================================================
 # 4. /files/view — PDF File Viewer Endpoint (Revised เพื่อความแม่นยำ)
