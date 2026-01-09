@@ -200,7 +200,7 @@ def parse_collection_name(collection_name: str) -> Tuple[str, Optional[str]]:
             return parts[0], parts[1]
     return name, None
 
-# ==================== 7. DOCUMENT FILE PATH RESOLVER ====================
+# ==================== 7. DOCUMENT FILE PATH RESOLVER (REVISED) ====================
 def get_document_file_path(
     document_uuid: str,
     tenant: str,
@@ -209,16 +209,17 @@ def get_document_file_path(
     doc_type_name: str
 ) -> Optional[Dict[str, str]]:
     """
-    ค้นหา Path ของไฟล์ PDF บน Disk โดยใช้ UUID
+    ค้นหา Path ของไฟล์ PDF บน Disk โดยใช้ UUID 
+    รองรับภาษาไทยแบบ Robust ทั้งระบบ Linux และการอัปโหลดจากเครื่อง Client
     """
     try:
         tenant_clean = _n(tenant)
         doc_type_clean = _n(doc_type_name).lower()
         
-        # --- 1. การโหลด Mapping Data ---
+        # --- 1. โหลด Mapping Data ---
         mapping_path = get_mapping_file_path(doc_type_name, tenant, year, enabler)
         
-        # Fallback: ถ้าหา Mapping ตามปีไม่เจอ ให้ลองหาในระดับ Global ของ Tenant
+        # Fallback: ลองหาในระดับ Global ถ้าตามปีไม่เจอ
         if not os.path.exists(mapping_path):
             mapping_path = get_mapping_file_path(doc_type_name, tenant, None, None)
 
@@ -234,41 +235,57 @@ def get_document_file_path(
             logger.warning(f"❌ [Path Resolver] UUID {document_uuid} not found in mapping")
             return None
 
-        # --- 2. ตรวจสอบไฟล์ด้วย Direct Path ---
+        # --- 2. ตรวจสอบ Direct Path (จากที่บันทึกไว้ใน DB) ---
         stored_path = entry.get("filepath", "")
         filename = entry.get("file_name") or entry.get("filename") or os.path.basename(stored_path)
         
         if stored_path:
-            # รวม DATA_STORE_ROOT กับ path ที่บันทึกไว้
             potential_path = stored_path if os.path.isabs(stored_path) else os.path.join(DATA_STORE_ROOT, stored_path)
             potential_path = resolve_filepath_to_absolute(potential_path)
 
+            # ตรวจสอบไฟล์จริง (NFC)
             if os.path.exists(potential_path):
                 logger.info(f"✅ [Path Resolver] Direct hit: {potential_path}")
                 return {"file_path": potential_path, "original_filename": filename}
+            
+            # Fallback 1: ลองแบบ NFD (เผื่อไฟล์มาจาก Mac)
+            nfd_path = unicodedata.normalize('NFD', potential_path)
+            if os.path.exists(nfd_path):
+                logger.info(f"✅ [Path Resolver] Direct hit (NFD): {nfd_path}")
+                return {"file_path": nfd_path, "original_filename": filename}
 
-        # --- 3. Fuzzy Scan (ถ้า Direct Path หาไม่เจอ) ---
-        # กำหนดจุดเริ่มสแกน
+        # --- 3. Fuzzy Scan (ถ้า Direct Path หาไม่เจอ หรือชื่อไฟล์ภาษาไทยไม่ตรงกัน) ---
         if doc_type_clean == "evidence":
             year_val = str(year) if year and str(year) != "None" else ""
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", "evidence", year_val)
         else:
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", doc_type_clean)
 
-        # ถ้า path เริ่มต้นไม่มีจริง ให้ถอยไปที่ data root ของ tenant
         if not os.path.exists(base_search_path):
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data")
 
         logger.info(f"🔎 [Path Resolver] Scanning: {base_search_path} for: {filename}")
         
+        # Normalize ชื่อไฟล์ที่ต้องการหาให้เป็นกลางที่สุด (ใช้ _n ที่คุณทำไว้)
         target_fn_norm = _n(filename) 
         
         for root, dirs, files in os.walk(base_search_path):
             for f in files:
+                # 🟢 หัวใจสำคัญ: เทียบชื่อไฟล์โดยการ Normalize ทั้งคู่ก่อนเทียบ
                 if _n(f) == target_fn_norm:
-                    final_path = resolve_filepath_to_absolute(os.path.join(root, f))
-                    logger.info(f"✅ [Path Resolver] Fuzzy match found: {final_path}")
-                    return {"file_path": final_path, "original_filename": f}
+                    raw_full_path = os.path.join(root, f)
+                    
+                    # 🟢 แปลงเป็น NFC เพื่อให้ระบบ Linux/FastAPI Stream ไฟล์ได้
+                    final_path = resolve_filepath_to_absolute(raw_full_path)
+                    
+                    if os.path.exists(final_path):
+                        logger.info(f"✅ [Path Resolver] Fuzzy match found & Verified: {final_path}")
+                        return {"file_path": final_path, "original_filename": f}
+                    
+                    # Last Resort: ถ้า OS บอกว่า NFC ไม่เจอ ให้ส่ง Path ดิบที่ os.walk เจอไป
+                    if os.path.exists(raw_full_path):
+                        logger.warning(f"⚠️ [Path Resolver] Found by walk but NFC check failed, using raw: {raw_full_path}")
+                        return {"file_path": raw_full_path, "original_filename": f}
 
         logger.error(f"❌ [Path Resolver] File not found on disk: {filename}")
         return None
@@ -303,12 +320,15 @@ def get_normalized_metadata(doc_type: str, year_input=None, enabler_input=None, 
 
 def resolve_filepath_to_absolute(path: str) -> str:
     """
-    แปลง Path ให้เป็น Absolute Path และ Normalize (NFKC) เพื่อแก้ปัญหา macOS
+    แปลง Path ให้เป็น Absolute Path และ Normalize เป็น NFC 
+    ซึ่งเป็นมาตรฐานที่ Linux File System และ FastAPI (FileResponse) เข้าใจได้ดีที่สุด
     """
+    if not path:
+        return ""
     # 1. ทำให้เป็น Absolute Path
     abs_path = os.path.abspath(path)
-    # 2. Normalize เพื่อให้ Path ที่มีอักขระพิเศษ (ภาษาไทย) มีการเข้ารหัสที่ถูกต้อง
-    return unicodedata.normalize('NFKC', abs_path)
+    # 2. 🟢 เปลี่ยนจาก NFKC เป็น NFC เพื่อป้องกันสระไทย (เช่น สระอำ) ถูกแปลงรหัสจนไฟล์หาไม่เจอ
+    return unicodedata.normalize('NFC', abs_path)
 
 # ==================== 9. EVIDENCE MAPPING ====================
 def load_evidence_mapping(

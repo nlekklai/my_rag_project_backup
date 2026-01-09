@@ -296,7 +296,6 @@ async def reingest_file(
 # =========================
 # 3. GET/DELETE: Download & Remove
 # =========================
-
 @upload_router.get("/download/{doc_type}/{doc_id}")
 async def download_file(
     doc_type: str, doc_id: str,
@@ -308,10 +307,32 @@ async def download_file(
     search_year = None if dt_clean != _n(EVIDENCE_DOC_TYPES) else (year or getattr(current_user, "year", DEFAULT_YEAR))
     
     resolved = get_document_file_path(doc_id, current_user.tenant, search_year, enabler, doc_type)
-    if not resolved or not os.path.exists(resolved["file_path"]):
-        raise HTTPException(status_code=404, detail="ไม่พบไฟล์")
+    
+    if not resolved:
+         raise HTTPException(status_code=404, detail="ไม่พบรหัสไฟล์ในฐานข้อมูล")
 
-    return FileResponse(resolved["file_path"], filename=resolved["original_filename"])
+    # --- ส่วนที่แก้ไข: Normalize Path เพื่อป้องกันปัญหาภาษาไทย ---
+    target_path = resolved["file_path"]
+    
+    # พยายาม Normalize ชื่อไฟล์ให้เป็นรูปแบบมาตรฐาน (NFC)
+    normalized_path = unicodedata.normalize('NFC', target_path)
+    
+    # ตรวจสอบว่ามีไฟล์อยู่จริงไหมอีกครั้ง
+    if not os.path.exists(normalized_path):
+        # ถ้า NFC ไม่เจอ ให้ลอง NFD (เผื่อเป็นเครื่อง Mac หรือระบบเก่า)
+        normalized_path = unicodedata.normalize('NFD', target_path)
+        if not os.path.exists(normalized_path):
+            logger.error(f"❌ File found by Fuzzy but cannot be accessed: {target_path}")
+            raise HTTPException(status_code=404, detail="ระบบพบไฟล์แต่ไม่สามารถเข้าถึงข้อมูลบนดิสก์ได้")
+
+    logger.info(f"📁 Serving file: {normalized_path}")
+    
+    # ส่งไฟล์กลับโดยระบุ Media Type เพื่อความปลอดภัย
+    return FileResponse(
+        normalized_path, 
+        filename=resolved["original_filename"],
+        media_type='application/pdf' if normalized_path.lower().endswith('.pdf') else None
+    )
 
 @upload_router.delete("/{doc_type}/{doc_id}")
 async def delete_file(
