@@ -7,6 +7,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from pydantic import BaseModel, EmailStr, Field
 
+# 🎯 เชื่อมต่อกับ Config ส่วนกลาง
+from config.global_vars import DEFAULT_YEAR, SUPPORTED_ENABLERS
+
 logger = logging.getLogger(__name__)
 
 # ------------------- Pydantic Models -------------------
@@ -14,8 +17,10 @@ logger = logging.getLogger(__name__)
 class UserBase(BaseModel):
     email: EmailStr
     full_name: str
-    tenant: str = Field(..., example="pea", description="รหัสองค์กร")
-    enablers: List[str] = Field(default_factory=list, description="รายการ Enabler ที่ User นี้เข้าถึงได้")
+    tenant: str = Field(..., description="รหัสองค์กร เช่น pea, tcg")
+    enablers: List[str] = Field(default_factory=list, description="รายการ Enabler ที่เข้าถึงได้")
+    # 🎯 ดึงปีเริ่มต้นจาก global_vars
+    year: str = Field(default=str(DEFAULT_YEAR), description="ปีงบประมาณที่ใช้งาน")
     
 class UserRegister(UserBase):
     password: str = Field(..., min_length=8)
@@ -30,13 +35,14 @@ class UserDB(UserMe):
 # ------------------- In-memory DB (simulation) -------------------
 USERS: Dict[str, UserDB] = {
     "dev.admin@pea.com": UserDB(
-        id="dev-admin-id",
+        id="pea-admin-id",
         email="dev.admin@pea.com",
         full_name="Dev Admin (PEA)",
         tenant="pea",
         is_active=True,
         password="P@ssword2568",
-        enablers=["KM","IM"] 
+        enablers=["KM", "IM", "SP", "SCM", "CG"],
+        year=str(DEFAULT_YEAR)
     ),
     "admin@tcg.or.th": UserDB(
         id="tcg-admin-id",
@@ -45,84 +51,74 @@ USERS: Dict[str, UserDB] = {
         tenant="tcg",
         is_active=True,
         password="P@ssword2568",
-        enablers=["KM", "IM"]
+        enablers=SUPPORTED_ENABLERS, # ให้สิทธิ์ทุกตัวที่มีในระบบ
+        year=str(DEFAULT_YEAR)
     )
 }
 
-# ------------------- 🟢 Intelligent Session for Local/Server -------------------
+# ------------------- 🟢 Intelligent Persistent Session -------------------
+# แก้ปัญหา Server Restart แล้ว Session หลุด (รองรับทั้ง macOS และ Linux Server)
 SESSION_FILE = ".dev_session"
-IS_MACOS = platform.system() == "Darwin"
 
 def get_persisted_session() -> Optional[str]:
-    """ดึง Session ล่าสุดจากไฟล์ (เฉพาะตอน Dev บน Mac เพื่อป้องกัน Hot-reload แล้วหลุด)"""
-    if IS_MACOS and os.path.exists(SESSION_FILE):
+    """ดึง Session ล่าสุดจากไฟล์เพื่อกู้คืนสถานะ Login"""
+    if os.path.exists(SESSION_FILE):
         try:
             with open(SESSION_FILE, "r") as f:
                 email = f.read().strip()
-                return email if email in USERS else "admin@tcg.or.th"
-        except:
-            return "admin@tcg.or.th"
-    return "admin@tcg.or.th" if IS_MACOS else None
+                return email if email in USERS else None
+        except Exception as e:
+            logger.error(f"Error reading session file: {e}")
+            return None
+    return None
 
 def save_persisted_session(email: str):
-    """บันทึก Session ลงไฟล์ (เฉพาะตอน Dev บน Mac)"""
-    if IS_MACOS:
+    """บันทึก Session ลงไฟล์ (Persistent Storage)"""
+    try:
         with open(SESSION_FILE, "w") as f:
             f.write(email)
+    except Exception as e:
+        logger.error(f"Save session failed: {e}")
 
-# ค่าเริ่มต้นตอนเริ่มระบบ
+# โหลดสถานะล่าสุดทันทีที่ Start Server
 CURRENT_SESSION_USER: Optional[str] = get_persisted_session()
-
-if IS_MACOS:
-    logger.info(f"🛠️ [Auth System] macOS Detected: Auto-login enabled (Current: {CURRENT_SESSION_USER})")
 
 # ------------------- Utility/Mock Dependencies -------------------
 
 async def get_current_user() -> UserMe:
-    """
-    ดึงข้อมูล User ปัจจุบันจาก Session ในหน่วยความจำ
-    รองรับ Auto-login สำหรับ Local Development (macOS)
-    """
+    """Dependency สำหรับดึงข้อมูล User ปัจจุบัน (Auto-Restore จากไฟล์)"""
     global CURRENT_SESSION_USER
     
-    # 🎯 1. กรณีไม่มี Session: ถ้าอยู่บน Mac ให้ดึงค่าล่าสุดกลับมา
+    # 1. ถ้า RAM ว่าง ให้ลองกู้จากไฟล์ (กัน Error 401 หลัง Restart)
     if not CURRENT_SESSION_USER:
-        if IS_MACOS:
-            CURRENT_SESSION_USER = get_persisted_session()
-            logger.info(f"🛠️ [Auth] Restoring session: {CURRENT_SESSION_USER}")
-        else:
-            logger.warning("🚫 [Auth] Access denied: No active session found.")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="เซสชันหมดอายุหรือยังไม่ได้เข้าสู่ระบบ กรุณา Login ใหม่อีกครั้ง",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    
-    email = CURRENT_SESSION_USER
-    
-    # 🎯 2. ตรวจสอบข้อมูลใน DB
-    if email in USERS:
-        user_db = USERS[email]
-        if not user_db.is_active:
-            raise HTTPException(status_code=403, detail="บัญชีผู้ใช้นี้ถูกระงับการใช้งาน")
-            
-        return UserMe(**user_db.model_dump(exclude={"password"}))
+        CURRENT_SESSION_USER = get_persisted_session()
+        if CURRENT_SESSION_USER:
+            logger.info(f"🔄 [Auth] Session restored for: {CURRENT_SESSION_USER}")
 
-    # 🎯 3. กรณีหา User ไม่เจอ
-    raise HTTPException(status_code=401, detail="ไม่พบข้อมูลผู้ใช้ในระบบ")
+    # 2. ถ้ายังไม่มีอีก แสดงว่ายังไม่ได้ Login จริงๆ
+    if not CURRENT_SESSION_USER:
+        logger.warning("🚫 [Auth] Access denied: No active session found.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="เซสชันหมดอายุ กรุณา Login ใหม่อีกครั้ง",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 3. ตรวจสอบใน DB
+    user_db = USERS.get(CURRENT_SESSION_USER)
+    if not user_db or not user_db.is_active:
+        raise HTTPException(status_code=403, detail="บัญชีผู้ใช้ไม่มีสิทธิ์เข้าถึง")
+            
+    return UserMe(**user_db.model_dump(exclude={"password"}))
 
 
 def check_user_permission(user: UserMe, tenant: str, enabler: Optional[str] = None) -> bool:
-    """
-    ตรวจสอบสิทธิ์การเข้าถึงข้อมูล (Authorization Gatekeeper)
-    ใช้ตรวจสอบว่า User มีสิทธิ์ใน Tenant และ Enabler ที่ระบุหรือไม่
-    """
+    """ตรวจสอบสิทธิ์ (Authorization Gatekeeper)"""
     try:
-        # Normalize ค่าเพื่อป้องกันปัญหาตัวพิมพ์เล็ก-ใหญ่
         target_tenant = str(tenant).strip().lower()
         user_tenant = str(user.tenant).strip().lower()
         
-        # 1. ตรวจสอบ Tenant
+        # 🛡️ 1. ตรวจสอบ Tenant
         if target_tenant != user_tenant:
             logger.error(f"🚫 [Permission Denied] User Tenant:{user_tenant} != Target:{target_tenant}")
             raise HTTPException(
@@ -130,7 +126,7 @@ def check_user_permission(user: UserMe, tenant: str, enabler: Optional[str] = No
                 detail=f"Access Denied: คุณไม่มีสิทธิ์เข้าถึงข้อมูลขององค์กร {tenant}"
             )
 
-        # 2. ตรวจสอบ Enabler (ถ้าส่งมาเช็ค)
+        # 🛡️ 2. ตรวจสอบ Enabler (ถ้าส่งมาเช็ค)
         if enabler:
             target_en = str(enabler).strip().upper()
             user_enablers = [str(e).strip().upper() for e in user.enablers]
@@ -171,7 +167,7 @@ async def login_for_access_token(
     if not user or user.password != input_pass:
         raise HTTPException(status_code=401, detail="อีเมลหรือรหัสผ่านไม่ถูกต้อง")
     
-    # บันทึก Session
+    # บันทึกสถานะทั้งใน RAM และ File
     CURRENT_SESSION_USER = input_user
     save_persisted_session(input_user)
     
@@ -191,7 +187,7 @@ async def read_users_me(current_user: UserMe = Depends(get_current_user)):
 async def logout():
     global CURRENT_SESSION_USER
     CURRENT_SESSION_USER = None
-    if IS_MACOS and os.path.exists(SESSION_FILE):
+    if os.path.exists(SESSION_FILE):
         os.remove(SESSION_FILE)
     logger.info("🚪 User logged out.")
     return {"status": "success", "message": "Logged out"}
