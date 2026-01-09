@@ -210,22 +210,16 @@ def get_document_file_path(
 ) -> Optional[Dict[str, str]]:
     """
     ค้นหา Path ของไฟล์ PDF บน Disk โดยใช้ UUID
-    Logic: 
-    1. หาจาก Mapping JSON (รองรับ Fallback ถ้าหาปีที่ส่งมาไม่เจอ)
-    2. ลองเข้าถึงไฟล์จาก 'filepath' ที่บันทึกไว้ตรงๆ (Direct Access)
-    3. หากไม่เจอ ให้ทำ 'Fuzzy Scan' (os.walk) ในโฟลเดอร์ที่เกี่ยวข้อง
     """
     try:
         tenant_clean = _n(tenant)
         doc_type_clean = _n(doc_type_name).lower()
         
         # --- 1. การโหลด Mapping Data ---
-        # พยายามโหลดตามปีที่ส่งมาก่อน
         mapping_path = get_mapping_file_path(doc_type_name, tenant, year, enabler)
         
-        # 💡 Fallback: ถ้าหา Mapping ตามปีไม่เจอ (เช่น URL ส่งปีผิด) ให้ลองหาในโฟลเดอร์ Root ของ Tenant
+        # Fallback: ถ้าหา Mapping ตามปีไม่เจอ ให้ลองหาในระดับ Global ของ Tenant
         if not os.path.exists(mapping_path):
-            logger.debug(f"Yearly mapping not found, trying global mapping: {doc_type_clean}")
             mapping_path = get_mapping_file_path(doc_type_name, tenant, None, None)
 
         if not os.path.exists(mapping_path):
@@ -240,13 +234,12 @@ def get_document_file_path(
             logger.warning(f"❌ [Path Resolver] UUID {document_uuid} not found in mapping")
             return None
 
-        # --- 2. ตรวจสอบไฟล์ด้วย Direct Path (ประสิทธิภาพสูง) ---
+        # --- 2. ตรวจสอบไฟล์ด้วย Direct Path ---
         stored_path = entry.get("filepath", "")
         filename = entry.get("file_name") or entry.get("filename") or os.path.basename(stored_path)
         
-        # แปลง Relative Path (จาก Mapping) เป็น Absolute Path
         if stored_path:
-            # ถ้า stored_path เป็น relative (เช่น tcg/data/...) ให้ต่อกับ ROOT
+            # รวม DATA_STORE_ROOT กับ path ที่บันทึกไว้
             potential_path = stored_path if os.path.isabs(stored_path) else os.path.join(DATA_STORE_ROOT, stored_path)
             potential_path = resolve_filepath_to_absolute(potential_path)
 
@@ -254,29 +247,23 @@ def get_document_file_path(
                 logger.info(f"✅ [Path Resolver] Direct hit: {potential_path}")
                 return {"file_path": potential_path, "original_filename": filename}
 
-        # --- 3. Fuzzy Scan (กรณีไฟล์ถูกย้ายที่ หรือ Path ใน DB คลาดเคลื่อน) ---
-        # กำหนดจุดเริ่มสแกน: ถ้าเป็น evidence สแกนในโฟลเดอร์ปี/enabler ถ้าเป็น document สแกนในโฟลเดอร์กลาง
+        # --- 3. Fuzzy Scan (ถ้า Direct Path หาไม่เจอ) ---
+        # กำหนดจุดเริ่มสแกน
         if doc_type_clean == "evidence":
             year_val = str(year) if year and str(year) != "None" else ""
-            # สแกนกว้างขึ้นเล็กน้อยในระดับปี เพื่อรองรับการสลับ enabler
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", "evidence", year_val)
         else:
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data", doc_type_clean)
 
-        # ถ้าจุดเริ่มสแกนไม่มีจริง ให้ถอยกลับไปที่ data root ของ tenant
+        # ถ้า path เริ่มต้นไม่มีจริง ให้ถอยไปที่ data root ของ tenant
         if not os.path.exists(base_search_path):
             base_search_path = os.path.join(DATA_STORE_ROOT, tenant_clean, "data")
 
         logger.info(f"🔎 [Path Resolver] Scanning: {base_search_path} for: {filename}")
         
-        target_fn_norm = _n(filename) # Normalize ชื่อไฟล์ที่จะหา
+        target_fn_norm = _n(filename) 
         
         for root, dirs, files in os.walk(base_search_path):
-            # Optimization: กรองเบื้องต้นสำหรับ Evidence
-            if doc_type_clean == "evidence" and enabler and _n(enabler) not in _n(root):
-                # ถ้าอยากให้หาข้าม enabler ได้ ให้คอมเมนต์ 2 บรรทัดนี้
-                pass 
-            
             for f in files:
                 if _n(f) == target_fn_norm:
                     final_path = resolve_filepath_to_absolute(os.path.join(root, f))
