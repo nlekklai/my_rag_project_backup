@@ -62,7 +62,7 @@ import unicodedata, mimetypes
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL")
 
 logger = logging.getLogger(__name__)
-llm_router = APIRouter(prefix="/api", tags=["LLM"])
+llm_router = APIRouter(prefix="/api/llm", tags=["LLM"]) # เปลี่ยนจาก /api เป็น /api/llm
 
 # =====================================================================
 # Response Models
@@ -599,11 +599,10 @@ def generate_source_url(
     if PUBLIC_BASE_URL:
         base_url = PUBLIC_BASE_URL.rstrip("/")
     else:
-        base_url = str(request.base_url).rstrip("/")
+        base_url = f"{request.url.scheme}://{request.url.netloc}"
 
-    # 🎯 ปรับให้เหมือน Local: ตัดเงื่อนไขแยก /api/llm ออก
-    # เพราะ Log ยืนยันว่าหน้าจัดการไฟล์เรียกผ่าน /api/... โดยตรงแล้วผ่าน
-    endpoint_path = f"/api/files/view/{doc_id}"
+    # 🎯 ต้องใส่ /llm เพิ่มเข้าไปให้ตรงกับ Prefix ของ APIRouter
+    endpoint_path = f"/api/llm/files/view/{doc_id}"
     
     url = f"{base_url}{endpoint_path}"
 
