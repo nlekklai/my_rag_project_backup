@@ -499,39 +499,40 @@ async def get_assessment_status(record_id: str, current_user: UserMe = Depends(g
 async def get_assessment_history(
     tenant: str, 
     year: Optional[str] = Query(None),
+    enabler: Optional[str] = Query(None), # 🎯 รับค่าจากการเปลี่ยน selector บน UI
     current_user: UserMe = Depends(get_current_user)
 ):
-    # 1. ตรวจสอบสิทธิ์องค์กร (Tenant Level) ครั้งเดียวที่ต้นทาง
-    # ใช้ check_user_permission แบบไม่ระบุ enabler เพื่อเช็คแค่ tenant
+    # 1. ตรวจสอบสิทธิ์องค์กรเบื้องต้น
     check_user_permission(current_user, tenant)
 
     history_list = []
     from config.global_vars import DATA_STORE_ROOT
     
-    # 2. ค้นหา Path ที่มีอยู่จริง (Normalize tenant เสมอ)
+    # 2. จัดการ Path ให้รองรับทั้ง Local และ Server
     norm_tenant = _n(tenant)
     tenant_export_root = os.path.join(DATA_STORE_ROOT, norm_tenant, "exports")
     
-    # Fallback สำหรับเครื่อง Mac หรือ Path นอก Docker
     if not os.path.exists(tenant_export_root):
         alt_path = os.path.join("data_store", norm_tenant, "exports")
-        if os.path.exists(alt_path):
-            tenant_export_root = alt_path
+        if os.path.exists(alt_path): tenant_export_root = alt_path
 
     if not os.path.exists(tenant_export_root):
-        logger.warning(f"⚠️ [History] ไม่พบโฟลเดอร์ exports สำหรับ: {norm_tenant}")
+        logger.warning(f"⚠️ [History] ไม่พบข้อมูลของ {norm_tenant}")
         return {"items": []}
 
-    # 3. ระบุปีที่ต้องการค้นหา
+    # 3. เตรียม Filter
+    # กรองเฉพาะ Enabler ที่ User มีสิทธิ์
+    user_allowed_enablers = [e.upper() for e in current_user.enablers]
+    # กรองตามที่ UI เลือกมา (เช่น SP, SCM, KM)
+    target_enabler = enabler.upper() if enabler else None
+
+    # 4. กำหนดช่วงปี
     if not year or str(year).lower() == "all":
         search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
     else:
         search_years = [str(year)]
 
-    # เตรียมรายการ Enablers ที่ User มีสิทธิ์เพื่อใช้กรอง (ไม่ต้อง raise exception ใน loop)
-    allowed_enablers = [e.upper() for e in current_user.enablers]
-
-    # 4. Scan ไฟล์ JSON
+    # 5. สแกนไฟล์และกรองข้อมูล
     for y in search_years:
         year_path = os.path.join(tenant_export_root, y)
         if not os.path.exists(year_path): continue
@@ -544,10 +545,14 @@ async def get_assessment_history(
                         with open(file_path, "r", encoding="utf-8") as jf:
                             data = json.load(jf)
                             summary = data.get("summary", {})
-                            enabler_in_file = (summary.get("enabler") or "KM").upper()
+                            file_enabler = (summary.get("enabler") or "KM").upper()
                             
-                            # 🛡️ ตรวจสอบสิทธิ์ Enabler: ถ้าไม่มีสิทธิ์ให้ข้ามไฟล์นี้ไป (ห้าม raise error)
-                            if enabler_in_file not in allowed_enablers:
+                            # 🛡️ เช็คชั้นที่ 1: User มีสิทธิ์ใน Enabler นี้ไหม?
+                            if file_enabler not in user_allowed_enablers:
+                                continue
+
+                            # 🛡️ เช็คชั้นที่ 2: ตรงกับที่เลือกบน UI (Selector) ไหม?
+                            if target_enabler and file_enabler != target_enabler:
                                 continue
 
                             history_list.append({
@@ -555,16 +560,16 @@ async def get_assessment_history(
                                 "date": parse_safe_date(summary.get("export_timestamp"), file_path),
                                 "tenant": tenant,
                                 "year": y,
-                                "enabler": enabler_in_file,
+                                "enabler": file_enabler,
                                 "scope": (summary.get("sub_criteria_id") or "ALL").upper(),
                                 "level": f"L{summary.get('highest_pass_level_overall', 0)}",
                                 "score": round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2),
                                 "status": "COMPLETED"
                             })
                     except Exception as e:
-                        logger.error(f"❌ Error reading {f}: {e}")
+                        logger.error(f"❌ Error parsing {f}: {e}")
 
-    # เรียงลำดับตามวันที่ (ล่าสุดขึ้นก่อน)
+    # เรียงจากใหม่ไปเก่า
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 
