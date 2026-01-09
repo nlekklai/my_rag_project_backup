@@ -502,19 +502,26 @@ async def get_assessment_history(
     enabler: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
 ):
-    # 1. ตรวจสอบสิทธิ์องค์กรเบื้องต้น
+    """
+    Full Revised History Endpoint:
+    แก้ไขให้อ่านค่า Level จาก "Overall Maturity Level (Weighted)" หรือ "highest_pass_level"
+    เพื่อให้แสดงผลในหน้าประวัติได้อย่างถูกต้อง
+    """
+    # 1. ตรวจสอบสิทธิ์องค์กร
     check_user_permission(current_user, tenant)
 
     history_list = []
     from config.global_vars import DATA_STORE_ROOT
     
-    # 2. จัดการ Path ให้รองรับทั้ง Local และ Server
+    # 2. จัดการ Path (Tenant & Exports)
     norm_tenant = _n(tenant)
     tenant_export_root = os.path.join(DATA_STORE_ROOT, norm_tenant, "exports")
     
+    # Fallback สำหรับรัน Local
     if not os.path.exists(tenant_export_root):
         alt_path = os.path.join("data_store", norm_tenant, "exports")
-        if os.path.exists(alt_path): tenant_export_root = alt_path
+        if os.path.exists(alt_path): 
+            tenant_export_root = alt_path
 
     if not os.path.exists(tenant_export_root):
         logger.warning(f"⚠️ [History] ไม่พบข้อมูลของ {norm_tenant}")
@@ -530,7 +537,7 @@ async def get_assessment_history(
     else:
         search_years = [str(year)]
 
-    # 5. สแกนไฟล์และกรองข้อมูล
+    # 5. สแกนไฟล์และดึงข้อมูล
     for y in search_years:
         year_path = os.path.join(tenant_export_root, y)
         if not os.path.exists(year_path): continue
@@ -544,30 +551,43 @@ async def get_assessment_history(
                             data = json.load(jf)
                             summary = data.get("summary", {})
                             
-                            # ดึงข้อมูลเบื้องต้น
+                            # ดึงข้อมูล Enabler และ Scope
                             file_enabler = (summary.get("enabler") or "KM").upper()
                             scope = (summary.get("sub_criteria_id") or "ALL").upper()
                             
-                            # 🛡️ เช็คชั้นที่ 1: User มีสิทธิ์ใน Enabler นี้ไหม?
+                            # 🛡️ สิทธิ์การเข้าถึง Enabler
                             if file_enabler not in user_allowed_enablers:
                                 continue
 
-                            # 🛡️ เช็คชั้นที่ 2: ตรงกับที่เลือกบน UI (Selector) ไหม?
+                            # 🎯 กรองตามที่ User เลือก
                             if target_enabler and file_enabler != target_enabler:
                                 continue
 
-                            # --- 🛠️ Logic การจัดการ Level & Score ---
-                            # กรณีเป็น ALL (ประเมินทุกข้อ) ไม่ควรแสดง Level ของข้อใดข้อหนึ่ง
-                            if scope == "ALL":
-                                display_level = "-"
-                            else:
-                                # กรณีระบุ Sub-criteria ให้ดึง Level ที่ผ่านสูงสุดมาแสดง
-                                raw_level = summary.get('highest_pass_level_overall', 0)
-                                display_level = f"L{raw_level}"
+                            # --- 🛠️ Logic การจัดการ Level (ปรับตาม JSON จริง) ---
+                            display_level = "-"
                             
-                            # ดึงคะแนนและปัดเศษ 2 ตำแหน่ง
-                            total_score = round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2)
-                            # ---------------------------------------
+                            if scope != "ALL":
+                                # 1. พยายามดึงจาก "Overall Maturity Level (Weighted)" (เช่น "L1")
+                                raw_weighted_level = summary.get("Overall Maturity Level (Weighted)")
+                                # 2. พยายามดึงจาก "highest_pass_level" (เช่น 1)
+                                raw_highest_level = summary.get("highest_pass_level")
+
+                                if raw_weighted_level:
+                                    display_level = str(raw_weighted_level)
+                                elif raw_highest_level is not None:
+                                    display_level = f"L{raw_highest_level}"
+                                else:
+                                    # Fallback: คำนวณจาก Score ถ้าไม่มีฟิลด์ข้างต้น
+                                    score_val = float(summary.get("Total Weighted Score Achieved") or 0)
+                                    if score_val >= 0.8: display_level = "L5"
+                                    elif score_val >= 0.6: display_level = "L4"
+                                    elif score_val >= 0.4: display_level = "L3"
+                                    elif score_val >= 0.2: display_level = "L2"
+                                    elif score_val > 0: display_level = "L1"
+                            
+                            # จัดการคะแนน (Score)
+                            total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
+                            # --------------------------------------------------
 
                             history_list.append({
                                 "record_id": data.get("record_id") or f.replace(".json", ""),
@@ -583,7 +603,7 @@ async def get_assessment_history(
                     except Exception as e:
                         logger.error(f"❌ Error parsing {f}: {e}")
 
-    # เรียงลำดับจากวันที่ล่าสุดขึ้นก่อน
+    # 6. เรียงลำดับจากวันที่ล่าสุดขึ้นก่อน
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 
