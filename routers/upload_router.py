@@ -296,9 +296,15 @@ async def reingest_file(
 # =========================
 # 3. GET/DELETE: Download & Remove
 # =========================
+# =========================
+# 3. GET/DELETE: Download & View & Remove (Revised for Preview)
+# =========================
+import mimetypes # เพิ่มการ import standard library นี้ที่ด้านบนของไฟล์ด้วยครับ
+
 @upload_router.get("/download/{doc_type}/{doc_id}")
 async def download_file(
-    doc_type: str, doc_id: str,
+    doc_type: str, 
+    doc_id: str,
     year: Optional[int] = Query(None),
     enabler: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
@@ -311,27 +317,40 @@ async def download_file(
     if not resolved:
          raise HTTPException(status_code=404, detail="ไม่พบรหัสไฟล์ในฐานข้อมูล")
 
-    # --- ส่วนที่แก้ไข: Normalize Path เพื่อป้องกันปัญหาภาษาไทย ---
+    # --- ส่วนจัดการ Path และ Unicode (NFC) ---
     target_path = resolved["file_path"]
-    
-    # พยายาม Normalize ชื่อไฟล์ให้เป็นรูปแบบมาตรฐาน (NFC)
     normalized_path = unicodedata.normalize('NFC', target_path)
     
-    # ตรวจสอบว่ามีไฟล์อยู่จริงไหมอีกครั้ง
     if not os.path.exists(normalized_path):
-        # ถ้า NFC ไม่เจอ ให้ลอง NFD (เผื่อเป็นเครื่อง Mac หรือระบบเก่า)
         normalized_path = unicodedata.normalize('NFD', target_path)
         if not os.path.exists(normalized_path):
-            logger.error(f"❌ File found by Fuzzy but cannot be accessed: {target_path}")
-            raise HTTPException(status_code=404, detail="ระบบพบไฟล์แต่ไม่สามารถเข้าถึงข้อมูลบนดิสก์ได้")
+            logger.error(f"❌ File not found on disk: {target_path}")
+            raise HTTPException(status_code=404, detail="ไม่พบไฟล์จริงบนระบบ")
 
-    logger.info(f"📁 Serving file: {normalized_path}")
+    # --- วิเคราะห์ Media Type (MIME Type) ---
+    # ใช้ mimetypes library เพื่อความแม่นยำสูงขึ้น
+    m_type, _ = mimetypes.guess_type(normalized_path)
     
-    # ส่งไฟล์กลับโดยระบุ Media Type เพื่อความปลอดภัย
+    # Fallback กรณีพิเศษ
+    if not m_type:
+        file_ext = normalized_path.lower()
+        if file_ext.endswith('.pdf'):
+            m_type = 'application/pdf'
+        elif file_ext.endswith('.docx'):
+            m_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        else:
+            m_type = 'application/octet-stream'
+
+    logger.info(f"📁 Serving file: {normalized_path} as {m_type}")
+
+    # ส่ง FileResponse
+    # การตั้ง filename ใน FileResponse บางครั้งทำให้ Browser บังคับโหลด 
+    # ถ้าอยากให้ Preview ภาพ/PDF ได้ดีที่สุด ให้ใช้พารามิเตอร์ตามนี้ครับ
     return FileResponse(
-        normalized_path, 
+        path=normalized_path,
+        media_type=m_type,
         filename=resolved["original_filename"],
-        media_type='application/pdf' if normalized_path.lower().endswith('.pdf') else None
+        content_disposition_type="inline" # 🟢 พยายาม Preview บน Browser
     )
 
 @upload_router.delete("/{doc_type}/{doc_id}")
