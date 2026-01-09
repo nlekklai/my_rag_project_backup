@@ -71,7 +71,8 @@ from config.global_vars import (
     EMBEDDING_MODEL_NAME,
     USE_HYBRID_SEARCH,
     HYBRID_BM25_WEIGHT,
-    HYBRID_VECTOR_WEIGHT
+    HYBRID_VECTOR_WEIGHT,
+    DEFAULT_DOC_TYPES
 )
 
 # Logging
@@ -554,29 +555,19 @@ class VectorStoreManager:
                     self.logger.info(f"🚀 VectorStoreManager ready for {self.tenant} / {self.year}")
 
     def _get_chroma_client_base_path(self, tenant: str, year: Optional[int]) -> str:
-        """
-        Confirmed Logic: แยก Path ระหว่าง Evidence (รายปี) และ Global (ส่วนกลาง)
-        """
         root_path = get_vectorstore_tenant_root_path(tenant) 
-        current_dt = _n(getattr(self, 'doc_type', EVIDENCE_DOC_TYPES))
+        current_dt = _n(self.doc_type)
         evidence_type = _n(EVIDENCE_DOC_TYPES)
 
-        # 🎯 เป้าหมาย: แยกโฟลเดอร์ให้เด็ดขาด เพื่อป้องกันการแย่งไฟล์ lock
+        # 🎯 แยก Path: Evidence ไปตามปี | อย่างอื่นไปตามประเภท (document, faq, seam)
         if current_dt == evidence_type and year:
             target_path = os.path.join(root_path, str(year))
-            mode = "YEARLY"
         else:
-            # แนะนำ: ให้ Global Docs อยู่ในโฟลเดอร์ย่อย 'global' หรือตาม doc_type 
-            # แทนการวางไว้ที่ root_path ตรงๆ เพื่อไม่ให้ทับกับโฟลเดอร์ปี
+            # จะได้ path เช่น /vectorstore/document/ ป้องกันการชนกับโฟลเดอร์ปี
             target_path = os.path.join(root_path, current_dt) 
-            mode = "GLOBAL"
 
-        # สร้างโฟลเดอร์ถ้ายังไม่มี
         os.makedirs(target_path, exist_ok=True)
-        
-        self.logger.info(f"📂 [CONFIRMED] VSM Path Mode: {mode} -> {target_path}")
         return target_path
-    
     # -------------------- START FIXES (3 Functions) --------------------
     
     def set_multi_doc_retriever(self, mdr: 'MultiDocRetriever'):
@@ -1506,16 +1497,26 @@ class VectorStoreExecutorSingleton:
             self._executor.shutdown(wait=True)
             VectorStoreExecutorSingleton._is_initialized = False
 
-def get_vectorstore(collection_name: str, tenant: str, year: Optional[int]) -> Chroma:
-    # 1. เรียกใช้ Manager เพื่อหา Path (Logic ที่คุณ Confirm มา)
-    manager = VectorStoreManager(tenant=tenant, year=year)
+
+def get_vectorstore(
+    collection_name: str, 
+    tenant: str, 
+    year: Optional[int],
+    doc_type: str = DEFAULT_DOC_TYPES # 🟢 เพิ่ม Parameter นี้ เพื่อรับค่าจาก Router
+) -> Chroma:
+    """
+    สร้าง Chroma Object โดยแยก Path ตาม tenant และ doc_type ที่ Login เข้ามา
+    """
+    # 1. สร้าง Manager โดยระบุ doc_type ให้ชัดเจน (ห้ามใช้ Default ที่เป็น evidence)
+    manager = VectorStoreManager(tenant=tenant, year=year, doc_type=doc_type)
+    
+    # 2. คำนวณหา Path (จะออกมาเป็น /vectorstore/document หรือ /vectorstore/2567 ตามที่คุณ Confirm)
     db_path = manager._get_chroma_client_base_path(tenant, year)
     
-    # 2. 🟢 จุดสำคัญ: ดึง Client จาก Cache กลาง (ห้ามสร้างใหม่เอง)
-    # ใช้ฟังก์ชัน get_shared_chroma_client ที่ผมเคยส่งให้ก่อนหน้า
+    # 3. ดึง Shared Client (ป้องกัน Error Settings mismatch)
     shared_client = get_shared_chroma_client(db_path)
     
-    # 3. สร้าง Object Chroma โดยใช้ client อ้างอิง
+    # 4. คืนค่า Chroma Instance
     return Chroma(
         client=shared_client,
         collection_name=collection_name,
