@@ -11,6 +11,7 @@ uploads/
 .DS_Store
 .hf_cache
 .vscode
+.dev_session
 *.sqlite3
 # Ignore folders
 vectorstore/
