@@ -105,7 +105,6 @@ app.add_middleware(
 # -----------------------------
 # Routers 
 # -----------------------------
-# app.include_router(upload_router)
 app.include_router(upload_router)
 app.include_router(llm_router)
 # ✅ รวม assessment_router และ auth_router เข้าสู่แอปพลิเคชัน

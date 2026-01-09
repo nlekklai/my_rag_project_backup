@@ -244,14 +244,14 @@ def _is_pdf_image_only(file_path: str) -> bool:
 
 def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Document]:
     """
-    Revised Full Version: รองรับ Multi-Platform (Mac/Server),
-    แก้ปัญหา NoneType/TypeError และเพิ่ม Direct OCR เมื่อ Unstructured พัง
+    Revised Full Version: รองรับ Multi-Platform และแก้ปัญหา NoneType/TypeError
+    พร้อมระบบ Smart Fallback สำหรับ PDF และ Image
     """
     raw_docs: List[Any] = [] 
     ext = "." + file_path.lower().split('.')[-1]
     filename = os.path.basename(file_path)
     
-    # --- 1. Handle CSV (Thai BOM Ready) ---
+    # --- 1. Handle CSV (Thai BOM & Encoding Ready) ---
     if loader_class.__name__ == 'CSVLoader' or ext == ".csv":
         try:
             loader = loader_class(
@@ -264,71 +264,76 @@ def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Docume
             logger.error(f"❌ CSV LOADER FAILED: {filename} -> {e}")
             return []
     
-    # --- 2. Handle PDF (Text/Image-only) with Robust Fallback ---
+    # --- 2. Handle PDF (Smart Switch: Text Layer vs OCR) ---
     elif ext == ".pdf":
         try:
             if _is_pdf_image_only(file_path):
                 logger.info(f"PDF is image-only, using High-Res OCR: {filename}")
                 try:
-                    # ลองแบบ Full Option (Languages support)
+                    # พยายามใช้ OCR พร้อมระบุภาษาไทย
                     loader = UnstructuredFileLoader(
-                        file_path, mode="elements", strategy="hi_res", languages=['tha','eng']
+                        file_path, 
+                        mode="elements", 
+                        strategy="hi_res", 
+                        languages=['tha', 'eng']
                     )
                     raw_docs = loader.load()
-                except (TypeError, Exception):
-                    # Fallback สำหรับ Mac/Server version ที่ไม่ยอมรับ parameter languages
-                    logger.warning(f"⚠️ PDF OCR fallback: Removing 'languages' for {filename}")
-                    loader = UnstructuredFileLoader(file_path, mode="elements", strategy="hi_res")
-                    raw_docs = loader.load()
+                except (TypeError, Exception) as e_ocr:
+                    # 🛡️ Fallback 1: ถ้า OCR แบบระบุภาษาพัง (เช่น version บน Mac ไม่รองรับ)
+                    logger.warning(f"⚠️ PDF OCR (with lang) failed: {e_ocr}. Trying without lang...")
+                    try:
+                        loader = UnstructuredFileLoader(file_path, mode="elements", strategy="hi_res")
+                        raw_docs = loader.load()
+                    except Exception:
+                        # 🛡️ Fallback 2: ถ้า Unstructured พังถาวร ให้ใช้ PyPDFLoader (อย่างน้อยก็ได้ text บางส่วน)
+                        logger.warning(f"⚠️ Unstructured failed. Falling back to PyPDFLoader: {filename}")
+                        from langchain_community.document_loaders import PyPDFLoader
+                        loader = PyPDFLoader(file_path)
+                        raw_docs = loader.load()
             else:
+                # กรณีมี Text Layer ใช้ PyPDFLoader ซึ่งแม่นยำและเร็วที่สุด
                 logger.info(f"PDF has text layer, using PyPDFLoader: {filename}")
+                from langchain_community.document_loaders import PyPDFLoader
                 loader = PyPDFLoader(file_path)
                 raw_docs = loader.load()
         except Exception as e:
-             logger.error(f"❌ PDF LOADER FAILED: {filename} -> {e}")
+             logger.error(f"❌ PDF LOADER CRITICAL FAILED: {filename} -> {e}")
              return []
 
-    # --- 3. Handle Images (Triple-Guard: Unstructured -> Simple -> Direct OCR) ---
+    # --- 3. Handle Images (Triple-Guard: Unstructured -> Direct Pytesseract) ---
     elif ext in [".jpg", ".jpeg", ".png"]:
         logger.info(f"Reading image file: {filename} ...")
-        
-        # 🚀 Step 3.1: Unstructured elements mode
         try:
             loader = UnstructuredFileLoader(file_path, mode="elements", languages=['tha','eng'])
             raw_docs = loader.load()
-        except (TypeError, Exception) as e:
-            logger.warning(f"⚠️ Primary image loader failed ({type(e).__name__}). Trying Fallback 1...")
+        except Exception:
             try:
-                # 🚀 Step 3.2: Unstructured elements mode (No languages)
                 loader = UnstructuredFileLoader(file_path, mode="elements")
                 raw_docs = loader.load()
             except: raw_docs = []
 
-        # เช็คว่าได้เนื้อหาจริงหรือไม่ (ป้องกันอาการ NoneType/Empty String)
+        # เช็คเนื้อหา ถ้าว่างเปล่าให้ใช้ Direct OCR (ไม้ตายสุดท้าย)
         has_content = any(getattr(d, 'page_content', None) and str(d.page_content).strip() for d in raw_docs)
-        
-        # 🚀 Step 3.3: Direct Pytesseract OCR (ไม้ตายสุดท้าย พร้อม Image Enhancement)
         if not raw_docs or not has_content:
             try:
-                logger.warning(f"⚠️ Unstructured failed/Empty. Using Direct Pytesseract OCR: {filename}")
+                logger.warning(f"⚠️ Unstructured image loader failed. Using Direct Pytesseract OCR: {filename}")
                 from PIL import Image, ImageEnhance
                 import pytesseract
                 
                 with Image.open(file_path) as img:
-                    # Pre-processing สำหรับภาษาไทย: แปลงเป็นขาวดำ + ขยาย 2 เท่า + เพิ่ม Contrast
-                    img = img.convert('L') 
-                    img = img.resize((img.width * 2, img.height * 2), resample=Image.Resampling.LANCZOS)
-                    img = ImageEnhance.Contrast(img).enhance(2.0)
+                    # Enhancement เพื่อให้ OCR ภาษาไทยอ่านง่ายขึ้น
+                    img = img.convert('L') # ขาวดำ
+                    img = img.resize((img.width * 2, img.height * 2)) # ขยายขนาด
+                    img = ImageEnhance.Contrast(img).enhance(2.0) # เพิ่มความชัด
                     text = pytesseract.image_to_string(img, lang='tha+eng')
                 
                 if text.strip():
-                    raw_docs = [Document(page_content=text, metadata={"source": file_path, "format": "Direct OCR Enhanced"})]
-                    logger.info(f"✅ Direct OCR Successful: {filename}")
+                    raw_docs = [Document(page_content=text, metadata={"source": file_path, "format": "Direct OCR"})]
             except Exception as e_direct:
                 logger.error(f"❌ All Image loaders failed for {filename}: {e_direct}")
                 return []
         
-    # --- 4. Handle Other File Types (Word, Excel, etc.) ---
+    # --- 4. Handle Others (Word, Excel, PowerPoint) ---
     else:
         try:
             loader = loader_class(file_path)
@@ -337,23 +342,29 @@ def _load_document_with_loader(file_path: str, loader_class: Any) -> List[Docume
             logger.error(f"❌ GENERAL LOADER FAILED: {filename} -> {e}")
             return []
         
-    # --- 5. Post-Processing & Filtering (จุดที่ป้องกัน Error __str__ และทำความสะอาดข้อมูล) ---
+    # --- 5. Final Post-Processing (ป้องกัน NoneType และ Normalize ภาษาไทย) ---
     if raw_docs:
         filtered_docs = []
         for doc in raw_docs:
+            if doc is None: continue
             try:
-                # ดึงเนื้อหาผ่าน getattr เพื่อความปลอดภัย
-                content = getattr(doc, 'page_content', None)
-                if content and str(content).strip():
-                    # ทำความสะอาดและ Normalize ภาษาไทย (NFC)
-                    cleaned_text = str(content).strip()
-                    doc.page_content = unicodedata.normalize('NFC', cleaned_text)
-                    filtered_docs.append(doc)
-            except Exception:
-                continue # ข้าม chunk ที่มีปัญหา
+                # ดึงเนื้อหาและตรวจสอบว่าไม่เป็น None
+                content = getattr(doc, 'page_content', "")
+                if content is not None:
+                    txt = str(content).strip()
+                    if txt:
+                        # Normalize ภาษาไทย ป้องกันปัญหาตัวสระลอย/วรรณยุกต์
+                        doc.page_content = unicodedata.normalize('NFC', txt)
+                        # ตรวจสอบ metadata ต้องเป็น dict เสมอสำหรับ ChromaDB
+                        if not isinstance(doc.metadata, dict):
+                            doc.metadata = {}
+                        filtered_docs.append(doc)
+            except Exception as e_clean:
+                logger.debug(f"Cleaning error in {filename}: {e_clean}")
+                continue
         
         if not filtered_docs:
-             logger.warning(f"⚠️ [EMPTY] No valid text extracted from {filename}")
+             logger.warning(f"⚠️ [NO CONTENT] No valid text could be extracted from {filename}")
              return []
              
         return filtered_docs
