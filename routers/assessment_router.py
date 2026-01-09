@@ -24,7 +24,7 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Pt, RGBColor, Inches
 from docx.oxml.ns import qn
 
-from routers.auth_router import UserMe, get_current_user
+from routers.auth_router import get_current_user, check_user_permission, UserMe
 from utils.path_utils import (
     _n, 
     get_tenant_year_export_root, 
@@ -51,13 +51,6 @@ class StartAssessmentRequest(BaseModel):
     enabler: str
     sub_criteria: Optional[str] = "all"
     sequential_mode: bool = True
-
-# ------------------- Permission Helper -------------------
-def check_user_permission(user: UserMe, tenant: str, enabler: str):
-    if _n(user.tenant) != _n(tenant):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
-    if user.enablers and enabler.upper() not in [e.upper() for e in user.enablers]:
-        raise HTTPException(status_code=403, detail=f"Enabler '{enabler}' not allowed")
 
 # ------------------- Helpers -------------------
 def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
@@ -508,48 +501,41 @@ async def get_assessment_history(
     year: Optional[str] = Query(None),
     current_user: UserMe = Depends(get_current_user)
 ):
-    # 1. ตรวจสอบสิทธิ์องค์กร
-    if _n(tenant) != _n(current_user.tenant):
-        raise HTTPException(status_code=403, detail="Permission Denied")
+    # 1. ตรวจสอบสิทธิ์องค์กร (Tenant Level) ครั้งเดียวที่ต้นทาง
+    # ใช้ check_user_permission แบบไม่ระบุ enabler เพื่อเช็คแค่ tenant
+    check_user_permission(current_user, tenant)
 
     history_list = []
-    
-    # 2. สร้าง Path แบบ Dynamic (ไม่ Hardcode)
-    # เราจะลองหาจาก DATA_STORE_ROOT ในหลายๆ รูปแบบ
     from config.global_vars import DATA_STORE_ROOT
     
-    # กำหนดความน่าจะเป็นของ Path (รองรับทั้ง Docker และ Local)
-    base_candidates = [
-        os.path.join(DATA_STORE_ROOT, _n(tenant), "exports"),
-        os.path.join("data_store", _n(tenant), "exports"),
-        os.path.join(DATA_STORE_ROOT, tenant, "exports") # เผื่อกรณี Folder เป็นตัวพิมพ์ใหญ่
-    ]
+    # 2. ค้นหา Path ที่มีอยู่จริง (Normalize tenant เสมอ)
+    norm_tenant = _n(tenant)
+    tenant_export_root = os.path.join(DATA_STORE_ROOT, norm_tenant, "exports")
     
-    tenant_export_root = None
-    for cand in base_candidates:
-        if os.path.exists(cand):
-            tenant_export_root = cand
-            break
-    
-    if not tenant_export_root:
-        logger.error(f"❌ [History] ไม่พบ Folder exports ของ tenant: {tenant}")
+    # Fallback สำหรับเครื่อง Mac หรือ Path นอก Docker
+    if not os.path.exists(tenant_export_root):
+        alt_path = os.path.join("data_store", norm_tenant, "exports")
+        if os.path.exists(alt_path):
+            tenant_export_root = alt_path
+
+    if not os.path.exists(tenant_export_root):
+        logger.warning(f"⚠️ [History] ไม่พบโฟลเดอร์ exports สำหรับ: {norm_tenant}")
         return {"items": []}
 
     # 3. ระบุปีที่ต้องการค้นหา
-    search_years = []
     if not year or str(year).lower() == "all":
-        # ดึงโฟลเดอร์ปีทั้งหมดที่มีใน exports ของ tenant นั้น
         search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
     else:
         search_years = [str(year)]
 
+    # เตรียมรายการ Enablers ที่ User มีสิทธิ์เพื่อใช้กรอง (ไม่ต้อง raise exception ใน loop)
+    allowed_enablers = [e.upper() for e in current_user.enablers]
+
     # 4. Scan ไฟล์ JSON
     for y in search_years:
         year_path = os.path.join(tenant_export_root, y)
-        if not os.path.exists(year_path):
-            continue
+        if not os.path.exists(year_path): continue
 
-        # os.walk จะช่วยให้หาเจอทุกไฟล์ JSON ไม่ว่า enabler จะเป็น km หรือ im
         for root, _, files in os.walk(year_path):
             for f in files:
                 if f.lower().endswith(".json"):
@@ -558,12 +544,10 @@ async def get_assessment_history(
                         with open(file_path, "r", encoding="utf-8") as jf:
                             data = json.load(jf)
                             summary = data.get("summary", {})
-                            enabler = (summary.get("enabler") or "KM").upper()
+                            enabler_in_file = (summary.get("enabler") or "KM").upper()
                             
-                            # ตรวจสอบสิทธิ์ (ต้องมีสิทธิ์ใน Enabler นั้นๆ)
-                            try:
-                                check_user_permission(current_user, tenant, enabler)
-                            except:
+                            # 🛡️ ตรวจสอบสิทธิ์ Enabler: ถ้าไม่มีสิทธิ์ให้ข้ามไฟล์นี้ไป (ห้าม raise error)
+                            if enabler_in_file not in allowed_enablers:
                                 continue
 
                             history_list.append({
@@ -571,7 +555,7 @@ async def get_assessment_history(
                                 "date": parse_safe_date(summary.get("export_timestamp"), file_path),
                                 "tenant": tenant,
                                 "year": y,
-                                "enabler": enabler,
+                                "enabler": enabler_in_file,
                                 "scope": (summary.get("sub_criteria_id") or "ALL").upper(),
                                 "level": f"L{summary.get('highest_pass_level_overall', 0)}",
                                 "score": round(float(summary.get("Total Weighted Score Achieved", 0.0)), 2),
@@ -580,6 +564,7 @@ async def get_assessment_history(
                     except Exception as e:
                         logger.error(f"❌ Error reading {f}: {e}")
 
+    # เรียงลำดับตามวันที่ (ล่าสุดขึ้นก่อน)
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 

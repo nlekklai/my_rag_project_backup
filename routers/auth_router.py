@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
+import platform
+import os
 from typing import Dict, List, Optional
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status, Form
@@ -26,7 +28,6 @@ class UserDB(UserMe):
     password: str
 
 # ------------------- In-memory DB (simulation) -------------------
-# ประกาศและใส่ข้อมูลลงไปทันทีในขั้นตอนเดียว
 USERS: Dict[str, UserDB] = {
     "dev.admin@pea.com": UserDB(
         id="dev-admin-id",
@@ -47,77 +48,113 @@ USERS: Dict[str, UserDB] = {
         enablers=["KM", "IM"]
     )
 }
-# 🟢 ตัวแปรจำลอง Session (เพราะรัน Local และยังไม่มีระบบ Token จริงที่ซับซ้อน)
-CURRENT_SESSION_USER: Optional[str] = None
+
+# ------------------- 🟢 Intelligent Session for Local/Server -------------------
+SESSION_FILE = ".dev_session"
+IS_MACOS = platform.system() == "Darwin"
+
+def get_persisted_session() -> Optional[str]:
+    """ดึง Session ล่าสุดจากไฟล์ (เฉพาะตอน Dev บน Mac เพื่อป้องกัน Hot-reload แล้วหลุด)"""
+    if IS_MACOS and os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, "r") as f:
+                email = f.read().strip()
+                return email if email in USERS else "admin@tcg.or.th"
+        except:
+            return "admin@tcg.or.th"
+    return "admin@tcg.or.th" if IS_MACOS else None
+
+def save_persisted_session(email: str):
+    """บันทึก Session ลงไฟล์ (เฉพาะตอน Dev บน Mac)"""
+    if IS_MACOS:
+        with open(SESSION_FILE, "w") as f:
+            f.write(email)
+
+# ค่าเริ่มต้นตอนเริ่มระบบ
+CURRENT_SESSION_USER: Optional[str] = get_persisted_session()
+
+if IS_MACOS:
+    logger.info(f"🛠️ [Auth System] macOS Detected: Auto-login enabled (Current: {CURRENT_SESSION_USER})")
 
 # ------------------- Utility/Mock Dependencies -------------------
 
 async def get_current_user() -> UserMe:
     """
-    ดึงข้อมูล User ปัจจุบันจาก Session ในหน่วยความจำ (Global Variable)
-    และตรวจสอบสิทธิ์ก่อนอนุญาตให้เข้าถึง API
+    ดึงข้อมูล User ปัจจุบันจาก Session ในหน่วยความจำ
+    รองรับ Auto-login สำหรับ Local Development (macOS)
     """
     global CURRENT_SESSION_USER
     
-    # 🎯 1. ตรวจสอบว่ามี User Login อยู่ในระบบจริงหรือไม่
-    # เราลบ "or admin@tcg.or.th" ออก เพื่อป้องกันการสวมรอย Identity อัตโนมัติ
+    # 🎯 1. กรณีไม่มี Session: ถ้าอยู่บน Mac ให้ดึงค่าล่าสุดกลับมา
     if not CURRENT_SESSION_USER:
-        logger.warning("🚫 [Auth] Access denied: No active session found.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="เซสชันหมดอายุหรือยังไม่ได้เข้าสู่ระบบ กรุณา Login ใหม่อีกครั้ง",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        if IS_MACOS:
+            CURRENT_SESSION_USER = get_persisted_session()
+            logger.info(f"🛠️ [Auth] Restoring session: {CURRENT_SESSION_USER}")
+        else:
+            logger.warning("🚫 [Auth] Access denied: No active session found.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="เซสชันหมดอายุหรือยังไม่ได้เข้าสู่ระบบ กรุณา Login ใหม่อีกครั้ง",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     
     email = CURRENT_SESSION_USER
     
-    # 🎯 2. ตรวจสอบว่า Email ใน Session มีอยู่ใน Database หรือไม่
+    # 🎯 2. ตรวจสอบข้อมูลใน DB
     if email in USERS:
         user_db = USERS[email]
-        
-        # ตรวจสอบว่าบัญชีถูกระงับหรือไม่
         if not user_db.is_active:
-            logger.error(f"❌ [Auth] User account is inactive: {email}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="บัญชีผู้ใช้นี้ถูกระงับการใช้งาน"
-            )
+            raise HTTPException(status_code=403, detail="บัญชีผู้ใช้นี้ถูกระงับการใช้งาน")
             
-        # คืนค่าเป็น UserMe Object (ตัด Password ออก)
-        logger.info(f"✅ [Auth] Identity Verified: {email} (Tenant: {user_db.tenant})")
         return UserMe(**user_db.model_dump(exclude={"password"}))
 
-    # 🎯 3. กรณีมี Session แต่หา User ไม่เจอใน DB (เช่น มีการแก้โค้ด USERS)
-    logger.error(f"❌ [Auth] Session exists for {email} but user not found in DB.")
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="ไม่พบข้อมูลผู้ใช้ในระบบ",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    # 🎯 3. กรณีหา User ไม่เจอ
+    raise HTTPException(status_code=401, detail="ไม่พบข้อมูลผู้ใช้ในระบบ")
+
+
+def check_user_permission(user: UserMe, tenant: str, enabler: Optional[str] = None) -> bool:
+    """
+    ตรวจสอบสิทธิ์การเข้าถึงข้อมูล (Authorization Gatekeeper)
+    ใช้ตรวจสอบว่า User มีสิทธิ์ใน Tenant และ Enabler ที่ระบุหรือไม่
+    """
+    try:
+        # Normalize ค่าเพื่อป้องกันปัญหาตัวพิมพ์เล็ก-ใหญ่
+        target_tenant = str(tenant).strip().lower()
+        user_tenant = str(user.tenant).strip().lower()
+        
+        # 1. ตรวจสอบ Tenant
+        if target_tenant != user_tenant:
+            logger.error(f"🚫 [Permission Denied] User Tenant:{user_tenant} != Target:{target_tenant}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access Denied: คุณไม่มีสิทธิ์เข้าถึงข้อมูลขององค์กร {tenant}"
+            )
+
+        # 2. ตรวจสอบ Enabler (ถ้าส่งมาเช็ค)
+        if enabler:
+            target_en = str(enabler).strip().upper()
+            user_enablers = [str(e).strip().upper() for e in user.enablers]
+            
+            if target_en not in user_enablers:
+                logger.error(f"🚫 [Permission Denied] Enabler mismatch! User has:{user_enablers}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access Denied: คุณไม่มีสิทธิ์ใช้งานในระบบ {target_en}"
+                )
+
+        return True
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"💥 [Permission Error]: {str(e)}")
+        raise HTTPException(status_code=500, detail="เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์")
 
 
 # ------------------- Router Setup -------------------
 auth_router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 # ------------------- Endpoints -------------------
-
-@auth_router.post("/register", response_model=UserMe, status_code=status.HTTP_201_CREATED)
-async def register_user(user_data: UserRegister):
-    if user_data.email in USERS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-
-    new_user_id = uuid4().hex
-    new_user = UserDB(
-        id=new_user_id,
-        email=user_data.email,
-        full_name=user_data.full_name,
-        tenant=user_data.tenant, 
-        is_active=True,
-        enablers=user_data.enablers, 
-        password=user_data.password
-    )
-    USERS[new_user.email] = new_user
-    return UserMe(**new_user.model_dump(exclude={"password"}))
 
 @auth_router.post("/jwt/login")
 async def login_for_access_token(
@@ -126,36 +163,19 @@ async def login_for_access_token(
 ):
     global CURRENT_SESSION_USER
     
-    # 1. ล้างขยะออกจาก input
     input_user = username.strip().lower()
     input_pass = password.strip()
     
-    # 2. ดูค่าใน USERS จริงๆ ณ วินาทีที่กด Login
-    # (ถ้าพิมพ์ออกมาแล้วเป็น {} แสดงว่า Dictionary ว่างเปล่า)
-    print(f"\n--- DEBUG LOGIN ---")
-    print(f"Current DB Keys: {list(USERS.keys())}")
-    print(f"Searching for: '{input_user}'")
-    
-    # 3. ลองดึงข้อมูล
     user = USERS.get(input_user)
     
-    if not user:
-        # ลองค้นหาแบบ Manual (เผื่อมีช่องว่างหลุดใน Dictionary)
-        for key in USERS.keys():
-            if key.strip().lower() == input_user:
-                user = USERS[key]
-                break
+    if not user or user.password != input_pass:
+        raise HTTPException(status_code=401, detail="อีเมลหรือรหัสผ่านไม่ถูกต้อง")
     
-    if not user:
-        print(f"❌ Error: '{input_user}' not found in DB")
-        raise HTTPException(status_code=401, detail="Incorrect username or password")
-        
-    if user.password != input_pass:
-        print(f"❌ Error: Password mismatch for '{input_user}'")
-        raise HTTPException(status_code=401, detail="Incorrect username or password")
-    
-    print(f"✅ Success: Logged in as '{input_user}'")
+    # บันทึก Session
     CURRENT_SESSION_USER = input_user
+    save_persisted_session(input_user)
+    
+    logger.info(f"✅ Success: Logged in as '{input_user}' (Tenant: {user.tenant})")
     
     return {
         "access_token": f"token_{user.id}",
@@ -171,4 +191,16 @@ async def read_users_me(current_user: UserMe = Depends(get_current_user)):
 async def logout():
     global CURRENT_SESSION_USER
     CURRENT_SESSION_USER = None
+    if IS_MACOS and os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
+    logger.info("🚪 User logged out.")
     return {"status": "success", "message": "Logged out"}
+
+@auth_router.post("/register", response_model=UserMe)
+async def register_user(user_data: UserRegister):
+    if user_data.email in USERS:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    new_user = UserDB(id=uuid4().hex, **user_data.model_dump())
+    USERS[new_user.email] = new_user
+    return UserMe(**new_user.model_dump(exclude={"password"}))
