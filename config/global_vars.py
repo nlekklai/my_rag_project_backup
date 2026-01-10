@@ -247,21 +247,21 @@ ACTION_PLAN_LANGUAGE: Final[str] = "th"  # "th" or "en"
 # ================================================================
 
 # แก้ในส่วนต้นของไฟล์ core/seam_assessment.py หรือที่นิยามตัวแปรนี้
-REQUIRED_PDCA: Final[Dict[int, Set[str]]] = {
-    1: {"P"},
-    2: {"P", "D"},
-    3: {"P", "D", "C"},
-    4: {"P", "D", "C", "A"},
-    5: {"P", "D", "C", "A"},
-}
+# REQUIRED_PDCA: Final[Dict[int, Set[str]]] = {
+#     1: {"P"},
+#     2: {"P", "D"},
+#     3: {"P", "D", "C"},
+#     4: {"P", "D", "C", "A"},
+#     5: {"P", "D", "C", "A"},
+# }
 
-CORRECT_PDCA_SCORES_MAP: Final[Dict[int, Dict[str, int]]] = {
-    1: {"Plan": 1, "Do": 0, "Check": 0, "Act": 0},
-    2: {"Plan": 1, "Do": 1, "Check": 0, "Act": 0},
-    3: {"Plan": 1, "Do": 1, "Check": 1, "Act": 1},
-    4: {"Plan": 2, "Do": 2, "Check": 1, "Act": 1},
-    5: {"Plan": 2, "Do": 2, "Check": 2, "Act": 2},
-}
+# CORRECT_PDCA_SCORES_MAP: Final[Dict[int, Dict[str, int]]] = {
+#     1: {"Plan": 1, "Do": 0, "Check": 0, "Act": 0},
+#     2: {"Plan": 1, "Do": 1, "Check": 0, "Act": 0},
+#     3: {"Plan": 1, "Do": 1, "Check": 1, "Act": 1},
+#     4: {"Plan": 2, "Do": 2, "Check": 1, "Act": 1},
+#     5: {"Plan": 2, "Do": 2, "Check": 2, "Act": 2},
+# }
 
 PDCA_PHASE_MAP: Final[Dict[int, str]] = {
     1: "Plan (P)",

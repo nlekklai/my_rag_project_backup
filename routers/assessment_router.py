@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # routers/assessment_router.py
-# Production Final Version - 20 ธันวาคม 2568 (Fixed parameter order + stable UUID + full assessment flow)
+# Production Final Version - 2026 Optimized for DB Persistence & Professional Reporting
 
 import os
 import uuid
@@ -8,6 +8,8 @@ import json
 import asyncio
 import logging
 import mimetypes
+import tempfile
+import pytz
 from datetime import datetime
 from typing import Optional, Dict, Any, Union, List
 
@@ -15,15 +17,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-import tempfile
+# --- Docx Imports (สำหรับสร้าง Report) ---
 from docx import Document
-from docx.shared import Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.style import WD_STYLE_TYPE
-
 from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
+# --- Project Imports ---
 from routers.auth_router import get_current_user, check_user_permission, UserMe
 from utils.path_utils import (
     _n, 
@@ -32,7 +32,7 @@ from utils.path_utils import (
     get_document_file_path,
     get_vectorstore_collection_path,
     get_vectorstore_tenant_root_path
-    )
+)
 
 from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
 from core.vectorstore import load_all_vectorstores
@@ -41,67 +41,62 @@ from config.global_vars import (
     EVIDENCE_DOC_TYPES, 
     DEFAULT_LLM_MODEL_NAME, 
     DEFAULT_YEAR, 
-    DEFAULT_TENANT
+    DEFAULT_TENANT,
+    DATA_STORE_ROOT
 )
-import pytz
 
+# 🎯 Database Components (SQLite Persistence)
+from database import (
+    SessionLocal, 
+    AssessmentTaskTable, 
+    AssessmentResultTable,
+    db_update_task_status,
+    db_finish_task
+)
+
+# ตั้งค่า Logger และ Router
 logger = logging.getLogger(__name__)
 assessment_router = APIRouter(prefix="/api/assess", tags=["Assessment"])
 
-ACTIVE_TASKS: Dict[str, Any] = {}
-
+# --- Request Models ---
 class StartAssessmentRequest(BaseModel):
     tenant: str
-    year: Union[int, str]
-    enabler: str
+    year: Optional[Union[int, str]] = None
+    enabler: str = "KM"
     sub_criteria: Optional[str] = "all"
-    sequential_mode: bool = True
+    sequential_mode: bool = False
 
-# ------------------- Helpers -------------------
+# ------------------------------------------------------------------
+# [Helpers]
+# ------------------------------------------------------------------
 def parse_safe_date(raw_date_str: Any, file_path: str) -> str:
-    tz = pytz.timezone('Asia/Bangkok') # กำหนด Timezone ไทย
-    
+    """แปลงวันที่จาก String หรือ File Metadata ให้เป็น ISO Format (Bangkok Time)"""
+    tz = pytz.timezone('Asia/Bangkok')
     if raw_date_str and isinstance(raw_date_str, str):
         try:
-            # ถ้ามีรูปแบบ %Y%m%d_%H%M%S (เช่นจากชื่อไฟล์)
+            # รองรับ format yyyymmdd_hhmmss
             if "_" in raw_date_str:
                 dt = datetime.strptime(raw_date_str, "%Y%m%d_%H%M%S")
-                # บังคับให้เป็นเวลาไทย
                 return tz.localize(dt).isoformat()
-        except:
-            pass
-
+        except: pass
+    
+    # Fallback: ใช้เวลาแก้ไขไฟล์ล่าสุด
     try:
-        # ดึงเวลาที่แก้ไขไฟล์ล่าสุดจาก Disk
         mtime = os.path.getmtime(file_path)
-        dt = datetime.fromtimestamp(mtime, tz) # ระบุ Timezone ตอนดึง timestamp
+        dt = datetime.fromtimestamp(mtime, tz)
         return dt.isoformat()
     except:
-        # กรณีผิดพลาดให้ใช้เวลาปัจจุบันที่เป็น Thai Timezone
         return datetime.now(tz).isoformat()
 
-def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
-    # 1. หา root ของ tenant
-    # ลองหาปี 2568 เป็นตัวตั้งต้นก่อน
-    sample_path = get_tenant_year_export_root(current_user.tenant, "2568")
-    tenant_export_root = os.path.dirname(sample_path)
+
+def safe_float(value):
+    try:
+        if isinstance(value, str):
+            value = value.replace('%', '') # ลบ % ออกถ้ามี
+        return float(value)
+    except:
+        return 0.0
     
-    norm_search = _n(search_id).lower()
-
-    # 2. เพิ่มการตรวจสอบ Path สำรอง (กรณีรันบน Linux/Docker แล้ว /app/ หายไป)
-    search_paths = [tenant_export_root]
-    if tenant_export_root.startswith("/app/"):
-        search_paths.append(tenant_export_root.replace("/app/", "", 1))
-
-    for s_path in search_paths:
-        if os.path.exists(s_path):
-            for root, _, files in os.walk(s_path):
-                for f in files:
-                    if f.endswith(".json") and norm_search in _n(f).lower():
-                        return os.path.join(root, f)
-                    
-    raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์ผลการประเมิน ID: {search_id}")
-
 
 @assessment_router.get("/evidence/{doc_type}/{document_uuid}")
 async def serve_evidence_file(
@@ -161,20 +156,45 @@ async def serve_evidence_file(
 
 
 @assessment_router.get("/view-document")
-async def view_document(filename: str, page: Optional[str] = "1", current_user: UserMe = Depends(get_current_user)):
-    """ Endpoint สำหรับเปิดไฟล์ PDF ไปยังหน้าที่ระบุ """
-    # ค้นหาไฟล์ในโฟลเดอร์เก็บเอกสารของ Tenant
-    import os
-    from utils.path_utils import get_tenant_year_import_root
+async def view_document(
+    filename: str, 
+    document_uuid: Optional[str] = None, 
+    current_user: UserMe = Depends(get_current_user)
+):
+    """ Endpoint สำหรับเปิดไฟล์ PDF โดยรองรับการค้นหาที่แม่นยำขึ้น """
     
-    # สมมติว่าไฟล์เก็บอยู่ที่โฟลเดอร์ import/EVIDENCE_DOC
-    base_path = os.path.join(get_tenant_year_import_root(current_user.tenant, current_user.year), "EVIDENCE_DOC")
-    file_path = os.path.join(base_path, filename)
+    file_path = None
 
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์เอกสาร: {filename}")
+    # 1. พยายามหาจาก UUID ก่อน (ดีที่สุด เพราะแม่นยำ 100% แม้ชื่อไฟล์จะซ้ำ)
+    if document_uuid:
+        file_info = get_document_file_path(
+            document_uuid=document_uuid,
+            tenant=current_user.tenant,
+            year=current_user.year,
+            enabler="KM", # หรือดึงจาก Query Param
+            doc_type_name="evidence"
+        )
+        if file_info:
+            file_path = file_info["file_path"]
 
-    # ส่งไฟล์กลับไปเพื่อให้ Browser เปิด (ระบุหน้าด้วย #page=X ในฝั่ง Frontend)
+    # 2. ถ้าไม่มี UUID ให้หาจากชื่อไฟล์ (ใช้ Logic เดิมของคุณ)
+    if not file_path:
+        # ใช้ get_document_source_dir ที่คุณมีใน path_utils อยู่แล้ว
+        from utils.path_utils import get_document_source_dir, resolve_filepath_to_absolute
+        
+        base_path = get_document_source_dir(
+            tenant=current_user.tenant,
+            year=current_user.year,
+            enabler="KM",
+            doc_type="evidence"
+        )
+        file_path = resolve_filepath_to_absolute(os.path.join(base_path, filename))
+
+    if not file_path or not os.path.exists(file_path):
+        logger.error(f"❌ File not found: {file_path}")
+        raise HTTPException(status_code=404, detail=f"ไม่พบไฟล์เอกสารบนเซิร์ฟเวอร์")
+
+    # ส่งไฟล์ PDF กลับไป
     return FileResponse(file_path, media_type="application/pdf")
 
 
@@ -197,7 +217,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     overall_level = str(summary.get("Overall Maturity Level (Weighted)") or
                         f"L{summary.get('highest_pass_level_overall', 0)}")
 
-    total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
+    total_score = round(safe_float(summary.get("Total Weighted Score Achieved")), 2)
     full_score_all = round(float(summary.get("Total Possible Weight") or 40.0), 2)
     total_expected = int(summary.get("total_subcriteria") or 12)
     passed_count = int(summary.get("total_subcriteria_assessed") or len(sub_results))
@@ -528,34 +548,107 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         doc.add_page_break()
 
     return doc
-# ------------------- API Endpoints -------------------
-@assessment_router.get("/status/{record_id}")
-async def get_assessment_status(record_id: str, current_user: UserMe = Depends(get_current_user)):
-    # 1. เช็คใน Memory ก่อน (งานที่กำลังรัน)
-    if record_id in ACTIVE_TASKS:
-        return ACTIVE_TASKS[record_id]
 
-    # 2. ถ้าไม่อยู่ใน Memory ให้ไปหาใน Disk (งานที่เสร็จแล้ว)
-    # ฟังก์ชันนี้จะสแกนหาทุกปีให้เอง
+# ==================== HELPER: ฟังก์ชันค้นหาไฟล์แบบ Robust ====================
+def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
+    """
+    สแกนหาไฟล์ JSON ในโฟลเดอร์ exports ของ Tenant 
+    โดยรองรับทั้งเลข ID แบบย่อ (จาก History) และชื่อไฟล์เต็ม
+    """
+    from config.global_vars import DATA_STORE_ROOT
+    from utils.path_utils import _n
+    
+    norm_tenant = _n(current_user.tenant)
+    norm_search = _n(search_id).lower()
+
+    # 1. กำหนด Root Path สำหรับการค้นหา
+    # พยายามหาจากโครงสร้างมาตรฐาน /data_store/{tenant}/exports
+    tenant_export_root = os.path.join(DATA_STORE_ROOT, norm_tenant, "exports")
+    
+    # 2. รายการ Search Paths (รวม Fallback สำหรับ Docker และ Local Dev)
+    search_paths = [tenant_export_root]
+    
+    # กรณีรันบน Docker
+    if tenant_export_root.startswith("/app/"):
+        search_paths.append(tenant_export_root.replace("/app/", "", 1))
+    
+    # กรณีรัน Local Dev (data_store อยู่ที่ root โปรเจค)
+    search_paths.append(os.path.join("data_store", norm_tenant, "exports"))
+
+    logger.info(f"🔍 [Search] Looking for ID: {norm_search} in {search_paths}")
+
+    # 3. เริ่มทำการสแกนหาไฟล์ (Recursive Scan)
+    for s_path in search_paths:
+        if os.path.exists(s_path):
+            for root, _, files in os.walk(s_path):
+                for f in files:
+                    # 🟢 ตรวจสอบไฟล์ JSON และเช็คว่า ID อยู่ในชื่อไฟล์หรือไม่
+                    # ใช้ _n(f) เพื่อรองรับปัญหา Unicode (ภาษาไทย/macOS NFD)
+                    if f.lower().endswith(".json") and norm_search in _n(f).lower():
+                        found_path = os.path.join(root, f)
+                        logger.info(f"✅ [Search] Found matching file: {found_path}")
+                        return found_path
+                    
+    logger.error(f"❌ [Search] Could not find assessment file for ID: {norm_search}")
+    raise HTTPException(
+        status_code=404, 
+        detail=f"ไม่พบผลการประเมิน ID: {search_id} โปรดตรวจสอบว่าไฟล์ยังอยู่บน Server หรือไม่"
+    )
+
+
+# ==================== API ENDPOINT: GET Status / Get Data ====================
+@assessment_router.get("/status/{record_id}")
+async def get_assessment_status(
+    record_id: str, 
+    current_user: UserMe = Depends(get_current_user)
+):
+    """
+    Endpoint สำหรับดึงข้อมูลการประเมินราย Record:
+    1. ถ้างานกำลังรัน (ACTIVE_TASKS) จะส่ง Progress กลับไป
+    2. ถ้างานเสร็จแล้ว จะหาไฟล์ JSON บน Disk แล้วส่งข้อมูลที่ Transform แล้วกลับไป
+    """
+    
+    # 1. เช็คใน Memory ก่อน (กรณีงานกำลังรัน - Polling)
+    # สมมติว่า ACTIVE_TASKS คือ Dict ที่เก็บสถานะงานใน RAM
+    if record_id in globals().get("ACTIVE_TASKS", {}):
+        return globals()["ACTIVE_TASKS"][record_id]
+
+    # 2. ถ้าไม่อยู่ใน Memory ให้ไปหาไฟล์ที่เสร็จแล้วบน Disk
     file_path = _find_assessment_file(record_id, current_user)
     
     try:
+        # 3. อ่านไฟล์ JSON ต้นฉบับ
         with open(file_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
 
-        # ดึงข้อมูล Enabler มาเช็ค Permission
+        # 4. ดึง Metadata มาตรวจสอบสิทธิ์เข้าถึง (Tenant Isolation)
         summary = raw_data.get("summary", {})
-        enabler = (summary.get("enabler") or "KM").upper()
-        tenant = summary.get("tenant") or current_user.tenant
+        file_enabler = (summary.get("enabler") or "KM").upper()
+        file_tenant = summary.get("tenant") or current_user.tenant
         
-        check_user_permission(current_user, tenant, enabler)
+        # ตรวจสอบว่า User มีสิทธิ์ดูข้อมูลของ Tenant และ Enabler นี้จริงหรือไม่
+        check_user_permission(current_user, file_tenant, file_enabler)
 
-        # แปลงข้อมูลส่งให้ UI
-        return _transform_result_for_ui(raw_data, current_user)
+        # 5. 🔥 แปลงข้อมูล (Transform) ให้เป็น Format ที่ UI พร้อมแสดงผล
+        # หมายเหตุ: ใส่ current_user เข้าไปด้วยตาม Signature เดิมของคุณ
+        ui_result = _transform_result_for_ui(raw_data, current_user)
+        
+        # 🛡️ จุดสำคัญ: ต้องใส่ status และ record_id กลับไปด้วยเสมอ 
+        # เพื่อให้ Frontend รู้ว่าต้อง "เลิกโหลด" และเปลี่ยนไปหน้า Result ได้แล้ว
+        ui_result["status"] = "COMPLETED"
+        ui_result["record_id"] = record_id
+        
+        logger.info(f"🚀 [Status] Returning COMPLETED status for: {record_id}")
+        return ui_result
+
+    except json.JSONDecodeError:
+        logger.error(f"💥 [Status] Invalid JSON file format at: {file_path}")
+        raise HTTPException(status_code=500, detail="ไฟล์ข้อมูลเสียหาย ไม่สามารถเปิดได้")
     except Exception as e:
-        logger.error(f"Error loading status for {record_id}: {e}")
-        raise HTTPException(status_code=500, detail="ไม่สามารถอ่านไฟล์ผลการประเมินได้")
-
+        logger.error(f"💥 [Status] Error processing result for {record_id}: {str(e)}")
+        # ป้องกัน UI นิ่งด้วยการบอก Error ที่ชัดเจน
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการโหลดผล: {str(e)}")
+    
 @assessment_router.get("/history")
 async def get_assessment_history(
     tenant: str, 
@@ -668,92 +761,52 @@ async def get_assessment_history(
     return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
 
 
+# ------------------------------------------------------------------
+# 1. Start Assessment Endpoint
+# ------------------------------------------------------------------
 @assessment_router.post("/start")
 async def start_assessment(
     request: StartAssessmentRequest, 
     background_tasks: BackgroundTasks, 
     current_user: UserMe = Depends(get_current_user)
 ):
-    """
-    Endpoint สำหรับเริ่มการประเมินที่รองรับการเลือกปีอย่างอิสระ
-    - บังคับใช้ปีจาก Request เป็นอันดับแรก
-    - ระบบตรวจสอบ Path แบบยืดหยุ่น (รองรับ Docker/Local Path)
-    """
-    # 1. จัดเตรียมค่า Parameter
     enabler_uc = request.enabler.upper()
-    
-    # --- ปรับปรุง Logic การเลือกปี (Priority: Request > User Profile > Default) ---
-    raw_year = request.year if request.year else (current_user.year or DEFAULT_YEAR)
-    target_year = str(raw_year).strip()
-    
+    target_year = str(request.year if request.year else (current_user.year or DEFAULT_YEAR)).strip()
     target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
 
-    # 2. ตรวจสอบสิทธิ์
+    # ตรวจสอบสิทธิ์
     check_user_permission(current_user, request.tenant, enabler_uc)
 
-    # หา Path ที่ระบบคาดหวัง
-    vs_path = get_vectorstore_collection_path(
-        tenant=request.tenant,
-        year=target_year,
-        doc_type="evidence",
-        enabler=enabler_uc
-    )
+    # ตรวจสอบ Path ฐานข้อมูล (Chroma)
+    vs_path = get_vectorstore_collection_path(request.tenant, target_year, "evidence", enabler_uc)
+    if not os.path.exists(vs_path):
+        raise HTTPException(status_code=400, detail=f"ไม่พบฐานข้อมูล {enabler_uc} ปี {target_year}")
 
-    # 🛡️ FIX: ตรวจสอบความยืดหยุ่นของ Path (กรณีรันบน Server ที่ Path อาจต่างจากใน Container)
-    resolved_vs_path = vs_path
-    if not os.path.exists(resolved_vs_path) and vs_path.startswith("/app/"):
-        # ลองหาแบบตัด /app/ ออก (Local mode)
-        alt_path = vs_path.replace("/app/", "", 1)
-        if os.path.exists(alt_path):
-            resolved_vs_path = alt_path
-
-    # A. ตรวจสอบว่าโฟลเดอร์ปีนั้นๆ มีอยู่จริงไหม
-    if not os.path.exists(resolved_vs_path):
-        vs_tenant_root = get_vectorstore_tenant_root_path(request.tenant)
-        # ลองสแกนหา Path จริงเพื่อแนะนำ User
-        real_root = vs_tenant_root.replace("/app/", "", 1) if not os.path.exists(vs_tenant_root) else vs_tenant_root
-        
-        available_info = ""
-        if os.path.exists(real_root):
-            years = [d for d in os.listdir(real_root) if os.path.isdir(os.path.join(real_root, d))]
-            if years:
-                available_info = f" ปีที่มีข้อมูลในระบบคือ: {', '.join(years)}"
-            else:
-                available_info = " ระบบยังไม่มีข้อมูลปีใดๆ ในฐานข้อมูล"
-        
-        logger.error(f"❌ Path Not Found: {vs_path} (Resolved: {resolved_vs_path})")
-        raise HTTPException(
-            status_code=400, 
-            detail=f"ไม่พบฐานข้อมูล {enabler_uc} ของปี {target_year}.{available_info}"
-        )
-
-    # B. ตรวจสอบไฟล์ข้างใน (ป้องกันโฟลเดอร์ว่าง)
-    # เช็คทั้ง chroma.sqlite3 หรือโฟลเดอร์ UUID ของ Chroma
-    db_file = os.path.join(resolved_vs_path, "chroma.sqlite3")
-    has_subdirs = any(os.path.isdir(os.path.join(resolved_vs_path, d)) for d in os.listdir(resolved_vs_path)) if os.path.exists(resolved_vs_path) else False
-    
-    if not os.path.exists(db_file) and not has_subdirs:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"ฐานข้อมูลปี {target_year} ยังไม่ได้ถูก Ingest ข้อมูล (โฟลเดอร์ว่างเปล่า)"
-        )
-
-    # --------------------------------------------------------
-
-    # 3. สร้าง Record ID
+    # 3. สร้าง Record ID และบันทึกลง Database
     record_id = uuid.uuid4().hex[:12]
     
-    # 4. บันทึกลง ACTIVE_TASKS
-    ACTIVE_TASKS[record_id] = {
-        "status": "RUNNING",
-        "record_id": record_id,
-        "tenant": request.tenant,
-        "year": target_year,
-        "enabler": enabler_uc,
-        "progress_message": f"กำลังเริ่มการประเมิน {enabler_uc} ปี {target_year}..."
-    }
+    db = SessionLocal()
+    try:
+        new_task = AssessmentTaskTable(
+            record_id=record_id,
+            user_id=current_user.id,
+            tenant=request.tenant,
+            year=target_year,
+            enabler=enabler_uc,
+            sub_criteria=target_sub,
+            status="RUNNING",
+            progress_percent=5,
+            progress_message="กำลังเตรียมข้อมูล Vector Store..."
+        )
+        db.add(new_task)
+        db.commit()
+    except Exception as e:
+        logger.error(f"DB Error: {e}")
+        raise HTTPException(status_code=500, detail="ไม่สามารถสร้าง Task ในฐานข้อมูลได้")
+    finally:
+        db.close()
 
-    # 5. ส่งเข้า Background Task
+    # 4. ส่งเข้า Background Task
     background_tasks.add_task(
         run_assessment_engine_task,
         record_id=record_id,
@@ -764,134 +817,187 @@ async def start_assessment(
         sequential=request.sequential_mode
     )
 
-    logger.info(f"🚀 Started Assessment: {record_id} | Year: {target_year} | Path: {resolved_vs_path}")
     return {"record_id": record_id, "status": "RUNNING"}
 
+# ------------------------------------------------------------------
+# 2. Background Task Engine
+# ------------------------------------------------------------------
 async def run_assessment_engine_task(
     record_id: str, 
     tenant: str, 
-    year: str,  # แก้ Type Hint เป็น str
+    year: str, 
     enabler: str, 
     sub_id: str, 
     sequential: bool
 ):
     try:
-        str_year = year # ใช้ง่ายๆ ไม่ต้องแปลง
-        logger.info(f"🚀 [TASK START] Record: {record_id} | Enabler: {enabler} | Sub-ID: {sub_id} | Year: {str_year}")
+        logger.info(f"🚀 [Task {record_id}] Starting Assessment for {tenant}/{year}/{enabler}")
+        
+        # 0. อัปเดตสถานะเริ่มต้น
+        db_update_task_status(record_id, 5, f"เริ่มเตรียมข้อมูลสำหรับ {tenant} ปี {year}...")
 
-        # 1. Load Vectorstores (ใช้ str_year เข้าไปหา Path)
+        # 1. Load Resources
+        # อ้างอิงจาก load_all_vectorstores(tenant, year, doc_ids, doc_types, enabler_filter, ...)
+        db_update_task_status(record_id, 15, "กำลังเชื่อมต่อ Vector Database...")
+        
         vsm = await asyncio.to_thread(
             load_all_vectorstores,
-            doc_types=EVIDENCE_DOC_TYPES,
-            enabler_filter=enabler,
-            tenant=tenant,
-            year=str_year
+            tenant,            # 1. tenant
+            year,              # 2. year
+            None,              # 3. doc_ids (Set[str])
+            EVIDENCE_DOC_TYPES,# 4. doc_types (เช่น 'evidence')
+            enabler            # 5. enabler_filter (เช่น 'KM')
         )
         
-        # 2. Load Document Mapping
+        # สำหรับ mapping มักจะใช้ doc_type, tenant, year, enabler
         doc_map_raw = await asyncio.to_thread(
             load_doc_id_mapping, 
             EVIDENCE_DOC_TYPES, 
             tenant, 
-            str_year, 
+            year, 
             enabler
         )
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
-        # 3. Create LLM & Engine
-        llm = await asyncio.to_thread(create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
-        config = AssessmentConfig(enabler=enabler, tenant=tenant, year=str_year, force_sequential=sequential)
-
+        # 2. Setup AI Engine
+        db_update_task_status(record_id, 25, "กำลังเตรียม AI Model...")
+        
+        llm = await asyncio.to_thread(
+            create_llm_instance, 
+            model_name=DEFAULT_LLM_MODEL_NAME, 
+            temperature=0.0
+        )
+        
+        config = AssessmentConfig(
+            enabler=enabler, 
+            tenant=tenant, 
+            year=year, 
+            force_sequential=sequential
+        )
+        
         engine = SEAMPDCAEngine(
-            config=config,
-            llm_instance=llm,
-            logger_instance=logger,
-            doc_type=EVIDENCE_DOC_TYPES,
-            vectorstore_manager=vsm,
-            document_map=doc_map
+            config=config, 
+            llm=llm, 
+            logger=logger, 
+            evidence_doc_type=EVIDENCE_DOC_TYPES, 
+            vectorstore_manager=vsm, 
+            doc_id_mapping=doc_map
         )
 
-        # 4. Execution
+        # 3. รันการประเมิน
+        db_update_task_status(record_id, 35, "AI กำลังวิเคราะห์ข้อมูลและสรุปผล...")
+        
         result = await asyncio.to_thread(
             engine.run_assessment, 
             target_sub_id=sub_id, 
             export=True, 
-            vectorstore_manager=vsm, 
-            sequential=sequential, 
             record_id=record_id,
-            document_map=doc_map
+            vectorstore_manager=vsm
         )
 
+        # 4. บันทึกผลลัพธ์
         if isinstance(result, dict) and result.get("status") == "FAILED":
-            error_msg = result.get("error_message", "Engine reported an error")
-            logger.error(f"❌ [TASK FAILED] {record_id}: {error_msg}")
-            if record_id in ACTIVE_TASKS:
-                ACTIVE_TASKS[record_id]["status"] = "FAILED"
-                ACTIVE_TASKS[record_id]["error_message"] = error_msg
-            return
-
-        if record_id in ACTIVE_TASKS:
-            del ACTIVE_TASKS[record_id]
-            logger.info(f"✅ [TASK COMPLETED] Record: {record_id}")
+            error_msg = result.get("error_message", "Unknown Error")
+            db_update_task_status(record_id, 0, f"ล้มเหลว: {error_msg}", status="FAILED")
+        else:
+            from database import db_finish_task
+            await asyncio.to_thread(db_finish_task, record_id, result)
+            db_update_task_status(record_id, 100, "การประเมินเสร็จสมบูรณ์")
             
     except Exception as e:
-        logger.error(f"💥 [TASK CRASH] Record {record_id}: {str(e)}", exc_info=True)
-        if record_id in ACTIVE_TASKS:
-            ACTIVE_TASKS[record_id]["status"] = "FAILED"
-            ACTIVE_TASKS[record_id]["error_message"] = f"Internal Server Error: {str(e)}"
+        logger.error(f"💥 [Task {record_id}] Critical Crash: {str(e)}", exc_info=True)
+        try:
+            db_update_task_status(record_id, 0, f"ระบบขัดข้อง: {str(e)}", status="FAILED")
+        except:
+            pass
 
+# ------------------------------------------------------------------
+# 3. Task List API (สำหรับหน้า UI ดึงรายการมาโชว์)
+# ------------------------------------------------------------------
+@assessment_router.get("/tasks")
+async def get_assessment_tasks(current_user: UserMe = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        # ดึงเฉพาะของ Tenant ตัวเอง เรียงลำดับใหม่สุดขึ้นก่อน
+        tasks = db.query(AssessmentTaskTable).filter(
+            AssessmentTaskTable.tenant == current_user.tenant
+        ).order_by(AssessmentTaskTable.created_at.desc()).limit(20).all()
+        
+        return {"tasks": tasks}
+    finally:
+        db.close()
+
+
+# ------------------------------------------------------------------
+# 4. Download API (Full Revised)
+# ------------------------------------------------------------------
 @assessment_router.get("/download/{record_id}/{file_type}")
 async def download_assessment_file(
     record_id: str,
     file_type: str,
-    background_tasks: BackgroundTasks, # 1. เพิ่มตัวนี้เข้ามาใน Parameter
+    background_tasks: BackgroundTasks,
     current_user: UserMe = Depends(get_current_user)
 ):
-    logger.info(f"Download request: record_id={record_id}, file_type={file_type}")
+    """
+    API สำหรับดาวน์โหลดผลประเมินย้อนหลัง (JSON หรือ Word)
+    """
+    logger.info(f"📥 Download request: record_id={record_id}, type={file_type} by {current_user.email}")
 
-    # 1. หาไฟล์ JSON
+    # 1. ค้นหาไฟล์ต้นฉบับ (JSON)
     json_path = _find_assessment_file(record_id, current_user)
 
-    # 2. อ่านข้อมูล
-    with open(json_path, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    # 2. อ่านข้อมูลเพื่อตรวจสอบ Permission ระดับ Enabler อีกครั้ง
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+    except Exception as e:
+        logger.error(f"Error reading JSON: {e}")
+        raise HTTPException(status_code=500, detail="ไม่สามารถอ่านไฟล์ข้อมูลได้")
 
-    # 3. ตรวจ permission
+    # 3. ตรวจสอบสิทธิ์เข้าถึง Enabler (เช่น User PEA-KM ห้ามโหลด PEA-IT)
     enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
     check_user_permission(current_user, current_user.tenant, enabler)
 
     file_type = file_type.lower()
 
-    # 4. JSON
+    # --- กรณีขอไฟล์ JSON ---
     if file_type == "json":
         return FileResponse(
             path=json_path,
-            filename=f"assessment-{record_id}.json",
+            filename=f"SEAM_Result_{enabler}_{record_id}.json",
             media_type="application/json"
         )
 
-    # 5. Word Report
+    # --- กรณีขอไฟล์ Word (DOCX) ---
     elif file_type in ["word", "docx"]:
-        logger.info(f"Generating on-the-fly Word report for {record_id}")
+        logger.info(f"📄 Generating Word report for {record_id}...")
 
+        # แปลงข้อมูล
         ui_data = _transform_result_for_ui(raw_data)
-        doc = create_docx_report_similar_to_ui(ui_data)
+        
+        # สร้าง Document (เรียกใช้จากฟังก์ชันที่คุณมีใน gen_report.py หรือคล้ายกัน)
+        try:
+            from gen_report import create_docx_report_similar_to_ui # <--- ตรวจสอบชื่อฟังก์ชันให้ตรง
+            doc = create_docx_report_similar_to_ui(ui_data)
+        except ImportError:
+            # Fallback หากยังไม่ได้ทำตัวสร้าง Report
+            raise HTTPException(status_code=501, detail="ระบบสร้างไฟล์ Word ยังไม่ถูกติดตั้ง")
 
+        # บันทึกลงไฟล์ชั่วคราว (Temporary File)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             doc.save(tmp.name)
             temp_path = tmp.name
 
-        logger.info(f"Word report generated: {os.path.basename(temp_path)}")
+        logger.info(f"✅ Word report generated at: {temp_path}")
 
-        # 2. ใช้ background_tasks.add_task แทน lambda
+        # ใช้ Background Task ลบไฟล์ทิ้งหลังจากส่งให้ User เสร็จแล้ว
         background_tasks.add_task(os.remove, temp_path)
 
-        # 3. ส่ง FileResponse โดยเอาพารามิเตอร์ background ออก
         return FileResponse(
             path=temp_path,
-            filename=f"{ui_data['enabler']}_Assessment_Report_{record_id}.docx",
+            filename=f"SEAM_Report_{enabler}_{record_id}.docx",
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
     else:
-        raise HTTPException(status_code=400, detail="รองรับเฉพาะ json และ word")
+        raise HTTPException(status_code=400, detail="รูปแบบไฟล์ไม่ถูกต้อง (รองรับ json, word)")

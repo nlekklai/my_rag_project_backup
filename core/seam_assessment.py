@@ -23,6 +23,8 @@ from filelock import FileLock  # ต้องติดตั้ง: pip install 
 import re
 import hashlib
 import copy
+from database import db_update_task_status
+# db_update_task_status(record_id, progress_value, message)
 
 
 # -------------------- PATH SETUP & IMPORTS --------------------
@@ -40,7 +42,6 @@ try:
         DEFAULT_LLM_MODEL_NAME,
         LLM_TEMPERATURE,
         MIN_RETRY_SCORE,
-        REQUIRED_PDCA,
         PDCA_PHASE_MAP,        # ✅ ย้ายมาไว้ที่นี่ตามที่มีใน global_vars.py
         BASE_PDCA_KEYWORDS,
         PDCA_LEVEL_SYNONYMS,
@@ -61,10 +62,6 @@ try:
         build_multichannel_context_for_level
     )
     from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
-    
-    # ❌ ลบบรรทัดเดิมที่เป็นสาเหตุของ ImportError ออก:
-    # from core.seam_prompts import PDCA_PHASE_MAP 
-    
     from core.action_plan_schema import ActionPlanActions
 
     # 3. 🎯 Import Path Utilities
@@ -631,7 +628,6 @@ class SEAMPDCAEngine:
 
         self.is_sequential = getattr(config, 'force_sequential', True)
         self.is_parallel_all_mode = is_parallel_all_mode
-        self.required_pdca_map = REQUIRED_PDCA
         self.base_pdca_keywords = BASE_PDCA_KEYWORDS
         self.RERANK_THRESHOLD: float = RERANK_THRESHOLD
         self.MAX_EVI_STR_CAP: float = MAX_EVI_STR_CAP
