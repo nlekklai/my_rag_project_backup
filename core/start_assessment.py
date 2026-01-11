@@ -6,7 +6,8 @@ import sys
 import logging
 import argparse
 import time
-import uuid  # [ADDED] สำหรับสร้าง record_id ในโหมด CLI
+import uuid
+import multiprocessing
 from typing import Optional, Dict, Any
 from copy import deepcopy
 
@@ -15,27 +16,33 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
+# -------------------- IMPORT CORE --------------------
 from models.llm import create_llm_instance
+# แก้ไขการ import ให้ตรงกับชื่อใน core/database.py
+from database import init_db, db_create_task, db_finish_task, db_update_task_status 
+from config.global_vars import (
+    EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, DEFAULT_LLM_MODEL_NAME, 
+    DEFAULT_TENANT, DEFAULT_YEAR
+) 
 
 try:
-    # Import Config & Core Modules
-    from config.global_vars import (
-        EVIDENCE_DOC_TYPES, DEFAULT_ENABLER, DEFAULT_LLM_MODEL_NAME, 
-        DEFAULT_TENANT, DEFAULT_YEAR
-    ) 
     from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
-    from core.vectorstore import load_all_vectorstores, VectorStoreManager 
+    # แก้ไขปัญหา ImportError โดยการ Map ชื่อฟังก์ชันให้ตรงกับที่มีใน core/vectorstore.py
+    from core.vectorstore import load_all_vectorstores, VectorStoreManager
     
-    # Load Document Map Utility
     try:
+        # พยายาม import ชื่อมาตรฐาน ถ้าไม่มีให้ใช้ load_doc_id_mapping แทน
         from core.vectorstore import load_document_map
     except ImportError:
-        def load_document_map(tenant: str, year: int, enabler: str) -> Dict[str, str]:
-             return {}
+        try:
+            from core.vectorstore import load_doc_id_mapping as load_document_map
+            print("💡 Note: Using 'load_doc_id_mapping' as 'load_document_map'")
+        except ImportError:
+            def load_document_map(*args, **kwargs): return {}
+            print("⚠️ Warning: No document mapping function found, using empty dict.")
 
-    import assessments.seam_mocking as seam_mocking 
 except Exception as e:
-    print(f"FATAL: missing import in start_assessment.py: {e}", file=sys.stderr)
+    print(f"❌ FATAL: Missing critical modules: {e}", file=sys.stderr)
     raise
 
 # -------------------- LOGGING SETUP --------------------
@@ -44,81 +51,84 @@ logger = logging.getLogger(__name__)
 
 # -------------------- ARGUMENT PARSING --------------------
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="SEAM PDCA Assessment Runner")
-    p.add_argument("--sub", type=str, default="all", help="Sub-Criteria ID or 'all' (e.g., 1.1)")
-    p.add_argument("--enabler", type=str, default=DEFAULT_ENABLER, help="Enabler ID (e.g., KM)")
-    p.add_argument("--target_level", type=int, default=5, help="Maximum target level.")
-    p.add_argument("--export", action="store_true", help="Export results to JSON file.")
-    p.add_argument("--mock", choices=["none", "random", "control"], default="none", help="Mock mode.")
-    p.add_argument("--sequential", action="store_true", help="Force sequential execution.")
-    p.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help="Tenant ID (e.g., 'pea').")
-    p.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Assessment year (e.g., 2568).")
-    
-    # Adaptive RAG Tuning
-    p.add_argument("--min-retry-score", type=float, default=0.65, help="Min Rerank score.")
-    p.add_argument("--max-retrieval-attempts", type=int, default=3, help="Max attempts.")
-    
-    # [ADDED] Option สำหรับกำหนด ID เองถ้าต้องการ (ถ้าไม่ใส่จะ Generate ให้)
-    p.add_argument("--record-id", type=str, default=None, help="Specific record ID for this run.")
-    
+    p = argparse.ArgumentParser(description="SEAM PDCA Assessment Runner (CLI Mode)")
+    p.add_argument("--sub", type=str, default="all", help="Sub-Criteria ID (e.g., 1.1)")
+    p.add_argument("--enabler", type=str, default=DEFAULT_ENABLER, help="Enabler (KM/IT/...)")
+    p.add_argument("--target_level", type=int, default=5, help="Max target maturity level")
+    p.add_argument("--export", action="store_true", help="Save results to JSON")
+    p.add_argument("--mock", choices=["none", "random", "control"], default="none", help="Mock mode")
+    p.add_argument("--sequential", action="store_true", help="Force sequential execution")
+    p.add_argument("--tenant", type=str, default=DEFAULT_TENANT, help="Tenant ID (e.g., 'pea')")
+    p.add_argument("--year", type=int, default=DEFAULT_YEAR, help="Year (e.g., 2567)")
+    p.add_argument("--min-retry-score", type=float, default=0.65)
+    p.add_argument("--max-retrieval-attempts", type=int, default=3)
+    p.add_argument("--record-id", type=str, default=None, help="Custom record ID")
     return p.parse_args()
 
 # -------------------- MAIN EXECUTION --------------------
 def main():
     args = parse_args()
     
-    # 1. สร้าง Record ID สำหรับการรันครั้งนี้ (ถ้าไม่ได้ระบุมา)
-    # เพื่อให้สอดคล้องกับระบบ Engine ใหม่ที่ต้องการ record_id
+    # 1. Initialize Record ID
     record_id = args.record_id if args.record_id else uuid.uuid4().hex[:12]
-    
     run_mode = "Sequential" if args.sequential else "Parallel"
-    logger.info(
-        f"🚀 Starting {run_mode} Runner | ID: {record_id} | "
-        f"Target: {args.enabler} {args.sub} ({args.tenant}/{args.year})"
-    )
+    logger.info(f"🚀 Runner Started | ID: {record_id} | Mode: {run_mode}")
     start_ts = time.time()
 
-    # 1.1 Load Vectorstores
+    # 2. Database Task Pre-registration
+    try:
+        init_db()
+        db_create_task(
+            record_id=record_id,
+            tenant=args.tenant,
+            year=str(args.year),
+            enabler=args.enabler,
+            sub_criteria=args.sub,
+            user_id="CLI_SYSTEM"
+        )
+        logger.info(f"✅ Database Task Registered: {record_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ DB Registration Warning: {e}")
+
+    # 3. Resource Loading
     vsm = None
-    if args.sequential and args.mock == "none":
-        logger.info("Sequential mode: Initial VSM load skipped (deferred to engine).")
-    else:
+    if not (args.sequential and args.mock == "none"):
         try:
             vsm = load_all_vectorstores(
-                doc_types=[EVIDENCE_DOC_TYPES], 
-                enabler_filter=args.enabler,
-                tenant=args.tenant,        
-                year=args.year             
+                tenant=args.tenant,
+                year=str(args.year),
+                doc_ids=None,
+                doc_types=EVIDENCE_DOC_TYPES, 
+                enabler_filter=args.enabler
             )
         except Exception as e:
-            logger.error(f"Failed to load vectorstores: {e}")
+            logger.error(f"VSM Load failed: {e}")
             if args.mock == "none": raise
 
-    # 1.2 Load Document Map
+    # Load Document Map
+    document_map = {}
     try:
-        document_map = load_document_map(tenant=args.tenant, year=args.year, enabler=args.enabler)
-        logger.info(f"Loaded {len(document_map)} document mappings.")
+        # เรียกใช้ผ่าน alias ที่เราทำไว้ด้านบน
+        document_map = load_document_map(EVIDENCE_DOC_TYPES, args.tenant, str(args.year), args.enabler)
+        # ถ้าได้มาเป็น dict ของ dict ให้ดึงเฉพาะ file_name
+        if document_map and isinstance(next(iter(document_map.values())), dict):
+            document_map = {k: v.get("file_name", k) for k, v in document_map.items()}
+        logger.info(f"🎯 Loaded {len(document_map)} document mappings.")
     except Exception as e:
-        logger.warning(f"Document map loading failed: {e}")
-        document_map = {}
+        logger.warning(f"Document map warning: {e}")
 
-    # 1.3 Initialize LLM
-    llm = None
-    try:
-        llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
-    except Exception as e:
-        logger.error(f"LLM Init failed: {e}")
-        if args.mock == "none": raise
+    # Initialize LLM
+    llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0)
 
-    # 2. Instantiate Engine
+    # 4. Engine Configuration
     config = AssessmentConfig(
         enabler=args.enabler, 
+        tenant=args.tenant,
+        year=args.year,
         target_level=args.target_level,
         mock_mode=args.mock,
         force_sequential=args.sequential,
         model_name=DEFAULT_LLM_MODEL_NAME,
-        tenant=args.tenant,  
-        year=args.year, 
         min_retry_score=args.min_retry_score,
         max_retrieval_attempts=args.max_retrieval_attempts
     )
@@ -132,8 +142,7 @@ def main():
         document_map=document_map
     )
 
-    # 3. Run Assessment 
-    # [FIXED] ส่ง record_id เข้าไปตาม Signature ใหม่ของ Engine
+    # 5. Run Assessment 
     try:
         final = engine.run_assessment(
             target_sub_id=args.sub, 
@@ -141,35 +150,34 @@ def main():
             vectorstore_manager=vsm,
             sequential=args.sequential,
             document_map=document_map,
-            record_id=record_id # <--- ส่ง ID เข้าไปที่นี่เพื่อแก้ TypeError
+            record_id=record_id
         )
-    except Exception as e:
-        logger.exception(f"❌ Engine run failed: {e}")
-        raise
 
-    # 4. Print Summary
+        # 5.1 บันทึกผลลง Database หลังรันเสร็จ (Persistence)
+        db_finish_task(record_id, final)
+        logger.info(f"💾 Results saved to database for Record ID: {record_id}")
+
+    except Exception as e:
+        logger.exception(f"❌ Engine execution failed: {e}")
+        db_update_task_status(record_id, 0, f"Error: {str(e)}", status="FAILED")
+        sys.exit(1)
+
+    # 6. Print Summary UI
     summary = final.get("summary", {})
     duration_s = time.time() - start_ts
-    
-    highest_passed = summary.get('highest_pass_level') or summary.get('highest_pass_level_overall', 0)
-    achieved_weight = summary.get('achieved_weight') or summary.get('total_achieved_weight', 0.0)
-    total_weight = summary.get('total_weight') or summary.get('total_possible_weight', 0.0)
     
     print("\n" + "═"*65)
     print(f" 🏁  ASSESSMENT COMPLETE | ID: {record_id}")
     print("═"*65)
     print(f" [MODE]        : {run_mode}")
-    print(f" [SUB-ID]      : {args.sub}")
+    print(f" [RESULT]      : Level {summary.get('overall_level_label', 'N/A')}")
+    print(f" [SCORE]       : {summary.get('overall_avg_score', 0.0):.2f} / 5.00")
     print(f" [DURATION]    : {duration_s:.2f} seconds")
     print("-" * 65)
-    print(f" [RESULT]      : Level Achieved -> L{highest_passed}")
-    print(f" [SCORE]       : {achieved_weight:.2f} / {total_weight:.2f}")
-    print(f" [PROGRESS]    : {summary.get('percentage_achieved_run', 0.0):.2f}%")
+    if args.export:
+        print(f" 💾 Exported to: {final.get('export_path_used', 'N/A')}")
     print("═"*65)
 
-    if args.export:
-        export_path = final.get("export_path_used", "N/A")
-        print(f" 💾 Exported to: {export_path}")
-
 if __name__ == "__main__":
+    multiprocessing.freeze_support() # สำคัญสำหรับ Mac
     main()
