@@ -51,7 +51,8 @@ try:
         INITIAL_TOP_K,
         FINAL_K_RERANKED,
         MAX_CHUNKS_PER_FILE,
-        MAX_CHUNKS_PER_BLOCK
+        MAX_CHUNKS_PER_BLOCK,
+        TARGET_SCORE_THRESHOLD_MAP
     )
     
     # 2. Import Logic Functions
@@ -160,15 +161,15 @@ def classify_by_keyword(
     chunk_metadata: dict = None
 ) -> str:
     """
-    [ULTIMATE PDCA CLASSIFIER v2026.4 - FULL REVISED FOR NEW BRANCH]
+    [ULTIMATE PDCA CLASSIFIER v2026.5 - SMART ANCHOR & MASTER DOCS]
     --------------------------------------------------
-    - Metadata & Filename Awareness: ค้นหาข้อมูลจากชื่อไฟล์เพื่อความแม่นยำสูงสุด
-    - JSON v2 Compatibility: รองรับโครงสร้าง 'require_phase' และ 'specific_contextual_rule'
-    - L1/L2 High-Pass: ยอมรับมติบอร์ด (D) ในระดับนโยบายโดยไม่ถูกบล็อกด้วย Must-include
+    - Smart Anchor: ยอมให้ 'แผนแม่บท/นโยบาย' ผ่านแม้ไม่มีเลขข้อในหน้านั้น
+    - Multi-Step Priority: ตรวจจากเฉพาะเจาะจง (JSON Level) ไปจนถึงระดับ Global
+    - Regex Boundary Aware: รองรับทั้งไทยและอังกฤษ
     """
     if not text: return 'Other'
 
-    # --- 0. METADATA OVERRIDE (ลำดับความสำคัญสูงสุด) ---
+    # --- 0. METADATA OVERRIDE ---
     if chunk_metadata:
         meta_tag = chunk_metadata.get("pdca_tag") or chunk_metadata.get("PDCA")
         if meta_tag and str(meta_tag).upper() in {"P", "D", "C", "A"}:
@@ -179,43 +180,48 @@ def classify_by_keyword(
 
     def keyword_match(text_to_search: str, keywords_input, anchor: str = None) -> bool:
         """
-        หัวใจสำคัญ: ค้นหา Keywords ทั้งใน 'เนื้อหา' และ 'ชื่อไฟล์'
+        หัวใจสำคัญ: ค้นหาคำสำคัญ และตรวจสอบบริบทของเลขข้อ (Anchor)
         """
         filename = ""
         if chunk_metadata and isinstance(chunk_metadata, dict):
-            # ดึงจาก 'source' หรือ 'filename' (ChromaDB มักเก็บใน source)
             filename = chunk_metadata.get("source", "") or chunk_metadata.get("filename", "")
             filename = os.path.basename(filename)
 
-        # รวมข้อความที่จะใช้ค้นหา (ช่วยให้ KM1.1L106.pdf กลายเป็นหลักฐานชั้นดี)
+        # รวมข้อความที่จะใช้ค้นหา
         search_scope = (text_to_search + " " + filename).lower()
 
-        # 1. ANCHOR CHECK (ระดับความแม่นยำรายหัวข้อ)
-        if anchor:
-            # ใช้ regex เพื่อหาเลขข้อ (เช่น 1.1) โดยไม่ให้ติดเลขอื่น (เช่น 1.11)
-            anchor_pattern = rf'(?<!\d){re.escape(anchor)}(?!\d)'
-            if not re.search(anchor_pattern, search_scope):
-                return False
-
-        # 2. KEYWORD NORMALIZATION
+        # 1. KEYWORD NORMALIZATION
         kws = keywords_input if isinstance(keywords_input, list) else \
               [k.strip() for k in str(keywords_input).split(",") if k.strip()]
         
-        # 3. REGEX MATCHING
+        # 2. KEYWORD MATCHING (ต้องเจอ Keyword ก่อน)
+        found_kw = False
         for kw in kws:
             kw_clean = str(kw).strip().lower()
             if not kw_clean: continue
             
             is_thai = any("\u0e00" <= c <= "\u0e7f" for c in kw_clean)
-            if is_thai:
-                pattern = re.escape(kw_clean)
-            else:
-                pattern = r'\b{}\b'.format(re.escape(kw_clean))
+            pattern = re.escape(kw_clean) if is_thai else r'\b{}\b'.format(re.escape(kw_clean))
                 
             if re.search(pattern, search_scope, re.IGNORECASE):
-                return True
+                found_kw = True
+                break
+        
+        if not found_kw: return False
+
+        # 3. [SMART ANCHOR] ถ้ามี Anchor (เช่น 1.1) ให้เช็คความเกี่ยวข้อง
+        if anchor:
+            anchor_pattern = rf'(?<!\d){re.escape(anchor)}(?!\d)'
+            
+            # ข้อยกเว้น: ถ้าเป็นเอกสารหลัก ให้ข้ามการเช็ค Anchor (เลขข้อ)
+            master_keywords = [r"แผนแม่บท", r"master plan", r"ยุทธศาสตร์", r"นโยบาย", r"ทิศทาง", r"roadmap"]
+            is_master = any(re.search(re.escape(m), filename.lower()) for m in master_keywords)
+            
+            # ถ้าไม่เจอเลขข้อ และไม่ใช่ไฟล์หลัก -> Reject
+            if not re.search(anchor_pattern, search_scope) and not is_master:
+                return False
                 
-        return False
+        return True
 
     def check_pdca_sequence(rules_dict: dict, anchor: str = None) -> Optional[str]:
         mapping = {
@@ -231,49 +237,34 @@ def classify_by_keyword(
 
     # --- EXECUTION STEPS ---
     
-    # Step 1: Specific Level Rules (จาก JSON ใหม่ เช่น 1.1 -> L1)
+    # Step 1: Specific Level Rules (เช็คตรงข้อ ตรงระดับ)
     rules = contextual_rules_map.get(sub_id, {})
     current_l_rules = rules.get(f"L{level}", {})
     
     if isinstance(current_l_rules, dict) and current_l_rules:
-        # ดึง Phase ที่ JSON ระบุว่าจำเป็น (เช่น ["P", "D"])
-        required_phases = current_l_rules.get("require_phase", [])
-        
-        # ค้นหา Tag เบื้องต้น
+        # ใช้ anchor=None ในชั้นนี้ เพราะเราเชื่อใจ Keywords ราย Level ที่เราตั้งไว้แล้ว
         tag = check_pdca_sequence(current_l_rules, anchor=None)
-        
         if tag:
-            # [LOGIC OVERRIDE] สำหรับ Level 1-2 ถ้าเจอ 'D' (มติ/อนุมัติ) 
-            # ให้ผ่านทันทีเพื่อรองรับ "นโยบายที่ถูกนำไปปฏิบัติจริงในขั้นต้น"
-            if tag == "D" and level <= 2:
-                return "D"
-
-            # Must-include / Avoid Guard สำหรับกรณีทั่วไป
-            if rules.get("must_include_keywords"):
-                if not keyword_match(text_lower, rules["must_include_keywords"]):
-                    return 'Other'
+            # L1-L2 High-Pass Logic
+            if tag == "D" and level <= 2: return "D"
             
-            if rules.get("avoid_keywords"):
-                if keyword_match(text_lower, rules["avoid_keywords"]):
-                    return 'Other'
-                    
+            # Guards
+            if rules.get("must_include_keywords") and not keyword_match(text_lower, rules["must_include_keywords"]):
+                return 'Other'
+            if rules.get("avoid_keywords") and keyword_match(text_lower, rules["avoid_keywords"]):
+                return 'Other'
             return tag
 
-    # Step 2: JSON Sub-ID Fallback (ค้นหา Keywords รวมของหัวข้อนั้นๆ)
-    # ใช้ Anchor=sub_id เพื่อกรองเนื้อหาที่ตรงข้อจริง
+    # Step 2: JSON Sub-ID Fallback (Keywords รวมของข้อนั้นๆ)
     tag = check_pdca_sequence(rules, anchor=sub_id)
     if tag: return tag
 
-    # Step 3: Default Enabler Rules (เช่น KM กลาง)
-    defaults = contextual_rules_map.get("_enabler_defaults", {})
-    tag = check_pdca_sequence(defaults, anchor=sub_id)
-    if tag: return tag
-
-    # Step 4: Global System Fallback (ถ้ายังไม่เจออะไรเลย)
+    # Step 3: Global System Fallback (BASE_PDCA_KEYWORDS)
     try:
         from config.global_vars import PDCA_PRIORITY_ORDER, BASE_PDCA_KEYWORDS
         tag_map = {"Plan": "P", "Do": "D", "Check": "C", "Act": "A"}
         for full_tag in PDCA_PRIORITY_ORDER:
+            # ใช้ anchor=sub_id เพื่อให้แน่ใจว่า keywords ทั่วไปจะไม่ไปดึงเนื้อหาข้ออื่นมา
             if keyword_match(text_lower, BASE_PDCA_KEYWORDS.get(full_tag, []), anchor=sub_id):
                 return tag_map.get(full_tag, 'Other')
     except ImportError:
@@ -670,70 +661,6 @@ class SEAMPDCAEngine:
             
         return ""
 
-    def enhance_query_for_statement(
-        self,
-        statement_text: str,
-        sub_id: str,
-        statement_id: str,
-        level: int,
-        focus_hint: str,
-    ) -> List[str]:
-        """
-        [Revised 2026 - STABLE ANCHOR VERSION]
-        เน้นการใช้ Sub-ID เป็นตัวสมอ (Anchor) เพื่อป้องกันการดึงข้อมูลข้ามข้อ
-        """
-        logger = logging.getLogger(__name__)
-        enabler_id = self.enabler_id
-        cum_rules = self.get_cumulative_rules(sub_id, level)
-        
-        # 🟢 [ANCHOR] สร้างตัวระบุข้อที่แข็งแรง
-        # เช่น "KM 1.1" หรือ "1.1 KM"
-        id_anchor = f"{enabler_id} {sub_id}"
-        
-        # รวบรวม Keywords
-        plan_kws = cum_rules.get('plan_keywords', [])
-        do_kws = cum_rules.get('do_keywords', [])
-        check_kws = cum_rules.get('check_keywords', [])
-        act_kws = cum_rules.get('act_keywords', [])
-        all_kws = list(set(plan_kws + do_kws + check_kws + act_kws))
-        keywords_str = " ".join(all_kws[:8]) 
-
-        queries = []
-
-        # Query 1: Direct Matching (เน้นข้อ + ใจความเกณฑ์) - ต้องอยู่หน้าสุด
-        # ตัวอย่าง: "KM 1.1 ผู้บริหารกำหนดวิสัยทัศน์ ทิศทาง"
-        queries.append(f"{id_anchor} {statement_text}")
-
-        # Query 2: Document Type Anchor (เน้นหาชนิดไฟล์ในข้อนั้นๆ)
-        if level <= 2:
-            # เน้นรากฐาน: ประกาศ นโยบาย แผน
-            queries.append(f"{id_anchor} ประกาศ นโยบาย แผนปฏิบัติการ คำสั่งแต่งตั้ง {keywords_str}")
-        else:
-            # เน้นหลักฐานเชิงประจักษ์: รายงาน สรุปผล
-            queries.append(f"{id_anchor} รายงานผล สรุปกิจกรรม บันทึกข้อความ {keywords_str}")
-
-        # Query 3: Maturity Specific (เจาะเฟส PDCA)
-        # เพิ่ม Query ที่เจาะจง Maturity Rules ที่ดึงมา
-        specific_rule = cum_rules.get('instruction', '')
-        if specific_rule:
-            queries.append(f"{id_anchor} {specific_rule}")
-
-        # Query 4: Cross-Check (ใช้ Keyword ล้วนๆ แต่ต้องมี ID Anchor นำหน้า)
-        # เพื่อให้ BM25 ทำงานได้แม่นยำที่สุด
-        if level >= 3:
-            ca_kws = " ".join(list(set(check_kws + act_kws))[:5])
-            queries.append(f"{id_anchor} ผลประเมิน ติดตาม ตรวจสอบ ปรับปรุง {ca_kws}")
-
-        # --- กรองและส่งออก ---
-        final_queries = []
-        seen = set()
-        for q in queries:
-            q_strip = q.strip()
-            if q_strip and q_strip not in seen:
-                final_queries.append(q_strip)
-                seen.add(q_strip)
-
-        return final_queries[:5]
 
     def _initialize_llm_if_none(self):
         """Initializes LLM instance if self.llm is None."""
@@ -2827,17 +2754,34 @@ class SEAMPDCAEngine:
             
             return "\n\n---\n\n".join(parts)
 
-        # 4. Construct Final Outputs
+        # 4. Construct Outputs & Enhanced Logging
         p_text = _create_block("Plan",  pdca_groups["Plan"])
         d_text = _create_block("Do",    pdca_groups["Do"])
         c_text = _create_block("Check", pdca_groups["Check"])
         a_text = _create_block("Act",   pdca_groups["Act"])
         o_text = _create_block("Other", pdca_groups["Other"])
 
-        # Logging สรุปสถานะ
-        status = " | ".join([f"{k}:{'✅' if v else '❌'}" for k, v in 
-                            {"P":p_text, "D":d_text, "C":c_text, "A":a_text}.items()])
-        self.logger.info(f"📊 [PDCA Blocks Ready] {sub_id} L{level} -> {status}")
+        # --- 🔍 LOGGING SECTION ---
+        # 1. ดึงชื่อจาก Rubric ตาม Hierarchy (criteria -> subcriteria)
+        main_id = sub_id.split('.')[0] if '.' in sub_id else sub_id
+        criteria_data = self.rubric.get("criteria", {}).get(main_id, {})
+        sub_data = criteria_data.get("subcriteria", {}).get(sub_id, {})
+        criteria_name = sub_data.get("name", "Unknown Criteria")
+        
+        # 2. ดึง Required Phases จาก Contextual Rules
+        level_key = f"L{level}"
+        level_rules = contextual_rules_map.get(sub_id, {}).get(level_key, {})
+        required_phases = level_rules.get("require_phase", ["P", "D"])
+        
+        # 3. สรุปสถานะ Blocks ด้วยไอคอน
+        status_icons = " | ".join([f"{k}:{'✅' if v else '❌'}" for k, v in 
+                                  {"P":p_text, "D":d_text, "C":c_text, "A":a_text}.items()])
+
+        # พิมพ์สรุปความพร้อมก่อนส่ง LLM
+        self.logger.info(f"🎯 [ASSESSING] {sub_id}: {criteria_name}")
+        self.logger.info(f"📊 [PDCA Blocks Ready] L{level} -> {status_icons}")
+        self.logger.info(f"📝 [Requirement] L{level} Expects: {required_phases}")
+        # --------------------------
 
         return p_text, d_text, c_text, a_text, o_text
     
@@ -3518,10 +3462,10 @@ class SEAMPDCAEngine:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE PRODUCTION v2026.4.5] - Precision & Data-Driven Logic
-        - ใช้ top_k=INITIAL_TOP_K เพื่อรักษา Precision
-        - ใช้ Dynamic Query Expansion จาก Rules แทนการ Hardcode ชื่อไฟล์
-        - ระบบ Relevance Filter + PDCA Tagging ก่อนส่ง LLM
+        [ULTIMATE REVISE 2026] - FULL MULTI-CHANNEL + EXPERT LOOP
+        - ระบบบูรณาการ PDCA Blocks และ build_multichannel_context_for_level
+        - รองรับระบบอุทธรณ์ (Expert Re-evaluation) เมื่อหลักฐานขัดแย้งกับผลตรวจ
+        - ใช้ Hybrid Evaluator (Low-Level vs Senior) ตามระดับเกณฑ์
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
@@ -3529,183 +3473,139 @@ class SEAMPDCAEngine:
         statement_text = statement_data['statement']
         sub_criteria_name = sub_criteria['sub_criteria_name']
         
-        MIN_RETRY_SC = 0.70
-        self.logger.info(f"🔍 [ASSESSMENT] {sub_id} L{level} | Attempt: {attempt} (Server Mode)")
+        self.logger.info(f"🚀 [ULTIMATE ENGINE] {sub_id} L{level} | Attempt: {attempt}")
 
-        # 1. เตรียม Contextual Rules และ Level Constraints
-        # ดึงกฎที่สอดคล้องกับ Rubrics และ Keywords ที่คุณตั้งไว้ใน JSON
+        # 1. ดึงกฎเกณฑ์และกำหนดพารามิเตอร์ (Anchors & Constraints)
         cum_rules = self.get_cumulative_rules(sub_id, level)
         level_constraint = self._get_level_constraint_prompt(sub_id, level)
+        plan_kws = cum_rules.get('plan_keywords', [])
 
-        # 2. ADAPTIVE RAG LOOP + Dynamic Query Expansion
+        # 2. ULTIMATE QUERY ENHANCER (Synonyms & Logic Expand)
+        enhanced_queries = self.enhance_query_for_statement(
+            statement_text=statement_text,
+            sub_id=sub_id,
+            statement_id=f"{sub_id}.L{level}",
+            level=level
+        )
+
+        # 3. ADAPTIVE RAG RETRIEVAL (Dual-Loop Strategy)
         mapped_stable_ids, priority_chunks = self._get_mapped_uuids_and_priority_chunks(
             sub_id=sub_id, level=level, statement_text=statement_text,
             level_constraint=level_constraint, vectorstore_manager=vectorstore_manager
         )
 
-        # สร้าง Query List อัตโนมัติ: รวมคำค้นหาเดิม + คำสำคัญจาก Rules
-        rag_query_list = [statement_text]
-        important_kws = cum_rules.get('plan_keywords', []) + cum_rules.get('do_keywords', [])
-        if important_kws:
-            # ดึงคำสำคัญมาสร้าง Query เสริม (ไม่เกิน 3-5 คำเพื่อไม่ให้ Query ยาวเกินไป)
-            rag_query_list.append(" OR ".join(important_kws[:3]))
-
         highest_rerank_score = -1.0
         final_top_evidences = []
 
-        # Adaptive Loop เพื่อหาเอกสารที่ดีที่สุด (สูงสุด 4 รอบ)
-        for loop_attempt in range(1, 5):
-            # รอบแรกใช้ Full Query, รอบถัดๆ ไปใช้เป้าหมายของเกณฑ์เป็นตัวนำ
-            query_input = rag_query_list if loop_attempt == 1 else [statement_text]
-            
+        for loop_idx in range(1, 3):
+            query_input = enhanced_queries if loop_idx == 1 else [statement_text]
             retrieval_result = self.rag_retriever(
-                query=query_input,
-                doc_type=self.doc_type,
-                sub_id=sub_id, level=level,
-                vectorstore_manager=vectorstore_manager,
-                stable_doc_ids=mapped_stable_ids,
-                top_k=INITIAL_TOP_K  # รักษาค่าเดิมตามคำแนะนำของคุณ
+                query=query_input, doc_type=self.doc_type, sub_id=sub_id, level=level,
+                vectorstore_manager=vectorstore_manager, stable_doc_ids=mapped_stable_ids,
+                top_k=30 
             )
             
-            current_evidences = retrieval_result.get("top_evidences", [])
-            all_candidates = current_evidences + priority_chunks
+            all_candidates = retrieval_result.get("top_evidences", []) + priority_chunks
+            if not all_candidates: continue
             
-            if not all_candidates:
-                continue
-
-            current_max = max(
-                (ev.get('rerank_score', ev.get('score', 0)) for ev in all_candidates),
-                default=0.0
-            )
-
-            if current_max >= highest_rerank_score:
-                highest_rerank_score = current_max
+            curr_max = max((ev.get('rerank_score', 0.0) for ev in all_candidates), default=0.0)
+            if curr_max >= highest_rerank_score:
+                highest_rerank_score = curr_max
                 final_top_evidences = all_candidates
+            if highest_rerank_score >= 0.75: break # มั่นใจมากพอแล้ว
 
-            # ถ้าได้เอกสารที่ Rerank score สูงพอแล้ว ให้หยุด Loop
-            if highest_rerank_score >= MIN_RETRY_SC:
-                break
+        # 4. CONTEXT CLEANING & FILTERING
+        relevant_filtered = [d for d in final_top_evidences if self.relevance_score_fn(d, sub_id, level) >= 0.35]
+        
+        # 5. [PRE-PROCESS] MULTI-CHANNEL SUMMARIZATION
+        # รวบรวมข้อมูลเลเวลก่อนหน้ามาทำ Baseline Summary
+        previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
+        flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
 
-        self.logger.info(f"Adaptive RAG completed | Highest score: {highest_rerank_score:.4f} | Raw evidences: {len(final_top_evidences)}")
-
-        # 3. ACT-HOOK: CONTEXT EXPANSION (ดึงหน้าข้างเคียงมาเสริมบริบท)
-        expanded_evidences = self._expand_context_with_neighbor_pages(
-            top_evidences=final_top_evidences,
-            collection_name=f"evidence_{self.enabler_id.lower()}"
+        # เรียกใช้ Multichannel Builder เพื่อสร้าง Summary สำหรับ Baseline และ Auxiliary
+        channels = build_multichannel_context_for_level(
+            level=level, 
+            top_evidences=relevant_filtered, 
+            previous_levels_evidence=flat_previous
         )
 
-        # 4. ROBUST PDCA TAGGING (ติดป้ายกำกับประเภทหลักฐาน)
-        for doc in expanded_evidences:
-            doc["pdca_tag"] = classify_by_keyword(
-                text=doc.get("text", ""),
-                sub_id=sub_id, level=level,
-                contextual_rules_map=self.contextual_rules_map,
-                chunk_metadata=doc.get('metadata')
+        # 6. [PRE-PROCESS] PDCA BLOCKS (DIRECT EVIDENCE)
+        plan_b, do_b, check_b, act_b, other_b = self._get_pdca_blocks_from_evidences(
+            evidences=relevant_filtered, 
+            baseline_evidences={k.split(".L")[-1]: v for k, v in previous_evidence.items()},
+            level=level, sub_id=sub_id, contextual_rules_map=self.contextual_rules_map
+        )
+
+        # ประกอบร่าง Context แบบบูรณาการ
+        synthesized_context = (
+            f"--- [PRIMARY] DIRECT PDCA EVIDENCE ---\n"
+            f"<Plan>\n{plan_b or 'ไม่พบข้อมูล'}\n</Plan>\n"
+            f"<Do>\n{do_b or 'ไม่พบข้อมูล'}\n</Do>\n"
+            f"<Check>\n{check_b or 'ไม่พบข้อมูล'}\n</Check>\n"
+            f"<Act>\n{act_b or 'ไม่พบข้อมูล'}\n</Act>\n"
+            f"\n--- [CONTEXT] BASELINE & SUPPORTING ---\n"
+            f"- ประวัติการประเมินเลเวลก่อนหน้า (Baseline): {channels.get('baseline_summary')}\n"
+            f"- สรุปหลักฐานรอง (Auxiliary): {channels.get('aux_summary')}\n"
+            f"\n<Other_Context>\n{other_b}\n</Other_Context>"
+        )
+
+        # 7. HYBRID EVALUATOR SELECTION
+        is_strategic = "strategic" in cum_rules.get('specific_contextual_rule', '').lower()
+        llm_evaluator_to_use = evaluate_with_llm_low_level if (level <= 2 and not is_strategic) else evaluate_with_llm
+        
+        # คำนวณความมั่นใจเบื้องต้น (Confidence Guardrail)
+        processed_docs = [LcDocument(page_content=d['text'], metadata=d.get('metadata', {})) for d in relevant_filtered]
+        confidence_res = self.calculate_audit_confidence(processed_docs)
+
+        # เตรียมพารามิเตอร์ (Sync with Prompt v35.9)
+        eval_args = {
+            "context": synthesized_context,
+            "sub_criteria_name": sub_criteria_name,
+            "level": level,
+            "statement_text": statement_text,
+            "sub_id": sub_id,
+            "llm_executor": self.llm,
+            "plan_keywords": plan_kws,
+            "ai_confidence": confidence_res["level"],
+            "confidence_reason": confidence_res["reason"],
+            "max_rerank_score": highest_rerank_score,
+            "max_evidence_strength": 10.0,
+            "specific_contextual_rule": cum_rules.get('specific_contextual_rule', "ไม่มี"),
+            "level_constraint": level_constraint,
+            "avoid_keywords": cum_rules.get('avoid_keywords', "ไม่มี"),
+            "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2)
+        }
+
+        # 8. EVALUATION PASS 1
+        llm_result = llm_evaluator_to_use(**eval_args)
+
+        # 9. EXPERT RE-EVALUATION LOOP (ศาลอุทธรณ์)
+        # เงื่อนไข: ถ้าตก แต่คะแนน RAG สูง หรือมีคะแนนรายด้านบางส่วนที่น่าสนใจ
+        if not llm_result.get('is_passed', False) and (highest_rerank_score > 0.65 or llm_result.get('score', 0) > 1.0):
+            missing_tags = {tag for tag in ['P', 'D', 'C', 'A'] if llm_result.get(f'{tag}_Score', 0) == 0}
+            self.logger.info(f"⚖️ [EXPERT TRIGGER] High Rerank ({highest_rerank_score:.2f}) found. Re-evaluating...")
+            
+            llm_result = self._run_expert_re_evaluation(
+                sub_id=sub_id, level=level, statement_text=statement_text,
+                context=synthesized_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
+                missing_tags=missing_tags, highest_rerank_score=highest_rerank_score,
+                sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
+                base_kwargs=eval_args
             )
 
-        # 5. DIVERSITY FILTER (กรองไฟล์ซ้ำซ้อน)
-        sorted_evidences = sorted(
-            expanded_evidences,
-            key=lambda x: x.get('rerank_score', 0),
-            reverse=True
-        )
-        
-        diverse_filtered = []
-        file_counts = {}
-        for doc in sorted_evidences:
-            meta = doc.get('metadata', {})
-            fname = os.path.basename(meta.get('source', 'unknown'))
-            if file_counts.get(fname, 0) < 5:  # จำกัดจำนวน Chunks ต่อไฟล์
-                diverse_filtered.append(doc)
-                file_counts[fname] = file_counts.get(fname, 0) + 1
-            if len(diverse_filtered) >= 30: # Max Context Chunks
-                break
-
-        self.logger.info(f"Diversity filter applied | Before relevance filter: {len(diverse_filtered)}")
-
-        # 6. RELEVANCE FILTER (กรอง Noise โดยอ้างอิงจาก Rules ใน JSON)
-        relevant_filtered = []
-        # ใช้เกณฑ์ความเข้มงวดตาม Maturity Level
-        rel_threshold = 0.35 if level <= 2 else 0.45 
-        
-        for doc in diverse_filtered:
-            rel_score = self.relevance_score_fn(doc, sub_id, level) # ฟังก์ชันที่คุณต้องการ
-            doc['relevance_score_custom'] = rel_score
-            if rel_score >= rel_threshold:
-                relevant_filtered.append(doc)
-
-        # Fallback Mechanism: หากกรองแล้วไม่เหลือหลักฐานเลย ให้ใช้ Top 5 จาก Rerank
-        if not relevant_filtered and diverse_filtered:
-            relevant_filtered = sorted(diverse_filtered, key=lambda x: x.get('rerank_score', 0), reverse=True)[:5]
-            self.logger.warning(f"Relevance filter too strict for {sub_id} L{level} → fallback to top 5")
-
-        self.logger.info(f"After relevance filter: {len(relevant_filtered)} evidences sent to LLM")
-
-        # 7. PDCA SYNTHESIS (เตรียมข้อมูลสำหรับ LLM)
-        previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
-        formatted_baseline_evi = {k.split(".L")[-1]: v for k, v in previous_evidence.items()}
-        
-        plan_b, do_b, check_b, act_b, other_b = self._get_pdca_blocks_from_evidences(
-            evidences=relevant_filtered,
-            baseline_evidences=formatted_baseline_evi,
-            level=level, sub_id=sub_id,
-            contextual_rules_map=self.contextual_rules_map,
-            record_id=record_id
-        )
-
-        # 8. EVALUATION WITH LLM
-        processed_lc_docs = [LcDocument(page_content=d['text'], metadata=d.get('metadata', d)) for d in relevant_filtered]
-        confidence_result = self.calculate_audit_confidence(processed_lc_docs)
-        
-        synthesized_context = (
-            f"--- EVIDENCE BLOCKS SYNTHESIS ---\n"
-            f"<Plan_Evidence>\n{plan_b or 'ไม่พบหลักฐานส่วนการวางแผน'}\n</Plan_Evidence>\n"
-            f"<Do_Evidence>\n{do_b or 'ไม่พบหลักฐานส่วนการดำเนินงาน'}\n</Do_Evidence>\n"
-            f"<Check_Evidence>\n{check_b or 'ไม่พบหลักฐานส่วนการตรวจสอบ'}\n</Check_Evidence>\n"
-            f"<Act_Evidence>\n{act_b or 'ไม่พบหลักฐานส่วนการปรับปรุง'}\n</Act_Evidence>\n"
-            f"<General_Context>\n{other_b}\n</General_Context>"
-        )
-
-        llm_result = evaluate_with_llm(
-            context=synthesized_context,
-            baseline_summary=self._get_baseline_summary_text(sub_id, level),
-            sub_id=sub_id,
-            level=level,
-            statement_text=statement_text,
-            sub_criteria_name=sub_criteria_name,
-            ai_confidence=confidence_result["level"],
-            confidence_reason=confidence_result.get("reason", "N/A"),
-            max_rerank_score=highest_rerank_score,
-            llm_executor=self.llm
-        )
-
-        # 9. POST-PROCESSING & SAVE
+        # 10. FINAL SAVING & OUTPUT
         llm_result = self.post_process_llm_result(llm_result, level)
-        max_evi_str = self._save_level_evidences_and_calculate_strength(
-            level_temp_map=relevant_filtered,
-            sub_id=sub_id,
-            level=level,
-            llm_result=llm_result,
-            highest_rerank_score=highest_rerank_score
+        self._save_level_evidences_and_calculate_strength(
+            level_temp_map=relevant_filtered, sub_id=sub_id, level=level,
+            llm_result=llm_result, highest_rerank_score=highest_rerank_score
         )
-
-        self.logger.info(f"📊 [RESULT] {sub_id} L{level} -> Score: {llm_result.get('score', 0.0):.4f} | Pass: {llm_result.get('is_passed')}")
 
         return {
-            "sub_criteria_id": sub_id,
-            "level": level,
+            "sub_criteria_id": sub_id, "level": level,
             "is_passed": llm_result.get('is_passed', False),
             "score": float(llm_result.get('score', 0.0)),
-            "audit_confidence": confidence_result,
-            "pdca_breakdown": {
-                "P": llm_result.get("P_Plan_Score", 0),
-                "D": llm_result.get("D_Do_Score", 0),
-                "C": llm_result.get("C_Check_Score", 0),
-                "A": llm_result.get("A_Act_Score", 0)
-            },
-            "reason": llm_result.get('reason', "วิเคราะห์ไม่สำเร็จ"),
-            "max_relevant_score": highest_rerank_score,
-            "evidence_strength": max_evi_str,
+            "reason": llm_result.get('reason', "ไม่พบข้อสรุป"),
+            "audit_confidence": confidence_res,
             "temp_map_for_level": relevant_filtered,
             "duration": round(time.time() - start_time, 2)
         }
