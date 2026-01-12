@@ -7,9 +7,19 @@ import logging
 from config.global_vars import (
     SUPPORTED_ENABLERS,
     SEAM_ENABLER_MAP,
-    ANALYSIS_FRAMEWORK,
-    PDCA_ANALYSIS_SIGNALS
 )
+
+# ================================================================
+# Intent & Analysis Signals
+# ================================================================
+PDCA_ANALYSIS_SIGNALS = [
+    "วิเคราะห์", "ตรวจสอบ", "มี pdca ไหม", "ครบไหม",
+    "ประเมินหลักฐาน", "ความสมบูรณ์", "p-d-c-a", "analyze",
+    "ขาดอะไร", "เช็คหลักฐาน",
+]
+
+ANALYSIS_FRAMEWORK  = "PDCA (Plan-Do-Check-Act)"
+
 
 logger = logging.getLogger(__name__)
 

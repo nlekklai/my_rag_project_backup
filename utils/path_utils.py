@@ -304,8 +304,21 @@ def get_rubric_file_path(tenant: str, enabler: str) -> str:
                         RUBRIC_FILENAME_PATTERN.format(tenant=_n(tenant), enabler=_n(enabler)))
 
 def get_contextual_rules_file_path(tenant: str, enabler: str) -> str:
-    return os.path.join(get_config_tenant_root_path(tenant),
-                        f"{_n(tenant)}_{_n(enabler)}_contextual_rules.json")
+    """
+    ปรับให้รองรับการหาไฟล์แบบลำดับชั้น (Tenant-Specific -> Global Default)
+    """
+    # 1. ลองหาใน Folder ของ Tenant ก่อน (เช่น data_store/pea/config/pea_km_contextual_rules.json)
+    tenant_path = os.path.join(
+        get_config_tenant_root_path(tenant),
+        f"{_n(tenant)}_{_n(enabler)}_contextual_rules.json"
+    )
+
+    if os.path.exists(tenant_path):
+        return tenant_path
+        
+    # 2. (Optional) ถ้าไม่เจอ ให้ Fallback ไปที่ Default Rules กลางของระบบ
+    # เพื่อให้ Tenant ใหม่เริ่มใช้งานได้ทันทีโดยไม่ต้องเขียนกฎใหม่หมด
+    return os.path.join(DATA_STORE_ROOT, "common", "config", f"default_{_n(enabler)}_rules.json")
 
 def get_export_dir(tenant: str, year: Union[int, str], enabler: str) -> str:
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year), _n(enabler))

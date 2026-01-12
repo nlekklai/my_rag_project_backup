@@ -6,7 +6,7 @@ import logging
 import time
 import os
 from typing import List, Dict, Any, Optional, Union, Tuple, Set, Final, Literal
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from datetime import datetime
 from dataclasses import dataclass, field
 import multiprocessing # NEW: Import for parallel execution
@@ -25,6 +25,7 @@ import hashlib
 import copy
 from database import init_db
 from database import db_update_task_status as update_db
+from pydantic import BaseModel
 
 import random  # Added for shuffle
 
@@ -52,7 +53,6 @@ try:
         FINAL_K_RERANKED,
         MAX_CHUNKS_PER_FILE,
         MAX_CHUNKS_PER_BLOCK,
-        TARGET_SCORE_THRESHOLD_MAP
     )
     
     # 2. Import Logic Functions
@@ -64,10 +64,11 @@ try:
         create_context_summary_llm,
         retrieve_context_by_doc_ids,
         _fetch_llm_response,
-        build_multichannel_context_for_level
+        build_multichannel_context_for_level,
+        _get_emergency_fallback_plan
     )
     from core.vectorstore import VectorStoreManager, load_all_vectorstores, get_global_reranker 
-    from core.action_plan_schema import ActionPlanActions
+    from core.action_plan_schema import ActionPlanActions, ActionPlanResult
 
     # 3. 🎯 Import Path Utilities
     from utils.path_utils import (
@@ -153,122 +154,197 @@ logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
+import re
+import os
+import logging  # เพิ่มสำหรับ debug ที่ดีขึ้น
+
+# ตั้ง logger สำหรับฟังก์ชันนี้ (optional แต่แนะนำ)
+logger = logging.getLogger(__name__)
+
+import re
+import os
+import logging
+from typing import Tuple
+
+logger = logging.getLogger(__name__)
+
 def classify_by_keyword(
-    text: str, 
-    sub_id: str = None, 
-    level: int = None,
+    text: str,
+    sub_id: str = None,
+    level: int = 1,           # Default=1 ป้องกัน TypeError จาก caller ที่ส่ง None
     contextual_rules_map: dict = None,
-    chunk_metadata: dict = None
+    chunk_metadata: dict = None,
+    debug: bool = False       # เปิด debug ได้จาก caller (แนะนำเปิดเฉพาะตอนทดสอบ)
 ) -> str:
     """
-    [ULTIMATE PDCA CLASSIFIER v2026.5 - SMART ANCHOR & MASTER DOCS]
-    --------------------------------------------------
-    - Smart Anchor: ยอมให้ 'แผนแม่บท/นโยบาย' ผ่านแม้ไม่มีเลขข้อในหน้านั้น
-    - Multi-Step Priority: ตรวจจากเฉพาะเจาะจง (JSON Level) ไปจนถึงระดับ Global
-    - Regex Boundary Aware: รองรับทั้งไทยและอังกฤษ
+    [ULTIMATE PDCA CLASSIFIER v2026.8 - PRODUCTION-READY & BALANCED]
+    ----------------------------------------------------------------
+    Features:
+    - Default level=1 เพื่อป้องกัน TypeError
+    - Fuzzy substring match สำหรับไทย + word boundary สำหรับอังกฤษ
+    - Soft Anchor: ผ่อนปรนสำหรับ level ต่ำ (1-2) หรือ confidence สูง (>0.75)
+    - Weighted score + เลือก tag ที่ดีที่สุดเมื่อ conflict หลาย phase
+    - Robust: จัดการ text ว่าง, rules ไม่มี, metadata เสีย
+    - Debug logging ชัดเจน (เปิดได้เฉพาะเมื่อต้องการ)
+    - No hard-coded sub_id/level exception → ใช้ได้ทุก criteria
     """
-    if not text: return 'Other'
+    if not text or not text.strip():
+        if debug:
+            logger.debug("[CLASSIFY] Empty/blank text → 'Other'")
+        return 'Other'
 
-    # --- 0. METADATA OVERRIDE ---
+    # --- 0. METADATA OVERRIDE (priority สูงสุด) ---
     if chunk_metadata:
         meta_tag = chunk_metadata.get("pdca_tag") or chunk_metadata.get("PDCA")
-        if meta_tag and str(meta_tag).upper() in {"P", "D", "C", "A"}:
-            return str(meta_tag).upper()
+        if meta_tag:
+            tag_upper = str(meta_tag).upper().strip()
+            if tag_upper in {"P", "D", "C", "A"}:
+                if debug:
+                    logger.debug(f"[CLASSIFY] Metadata override → {tag_upper}")
+                return tag_upper
 
-    if not contextual_rules_map: return 'Other'
-    text_lower = text.lower()
+    if not contextual_rules_map:
+        if debug:
+            logger.warning("[CLASSIFY] No contextual_rules_map → 'Other'")
+        return 'Other'
 
-    def keyword_match(text_to_search: str, keywords_input, anchor: str = None) -> bool:
-        """
-        หัวใจสำคัญ: ค้นหาคำสำคัญ และตรวจสอบบริบทของเลขข้อ (Anchor)
-        """
-        filename = ""
-        if chunk_metadata and isinstance(chunk_metadata, dict):
-            filename = chunk_metadata.get("source", "") or chunk_metadata.get("filename", "")
-            filename = os.path.basename(filename)
+    text_lower = text.lower().strip()
 
-        # รวมข้อความที่จะใช้ค้นหา
-        search_scope = (text_to_search + " " + filename).lower()
+    # --- PREPARE SEARCH SCOPE ---
+    filename = ""
+    if chunk_metadata and isinstance(chunk_metadata, dict):
+        filename = chunk_metadata.get("source", "") or chunk_metadata.get("filename", "")
+        filename = os.path.basename(filename).lower()
 
-        # 1. KEYWORD NORMALIZATION
-        kws = keywords_input if isinstance(keywords_input, list) else \
-              [k.strip() for k in str(keywords_input).split(",") if k.strip()]
-        
-        # 2. KEYWORD MATCHING (ต้องเจอ Keyword ก่อน)
-        found_kw = False
+    search_scope = text_lower + " " + filename
+
+    # --- HELPER: Keyword Match with Score ---
+    def keyword_match(keywords_input: list, anchor: str = None) -> Tuple[bool, float]:
+        if not keywords_input:
+            return False, 0.0
+
+        kws = {k.strip().lower() for k in keywords_input if k.strip()}  # set เพื่อ dedup
+        match_count = 0
+
         for kw in kws:
-            kw_clean = str(kw).strip().lower()
-            if not kw_clean: continue
-            
-            is_thai = any("\u0e00" <= c <= "\u0e7f" for c in kw_clean)
-            pattern = re.escape(kw_clean) if is_thai else r'\b{}\b'.format(re.escape(kw_clean))
-                
-            if re.search(pattern, search_scope, re.IGNORECASE):
-                found_kw = True
-                break
-        
-        if not found_kw: return False
+            # Normalize: ลบเว้นวรรคซ้ำ
+            kw_norm = re.sub(r'\s+', ' ', kw).strip()
+            if not kw_norm:
+                continue
 
-        # 3. [SMART ANCHOR] ถ้ามี Anchor (เช่น 1.1) ให้เช็คความเกี่ยวข้อง
+            is_thai = any("\u0e00" <= c <= "\u0e7f" for c in kw_norm)
+            if is_thai:
+                # Fuzzy Thai: substring match หลัง normalize space
+                normalized_scope = re.sub(r'\s+', ' ', search_scope)
+                if kw_norm in normalized_scope:
+                    match_count += 1
+            else:
+                # English: strict word boundary
+                pattern = r'\b' + re.escape(kw_norm) + r'\b'
+                if re.search(pattern, search_scope, re.IGNORECASE):
+                    match_count += 1
+
+        found = match_count > 0
+        # Score: sqrt saturation (สมดุล ไม่ over-boost ถ้า match เยอะ)
+        score = min((match_count ** 0.5) / (len(kws) ** 0.5 + 1), 1.0) if kws else 0.0
+
+        # --- SMART ANCHOR ---
+        anchor_matched = True
         if anchor:
             anchor_pattern = rf'(?<!\d){re.escape(anchor)}(?!\d)'
-            
-            # ข้อยกเว้น: ถ้าเป็นเอกสารหลัก ให้ข้ามการเช็ค Anchor (เลขข้อ)
             master_keywords = [r"แผนแม่บท", r"master plan", r"ยุทธศาสตร์", r"นโยบาย", r"ทิศทาง", r"roadmap"]
-            is_master = any(re.search(re.escape(m), filename.lower()) for m in master_keywords)
-            
-            # ถ้าไม่เจอเลขข้อ และไม่ใช่ไฟล์หลัก -> Reject
-            if not re.search(anchor_pattern, search_scope) and not is_master:
-                return False
-                
-        return True
+            is_master = any(re.search(re.escape(m), filename) for m in master_keywords)
 
-    def check_pdca_sequence(rules_dict: dict, anchor: str = None) -> Optional[str]:
+            anchor_found = bool(re.search(anchor_pattern, search_scope))
+
+            # Soft Anchor: ผ่อนปรนเมื่อ level ต่ำหรือ confidence สูง
+            if level <= 2 or score > 0.75:
+                anchor_matched = True  # pass ถ้าเจอ keyword อยู่แล้ว
+                if debug and not anchor_found and not is_master:
+                    logger.debug(
+                        f"[SOFT-ANCHOR] Pass for {sub_id} L{level} | "
+                        f"score={score:.3f}, anchor_found={anchor_found}, is_master={is_master}"
+                    )
+            else:
+                anchor_matched = anchor_found or is_master
+                if debug and not anchor_matched:
+                    logger.debug(f"[HARD-ANCHOR] Reject for {sub_id} L{level}")
+
+        final_match = found and anchor_matched
+
+        if debug:
+            logger.debug(
+                f"[KEYWORD-MATCH] {sub_id} L{level} | "
+                f"match_count={match_count}/{len(kws)}, score={score:.3f}, "
+                f"found={found}, anchor_matched={anchor_matched}, final={final_match}"
+            )
+
+        return final_match, score
+
+    # --- CORE: Check PDCA with Weighted Score ---
+    def check_pdca_sequence(rules_dict: dict, anchor: str = None) -> str:
+        tag_scores = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
         mapping = {
-            "plan_keywords": "P", 
-            "do_keywords": "D", 
-            "check_keywords": "C", 
+            "plan_keywords": "P",
+            "do_keywords": "D",
+            "check_keywords": "C",
             "act_keywords": "A"
         }
+
         for json_key, tag in mapping.items():
-            if keyword_match(text_lower, rules_dict.get(json_key, []), anchor=anchor):
-                return tag
+            match, score = keyword_match(rules_dict.get(json_key, []), anchor=anchor)
+            if match:
+                tag_scores[tag] = max(tag_scores[tag], score)
+
+        max_score = max(tag_scores.values())
+        if max_score > 0:
+            best_tag = max(tag_scores, key=tag_scores.get)
+            if debug:
+                logger.debug(f"[BEST-TAG] {best_tag} (score {max_score:.3f})")
+            return best_tag
+
         return None
 
-    # --- EXECUTION STEPS ---
-    
-    # Step 1: Specific Level Rules (เช็คตรงข้อ ตรงระดับ)
+    # --- EXECUTION PIPELINE ---
     rules = contextual_rules_map.get(sub_id, {})
     current_l_rules = rules.get(f"L{level}", {})
-    
+
+    # Step 1: Specific Level Rules (priority สูงสุด)
     if isinstance(current_l_rules, dict) and current_l_rules:
-        # ใช้ anchor=None ในชั้นนี้ เพราะเราเชื่อใจ Keywords ราย Level ที่เราตั้งไว้แล้ว
-        tag = check_pdca_sequence(current_l_rules, anchor=None)
+        tag = check_pdca_sequence(current_l_rules, anchor=None if level <= 2 else sub_id)
         if tag:
-            # L1-L2 High-Pass Logic
-            if tag == "D" and level <= 2: return "D"
-            
             # Guards
-            if rules.get("must_include_keywords") and not keyword_match(text_lower, rules["must_include_keywords"]):
-                return 'Other'
-            if rules.get("avoid_keywords") and keyword_match(text_lower, rules["avoid_keywords"]):
-                return 'Other'
+            if rules.get("must_include_keywords"):
+                must_match, _ = keyword_match(rules["must_include_keywords"])
+                if not must_match:
+                    if debug: logger.debug("[GUARD] Failed must_include → 'Other'")
+                    return 'Other'
+            if rules.get("avoid_keywords"):
+                avoid_match, _ = keyword_match(rules["avoid_keywords"])
+                if avoid_match:
+                    if debug: logger.debug("[GUARD] Hit avoid_keywords → 'Other'")
+                    return 'Other'
             return tag
 
-    # Step 2: JSON Sub-ID Fallback (Keywords รวมของข้อนั้นๆ)
+    # Step 2: Sub-ID Root Fallback
     tag = check_pdca_sequence(rules, anchor=sub_id)
-    if tag: return tag
+    if tag:
+        return tag
 
-    # Step 3: Global System Fallback (BASE_PDCA_KEYWORDS)
+    # Step 3: Global Fallback (ถ้ามี)
     try:
         from config.global_vars import PDCA_PRIORITY_ORDER, BASE_PDCA_KEYWORDS
         tag_map = {"Plan": "P", "Do": "D", "Check": "C", "Act": "A"}
         for full_tag in PDCA_PRIORITY_ORDER:
-            # ใช้ anchor=sub_id เพื่อให้แน่ใจว่า keywords ทั่วไปจะไม่ไปดึงเนื้อหาข้ออื่นมา
-            if keyword_match(text_lower, BASE_PDCA_KEYWORDS.get(full_tag, []), anchor=sub_id):
+            match, _ = keyword_match(BASE_PDCA_KEYWORDS.get(full_tag, []), anchor=sub_id)
+            if match:
                 return tag_map.get(full_tag, 'Other')
-    except ImportError:
-        pass
+    except (ImportError, AttributeError):
+        if debug:
+            logger.debug("[GLOBAL-FALLBACK] No BASE_PDCA_KEYWORDS")
+
+    if debug:
+        logger.debug("[FINAL] No match → 'Other'")
 
     return 'Other'
 
@@ -302,29 +378,28 @@ def get_actual_score(ev: dict) -> float:
 
     return 0.0
 
-def merge_evidence_mappings(results_list: List[Union[Tuple, Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    รวม evidence_mapping ที่ได้จาก Worker (ซึ่งคืนค่าเป็น Tuple) เข้าด้วยกัน
-    """
-    merged_mapping = defaultdict(list)
+def merge_evidence_mappings(results_list: List[Any]) -> Dict[str, List[Dict]]:
+    merged_mapping = {}
     
     for item in results_list:
-        # 1. กรณี Worker คืนค่าเป็น Tuple (Standard Engine Return)
-        # item[0] คือ sub_result, item[1] คือ temp_map (evidence)
-        if isinstance(item, tuple) and len(item) == 2:
-            worker_evidence_map = item[1]
-            if isinstance(worker_evidence_map, dict):
-                for level_key, evidence_list in worker_evidence_map.items():
-                    if isinstance(evidence_list, list):
-                        merged_mapping[level_key].extend(evidence_list)
-        
-        # 2. กรณี Worker คืนค่าเป็น Dict (Fallback หรือ Error case)
-        elif isinstance(item, dict) and 'evidence_mapping' in item:
-            worker_evidence_map = item['evidence_mapping']
-            for level_key, evidence_list in worker_evidence_map.items():
-                merged_mapping[level_key].extend(evidence_list)
-                
-    return dict(merged_mapping)
+        # ดึงเฉพาะส่วนที่เป็น map ออกมา
+        temp_map = item[1] if isinstance(item, tuple) and len(item) == 2 else {}
+        if not temp_map: continue
+
+        for level_key, evidence_list in temp_map.items():
+            if level_key not in merged_mapping:
+                merged_mapping[level_key] = []
+            
+            # สร้าง Index ของ ID ที่มีอยู่แล้วเพื่อกันซ้ำ
+            existing_ids = {str(e.get('doc_id') or e.get('chunk_uuid')) for e in merged_mapping[level_key]}
+            
+            for new_ev in evidence_list:
+                new_id = str(new_ev.get('doc_id') or new_ev.get('chunk_uuid'))
+                if new_id not in existing_ids:
+                    merged_mapping[level_key].append(new_ev)
+                    existing_ids.add(new_id)
+                    
+    return merged_mapping
 
 def get_pdca_keywords_str(phase: str) -> str:
     """
@@ -605,6 +680,7 @@ class SEAMPDCAEngine:
         self.rag_retriever = retrieve_context_with_filter
         self.create_structured_action_plan = create_structured_action_plan
         self.ActionPlanActions = ActionPlanActions
+        self.action_plan_model = ActionPlanResult
 
         self.logger.info(f"✅ Engine Initialized: Ready for Assessment (Sub-ID: {self.sub_id})")
     
@@ -747,78 +823,122 @@ class SEAMPDCAEngine:
 
     def get_cumulative_rules(self, sub_id: str, current_level: int) -> Dict[str, Any]:
         """
-        [FINAL POLISHED v2026.7] - Cumulative Maturity Rules Engine
-        ------------------------------------------------------------
-        - รวบรวมกฎสะสมจาก L1 ถึง current_level (Maturity Core)
-        - ผสม Generic Defaults จาก _enabler_defaults ของโครงการ
-        - ใช้ set ป้องกัน duplication ของ keywords เพื่อลด token usage
-        - แยก instructions เป็น list ตาม level เพื่อส่งต่อให้ LLM ประมวลผลได้แม่นยำ
-        - Logging ครบถ้วนสำหรับการ debug ในระบบ Production
-        """
-        import logging
-        logger = logging.getLogger("AssessmentApp")
+        [REVISED CUMULATIVE RULES ENGINE v2026.8 - PRIORITY & SMART ACCUMULATION]
+        ----------------------------------------------------------------------------
+        - รวบรวมกฎสะสมจาก L1 → current_level โดยให้ความสำคัญกับ level สูงกว่า
+        - ใช้ OrderedDict เพื่อรักษาลำดับ (specific > default)
+        - Required phases คำนวณจาก level สูงสุด (maturity-driven)
+        - แยก instructions เป็น dict {level: rule} + string รวมทั้งหมด
+        - Logging แยก level: info สำหรับ summary, debug สำหรับ detail
+        - Fallback ปลอดภัยถ้าไม่มี rules สำหรับ sub_id นั้น
 
-        # 1. เริ่มต้นด้วย Defaults (Global PDCA Keywords จากไฟล์ JSON)
+        Args:
+            sub_id (str): รหัส sub-criteria เช่น "1.2"
+            current_level (int): ระดับ maturity ปัจจุบัน (1-5)
+
+        Returns:
+            Dict[str, Any]: {
+                "plan_keywords": List[str],
+                "do_keywords": List[str],
+                "check_keywords": List[str],
+                "act_keywords": List[str],
+                "required_phases": List[str],          # sorted, unique
+                "level_specific_instructions": Dict[int, str],
+                "all_instructions": str,               # รวมทั้งหมดสำหรับ prompt
+                "source_summary": str                  # สรุปว่ามาจาก level ไหนบ้าง
+            }
+        """
+        # 1. ดึง defaults เป็นฐาน (fallback ถ้าไม่มี rules เฉพาะ)
         defaults = self.contextual_rules_map.get('_enabler_defaults', {})
         
-        # ใช้ set เพื่อจัดการความซ้ำซ้อนของคำค้นหาโดยอัตโนมัติ
-        cum_plan = set(defaults.get('plan_keywords', []))
-        cum_do   = set(defaults.get('do_keywords', []))
-        cum_check = set(defaults.get('check_keywords', []))
-        cum_act  = set(defaults.get('act_keywords', []))
+        # ใช้ OrderedDict เพื่อรักษาลำดับ: default → L1 → L2 → ... → current_level
+        cum_keywords = {
+            "plan": OrderedDict((k, None) for k in defaults.get('plan_keywords', [])),
+            "do":   OrderedDict((k, None) for k in defaults.get('do_keywords', [])),
+            "check": OrderedDict((k, None) for k in defaults.get('check_keywords', [])),
+            "act":  OrderedDict((k, None) for k in defaults.get('act_keywords', []))
+        }
 
-        required_phases = set()
-        instructions = []
+        required_phases: Set[str] = set()
+        level_specific_instructions: Dict[int, str] = {}
+        source_levels: List[int] = []
 
-        # 2. สะสมกฎจาก Level 1 จนถึง current_level (แนวคิด Maturity สะสมคะแนน)
+        # 2. ดึง rules เฉพาะของ sub_id
         sub_rules = self.contextual_rules_map.get(sub_id, {})
+        if not sub_rules:
+            logger.warning(f"[RULE_CUMULATIVE] No specific rules for {sub_id} → using defaults only")
         
+        # 3. สะสมจาก L1 ถึง current_level (ให้ level สูงกว่าทับลำดับ)
         for lv in range(1, current_level + 1):
             lv_key = f"L{lv}"
             level_rule = sub_rules.get(lv_key, {})
             
-            # ข้ามเลเวลที่ไม่มีการนิยามกฎไว้ (Graceful Handling)
             if not level_rule:
-                continue
-
-            # อัปเดต Keywords เฉพาะของเลเวลนั้นๆ เข้าสู่กลุ่มสะสม
-            cum_plan.update(level_rule.get('plan_keywords', []))
-            cum_do.update(level_rule.get('do_keywords', []))
-            cum_check.update(level_rule.get('check_keywords', []))
-            cum_act.update(level_rule.get('act_keywords', []))
-
-            # อัปเดต Phase ที่จำเป็น (เช่น L1 อาจต้องการแค่ P, D แต่ L4 ต้องการ P, D, C, A)
+                continue  # ข้าม level ที่ไม่มี rules
+            
+            source_levels.append(lv)
+            
+            # อัปเดต keywords (level สูงกว่าทับ default และ level ต่ำกว่า)
+            for phase, key_name in [("plan", "plan_keywords"), ("do", "do_keywords"),
+                                   ("check", "check_keywords"), ("act", "act_keywords")]:
+                new_kws = level_rule.get(key_name, [])
+                for kw in new_kws:
+                    cum_keywords[phase][kw] = None  # OrderedDict จะรักษาลำดับ
+            
+            # อัปเดต required phases (union ทุก level)
             if 'require_phase' in level_rule:
-                required_phases.update(level_rule.get('require_phase', []))
-
-            # เก็บคำสั่งพิเศษรายเลเวล (เช่น "L1: มติรับทราบ = ผ่าน")
+                required_phases.update(level_rule['require_phase'])
+            
+            # เก็บ specific rule ตาม level
             specific = level_rule.get('specific_contextual_rule')
             if specific:
-                instructions.append(f"L{lv}: {specific.strip()}")
+                level_specific_instructions[lv] = specific.strip()
 
-        # 3. สรุปผลลัพธ์และเตรียมโครงสร้างสำหรับส่งให้ Engine ส่วนถัดไป
-        result = {
-            "plan_keywords": list(cum_plan),
-            "do_keywords": list(cum_do),
-            "check_keywords": list(cum_check),
-            "act_keywords": list(cum_act),
-            "required_phases": sorted(list(required_phases)),
-            "instructions": instructions,  # ส่งแบบ List เพื่อให้ LLM แยกแยะได้ง่าย
-            "cumulative_instruction": "\n".join(instructions) if instructions else ""
-        }
+        # 4. แปลง OrderedDict → list (รักษาลำดับ)
+        result_keywords = {phase: list(cum_keywords[phase].keys()) for phase in cum_keywords}
 
-        # 4. Logging สำหรับการตรวจสอบการทำงาน (Monitoring)
-        logger.debug(
+        # 5. Required phases: ใช้จาก level สูงสุดเป็นหลัก (ถ้า L5 ต้องการ P,D,C,A → ใช้ทั้งหมด)
+        # แต่ยังคง union เพื่อความปลอดภัย
+        final_required = sorted(list(required_phases)) if required_phases else []
+
+        # 6. รวม instructions เป็น string (เพิ่มหัวข้อเพื่อให้ LLM โฟกัสถูกจุด)
+        instructions_lines = ["ข้อกำหนดเฉพาะสำหรับการพิจารณาระดับ Maturity:"]
+        for lv in sorted(level_specific_instructions.keys()):
+            prefix = "🎯 " if lv == current_level else "✅ " # เน้นเลเวลปัจจุบัน
+            instructions_lines.append(f"{prefix}ระดับ L{lv}: {level_specific_instructions[lv]}")
+        all_instructions = "\n".join(instructions_lines)
+
+        # 7. สรุป source สำหรับ debug
+        source_str = f"from levels {source_levels}" if source_levels else "defaults only"
+
+        # 8. Logging (info สำหรับ production monitoring, debug สำหรับ trace)
+        logger.info(
             f"[RULE_CUMULATIVE] {sub_id} L{current_level} | "
-            f"Keywords: P={len(result['plan_keywords'])} | "
-            f"D={len(result['do_keywords'])} | "
-            f"C={len(result['check_keywords'])} | "
-            f"A={len(result['act_keywords'])} | "
-            f"Phases={result['required_phases']} | "
-            f"Instructions={len(instructions)}"
+            f"Keywords (dedup): P={len(result_keywords['plan'])} | "
+            f"D={len(result_keywords['do'])} | C={len(result_keywords['check'])} | "
+            f"A={len(result_keywords['act'])} | Required={final_required} | "
+            f"Instructions={len(level_specific_instructions)} | Source={source_str}"
         )
 
-        return result
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"[RULE_DETAIL] {sub_id} L{current_level} | "
+                f"Plan keywords sample: {result_keywords['plan'][:5]}... | "
+                f"Required phases accumulated from levels: {sorted(source_levels)}"
+            )
+
+        # 9. Return structure ที่สมบูรณ์และใช้งานง่าย
+        return {
+            "plan_keywords": result_keywords["plan"],
+            "do_keywords": result_keywords["do"],
+            "check_keywords": result_keywords["check"],
+            "act_keywords": result_keywords["act"],
+            "required_phases": final_required,
+            "level_specific_instructions": level_specific_instructions,  # Dict[int, str]
+            "all_instructions": all_instructions,                       # string รวม
+            "source_summary": source_str,
+            "accumulated_levels": sorted(source_levels)
+        }
 
 
     def validate_accumulative_pass(self, llm_result: Dict[str, Any], target_phases: List[str]) -> Tuple[bool, str]:
@@ -883,106 +1003,146 @@ class SEAMPDCAEngine:
             "required_phases": list(required_phases)
         }
 
-
-    def post_process_llm_result(self, llm_output: Dict[str, Any], level: int) -> Dict[str, Any]:
+    def post_process_llm_result(
+        self,
+        llm_output: Dict[str, Any],
+        level: int,
+        sub_id: str = None  # Optional เพื่อป้องกัน NameError
+    ) -> Dict[str, Any]:
         """
-        [REVISED v2026.3] - ผสาน Hard-Fail Logic และ Heuristic จากเวอร์ชันคุณ
-        เข้ากับ Class Engine ปัจจุบัน
+        [POST-PROCESS LLM RESULT v2026.5 - ROBUST, L1-PERMISSIVE & CONFIGURABLE]
+        -------------------------------------------------------------------------
+        - ผสาน hard-fail logic, heuristic override, consistency check
+        - L1 permissive: ถ้า P มีและ D มี score > 0 → ถือว่าผ่าน (แม้ required=['P'])
+        - Normalize score ราย phase (max 2.0 ต่อ phase)
+        - Heuristic: ถ้า extraction ว่างแต่ reason มี keyword → ยังคง score
+        - Hard-fail rules แยกตาม level (L3 ต้อง C>0, L4 ต้อง A>0, L5 ต้อง C+A ≥3)
+        - Configurable threshold ผ่าน self.config
+        - Log สรุปชัดเจน (รวม sub_id ถ้ามี)
+        - ป้องกัน score reset เป็น 0.0 (ใช้ LLM score เป็น base)
         """
-        if not llm_output:
-            return {"is_passed": False, "score": 0.0, "reason": "No Output from LLM"}
+        if not llm_output or not isinstance(llm_output, dict):
+            return {"is_passed": False, "score": 0.0, "reason": "No valid LLM output"}
 
-        # 1. นิยามความสัมพันธ์ (Mapping Keys)
-        # ปรับให้รองรับทั้งชื่อเต็มและชื่อย่อที่ LLM อาจจะคืนมา
+        # Log เริ่มต้น (ใช้ sub_id ถ้ามี)
+        log_prefix = f"{sub_id or 'Unknown'} L{level}" if sub_id else f"L{level}"
+        self.logger.debug(f"[POST-PROCESS] Starting for {log_prefix}")
+
+        # 1. Mapping และ fallback
         extraction_map = {
-            "Extraction_P": ["P_Plan_Score", "score_p"],
-            "Extraction_D": ["D_Do_Score", "score_d"],
-            "Extraction_C": ["C_Check_Score", "score_c"],
-            "Extraction_A": ["A_Act_Score", "score_a"]
+            "Extraction_P": ["P_Plan_Score", "score_p", "P_Score"],
+            "Extraction_D": ["D_Do_Score", "score_d", "D_Score"],
+            "Extraction_C": ["C_Check_Score", "score_c", "C_Score"],
+            "Extraction_A": ["A_Act_Score", "score_a", "A_Score"]
         }
-        phase_map = {"Extraction_P": "Plan", "Extraction_D": "Do", "Extraction_C": "Check", "Extraction_A": "Act"}
-        reason_text = llm_output.get("reason", "")
+        phase_map = {"Extraction_P": "P", "Extraction_D": "D", "Extraction_C": "C", "Extraction_A": "A"}
+
+        reason_text = str(llm_output.get("reason", "")).strip()
         is_consistent = llm_output.get("consistency_check", True)
 
+        # 2. Heuristic Check & Clean Extraction
         for ext_key, score_keys in extraction_map.items():
             val = llm_output.get(ext_key, "-") or "-"
             raw_val = str(val).strip()
             
-            # --- ก. ทำความสะอาดข้อมูล ---
-            content_only = re.sub(r'[^\u0e00-\u0e7fa-zA-Z0-9]', '', raw_val)
-            is_negative = raw_val in ["-", "N/A", "n/a", "ไม่พบ", "ไม่มี", "ไม่ปรากฏ", "ไม่ระบุ"]
+            content_only = re.sub(r'[^\u0e00-\u0e7fa-zA-Z0-9\s]', '', raw_val).strip()
+            is_negative = raw_val in ["-", "N/A", "n/a", "ไม่พบ", "ไม่มี", "ไม่ปรากฏ", "ไม่ระบุ", ""]
             is_empty = (not content_only) or is_negative
-            
-            # ดึงคะแนนปัจจุบัน (ลองดูทุก key ที่เป็นไปได้)
+
             current_score = 0.0
             target_key = score_keys[0]
             for sk in score_keys:
                 if sk in llm_output:
-                    current_score = float(llm_output.get(sk, 0))
-                    target_key = sk
-                    break
+                    try:
+                        current_score = float(llm_output[sk])
+                        target_key = sk
+                        break
+                    except:
+                        current_score = 0.0
 
             if is_empty and current_score > 0:
-                # --- ข. [DYNAMIC HEURISTIC OVERRIDE] ---
-                # ดึง Keywords จาก self.global_pdca_keywords (หรือตัวแปรที่คุณมีในเครื่อง)
-                phase_name = phase_map.get(ext_key)
-                # ดึง keywords มาเช็คซ้ำใน reason
-                raw_keywords = getattr(self, 'global_pdca_keywords', {}).get(phase_name, [])
+                phase_name = phase_map.get(ext_key, "")
+                phase_keywords = getattr(self, 'global_pdca_keywords', {}).get(phase_name, [])
                 
-                found_keyword = any(kw in reason_text for kw in raw_keywords if len(kw) > 1)
+                found_keyword = any(kw.lower() in reason_text.lower() for kw in phase_keywords if len(kw) > 2)
                 
                 if found_keyword:
-                    self.logger.info(f" 🛡️ [Heuristic Pass] L{level}: {ext_key} empty but found keyword in Reason.")
-                    continue 
-                    
-                # ริบคะแนนหากไม่มีหลักฐานจริงใน Extraction field
-                self.logger.warning(f" 🚨 [Revoke] L{level}: {target_key} revoked. No evidence in {ext_key}")
-                llm_output[target_key] = 0.0
+                    self.logger.debug(f"[HEURISTIC-PASS] {log_prefix} {ext_key}: keep score {current_score}")
+                else:
+                    self.logger.warning(f"[REVOKE-SCORE] {log_prefix} {target_key}: revoked → 0.0")
+                    llm_output[target_key] = 0.0
 
-        # 2. Normalize คะแนนรายเฟส (Max 2.0 ต่อเฟส)
-        def get_sc(keys):
+        # 3. Normalize score (max 2.0 ต่อ phase)
+        def get_score(keys):
             for k in keys:
-                if k in llm_output: return float(llm_output[k])
+                if k in llm_output:
+                    try:
+                        return float(llm_output[k])
+                    except:
+                        pass
             return 0.0
 
-        p = round(min(get_sc(["P_Plan_Score", "score_p"]), 2.0), 1)
-        d = round(min(get_sc(["D_Do_Score", "score_d"]), 2.0), 1)
-        c = round(min(get_sc(["C_Check_Score", "score_c"]), 2.0), 1)
-        a = round(min(get_sc(["A_Act_Score", "score_a"]), 2.0), 1)
+        p = min(max(get_score(["P_Plan_Score", "score_p", "P_Score"]), 0.0), 2.0)
+        d = min(max(get_score(["D_Do_Score", "score_d", "D_Score"]), 0.0), 2.0)
+        c = min(max(get_score(["C_Check_Score", "score_c", "C_Score"]), 0.0), 2.0)
+        a = min(max(get_score(["A_Act_Score", "score_a", "A_Score"]), 0.0), 2.0)
+
         pdca_sum = round(p + d + c + a, 1)
-        
-        # 3. SE-AM Threshold & Hard-Fail Logic
-        threshold_map = {1: 1, 2: 2, 3: 4, 4: 6, 5: 8}
-        threshold = threshold_map.get(level, 2)
+
+        # 4. Threshold & Hard-Fail Logic (configurable)
+        threshold_map = getattr(self.config, 'pass_thresholds', {
+            1: 1.0,  # L1 permissive
+            2: 2.0,
+            3: 4.0,
+            4: 6.0,
+            5: 8.0
+        })
+        threshold = threshold_map.get(level, 2.0)
+
         is_passed = pdca_sum >= threshold
 
-        # กฎบังคับตก (Hard-Fail)
+        # L1 permissive: ถ้า P มีและ D มี score > 0 → ถือว่าผ่าน
+        if level == 1 and p > 0 and d > 0:
+            is_passed = True
+
+        # Hard-Fail Rules (บังคับตกสำหรับ level สูง)
         fail_reason = ""
         if is_passed:
             if not is_consistent:
                 is_passed = False
-                fail_reason = "พบความขัดแย้งของข้อมูลหลักฐาน (Consistency Fail)"
-            elif level == 3 and c <= 0:
+                fail_reason = "Consistency check failed"
+            elif level >= 3 and c <= 0:
                 is_passed = False
-                fail_reason = "ระดับ 3 บังคับต้องมีผลการวัด (C > 0)"
-            elif level == 4 and a <= 0:
+                fail_reason = f"Level {level} requires Check phase (C > 0)"
+            elif level >= 4 and a <= 0:
                 is_passed = False
-                fail_reason = "ระดับ 4 บังคับต้องมีการปรับปรุง (A > 0)"
-            elif level == 5 and (c < 2.0 or a < 2.0):
+                fail_reason = f"Level {level} requires Act phase (A > 0)"
+            elif level == 5 and (c < 1.5 or a < 1.5):
                 is_passed = False
-                fail_reason = "ระดับ 5 ต้องการคะแนน C และ A เต็ม (2.0)"
+                fail_reason = "Level 5 requires strong Check & Act (≥1.5 each)"
 
-        # 4. Final Object Update
+        # 5. Final Update
+        # ใช้ LLM score เดิมเป็น base ถ้าสูงกว่า pdca_sum (ป้องกัน reset)
+        final_score = max(pdca_sum, llm_output.get("score", 0.0))
+
         llm_output.update({
-            "score": pdca_sum,
+            "score": final_score,
             "pdca_breakdown": {"P": p, "D": d, "C": c, "A": a},
             "is_passed": is_passed,
             "fail_reason": fail_reason,
-            "consistency_check": is_consistent,
-            "pass_threshold": threshold
+            "pass_threshold": threshold,
+            "consistency_check": is_consistent
         })
 
+        # Log สรุป
+        status = "PASSED" if is_passed else f"FAILED ({fail_reason or 'ไม่ผ่าน threshold'})"
+        self.logger.info(
+            f"[POST-PROCESS] {log_prefix} | "
+            f"PDCA sum: {pdca_sum:.1f} (final score: {final_score:.1f}) / {threshold} | {status}"
+        )
+
         return llm_output
+
 
     def _check_contextual_rule_condition(
         self, 
@@ -1847,69 +2007,76 @@ class SEAMPDCAEngine:
 
     
     # -------------------- Evidence Classification Helper (Full Fixed 2026) --------------------
+    # -------------------- Evidence Classification Helper (Robust 2026) --------------------
     def _get_mapped_uuids_and_priority_chunks(
         self,
         sub_id: str,
         level: int,
-        statement_text: str,
-        level_constraint: str,
-        vectorstore_manager: Optional['VectorStoreManager']
+        statement_text: str = "",
+        level_constraint: Optional[Any] = None, # 🟢 ปรับเป็น Optional ป้องกัน Error Missing Argument
+        vectorstore_manager: Optional['VectorStoreManager'] = None,
+        evidence_map: Optional[Dict] = None 
     ) -> Tuple[List[str], List[Dict]]:
         """
-        [DYNAMIC CONTINUITY v2026.5] - No Manual UUIDs
+        [DYNAMIC CONTINUITY v2026.6.2] - ROBUST SIGNATURE
         ----------------------------------------------
-        - Auto-History: ดึงหลักฐานที่ AI เคยเลือกไว้ใน Level ก่อนหน้ามาเป็นฐาน (Baseline)
-        - Semantic Hinting: ใช้ Keywords จาก Rules ไปช่วยสกัดไฟล์สำคัญล่วงหน้า
-        - Zero Manual Input: ไม่ต้องกรอก UUID เอง ระบบจัดการ ID ใน Memory ทั้งหมด
+        - Fix: รองรับการเรียกแบบยืดหยุ่น ป้องกัน Error 'missing 1 required positional argument'
+        - Logic: ดึง Baseline จาก Memory/Map มาใช้เพื่อรักษาความต่อเนื่อง (Inheritance)
         """
         from copy import deepcopy
         priority_chunks = []
         mapped_stable_ids = []
 
-        # 1. 🧠 [AUTO-HISTORY] ดึงความจำจาก Level ก่อนหน้า (ถ้ามี)
-        # ระบบจะจำ UUID ที่มันเคยใช้ตรวจผ่านใน L1 มาส่งต่อให้ L2 เองอัตโนมัติ
-        for key, evidences in self.evidence_map.items():
+        # 1. เลือกใช้ Evidence Map (ลำดับความสำคัญ: 1. Argument ที่ส่งมา -> 2. Class Attribute -> 3. Empty Dict)
+        target_map = evidence_map if evidence_map is not None else getattr(self, 'evidence_map', {})
+
+        # 2. 🧠 [AUTO-HISTORY & INHERITANCE]
+        # ค้นหาหลักฐานที่เคยผ่านใน Level ต่ำกว่า เพื่อนำมาใช้ใน Level ปัจจุบัน
+        for key, evidences in target_map.items():
             if key.startswith(f"{sub_id}.L") and isinstance(evidences, list):
                 try:
-                    prev_level = int(key.split(".L")[-1])
-                    if prev_level < level:
+                    lvl_in_key = int(key.split(".L")[-1])
+                    # กฎ Inheritance: ใช้หลักฐานจาก Level ที่ <= ปัจจุบัน
+                    if lvl_in_key <= level:
                         history_items = deepcopy(evidences)
                         for item in history_items:
                             item["is_baseline"] = True
+                            # บูสต์คะแนนเพื่อให้ผ่านเกณฑ์การกรองของ RAG
                             item["rerank_score"] = max(item.get("rerank_score", 0.0), 0.85)
                         priority_chunks.extend(history_items)
                 except (ValueError, IndexError):
                     continue
 
-        # 2. 🔍 [SEMANTIC HINTING] สำหรับ L1 หรือกรณีที่ต้องการพยุงคะแนน
-        # ถ้าไม่มีประวัติ (เช่น L1) ให้ใช้คำสำคัญจาก Rule ไปทำ 'Pre-Search' สั้นๆ เพื่อหาไฟล์หลัก
-        if not priority_chunks:
-            rule_config = self.contextual_rules_map.get(sub_id, {}).get(str(level), {})
-            # ดึงคำสำคัญจาก plan_keywords หรือ do_keywords ใน JSON มาเป็นคำค้น
-            hints = rule_config.get("plan_keywords", [])[:2] # เอาแค่ 2 คำหลัก
+        # 3. 🔍 [SEMANTIC HINTING] กรณี L1 หรือยังไม่มีประวัติใน Map
+        if not priority_chunks and level == 1:
+            rule_config = getattr(self, 'contextual_rules_map', {}).get(sub_id, {}).get(str(level), {})
+            hints = rule_config.get("plan_keywords", [])[:2]
             if hints and vectorstore_manager:
-                self.logger.info(f"🔎 L1 Discovery: Searching for anchors using hints: {hints}")
-                discovery_result = vectorstore_manager.quick_search(
-                    query=f"{sub_id} {' '.join(hints)}",
-                    top_k=5 # ดึงมาแค่ 5 อันดับแรกเพื่อเป็นสมอเรือ
-                )
-                for chunk in discovery_result:
-                    chunk["rerank_score"] = 0.85 # บูสต์คะแนนให้ลอยขึ้นมา
-                    priority_chunks.append(chunk)
+                self.logger.info(f"🔎 L1 Discovery: Searching using hints: {hints}")
+                try:
+                    discovery_result = vectorstore_manager.quick_search(
+                        query=f"{sub_id} {' '.join(hints)}",
+                        top_k=5
+                    )
+                    for chunk in discovery_result:
+                        chunk["rerank_score"] = 0.85 # บูสต์ไฟล์ที่เจอจาก Keyword Rule
+                        priority_chunks.append(chunk)
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Quick search failed: {e}")
 
         if not priority_chunks:
             return [], []
 
-        # 3. 💧 [ROBUST HYDRATION] เติมเนื้อหาเต็ม
+        # 4. 💧 [ROBUST HYDRATION] เติมเนื้อหา Full Text จาก Vector DB
         try:
             priority_chunks = self._robust_hydrate_documents_for_priority_chunks(
                 chunks_to_hydrate=priority_chunks,
                 vsm=vectorstore_manager
             )
         except Exception as e:
-            self.logger.error(f"❌ Hydration failed: {e}")
+            self.logger.error(f"❌ Hydration failed in priority module: {e}")
 
-        # 4. 🎯 [ID SYNC] รวบรวม IDs ส่งกลับไปเป็น Filter ให้ Main RAG
+        # 5. 🎯 [ID SYNC] สกัด UUID เพื่อส่งให้ Filter ของ Main Retriever
         seen_ids = set()
         for chunk in priority_chunks:
             sid = chunk.get("stable_doc_uuid") or chunk.get("doc_id")
@@ -1918,7 +2085,7 @@ class SEAMPDCAEngine:
                     mapped_stable_ids.append(sid)
                     seen_ids.add(sid)
 
-        self.logger.info(f"✅ Continuity Ready: {len(priority_chunks)} priority chunks | {len(mapped_stable_ids)} IDs")
+        self.logger.info(f"✅ Continuity Ready: {len(priority_chunks)} priority chunks | Sub:{sub_id} L{level}")
         return mapped_stable_ids, priority_chunks
     
     # -------------------- Calculation Helpers (ADDED) --------------------
@@ -1942,53 +2109,58 @@ class SEAMPDCAEngine:
 
     def _calculate_overall_stats(self, target_sub_id: str):
         """
-        [ULTIMATE STATS v2026.3] Weighted Maturity Calculation
+        [ULTIMATE STATS v2026.4] Weighted Maturity & Coaching Analytics
         ------------------------------------------------------
-        - คำนวณ Maturity Score (0-5) ตามน้ำหนักความสำคัญของแต่ละเกณฑ์
-        - คำนวณ Progress % เทียบกับการผ่านระดับ L5 ทั้งหมด
-        - กำหนด Maturity Level Label โดยอิงจากระดับที่ผ่านเกณฑ์จริง (Conservative Approach)
+        - คำนวณ Maturity Score และ Progress %
+        - เพิ่มการนับจำนวน Soft Gaps และ Strength Points สำหรับ Coaching Report
         """
         from config.global_vars import MAX_LEVEL
         results = self.final_subcriteria_results
         
-        # 1. 🛡️ Safety Guard: กรณีไม่มีข้อมูลผลลัพธ์
+        # 1. 🛡️ Safety Guard
         if not results:
             self.total_stats = {
                 "overall_avg_score": 0.0,
                 "overall_level_label": "L0",
-                "progress_percent": 0.0,
-                "total_weighted_score": 0.0,
-                "total_possible_weight": 0.0,
                 "record_id": self.current_record_id,
                 "status": "No Data"
             }
             return
 
-        # 2. ⚖️ คะแนนถ่วงน้ำหนัก (Weighted Summation)
-        # weighted_score = (Level / MAX_LEVEL) * weight ของข้อนั้นๆ
+        # 2. ⚖️ คะแนนถ่วงน้ำหนัก
         total_weighted_score_achieved = sum(r.get('weighted_score', 0.0) for r in results)
         total_possible_weight = sum(r.get('weight', 0.0) for r in results)
 
-        # 3. 📊 คำนวณ Maturity Score (Scale 0.0 - 5.0)
+        # 3. 📊 Maturity Score & Progress
         overall_avg_score = 0.0
         if total_possible_weight > 0:
-            # สูตร: (คะแนนรวมที่ได้ / น้ำหนักรวม) * 5
             overall_avg_score = round((total_weighted_score_achieved / total_possible_weight) * MAX_LEVEL, 2)
         
-        # 4. 📈 คำนวณ Progress Percentage (0-100%)
-        # เทียบกับคะแนนเต็มสูงสุดที่เป็นไปได้ (น้ำหนักรวม * 5)
         max_possible_points = total_possible_weight * MAX_LEVEL
         progress_percent = 0.0
         if max_possible_points > 0:
             progress_percent = round((total_weighted_score_achieved / max_possible_points) * 100, 2)
 
-        # 5. 🏷️ กำหนด Maturity Level Label (Audit Logic)
-        # ใช้ค่าเฉลี่ยของระดับที่ผ่าน "ครบถ้วน" (Highest Full Level) เพื่อความแม่นยำตามเกณฑ์ SE-AM
+        # 4. 🏷️ Maturity Level Label (Audit Logic)
         avg_full_level = sum(r.get('highest_full_level', 0) for r in results) / len(results)
-        final_level = int(avg_full_level) # ใช้ Floor (ตัดเศษ) เพื่อความ Conservative หรือใช้ round() ตามความเหมาะสม
+        final_level = int(avg_full_level) 
         overall_level_label = f"L{min(max(final_level, 0), MAX_LEVEL)}"
+
+        # 5. 💡 [NEW] Coaching Metrics (นับจำนวนจุดแข็งและจุดที่ต้องพัฒนา)
+        total_strengths = 0
+        total_coaching_needs = 0
         
-        # 6. 📝 บันทึกผลสรุป (Comprehensive Object)
+        for r in results:
+            # ตรวจสอบจากรายละเอียดเลเวล
+            details = r.get('level_details', {})
+            for lvl_data in details.values():
+                insight = lvl_data.get('coaching_insight', "")
+                if "จุดแข็ง" in insight or "🌟" in insight:
+                    total_strengths += 1
+                if "ข้อแนะนำ" in insight or "💡" in insight:
+                    total_coaching_needs += 1
+
+        # 6. 📝 บันทึกผลสรุป
         self.total_stats = {
             "overall_avg_score": min(overall_avg_score, float(MAX_LEVEL)),
             "overall_level_label": overall_level_label,
@@ -1997,31 +2169,30 @@ class SEAMPDCAEngine:
             "progress_percent": progress_percent,
             "gap_to_full": round(total_possible_weight - total_weighted_score_achieved, 2),
             "assessed_count": len(results),
-            "total_subcriteria_in_rubric": len(self._flatten_rubric_to_statements()),
+            # เพิ่มมิติการ Coaching ใน Stats
+            "coaching_metrics": {
+                "total_strength_points": total_strengths,
+                "total_improvement_areas": total_coaching_needs
+            },
             "enabler": self.config.enabler,
-            "target_sub_id": target_sub_id,
             "record_id": self.current_record_id,
             "assessed_at": datetime.now().isoformat()
         }
 
-        # 7. 📢 Logging สรุปผลภาพรวม
-        self.logger.info(f"--- 🏁 ASSESSMENT COMPLETE (ID: {self.current_record_id}) ---")
-        self.logger.info(f"🏆 Overall Level: {overall_level_label} | Score: {overall_avg_score}/{MAX_LEVEL}")
-        self.logger.info(f"📊 Progress: {progress_percent}% | Weighted Score: {self.total_stats['total_weighted_score']}/{total_possible_weight}")
-        self.logger.info(f"----------------------------------------------------------")
-       
+        # 7. 📢 Logging
+        self.logger.info(f"🏆 Overall: {overall_level_label} ({overall_avg_score}/{MAX_LEVEL})")
+        self.logger.info(f"💡 Analytics: Strengths[{total_strengths}] | Needs Improvement[{total_coaching_needs}]")
+
+
     def _export_results(self, results: dict, sub_criteria_id: str, **kwargs) -> str:
         """
-        [ULTIMATE EXPORTER v2026.3]
+        [ULTIMATE EXPORTER v2026.4 - PRODUCTION READY]
         ---------------------------
-        - 📂 Hierarchical Storage: เก็บไฟล์แยกตาม Tenant/Year/Enabler อย่างเป็นระเบียบ
-        - 📑 Self-Contained Metadata: ฝังข้อมูลบริบท (Model, Target, ID) ลงใน JSON
-        - 📊 Audit Summary: สรุปผลคะแนนเบื้องต้นลงในไฟล์เพื่อให้ระบบอื่นอ่านง่าย
-        - 🛡️ Path Resilience: ระบบจัดการ Path ที่ป้องกันความผิดพลาดจากการสร้าง Folder
+        - 🛡️ JSON Safe: รองรับ Pydantic objects และ ActionPlan
+        - 📂 Hierarchical Storage: เก็บแยก Tenant/Year/Enabler
+        - 💡 Coaching Summary: รวม Insight ทุก Level ไว้ที่เดียว
+        - 📊 Audit Summary: สรุปสถิติคะแนนและสถานะเป้าหมาย
         """
-        import os
-        import json
-        from datetime import datetime
 
         # 1. ⚙️ เตรียมข้อมูลพื้นฐาน
         record_id = kwargs.get("record_id", getattr(self, "current_record_id", "no_id"))
@@ -2030,27 +2201,50 @@ class SEAMPDCAEngine:
         year = str(self.config.year)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 2. 📁 การจัดการ Path (Enterprise Directory Structure)
-        # โครงสร้าง: data_store/{tenant}/exports/{year}/{enabler}/
+        # 2. 📁 การจัดการ Path
         export_dir = os.path.join("data_store", tenant, "exports", year, enabler)
-        
         try:
             os.makedirs(export_dir, exist_ok=True)
             file_name = f"assessment_{enabler}_{record_id}_{sub_criteria_id}_{timestamp}.json"
             full_path = os.path.join(export_dir, file_name)
         except Exception as e:
             self.logger.error(f"❌ Directory creation failed: {e}")
-            # Fallback ไปยัง root data_store กรณี Permission มีปัญหา
             full_path = f"assessment_fallback_{record_id}.json"
 
-        # 3. 📊 เสริมข้อมูล Summary (ดึง Logic จาก Origin มาทำให้ครบถ้วน)
+        # 3. 🛠️ JSON Serialization Helper (จุดสำคัญที่แก้ไข)
+        def json_serializable(obj):
+            """แปลง Object พิเศษให้เป็น Type ที่ JSON รองรับ"""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if isinstance(obj, BaseModel): # รองรับ Pydantic (ActionPlan)
+                return obj.model_dump()
+            if hasattr(obj, '__dict__'):
+                return obj.__dict__
+            return str(obj)
+
+        # 4. 📊 ตรวจสอบและสร้างโครงสร้าง Summary
         if 'summary' not in results:
             results['summary'] = {}
         
         summary = results['summary']
         sub_res_list = results.get('sub_criteria_results', [])
 
-        # ฝังข้อมูลระบุตัวตน (Identity Metadata)
+        # 5. 💡 สกัด Coaching Insights จากรายเลเวล (รวมศูนย์)
+        all_coaching_insights = []
+        for sub_res in sub_res_list:
+            details = sub_res.get('level_details', {})
+            for lvl, data in details.items():
+                insight = data.get('coaching_insight', "")
+                if insight:
+                    all_coaching_insights.append({
+                        "id": sub_res.get('sub_id'),
+                        "level": lvl,
+                        "insight": insight
+                    })
+        
+        summary['coaching_summary'] = all_coaching_insights
+
+        # 6. 📑 ฝัง Identity Metadata
         results['metadata'] = {
             "record_id": record_id,
             "tenant": tenant,
@@ -2061,8 +2255,9 @@ class SEAMPDCAEngine:
             "export_at": datetime.now().isoformat()
         }
 
-        # สรุปผลสถิติตามประเภทการรัน (Single vs All)
+        # 7. 📈 คำนวณสถิติคะแนน (Audit Summary)
         if str(sub_criteria_id).lower() != "all" and len(sub_res_list) > 0:
+            # กรณีประเมินรายข้อ (เช่น 1.1)
             main_res = sub_res_list[0]
             summary.update({
                 "highest_pass_level": main_res.get('highest_full_level', 0),
@@ -2071,6 +2266,7 @@ class SEAMPDCAEngine:
                 "is_target_achieved": main_res.get('target_level_achieved', False)
             })
         else:
+            # กรณีประเมินภาพรวม (All)
             all_pass_levels = [r.get('highest_full_level', 0) for r in sub_res_list]
             total_achieved = sum(r.get('weighted_score', 0.0) for r in sub_res_list)
             total_possible = sum(r.get('weight', 0.0) for r in sub_res_list)
@@ -2083,25 +2279,32 @@ class SEAMPDCAEngine:
                 "total_subcriteria_assessed": len(sub_res_list)
             })
 
-        # นับจำนวน Action Plan ทั้งหมด
-        summary['total_action_plan_items'] = sum(len(r.get('action_plan', [])) for r in sub_res_list if isinstance(r.get('action_plan'), list))
+        # นับจำนวน Action Plan Items ทั้งหมด
+        summary['total_action_plan_items'] = sum(
+            len(r.get('action_plan', [])) 
+            for r in sub_res_list 
+            if isinstance(r.get('action_plan'), list)
+        )
 
-        # 4. 💾 การเขียนไฟล์ (Writing Process)
+        # 8. 💾 บันทึกไฟล์ด้วย Safety Serializer
         try:
             with open(full_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, ensure_ascii=False, indent=4)
+                # ใช้ default=json_serializable เพื่อป้องกัน Error
+                json.dump(results, f, ensure_ascii=False, indent=4, default=json_serializable)
             
             self.logger.info(f"💾 EXPORT SUCCESS: {full_path}")
-            
-            # สรุปบรรทัดสุดท้ายใน Log
-            final_lvl = summary.get('highest_pass_level', summary.get('highest_pass_level_overall', 0))
-            self.logger.info(f"📊 [FINAL REPORT] Record: {record_id} | Level: L{final_lvl} | Score: {summary.get('total_achieved_weight', summary.get('achieved_weight', 0))}")
-            
             return full_path
             
         except Exception as e:
-            self.logger.error(f"❌ Export failed: {str(e)}")
-            return ""
+            self.logger.error(f"❌ Export failed at write stage: {str(e)}")
+            # Fallback: พยายามบันทึกข้อมูลแบบดิบหาก JSON พัง
+            try:
+                fallback_path = full_path.replace(".json", "_emergency_dump.txt")
+                with open(fallback_path, 'w', encoding='utf-8') as f:
+                    f.write(str(results))
+                return fallback_path
+            except:
+                return ""
         
     def _create_error_result(
         self,
@@ -2159,102 +2362,146 @@ class SEAMPDCAEngine:
             "total_run_time_s": round(total_duration, 2)
         }
 
+
     def _save_level_evidences_and_calculate_strength(
-        self, 
-        level_temp_map: List[Dict[str, Any]], 
-        sub_id: str, 
-        level: int, 
+        self,
+        level_temp_map: List[Dict[str, Any]],
+        sub_id: str,
+        level: int,
         llm_result: Dict[str, Any],
         highest_rerank_score: float = 0.0
     ) -> float:
         """
-        [ULTIMATE SAVER v2026.3] Evidence Persistence & Strength Calculation
-        --------------------------------------------------------------------
-        - 🛡️ Robust Extraction: รองรับทั้ง Dict และ LangChain Document
-        - 🔗 Unique Identification: ระบบ Fallback ID ด้วย Hash (ป้องกัน Data Loss)
-        - 📊 Precision Scoring: คำนวณความมั่นใจของหลักฐานผ่าน Scoring Gate
-        - 🧩 UI Ready: จัดเตรียม Metadata สำหรับแสดงผลเลขหน้าและชื่อไฟล์ในรายงาน
+        [ULTIMATE EVIDENCE SAVER v2026.4 - ROBUST, TAG-AWARE & CONFIGURABLE]
+        ------------------------------------------------------------------------
+        - บันทึกหลักฐานลง evidence_map + temp_map_for_save
+        - Auto-classify pdca_tag ถ้ายังไม่มี (แก้ปัญหา tags=0)
+        - Deterministic Hash-ID เมื่อ ID หาย (ป้องกัน data loss)
+        - Normalize metadata (source, page, filename) ให้ UI/report พร้อมใช้
+        - Strength calculation: ใช้ rerank + pdca coverage + configurable gate
+        - Logging: summary หลัง save (chunks saved, PDCA tags count)
         """
-        import hashlib
         map_key = f"{sub_id}.L{level}"
         new_evidence_list: List[Dict[str, Any]] = []
-        
-        self.logger.info(f"💾 [EVI SAVE] Starting save for {map_key} ({len(level_temp_map)} potential chunks)")
+        seen_ids = set()
+
+        self.logger.info(f"💾 [EVI SAVE] Starting for {map_key} ({len(level_temp_map)} potential chunks)")
 
         for chunk in level_temp_map:
-            # 🎯 1. 📦 การสกัดข้อมูลเบื้องต้น (รองรับโครงสร้างข้อมูลที่หลากหลาย)
-            if isinstance(chunk, dict):
-                meta = chunk.get("metadata", {}) or {}
-                # ลำดับความสำคัญ: Direct Key > Metadata > ID
-                chunk_uuid = chunk.get("chunk_uuid") or chunk.get("id") or meta.get("chunk_uuid")
-                stable_doc_uuid = (chunk.get("stable_doc_uuid") or chunk.get("doc_id") or 
-                                  meta.get("stable_doc_uuid") or meta.get("doc_id"))
-                source = chunk.get("source") or meta.get("source") or "N/A"
-                text_content = chunk.get("page_content") or chunk.get("text") or ""
-            else:
-                # กรณีเป็น LangChain Document Object
-                meta = getattr(chunk, "metadata", {}) or {}
-                chunk_uuid = meta.get("chunk_uuid") or getattr(chunk, "id", None)
-                stable_doc_uuid = meta.get("stable_doc_uuid") or meta.get("doc_id")
-                source = meta.get("source", "N/A")
-                text_content = getattr(chunk, "page_content", "")
+            # 1. สกัดข้อมูล (รองรับ dict และ LangChain Document)
+            if not isinstance(chunk, dict):
+                chunk = {
+                    "text": getattr(chunk, "page_content", ""),
+                    "metadata": getattr(chunk, "metadata", {}) or {}
+                }
 
-            # 🎯 2. 🛡️ Validation & Fallback (ระบบป้องกัน Error "ID Missing")
-            if not stable_doc_uuid or not chunk_uuid:
-                if text_content and len(str(text_content)) > 10:
-                    # สร้าง Hash จากเนื้อหาเพื่อให้ได้ ID ที่คงที่ (Deterministic)
-                    content_hash = hashlib.md5(str(text_content).encode()).hexdigest()
-                    chunk_uuid = chunk_uuid or f"hash-{content_hash[:16]}"
-                    stable_doc_uuid = stable_doc_uuid or f"doc-{content_hash[16:32]}"
-                    self.logger.warning(f"⚠️ [EVI SAVE] Generated Hash-ID for source: {source}")
-                else:
-                    self.logger.error(f"❌ [EVI SAVE] Critical ID Missing & No Content! Skipping source: {source}")
-                    continue
+            meta = chunk.get("metadata", {}) or {}
+            text = chunk.get("text") or chunk.get("page_content") or ""
 
-            # 🎯 3. 📄 ดึงข้อมูลเลขหน้า (รองรับระบบ Label ของ PDF)
-            page_val = (
-                meta.get("page_label") or 
-                meta.get("page") or 
-                meta.get("page_number") or 
-                (chunk.get("page") if isinstance(chunk, dict) else "N/A")
+            # 2. ดึง ID (fallback hash ถ้าไม่มี)
+            chunk_uuid = (
+                chunk.get("chunk_uuid") or meta.get("chunk_uuid") or
+                chunk.get("id") or meta.get("id")
+            )
+            stable_doc_uuid = (
+                chunk.get("stable_doc_uuid") or meta.get("stable_doc_uuid") or
+                chunk.get("doc_id") or meta.get("doc_id")
             )
 
-            # 🎯 4. 📝 สร้าง Evidence Entry มาตรฐาน (สำหรับนำไปใช้ใน JSON Report)
+            if not stable_doc_uuid or not chunk_uuid:
+                if text.strip():
+                    content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                    chunk_uuid = chunk_uuid or f"hash-{content_hash[:16]}"
+                    stable_doc_uuid = stable_doc_uuid or f"doc-{content_hash[16:32]}"
+                    self.logger.debug(f"[EVI SAVE] Generated hash ID for chunk (source: {meta.get('source', 'N/A')})")
+                else:
+                    self.logger.warning(f"[EVI SAVE] Skip chunk: no ID & no content")
+                    continue
+
+            # Dedup
+            unique_key = f"{stable_doc_uuid}:{chunk_uuid}"
+            if unique_key in seen_ids:
+                continue
+            seen_ids.add(unique_key)
+
+            # 3. Auto-classify pdca_tag ถ้ายังไม่มี
+            pdca_tag = chunk.get("pdca_tag") or meta.get("pdca_tag")
+            if not pdca_tag or pdca_tag == "Other":
+                pdca_tag = classify_by_keyword(
+                    text=text,
+                    sub_id=sub_id,
+                    level=level,
+                    contextual_rules_map=self.contextual_rules_map,
+                    chunk_metadata=meta,
+                    debug=False  # ปิด debug เพื่อไม่ให้ log เยอะ
+                )
+                chunk["pdca_tag"] = pdca_tag  # บันทึกกลับไปใน chunk
+
+            # 4. Normalize metadata (สำหรับ report/UI)
+            source_raw = meta.get("source") or chunk.get("source") or "Unknown"
+            source_filename = os.path.basename(str(source_raw)) if source_raw else "Unknown_File"
+            page = str(
+                meta.get("page_label") or meta.get("page") or meta.get("page_number") or
+                chunk.get("page") or "N/A"
+            )
+
+            # 5. สร้าง evidence entry มาตรฐาน
             evidence_entry = {
                 "sub_id": sub_id,
                 "level": level,
-                "relevance_score": float(chunk.get("rerank_score") or chunk.get("score") or 0.5 if isinstance(chunk, dict) else 0.5),
+                "relevance_score": float(
+                    chunk.get("rerank_score") or chunk.get("score") or
+                    meta.get("relevance_score") or 0.5
+                ),
                 "doc_id": str(stable_doc_uuid),
                 "stable_doc_uuid": str(stable_doc_uuid),
                 "chunk_uuid": str(chunk_uuid),
-                "source": source,
-                "source_filename": meta.get("source_filename") or meta.get("file_name") or os.path.basename(str(source)),
-                "page": str(page_val),
-                "pdca_tag": (chunk.get("pdca_tag") if isinstance(chunk, dict) else meta.get("pdca_tag")) or "Other", 
-                "status": "PASS" if llm_result.get("is_passed") else "FAIL", 
+                "source": source_raw,
+                "source_filename": source_filename,
+                "page": page,
+                "pdca_tag": pdca_tag,
+                "text_preview": text[:200] + "..." if len(text) > 200 else text,
+                "status": "PASS" if llm_result.get("is_passed", False) else "FAIL",
                 "timestamp": datetime.now().isoformat(),
             }
             new_evidence_list.append(evidence_entry)
 
-        # 🎯 5. ⚖️ คำนวณความเข้มข้นของหลักฐาน (Evidence Strength)
-        # ส่งหลักฐานที่กรองแล้วเข้า Score Gate เพื่อดูว่าจะ Cap คะแนน AI หรือไม่
-        evi_cap_data = self._calculate_evidence_strength_cap(
-            top_evidences=new_evidence_list,
-            level=level,
-            highest_rerank_score=highest_rerank_score
-        )
-        final_evi_str = evi_cap_data.get('max_evi_str_for_prompt', 0.0)
-
-        # 🎯 6. 💾 บันทึกลง Memory Map (รองรับทั้ง Main Process และ Worker)
+        # 6. บันทึกลง map
         if new_evidence_list:
-            self.evidence_map.setdefault(map_key, []).extend(new_evidence_list)
-            self.temp_map_for_save.setdefault(map_key, []).extend(new_evidence_list)
-            self.logger.info(f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | Strength: {final_evi_str}")
+            if map_key not in self.evidence_map:
+                self.evidence_map[map_key] = []
+            self.evidence_map[map_key].extend(new_evidence_list)
+
+            if map_key not in self.temp_map_for_save:
+                self.temp_map_for_save[map_key] = []
+            self.temp_map_for_save[map_key].extend(new_evidence_list)
+
+            # 7. Summary PDCA tags ที่บันทึกจริง
+            tags_count = {"P": 0, "D": 0, "C": 0, "A": 0, "Other": 0}
+            for ev in new_evidence_list:
+                tag = ev.get("pdca_tag", "Other")
+                tags_count[tag] += 1
+
+            self.logger.info(
+                f"✅ [EVIDENCE SAVED] {map_key}: {len(new_evidence_list)} chunks | "
+                f"PDCA tags: P={tags_count['P']}, D={tags_count['D']}, "
+                f"C={tags_count['C']}, A={tags_count['A']}, Other={tags_count['Other']}"
+            )
+
         else:
-            self.logger.warning(f"⚠️ [EVI SAVE] No valid evidence entries for {map_key}")
-            final_evi_str = 0.0
+            self.logger.warning(f"⚠️ [EVI SAVE] No valid evidence for {map_key}")
         
-        return final_evi_str
+        # 8. Calculate Strength (ปรับปรุงให้สมดุล)
+        # ใช้ highest_rerank + PDCA coverage + configurable weight
+        pdca_coverage = sum(1 for ev in new_evidence_list if ev.get("pdca_tag") in {"P", "D", "C", "A"}) / max(1, len(new_evidence_list))
+        strength = round(
+            (highest_rerank_score * 0.6) + (pdca_coverage * 0.4),  # หรือปรับ weight ได้
+            2
+        )
+
+        self.logger.info(f"[STRENGTH] {map_key} → {strength:.2f} (rerank {highest_rerank_score:.4f} + coverage {pdca_coverage:.2f})")
+
+        return strength
     
     def calculate_audit_confidence(self, matched_chunks: List[Any]) -> Dict[str, Any]:
         """
@@ -2490,9 +2737,15 @@ class SEAMPDCAEngine:
         # 1. 🏷️ Helper: จัดหมวดหมู่ PDCA ทันทีที่เนื้อหาถูกเติม
         def _safe_classify(text: str) -> str:
             try:
+                # NEW: Fallback level ถ้าเป็น None (ใช้ 1 หรือค่า default ที่เหมาะสม)
+                safe_level = level if level is not None else 1  # หรือใช้ค่า default อื่นตามบริบท
+                
                 raw = classify_by_keyword(
-                    text=text, sub_id=active_sub_id, level=level,
-                    contextual_rules_map=self.contextual_rules_map
+                    text=text, 
+                    sub_id=active_sub_id, 
+                    level=safe_level,                # ← ใช้ safe_level แทน level เดิม
+                    contextual_rules_map=self.contextual_rules_map,
+                    debug=False  # หรือ True ถ้าต้องการ trace
                 )
                 if not raw: return "Other"
                 return TAG_ABBREV.get(str(raw).upper(), "Other")
@@ -2663,6 +2916,7 @@ class SEAMPDCAEngine:
 
         return clean_source, clean_page
     
+
     def _get_pdca_blocks_from_evidences(
         self,
         evidences: List[Dict],
@@ -2672,262 +2926,159 @@ class SEAMPDCAEngine:
         contextual_rules_map: Dict[str, Any],
         record_id: str = None
     ) -> Tuple[str, str, str, str, str]:
+        """
+        [OPTIMIZED PDCA BLOCK BUILDER v2026.6]
+        ----------------------------------------
+        - Smart PDCA tagging + fallback for L1
+        - Diversity-aware block generation (per-file + per-phase limit)
+        - Baseline boost in priority scoring
+        - Detailed debug logging for 1.2 L1
+        - Robust handling of empty/invalid chunks
+        """
+        MAX_CHUNKS_PER_FILE = 2
+        MAX_CHUNKS_PER_BLOCK = 5
+        MAX_CHUNKS_PER_PHASE = 8  # NEW: ป้องกัน phase ใด phase หนึ่งกินทั้งหมด
 
-        # 1. 🧹 Data Integration (คงเดิม)
+        if not evidences and not baseline_evidences:
+            self.logger.debug(f"[PDCA-BLOCK] No evidences or baseline for {sub_id} L{level}")
+            return "", "", "", "", ""
+
+        # 1. รวม chunks ทั้งหมด + tag baseline
         all_chunks = []
-        for c in (evidences or []):
-            if isinstance(c, dict) and c.get("text", "").strip():
-                chunk = c.copy()
-                chunk["is_baseline"] = False
-                all_chunks.append(chunk)
+        for chunk in (evidences or []):
+            if not isinstance(chunk, dict) or not chunk.get("text", "").strip():
+                continue
+            c = chunk.copy()
+            c["is_baseline"] = False
+            all_chunks.append(c)
 
-        # ปรับการดึง Baseline ให้ยืดหยุ่นขึ้น (รองรับทั้ง Key ที่เป็น Level ตรงๆ หรือ ID เต็ม)
+        # รวม baseline
         target_baseline = baseline_evidences.get(str(level)) or baseline_evidences.get(f"{sub_id}.L{level}") or []
         for b in target_baseline:
-            if isinstance(b, dict) and b.get("text", "").strip():
-                b_copy = b.copy()
-                b_copy["is_baseline"] = True
-                all_chunks.append(b_copy)
+            if not isinstance(b, dict) or not b.get("text", "").strip():
+                continue
+            b_copy = b.copy()
+            b_copy["is_baseline"] = True
+            all_chunks.append(b_copy)
 
         if not all_chunks:
             return "", "", "", "", ""
 
-        # 2. 🏷️ Classification & Smart Sorting
+        # 2. Smart Classification + Priority Scoring
         pdca_groups = defaultdict(list)
+        tag_counts = {"P": 0, "D": 0, "C": 0, "A": 0, "Other": 0}
+
         for chunk in all_chunks:
-            tag = classify_by_keyword(
-                text=chunk["text"], sub_id=sub_id, level=level,
+            # PDCA Tag (ใช้ classify_by_keyword หรือ metadata override)
+            tag = chunk.get('pdca_tag') or classify_by_keyword(
+                text=chunk["text"],
+                sub_id=sub_id,
+                level=level,
                 contextual_rules_map=contextual_rules_map,
-                chunk_metadata=chunk.get('metadata') # ส่ง Meta ไปช่วยจัดประเภท
+                chunk_metadata=chunk.get('metadata'),
+                debug=(sub_id == "1.2" and level == 1)
             )
+
             final_tag = tag if tag in {"P", "D", "C", "A"} else "Other"
-            
-            # L1 Logic: เน้นสร้างโครงสร้างพื้นฐาน
+
+            # L1 Fallback: Neutral → Plan
             if level == 1 and final_tag == "Other":
                 final_tag = "P"
-            
-            # [NEW] คำนวณ Priority Score เพื่อใช้ในการ Sorting
-            # ให้ความสำคัญกับ: 1. คะแนน Relevancy ใหม่  2. ไฟล์ประเภทหลักฐานจริง
-            rel_score = float(chunk.get("relevance_score_custom") or 0.0)
+                if sub_id == "1.2":
+                    self.logger.debug(f"[PDCA-FALLBACK] L1 Other → P for chunk rerank {chunk.get('rerank_score', 'N/A')}")
+
+            tag_counts[final_tag] += 1
+
+            # Priority Score: Relevancy 60% + Rerank 30% + Baseline Bonus 10%
+            rel_score = float(chunk.get("relevance_score") or chunk.get("relevance_score_custom") or 0.0)
             rerank_score = float(chunk.get("rerank_score") or chunk.get("score") or 0.0)
-            chunk["priority_score"] = (rel_score * 0.7) + (rerank_score * 0.3)
+            baseline_bonus = 0.15 if chunk.get("is_baseline") else 0.0
 
-            label = {"P":"Plan","D":"Do","C":"Check","A":"Act"}.get(final_tag, "Other")
-            pdca_groups[label].append(chunk)
+            priority = (rel_score * 0.6) + (rerank_score * 0.3) + baseline_bonus
+            chunk["priority_score"] = min(max(priority, 0.0), 1.0)
 
-        # 3. 🎭 Diverse Block Generator (Enhanced)
+            pdca_groups[final_tag].append(chunk)
+
+        # Debug Summary for 1.2 L1
+        if sub_id == "1.2" and level == 1:
+            self.logger.info(
+                f"[PDCA-SUMMARY-1.2-L1] Tag counts: P={tag_counts['P']} | D={tag_counts['D']} | "
+                f"C={tag_counts['C']} | A={tag_counts['A']} | Other={tag_counts['Other']}"
+            )
+
+        # 3. Diverse Block Generator (Enhanced)
         def _create_block(tag: str, chunks: List[Dict]) -> str:
-            if not chunks: return ""
-            
-            # เรียงตาม priority_score ที่รวมเรื่อง Source Grading ไว้แล้ว
+            if not chunks:
+                return ""
+
+            # Sort by priority descending
             sorted_chunks = sorted(chunks, key=lambda x: x.get("priority_score", 0), reverse=True)
-            
+
             diverse_list = []
-            file_counts = {}
+            file_counts = defaultdict(int)
+            phase_count = 0
+
             for doc in sorted_chunks:
-                # สกัดชื่อไฟล์เพื่อทำ Diversity Check
                 meta = doc.get('metadata') or {}
                 raw_source = doc.get("source_filename") or meta.get("source_filename") or meta.get("source") or "Unknown"
                 fname = os.path.basename(str(raw_source))
-                
-                # จำกัด Chunks ต่อไฟล์ เพื่อให้ AI เห็นหลักฐานจากหลายแหล่ง
-                if file_counts.get(fname, 0) < MAX_CHUNKS_PER_FILE:
-                    diverse_list.append(doc)
-                    file_counts[fname] = file_counts.get(fname, 0) + 1
-                
-                if len(diverse_list) >= MAX_CHUNKS_PER_BLOCK: # จำกัดไม่ให้ Block ยาวเกินไป (LLM Context Optimization)
+
+                # Diversity: max per file + max per phase
+                if file_counts[fname] >= MAX_CHUNKS_PER_FILE:
+                    continue
+                if phase_count >= MAX_CHUNKS_PER_PHASE:
                     break
 
-            # Build Formatted String
+                diverse_list.append(doc)
+                file_counts[fname] += 1
+                phase_count += 1
+
+            if not diverse_list:
+                return ""
+
+            # Format for LLM
             parts = []
-            for i, c in enumerate(diverse_list, start=1):
+            for i, c in enumerate(diverse_list, 1):
                 meta = c.get('metadata') or {}
                 fname = os.path.basename(str(c.get("source_filename") or meta.get("source") or "Unknown"))
-                pnum = c.get("page_label") or meta.get("page_label") or "N/A"
-                
-                baseline_tag = " [📜 ข้อมูลอ้างอิงระดับเดิม]" if c.get("is_baseline") else ""
+                pnum = c.get("page_label") or meta.get("page_label") or meta.get("page") or "N/A"
+                baseline_tag = " [📜 Baseline from prev level]" if c.get("is_baseline") else ""
+
+                text_snippet = c['text'].strip()[:500] + ("..." if len(c['text']) > 500 else "")
+
                 parts.append(
                     f"### [{tag} Evidence {i}/{len(diverse_list)}]{baseline_tag}\n"
-                    f"{c['text'].strip()}\n"
-                    f"[อ้างอิง: {fname}, หน้า: {pnum}, Relevancy: {c.get('priority_score', 0):.4f}]"
+                    f"{text_snippet}\n"
+                    f"[Source: {fname} | Page: {pnum} | Priority: {c.get('priority_score', 0):.4f} | "
+                    f"Rerank: {c.get('rerank_score', 'N/A')}]"
                 )
-            
+
             return "\n\n---\n\n".join(parts)
 
-        # 4. Construct Outputs & Enhanced Logging
-        p_text = _create_block("Plan",  pdca_groups["Plan"])
-        d_text = _create_block("Do",    pdca_groups["Do"])
-        c_text = _create_block("Check", pdca_groups["Check"])
-        a_text = _create_block("Act",   pdca_groups["Act"])
-        o_text = _create_block("Other", pdca_groups["Other"])
+        # 4. Build Outputs
+        p_text = _create_block("Plan",  pdca_groups["P"])
+        d_text = _create_block("Do",    pdca_groups["D"])
+        c_text = _create_block("Check", pdca_groups["C"])
+        a_text = _create_block("Act",   pdca_groups["A"])
+        o_text = _create_block("Other", pdca_groups["Other"])  # สำหรับ debug เท่านั้น
 
-        # --- 🔍 LOGGING SECTION ---
-        # 1. ดึงชื่อจาก Rubric ตาม Hierarchy (criteria -> subcriteria)
-        main_id = sub_id.split('.')[0] if '.' in sub_id else sub_id
-        criteria_data = self.rubric.get("criteria", {}).get(main_id, {})
-        sub_data = criteria_data.get("subcriteria", {}).get(sub_id, {})
-        criteria_name = sub_data.get("name", "Unknown Criteria")
-        
-        # 2. ดึง Required Phases จาก Contextual Rules
-        level_key = f"L{level}"
-        level_rules = contextual_rules_map.get(sub_id, {}).get(level_key, {})
-        required_phases = level_rules.get("require_phase", ["P", "D"])
-        
-        # 3. สรุปสถานะ Blocks ด้วยไอคอน
-        status_icons = " | ".join([f"{k}:{'✅' if v else '❌'}" for k, v in 
-                                  {"P":p_text, "D":d_text, "C":c_text, "A":a_text}.items()])
-
-        # พิมพ์สรุปความพร้อมก่อนส่ง LLM
-        self.logger.info(f"🎯 [ASSESSING] {sub_id}: {criteria_name}")
-        self.logger.info(f"📊 [PDCA Blocks Ready] L{level} -> {status_icons}")
-        self.logger.info(f"📝 [Requirement] L{level} Expects: {required_phases}")
-        # --------------------------
-
-        return p_text, d_text, c_text, a_text, o_text
-    
-    # ----------------------------------------------------------------------
-    # 🚀 CORE WORKER: Assessment Execution (REVISED v2026.3)
-    # ----------------------------------------------------------------------
-    def _run_sub_criteria_assessment_worker(
-        self,
-        sub_criteria: Dict[str, Any],
-        vectorstore_manager: Optional['VectorStoreManager'] = None
-    ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
-        """
-        [ADVANCED AUDITOR MODE v2026.5]
-        - ประเมินครบ L1-L5 เพื่อทำ Gap Analysis และเก็บ Evidence Roadmap
-        - Sequential Integrity: กรองคะแนนตามความต่อเนื่องของ SE-AM
-        - Gap Type Classification: แยกแยะจุดตกจริง (Primary) กับจุดติด Sequential (Gap)
-        """
-
-        # 1. INITIALIZATION
-        MAX_RETRY_ATTEMPTS = 2
-        sub_id = sub_criteria['sub_id']
-        sub_criteria_name = sub_criteria['sub_criteria_name']
-        sub_weight = sub_criteria.get('weight', 0)
-        
-        current_enabler = getattr(self.config, 'enabler', 'KM')
-        vsm = vectorstore_manager or getattr(self, 'vectorstore_manager', None)
-        
-        current_sequential_pass_level = 0 
-        first_failure_level = None # ตัวแปรชี้จุดที่ "ตกจริง" ครั้งแรก
-        raw_results_for_sub_seq: List[Dict[str, Any]] = []
-        start_ts = time.time() 
-
-        self.logger.info(f"🧵 [WORKER START] Full Gap-Analysis Mode | {sub_id}")
-        
-        # ดึงกฎที่ฉีดไว้ใน Class
-        all_rules_for_sub = getattr(self, 'contextual_rules_map', {}).get(sub_id, {})
-
-        # -----------------------------------------------------------
-        # 2. EVALUATION LOOP (L1 → Target Level)
-        # -----------------------------------------------------------
-        for statement_data in sub_criteria.get('levels', []):
-            level = statement_data.get('level')
-            if level is None or level > self.config.target_level:
-                continue
-            
-            # --- [PREPARATION] ---
-            level_key = f"L{level}"
-            specific_rules = all_rules_for_sub.get(level_key, {})
-            
-            # ฉีด Keywords และ Rules
-            extra_keys = set(specific_rules.get('plan_keywords', []) + specific_rules.get('do_keywords', []))
-            focus_hint = specific_rules.get('specific_contextual_rule', "")
-            
-            enhanced_statement = statement_data.get('statement', '')
-            if extra_keys:
-                enhanced_statement += f" (Keywords: {', '.join(extra_keys)})"
-            
-            # 🎯 [BASELINE SYNC]
-            past_summaries = [f"L{p['level']}: {'PASS' if p.get('raw_is_passed') else 'FAIL'} - {p.get('reason', '')[:100]}..." for p in raw_results_for_sub_seq]
-            baseline_context = "\n".join(past_summaries) if past_summaries else "ยังไม่มีข้อมูลระดับก่อนหน้า"
-
-            # ฟังก์ชันประเมิน
-            def assessment_fn(attempt):
-                return self._run_single_assessment(
-                    sub_criteria=sub_criteria,
-                    statement_data={**statement_data, 'statement': enhanced_statement, 'focus_hint': focus_hint},
-                    vectorstore_manager=vsm,
-                    attempt=attempt,
-                    doc_type=self.doc_type,      
-                    top_k=INITIAL_TOP_K,          
-                    baseline_summary=baseline_context,
-                    **specific_rules 
-                )
-
-            # --- [EXECUTION] ---
-            level_result = {}
-            for attempt_num in range(1, MAX_RETRY_ATTEMPTS + 1):
-                level_result = assessment_fn(attempt_num)
-                if level_result.get('is_passed', False): 
-                    break
-
-            # --- [SEQUENTIAL & GAP LOGIC] ---
-            # เก็บค่าผลตรวจดิบจาก LLM ไว้ก่อน
-            is_passed_llm = level_result.get('is_passed', False)
-            level_result['raw_is_passed'] = is_passed_llm # จำไว้ว่าจริงๆ แล้วเนื้อหาผ่านไหม
-
-            if not is_passed_llm and first_failure_level is None:
-                # จุดตกจริงจุดแรก (Primary Gap)
-                first_failure_level = level
-                level_result["display_status"] = "FAILED"
-                level_result["gap_type"] = "PRIMARY_GAP"
-            
-            elif is_passed_llm and first_failure_level is not None:
-                # ผ่านเนื้อหาแต่ "ติด Sequential" (Capped)
-                level_result["display_status"] = "PASSED (CAPPED)"
-                level_result["gap_type"] = "SEQUENTIAL_GAP"
-                level_result["is_passed"] = False # ในทางคะแนนไม่ให้นับผ่าน
-            
-            elif not is_passed_llm and first_failure_level is not None:
-                # ตกซ้ำซ้อน
-                level_result["display_status"] = "FAILED (GAP)"
-                level_result["gap_type"] = "COMPOUND_GAP"
-            else:
-                # ผ่านแบบต่อเนื่องปกติ
-                current_sequential_pass_level = level
-                level_result["display_status"] = "PASSED"
-                level_result["gap_type"] = "NONE"
-
-            # บันทึกหลักฐาน (Evidence) ทุกลำดับ
-            highest_rerank = level_result.get('max_relevant_score', 0.0)
-            self._save_level_evidences_and_calculate_strength(
-                level_temp_map=level_result.get("temp_map_for_level", []),
-                sub_id=sub_id, level=level, llm_result=level_result, highest_rerank_score=highest_rerank 
-            )
-
-            raw_results_for_sub_seq.append(level_result)
-            self.logger.info(f"✅ L{level} Done | Status: {level_result['display_status']} | Gap: {level_result['gap_type']}")
-
-        # -----------------------------------------------------------
-        # 3. FINAL SYNTHESIS
-        # -----------------------------------------------------------
-        # สร้าง Action Plan โดยใช้ข้อมูล Gap Type ไปช่วยเขียนคำแนะนำ
-        action_plan_result = self._generate_action_plan_safe(
-            sub_id, sub_criteria_name, current_enabler, raw_results_for_sub_seq
+        # Summary Log
+        self.logger.info(
+            f"[PDCA-BLOCK-SUMMARY] {sub_id} L{level} | "
+            f"Chunks total: {len(all_chunks)} | "
+            f"P: {len(pdca_groups['P'])} → block_len={len(p_text)} | "
+            f"D: {len(pdca_groups['D'])} → block_len={len(d_text)}"
         )
 
-        # แปลงเป็นชื่อไฟล์สำหรับ UI
-        for r in raw_results_for_sub_seq:
-            if "temp_map_for_level" in r:
-                r["temp_map_for_level"] = self._resolve_evidence_filenames(r["temp_map_for_level"])
+        if sub_id == "1.2" and final_tag == "Other" and chunk.get('rerank_score', 0) > 0.8:
+            self.logger.info(
+                f"[OTHER-HIGH-RERANK] {sub_id} L{level} | "
+                f"rerank={chunk.get('rerank_score', 0):.4f} | "
+                f"text: {chunk['text'][:200]}..."
+            )
 
-        # คะแนนถ่วงน้ำหนักตาม Level สูงสุดที่ผ่านต่อเนื่องจริง
-        weighted_score = round(self._calculate_weighted_score(current_sequential_pass_level, sub_weight), 2)
-        final_temp_map = {k: v for k, v in self.evidence_map.items() if k.startswith(f"{sub_id}.")}
-
-        return {
-            "sub_criteria_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
-            "highest_full_level": current_sequential_pass_level,
-            "weight": sub_weight,
-            "weighted_score": weighted_score,
-            "display_status": "PASSED" if current_sequential_pass_level >= self.config.target_level else "FAILED",
-            "action_plan": action_plan_result, 
-            "raw_results_ref": raw_results_for_sub_seq,
-            "worker_duration_s": round(time.time() - start_ts, 2)
-        }, final_temp_map
+        return p_text, d_text, c_text, a_text, o_text
+        
 
     def _generate_action_plan_safe(
         self, 
@@ -2937,40 +3088,94 @@ class SEAMPDCAEngine:
         results: List[Dict]
     ) -> Any:
         """
-        Wrapper เพื่อเรียกใช้ระบบ Action Plan อย่างปลอดภัย
+        [ULTIMATE REVISE 2026.5] - STRATEGIC ACTION PLAN GENERATOR
+        -----------------------------------------------------------
+        - บูรณาการ Coaching Insight และ Soft Gap เข้าสู่ Roadmap
+        - แยก Mode การทำงานตามความเข้มข้นของผลการประเมิน (Sustain / Refinement / Gap)
+        - ใช้ Logic ซ่อมรากฐาน (Foundation Repair) ก่อนยกระดับสู่เป้าหมาย
         """
         try:
-            # 1. นำเข้าฟังก์ชันหลัก (Import ภายในเพื่อลด Circular Dependency)
-            # 2. กรองข้อมูลเฉพาะเกณฑ์ที่ต้องการคำแนะนำ (FAILED, WEAK_EVIDENCE, PDCA_INCOMPLETE)
-            # กฎ: ถ้าผ่านระดับ target แล้ว และ strength > 3.0 อาจจะไม่ต้องสร้าง Action Plan
+            self.logger.info(f"🛠️ Preparing Strategic Action Plan for {sub_id} - {name}")
+            
+            # 1. คัดกรองและเตรียมข้อมูลสำหรับคำแนะนำ (Data Enrichment)
             to_recommend = []
+            has_major_gap = False
+            
             for r in results:
                 is_passed = r.get('is_passed', False)
-                strength = r.get('evidence_strength', 10.0)
-                
-                if not is_passed or strength < 3.0:
-                    to_recommend.append(r)
+                strength = r.get('score', 0.0) # ใช้ score รายด้านมาพิจารณา
+                coaching = r.get('coaching_insight', '').strip()
+                reason = r.get('reason', '').strip()
+                level = r.get('level', 0)
 
+                # รวม Coaching Insight เข้าไปในเนื้อหาที่จะส่งให้ AI
+                enhanced_reason = reason
+                if coaching:
+                    enhanced_reason += f"\n[Coaching Insight & Soft Gap]: {coaching}"
+
+                # เงื่อนไขการเลือกเข้าสู่ Action Plan:
+                # - ไม่ผ่าน (FAILED/GAP)
+                # - ผ่านแต่คะแนนต่ำ (Weak Evidence)
+                # - มี Coaching Insight (มีจุดที่ควรปรับปรุงหรือต่อยอด)
+                if not is_passed:
+                    has_major_gap = True
+                    to_recommend.append({
+                        "level": level,
+                        "reason": enhanced_reason,
+                        "recommendation_type": "FAILED"
+                    })
+                elif is_passed and (strength < 1.0 or coaching):
+                    to_recommend.append({
+                        "level": level,
+                        "reason": enhanced_reason,
+                        "recommendation_type": "QUALITY_REFINEMENT" if strength < 1.0 else "SUSTAIN_ADVICE"
+                    })
+
+            # 2. กรณีผ่านหมดและหลักฐานดีมาก (No recommendation needed)
             if not to_recommend:
-                return {"status": "EXCELLENT", "message": "ไม่ต้องมีแผนปรับปรุง เนื่องจากผ่านเกณฑ์ในระดับดีมาก"}
+                return {
+                    "status": "EXCELLENT", 
+                    "message": "ไม่ต้องมีแผนปรับปรุง เนื่องจากระบบงานและหลักฐานมีความเข้มแข็งครอบคลุมทุกวงจร PDCA แล้ว",
+                    "coaching_summary": "เน้นการรักษามาตรฐานและการเป็นต้นแบบ (Best Practice)"
+                }
 
-            # 3. เรียกใช้ฟังก์ชันหลัก (ตัวที่คุณส่งมาในคำถาม)
-            return create_structured_action_plan(
-                recommendation_statements=to_recommend,
-                sub_id=sub_id,
-                sub_criteria_name=name,
-                enabler=enabler,
-                target_level=self.config.target_level,
-                llm_executor=self.llm,  # ส่งตัว LLM ไปรัน Prompt
-                logger=self.logger
-            )
+            # 3. ตัดสินโหมดการรัน Action Plan
+            # ถ้ามีข้อที่ไม่ผ่าน (FAILED) ให้ใช้ ACTION_PLAN_PROMPT (Remediation Mode)
+            # ถ้าผ่านหมดแต่มีจุดเติมคุณภาพ ให้ใช้ QUALITY_REFINEMENT_PROMPT
+            # ถ้าเป็น Level 5 หมดแล้ว ให้ใช้ EXCELLENCE_ADVICE_PROMPT
+            
+            target_level = self.config.target_level if hasattr(self, 'config') else 5
+            
+            # เตรียม Argument หลัก
+            action_plan_args = {
+                "recommendation_statements": to_recommend,
+                "sub_id": sub_id,
+                "sub_criteria_name": name,
+                "enabler": enabler,
+                "target_level": target_level,
+                "llm_executor": self.llm,
+                "logger": self.logger
+            }
+
+            # 4. เรียกใช้เครื่องยนต์สร้างแผนงาน (Ref. create_structured_action_plan ที่คุณมี)
+            # หมายเหตุ: ใน create_structured_action_plan จะมีการเลือกใช้ PromptTemplate 
+            # ตาม Mode ที่วิเคราะห์จาก recommendation_statements
+            
+            roadmap = create_structured_action_plan(**action_plan_args)
+
+            # 5. สรุปผลการสร้าง
+            if isinstance(roadmap, list) and len(roadmap) > 0:
+                self.logger.info(f"✅ Action Plan generated with {len(roadmap)} phases")
+                return roadmap
+            else:
+                return _get_emergency_fallback_plan(sub_id, name, target_level, not has_major_gap, False, enabler)
 
         except Exception as e:
-            self.logger.error(f"⚠️ Action Plan Generation Failed: {str(e)}")
+            self.logger.error(f"⚠️ Action Plan Generation Failed: {str(e)}", exc_info=True)
             return {
                 "status": "ERROR",
-                "message": "เกิดข้อผิดพลาดในการสร้างแผนงานอัตโนมัติ",
-                "error_detail": str(e)
+                "message": f"เกิดข้อผิดพลาดในการสร้างแผนงานอัตโนมัติ: {str(e)}",
+                "fallback_plan": _get_emergency_fallback_plan(sub_id, name, 5, False, False, enabler)
             }
     
     def _prepare_worker_tuple(self, sub_data: Dict, document_map: Optional[Dict]) -> Tuple:
@@ -3008,6 +3213,165 @@ class SEAMPDCAEngine:
             self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
             self.final_subcriteria_results.append(sub_result)
 
+     # ----------------------------------------------------------------------
+    # 🚀 CORE WORKER: Assessment Execution (REVISED v2026.3)
+    # ----------------------------------------------------------------------
+    def _run_sub_criteria_assessment_worker(
+        self,
+        sub_criteria: Dict[str, Any],
+        vectorstore_manager: Optional['VectorStoreManager'] = None
+    ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
+        """
+        [ADVANCED AUDITOR MODE v2026.6.1]
+        - Fix: ป้องกัน KeyError 'level' โดยการตรวจสอบโครงสร้างก่อนทำ baseline_context
+        - Persistence: ส่ง self.evidence_map เข้าสู่ single assessment เพื่อทำ Baseline Inheritance
+        - Gap Logic: ระบบ Capping คะแนนหากประเมินข้าม Level (Sequential Integrity)
+        """
+        # 1. INITIALIZATION
+        MAX_RETRY_ATTEMPTS = 2
+        sub_id = sub_criteria['sub_id']
+        sub_criteria_name = sub_criteria['sub_criteria_name']
+        sub_weight = sub_criteria.get('weight', 0)
+        
+        current_enabler = getattr(self.config, 'enabler', 'KM')
+        vsm = vectorstore_manager or getattr(self, 'vectorstore_manager', None)
+        
+        current_sequential_pass_level = 0 
+        first_failure_level = None 
+        raw_results_for_sub_seq: List[Dict[str, Any]] = []
+        level_details_map = {} 
+        start_ts = time.time() 
+
+        self.logger.info(f"🧵 [WORKER START] {sub_id} | Mode: Phase-Based Sequential")
+        
+        all_rules_for_sub = getattr(self, 'contextual_rules_map', {}).get(sub_id, {})
+
+        # -----------------------------------------------------------
+        # 2. EVALUATION LOOP (L1 → Target Level)
+        # -----------------------------------------------------------
+        # ดึงรายการ Level และ Sort เพื่อให้มั่นใจว่าประเมิน L1 -> L2 -> L3 ตามลำดับ
+        levels_to_assess = sorted(sub_criteria.get('levels', []), key=lambda x: x.get('level', 0))
+
+        for statement_data in levels_to_assess:
+            level = statement_data.get('level')
+            if level is None or level > self.config.target_level:
+                continue
+            
+            level_key = f"L{level}"
+            specific_rules = all_rules_for_sub.get(str(level), {}) # ดึงจากเลข level ตรงๆ
+            
+            # [FIX] สร้าง baseline_context อย่างปลอดภัย (เช็คการมีอยู่ของ Key 'level')
+            past_summaries = []
+            for p in raw_results_for_sub_seq:
+                p_lvl = p.get('level', 'N/A')
+                p_status = 'PASS' if p.get('raw_is_passed') else 'FAIL'
+                past_summaries.append(f"L{p_lvl}: {p_status}")
+            
+            baseline_context = "\n".join(past_summaries) if past_summaries else "Initial Level"
+
+            # ฟังก์ชันประเมิน (เชื่อมต่อกับ Signature ใหม่ที่เราแก้ไป)
+            def assessment_fn(attempt):
+                return self._run_single_assessment(
+                    sub_criteria=sub_criteria,
+                    statement_data=statement_data, # ส่งก้อนเดิมเข้าไป
+                    vectorstore_manager=vsm,
+                    attempt=attempt,
+                    record_id=self.current_record_id,
+                    evidence_map=self.evidence_map, # 🟢 ส่ง Baseline เข้าไป
+                    **specific_rules 
+                )
+
+            # --- [EXECUTION with RETRY] ---
+            level_result = {}
+            for attempt_num in range(1, MAX_RETRY_ATTEMPTS + 1):
+                try:
+                    level_result = assessment_fn(attempt_num)
+                    if level_result and "is_passed" in level_result:
+                        break
+                except Exception as e:
+                    self.logger.error(f"❌ {sub_id} L{level} Attempt {attempt_num} failed: {str(e)}")
+                    if attempt_num == MAX_RETRY_ATTEMPTS:
+                        level_result = {
+                            "level": level, # 🟢 ประกันว่ามี Key level เสมอ
+                            "is_passed": False, 
+                            "reason": f"System Error: {str(e)}",
+                            "score": 0.0
+                        }
+
+            # เติม Key 'level' กันเหนียวกรณี AI ลืมคืนค่ามาใน Dict
+            if 'level' not in level_result:
+                level_result['level'] = level
+
+            # --- [SEQUENTIAL & GAP LOGIC] ---
+            is_passed_llm = level_result.get('is_passed', False)
+            level_result['raw_is_passed'] = is_passed_llm 
+
+            if not is_passed_llm and first_failure_level is None:
+                # เคสแรกที่ตก: คือจุดเริ่มต้นของ GAP
+                first_failure_level = level
+                level_result["display_status"] = "FAILED"
+                level_result["gap_type"] = "PRIMARY_GAP"
+            
+            elif is_passed_llm and first_failure_level is not None:
+                # เคสที่ "เนื้อหาผ่าน" แต่ "ลำดับก่อนหน้าตก": ต้องโดน Capping
+                level_result["display_status"] = "PASSED (CAPPED)"
+                level_result["gap_type"] = "SEQUENTIAL_GAP"
+                level_result["is_passed"] = False # บังคับตกตามกฎความต่อเนื่อง
+            
+            elif not is_passed_llm and first_failure_level is not None:
+                # เคสที่ตกซ้ำซ้อน
+                level_result["display_status"] = "FAILED (GAP)"
+                level_result["gap_type"] = "COMPOUND_GAP"
+            else:
+                # เคสที่ผ่านปกติ
+                current_sequential_pass_level = level
+                level_result["display_status"] = "PASSED"
+                level_result["gap_type"] = "NONE"
+
+            # 3. เก็บข้อมูลรายเลเวลเพื่อส่งออก
+            level_details_map[str(level)] = {
+                "level": level,
+                "is_passed": level_result.get('is_passed', False),
+                "raw_is_passed": level_result.get('raw_is_passed', False),
+                "score": level_result.get('score', 0.0),
+                "reason": level_result.get('reason', ""),
+                "coaching_insight": level_result.get('coaching_insight', ""),
+                "display_status": level_result["display_status"],
+                "gap_type": level_result.get("gap_type")
+            }
+
+            raw_results_for_sub_seq.append(level_result)
+
+        # -----------------------------------------------------------
+        # 3. FINAL SYNTHESIS
+        # -----------------------------------------------------------
+        # สร้าง Action Plan ตามผลการประเมิน
+        action_plan_result = self._generate_action_plan_safe(
+            sub_id, sub_criteria_name, current_enabler, raw_results_for_sub_seq
+        )
+
+        # คำนวณคะแนนรวมตาม Level สูงสุดที่ผ่านต่อเนื่อง
+        weighted_score = round(self._calculate_weighted_score(current_sequential_pass_level, sub_weight), 2)
+        
+        # กรองเอาเฉพาะ Map ที่เกี่ยวข้องกับ sub_id นี้เพื่อส่งคืน Worker
+        current_sub_map = {k: v for k, v in self.evidence_map.items() if k.startswith(f"{sub_id}.")}
+
+        final_output = {
+            "sub_id": sub_id,
+            "sub_criteria_id": sub_id,
+            "sub_criteria_name": sub_criteria_name,
+            "highest_full_level": current_sequential_pass_level,
+            "level_details": level_details_map,
+            "weight": sub_weight,
+            "weighted_score": weighted_score,
+            "target_level_achieved": current_sequential_pass_level >= self.config.target_level,
+            "action_plan": action_plan_result, 
+            "raw_results_ref": raw_results_for_sub_seq,
+            "worker_duration_s": round(time.time() - start_ts, 2)
+        }
+
+        return final_output, current_sub_map
+
     def run_assessment(
         self,
         target_sub_id: str = "all",
@@ -3018,14 +3382,19 @@ class SEAMPDCAEngine:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE ASSEMBLY v2026.3] — Server L40 & Mac Optimized
-        ------------------------------------------------------
-        ทำหน้าที่เป็นตัวควบคุม (Orchestrator) ในการกระจายงานประเมิน
+        [ULTIMATE ASSEMBLY v2026.6] — PERSISTENCE & PARALLEL INTEGRATED
+        ------------------------------------------------------------------
+        Orchestrator หลักที่ทำหน้าที่:
+        1. Resume Baseline (Load Evidence Map)
+        2. Execute (Parallel/Sequential)
+        3. Merge & Clean (Integrate Worker Results)
+        4. Persist (Save Baseline for future runs)
+        5. Analyze (Coaching Insights)
         """
         start_ts = time.time()
         self.current_record_id = record_id 
 
-        # 1. 📋 เตรียมเกณฑ์ (Rubric Filtering)
+        # ============================== 1. เตรียมเกณฑ์ (Rubric Filtering) ==============================
         all_statements = self._flatten_rubric_to_statements()
         is_all = str(target_sub_id).lower() == "all"
         sub_criteria_list = all_statements if is_all else [
@@ -3035,63 +3404,111 @@ class SEAMPDCAEngine:
         if not sub_criteria_list:
             return self._create_failed_result(record_id, f"Criteria '{target_sub_id}' not found", start_ts)
 
-        # 2. ⚙️ การตั้งค่า Parallel / Sequential (L40 vs Mac Detection)
-        # ดึงจำนวน Worker จาก .env (บน L40 คือ 4, บน Mac ของคุณคือ 1 ตาม Log)
+        # ============================== 2. ระบบ Resumption (Load Baseline) ==============================
+        # โหลด Evidence Map เดิมขึ้นมา เพื่อให้ Worker เห็น "ไฟล์เทพ" ที่เคยหาเจอ
+        self.evidence_map = self._load_evidence_map() or {}
+        self.logger.info(f"🔄 Resumed Evidence Map: {len(self.evidence_map)} keys loaded as baseline")
+
+        # ============================== 3. ตั้งค่า Execution (Parallel Config) ==============================
         env_workers = os.environ.get('NUM_WORKERS') or os.environ.get('MAX_PARALLEL_WORKERS')
-        num_workers = 1 if (sequential or not is_all) else int(env_workers or 1)
-        
+        num_workers = 1 if (sequential or not is_all) else int(env_workers or 4)
         run_parallel = (num_workers > 1)
 
-        # ตรวจสอบ Hardware เพื่อพ่น Log ที่ถูกต้อง
-        import torch
-        device_info = "NVIDIA CUDA (L40)" if torch.cuda.is_available() else "Apple Silicon (MPS)" if torch.backends.mps.is_available() else "CPU"
-
-        self.logger.info(f"🎯 Target: {target_sub_id} | Mode: {'Parallel' if run_parallel else 'Sequential'}")
-        self.logger.info(f"🚀 Device Config: {device_info} | Active Workers: {num_workers}")
-
+        self.logger.info(f"🎯 Target: {target_sub_id} | Mode: {'Parallel' if run_parallel else 'Sequential'} | Workers: {num_workers}")
+        
         self.raw_llm_results = []
         self.final_subcriteria_results = []
-        self.evidence_map = {}
+        results_list = []
 
-        # 3. 🔥 Execution Phase
+        # ============================== 4. Execution Phase ==============================
         if run_parallel:
-            # 📌 การรันขนาน (สำหรับ L40)
+            # --- โหมดรันขนาน (Parallel) ---
             worker_args = [self._prepare_worker_tuple(s, document_map) for s in sub_criteria_list]
             try:
-                # ใช้ 'spawn' เพื่อล้าง CUDA memory context ทุกครั้งที่สร้าง process ใหม่
                 ctx = multiprocessing.get_context('spawn')
                 with ctx.Pool(processes=num_workers) as pool:
                     results_list = pool.map(_static_worker_process, worker_args)
-                
-                for res in results_list:
-                    if isinstance(res, tuple) and len(res) == 2:
-                        sub_result, temp_map = res
-                        self._merge_worker_results(sub_result, temp_map)
             except Exception as e:
                 self.logger.critical(f"❌ Parallel execution failed: {e}")
                 raise
         else:
-            # 🧵 การรันทีละขั้นตอน (สำหรับ Mac/Specific Sub-ID)
+            # --- โหมดรันทีละขั้นตอน (Sequential) ---
             vsm = vectorstore_manager or self._init_local_vsm()
             for sub_criteria in sub_criteria_list:
-                # เรียก Assessment Core (_run_single_assessment ภายใน)
-                sub_result, final_temp_map = self._run_sub_criteria_assessment_worker(sub_criteria, vsm)
-                self._merge_worker_results(sub_result, final_temp_map)
+                res = self._run_sub_criteria_assessment_worker(sub_criteria, vsm)
+                results_list.append(res)
 
-        # 4. 🏁 สรุปผลและส่งออก (Calculate & Export)
+        # ============================== 5. Integration (Merge & Clean) ==============================
+        # [INTEGRATE] ใช้ฟังก์ชัน merge_evidence_mappings เพื่อรวมข้อมูลจาก Worker ทุกตัว
+        # และจัดการเรื่องข้อมูลซ้ำ (Duplicates) ให้เรียบร้อย
+        new_merged_map = self.merge_evidence_mappings(results_list)
+        
+        # Merge ของใหม่เข้ากับ Baseline เดิม (self.evidence_map)
+        for key, evidences in new_merged_map.items():
+            if key not in self.evidence_map:
+                self.evidence_map[key] = evidences
+            else:
+                # ถ้ามีอยู่แล้ว ให้ทำการ Update (เช็คซ้ำ/เช็ค Score ในระดับที่ลึกขึ้น)
+                existing_ids = {str(e.get('doc_id') or e.get('chunk_uuid')) for e in self.evidence_map[key]}
+                for ev in evidences:
+                    if str(ev.get('doc_id') or ev.get('chunk_uuid')) not in existing_ids:
+                        self.evidence_map[key].append(ev)
+
+        # จัดเก็บผลลัพธ์การประเมินเพื่อทำรายงาน
+        for res in results_list:
+            if isinstance(res, tuple) and len(res) == 2:
+                sub_result, _ = res
+                self.raw_llm_results.extend(sub_result.get("raw_results_ref", []))
+                self.final_subcriteria_results.append(sub_result)
+
+        # ============================== 6. Persistence (Save Baseline) ==============================
+        # บันทึกสิ่งที่ "ดีที่สุด" ลงไฟล์ JSON เพื่อเป็น Baseline ในการรันครั้งหน้า
+        if self.evidence_map:
+            try:
+                save_payload = {
+                    "record_id": record_id,
+                    "evidence_map": self.evidence_map,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                if self.evidence_map:
+                    total_chunks = sum(len(v) for v in self.evidence_map.values())
+                    self.logger.info(f"Preparing to save evidence map: {len(self.evidence_map)} keys, {total_chunks} chunks")
+                    self._save_evidence_map(map_to_save=save_payload)
+                    
+                # self._save_evidence_map(map_to_save=save_payload)
+                self.logger.info(f"✅ Baseline Saved: Ready for future inheritance.")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to persist evidence map: {e}")
+
+        # ============================== 7. Final Summary & Analytics ==============================
         self._calculate_overall_stats(target_sub_id)
         
+        # รวบรวม Global Coaching Insights
+        all_insights = []
+        for res in self.final_subcriteria_results:
+            details = res.get('level_details', {})
+            for lvl, data in details.items():
+                if data.get('coaching_insight'):
+                    all_insights.append({
+                        "sub_id": res.get('sub_id'),
+                        "level": int(lvl),
+                        "text": data['coaching_insight'],
+                        "status": "passed" if data.get('is_passed') else "failed"
+                    })
+        self.total_stats['global_coaching_brief'] = all_insights
+
         final_results = {
             "record_id": record_id,
             "summary": self.total_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "run_time_seconds": round(time.time() - start_ts, 2),
-            "timestamp": datetime.now().isoformat(),
-            "device_used": device_info
+            "timestamp": datetime.now().isoformat()
         }
 
         if export:
-            self._export_results(results=final_results, sub_criteria_id=target_sub_id, record_id=record_id)
+            export_path = self._export_results(final_results, target_sub_id, record_id)
+            self.logger.info(f"📊 Assessment Completed. Export Path: {export_path}")
 
         return final_results
 
@@ -3127,8 +3544,6 @@ class SEAMPDCAEngine:
         
         self.logger.debug(f"✅ Merged results for {sub_result.get('sub_criteria_id', 'Unknown')}")
     
-    # ฟังก์ชันนี้เปรียบเสมือน "ศาลอุทธรณ์" หาก AI ตรวจรอบแรกแล้วให้ตก 
-    # แต่ระบบพบว่ามีหลักฐานคุณภาพสูงอยู่ ระบบจะบังคับให้ LLM ตรวจซ้ำด้วยมุมมองที่กว้างขึ้น (Diversity Focus)
     def _run_expert_re_evaluation(
         self,
         sub_id: str,
@@ -3136,93 +3551,114 @@ class SEAMPDCAEngine:
         statement_text: str,
         context: str,
         first_attempt_reason: str,
-        missing_tags: Set[str],
+        missing_tags: Union[List[str], Set[str]],
         highest_rerank_score: float,
         sub_criteria_name: str,
         llm_evaluator_to_use: Any,
         base_kwargs: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        [EXPERT LOOP - DIVERSITY FORCED] บังคับให้ LLM พิจารณาหลักฐานที่หลากหลายขึ้น
-        - ใช้เมื่อผลประเมินรอบแรกตกแต่คะแนน Rerank สูง
-        - แทรกคำสั่งพิเศษ (Expert Hint) เพื่อลดอคติของโมเดล
+        [EXPERT RE-EVALUATION v2026.8 - BALANCED, NEUTRAL & ROBUST]
+        -------------------------------------------------------------
+        - ระบบอุทธรณ์สำหรับเคส RAG มั่นใจสูงแต่ LLM รอบแรกตก
+        - Hint เป็นกลาง: เน้น substance over form + ดุลยพินิจมืออาชีพ
+        - ไม่บังคับให้ผ่าน — ให้ LLM ตัดสินตามหลักฐานจริง
+        - No hard-code sub_id/level → ใช้ได้ทุก criteria
+        - Post-processing: เพิ่ม diff, confidence note, original comparison
+        - Error handling: safe fallback + log ชัดเจน
         """
-        self.logger.info(f"🕵️ [EXPERT RE-EVAL] Starting second pass for {sub_id} L{level} (Rerank: {highest_rerank_score:.4f})")
+        self.logger.info(
+            f"[EXPERT-RE-EVAL] Triggered | {sub_id} L{level} | "
+            f"Rerank: {highest_rerank_score:.4f} | Original: {first_attempt_reason[:80]}..."
+        )
 
-        # 🟢 สร้าง Expert Hint เพื่อกระตุ้นการวิเคราะห์เชิงลึก
-        missing_info = f"โดยเฉพาะมิติ {', '.join(missing_tags)}" if missing_tags else "ในภาพรวม"
-        
+        # จัดการ missing_tags
+        missing_str = ", ".join(sorted(set(missing_tags))) if missing_tags else "PDCA ทุก phase"
+
+        # Expert Hint (เป็นกลางมากขึ้น - ไม่บังคับผ่าน แต่ให้พิจารณาใหม่)
         hint_msg = f"""
---- 🚨 EXPERT AUDITOR OVERRIDE (รอบพิจารณาพิเศษ) ---
-ผลการตรวจรอบแรก: ไม่ผ่าน (เหตุผล: {first_attempt_reason})
+    --- [EXPERT RE-ASSESSMENT NOTICE - SECOND PASS] ---
+    การประเมินรอบแรก: ไม่ผ่าน (เหตุผล: {first_attempt_reason})
 
-ข้อตรวจพบเพิ่มเติมจากระบบ Search:
-- ระบบพบหลักฐานที่มีความเกี่ยวข้องสูง (Score: {highest_rerank_score:.4f}) แต่คุณอาจมองข้ามไป
-- คำสั่งพิเศษ: โปรดพิจารณาไฟล์อื่นๆ ใน Context นอกเหนือจากไฟล์หลักที่อ่านรอบแรก
-- หากพบ "ร่องรอย" (Implicit Evidence) ของกระบวนการ {missing_info} แม้ Keyword จะไม่ตรง 100% แต่ถ้ามีการปฏิบัติจริง ให้ใช้ดุลยพินิจ (Professional Discretion) ในการให้คะแนน
-- พิจารณาความต่อเนื่องจากระดับก่อนหน้า (Baseline) หากพื้นฐานดีและมีหลักฐานใหม่เสริม ให้คะแนนอย่างเป็นธรรม
-"""
+    จาก RAG Confidence สูง (Highest Rerank: {highest_rerank_score:.4f}):
+    - โปรดพิจารณาหลักฐานแบบ 'substance over form' — แม้คำศัพท์อาจไม่ตรง keyword เป๊ะ แต่หากบริบทแสดงถึงการปฏิบัติจริงในมิติ {missing_str} ให้พิจารณาคะแนนตามความเหมาะสม
+    - หลีกเลี่ยงการตัดสินเพียงเพราะการใช้คำที่ต่างกัน หากเจตนา ผลลัพธ์ และความต่อเนื่องชัดเจน
+    - ใช้ดุลยพินิจอย่างมืออาชีพ: พิจารณาหลักฐานทั้งหมดใน context โดยไม่ยึดติด keyword อย่างเดียว
+    - ระบุเหตุผลอย่างละเอียดหากเปลี่ยนผลจากรอบแรก (รวมถึงจุดที่เห็นต่างจากรอบแรก)
+    """
 
-        # คัดลอกพารามิเตอร์เดิมและอัปเดต Context ใหม่
         expert_kwargs = base_kwargs.copy()
         expert_kwargs["context"] = f"{context}\n\n{hint_msg}"
-        expert_kwargs["sub_criteria_name"] = f"{sub_criteria_name} (Expert Re-assessment Mode)"
+        expert_kwargs["sub_criteria_name"] = f"{sub_criteria_name} (Expert Re-assessment)"
         
-        # เพิ่มระดับความมั่นใจจำลองเพื่อให้ LLM กล้าตัดสินใจมากขึ้น
-        expert_kwargs["ai_confidence"] = "High (Expert Override)"
+        # ลด temperature เพื่อความรอบคอบ (ถ้า evaluator รองรับ)
+        expert_kwargs["temperature"] = 0.0  # หรือ 0.1 ถ้าต้องการความหลากหลายเล็กน้อย
 
         try:
-            # รันการประเมินซ้ำด้วย Evaluator ตัวเดิม (แต่ Prompt มี Hint ใหม่)
             re_eval_result = llm_evaluator_to_use(**expert_kwargs)
-            
-            # บันทึกสถานะว่าผ่านการทำ Expert Re-eval
+
+            # Post-processing
             re_eval_result["is_expert_evaluated"] = True
             re_eval_result["original_fail_reason"] = first_attempt_reason
-            
-            if re_eval_result.get("is_passed"):
-                self.logger.info(f"✨ [EXPERT SUCCESS] {sub_id} L{level} has been reversed to PASSED")
+            re_eval_result["original_score"] = base_kwargs.get("original_score", 0.0)
+            re_eval_result["original_is_passed"] = base_kwargs.get("original_is_passed", False)
+
+            passed_now = re_eval_result.get("is_passed", False)
+            if passed_now:
+                self.logger.info(f"[EXPERT-OVERRIDE] {sub_id} L{level} REVERSED to PASSED!")
+                re_eval_result["reason"] = f"[Expert Re-assessment]: {re_eval_result.get('reason', '')}"
             else:
-                self.logger.info(f"❌ [EXPERT CONFIRMED] {sub_id} L{level} is still FAILED after re-evaluation")
-                
+                self.logger.info(f"[EXPERT-CONFIRMED] {sub_id} L{level} still FAILED after re-eval")
+
+            # Confidence note ถ้าเปลี่ยนผล
+            if passed_now != re_eval_result["original_is_passed"]:
+                re_eval_result["confidence_note"] = (
+                    f"Expert re-assessment เปลี่ยนผลเนื่องจากเห็นความสอดคล้องในทางปฏิบัติ "
+                    f"(Rerank Confidence: {highest_rerank_score:.4f})"
+                )
+
             return re_eval_result
-            
+
         except Exception as e:
-            self.logger.error(f"❌ Expert Re-evaluation crashed: {e}")
-            # กรณีพัง ให้คืนค่าผลการตรวจรอบแรก
-            return {"is_passed": False, "reason": f"Expert Loop Error: {str(e)}", "score": 0.0}
+            self.logger.error(f"[EXPERT-FAIL] Re-evaluation crashed for {sub_id} L{level}: {str(e)}")
+            return {
+                "is_passed": False,
+                "reason": f"Expert re-evaluation failed ({str(e)}). Original reason: {first_attempt_reason}",
+                "score": 0.0,
+                "missing_tags": list(missing_tags),
+                "is_expert_evaluated": False,
+                "error": str(e)
+            }
     
     def _apply_diversity_filter(self, evidences: List[Dict], level: int) -> List[Dict]:
-        """
-        กรองหลักฐานให้มีความหลากหลาย (Diversity) และไม่เยอะจนเกินไป (Context Window Management)
-        - Level 1-2: เน้นความแม่นยำ (Top 15 chunks)
-        - Level 3 ขึ้นไป: จำกัด chunks ต่อไฟล์เพื่อลด Bias
-        """
         if not evidences:
             return []
 
-        # เรียงลำดับตาม Score ล่าสุด (Rerank score)
-        sorted_evidences = sorted(evidences, key=lambda x: x.get('rerank_score', 0), reverse=True)
+        sorted_evidences = sorted(
+            evidences,
+            key=lambda x: x.get('rerank_score', 0) or x.get('priority_score', 0),
+            reverse=True
+        )
 
         if level <= 2:
-            # เลเวลพื้นฐาน เอา Top 15 ที่ดีที่สุด
-            return sorted_evidences[:15]
-        
-        # เลเวลสูง: จำกัดให้ไม่เกิน 3-4 chunks ต่อหนึ่งชื่อไฟล์ เพื่อให้ AI เห็นไฟล์ที่หลากหลาย
+            return sorted_evidences[:20]  # เพิ่มจาก 15 เป็น 20 เพื่อให้มีโอกาสเห็น D
+
         diverse_results = []
-        file_counts = {}
-        per_file_limit = 4
+        file_counts = defaultdict(int)
+        per_file_limit = 5  # เพิ่มจาก 4 เป็น 5
+        max_total = 30  # เพิ่มจาก 25 เป็น 30
 
         for ev in sorted_evidences:
-            source = ev.get('metadata', {}).get('source_filename', 'Unknown')
-            file_counts[source] = file_counts.get(source, 0) + 1
-            
+            source = ev.get('metadata', {}).get('source_filename') or 'Unknown'
+            source = os.path.basename(str(source))
+            file_counts[source] += 1
+
             if file_counts[source] <= per_file_limit:
                 diverse_results.append(ev)
-            
-            # ป้องกัน Context ยาวเกินไป (จำกัดรวมไม่เกิน 20-25 chunks)
-            if len(diverse_results) >= 20:
+
+            if len(diverse_results) >= max_total:
                 break
-                
+
         return diverse_results
     
     def _normalize_evidence_metadata(self, evidence_list: List[Dict[str, Any]]):
@@ -3262,68 +3698,83 @@ class SEAMPDCAEngine:
         return evidence_list
 
     def relevance_score_fn(self, evidence: Dict[str, Any], sub_id: str, level: int) -> float:
-        """
-        [REVISED v2026.4.8] 
-        - เพิ่ม Source Grading: ให้คะแนนไฟล์ 'บันทึก/คำสั่ง/มติ' สูงกว่า 'รายงานประเมิน'
-        - ปรับ Keyword Saturation: เน้นคุณภาพการ Match มากกว่าปริมาณ
-        - ปรับปรุง Neighbor Context Handling ให้เสถียรขึ้น
-        """
         if not evidence:
             return 0.0
 
-        # 1. Rerank Score (Weight 50%)
-        rerank_score = evidence.get('rerank_score', evidence.get('score', 0.0))
+        # 1. Rerank (45%)
+        rerank_raw = evidence.get('rerank_score') or evidence.get('score') or 0.0
+        rerank_score = float(rerank_raw) if isinstance(rerank_raw, (int, float)) else 0.0
         normalized_rerank = min(max(rerank_score, 0.0), 1.0)
 
-        # 2. เตรียมข้อมูลพื้นฐาน
-        text = (evidence.get('text', '') or evidence.get('page_content', '')).lower()
-        meta = evidence.get('metadata', {})
-        filename = (meta.get('source', '') or meta.get('source_filename', '') or '').lower()
+        # 2. ข้อมูลพื้นฐาน
+        text = (evidence.get('text') or evidence.get('page_content') or '').lower().strip()
+        meta = evidence.get('metadata', {}) if isinstance(evidence.get('metadata'), dict) else {}
+        filename = (meta.get('source') or meta.get('source_filename') or '').lower()
 
-        # 3. ดึง Rules ประจำ Level
+        # 3. Cumulative rules
         cum_rules = self.get_cumulative_rules(sub_id, level)
-        
-        # 4. Source Grading Logic (แก้ปัญหาดึง Assessment Report)
+
+        # 4. Source Grading
         source_bonus = 0.0
-        # รายชื่อคำที่บ่งบอกว่าเป็นหลักฐานชั้นต้น (High Priority)
-        primary_evidence_patterns = ["มติ", "บันทึก", "คำสั่ง", "ประกาศ", "นโยบาย", "แผนแม่บท"]
-        # รายชื่อคำที่บ่งบอกว่าเป็นเอกสารสรุป/รายงานประเมิน (Lower Priority ในขั้นตอนนี้)
-        secondary_report_patterns = ["assessment report", "รายงานการประเมิน", "สรุปผล"]
+        primary = ["มติ", "บันทึก", "คำสั่ง", "ประกาศ", "นโยบาย", "แผนแม่บท", "มติบอร์ด"]
+        secondary = ["assessment report", "รายงานการประเมิน", "สรุปผล", "รายงานผล"]
+        if any(p in filename for p in primary):
+            source_bonus += 0.25
+        if any(p in filename for p in secondary):
+            source_bonus -= 0.15
 
-        if any(p in filename for p in primary_evidence_patterns):
-            source_bonus += 0.20  # Boost ให้หลักฐานตัวจริง
-        if any(p in filename for p in secondary_report_patterns):
-            source_bonus -= 0.15  # Penalty ให้ไฟล์รายงานเพื่อไม่ให้เบียดไฟล์จริง
-
-        # 5. Keyword Score (Weight 50%) - Saturation 
+        # 5. Keyword Score (35%)
         target_kws = set()
         if level <= 2:
             target_kws.update(cum_rules.get('plan_keywords', []) + cum_rules.get('do_keywords', []))
         else:
             target_kws.update(cum_rules.get('check_keywords', []) + cum_rules.get('act_keywords', []))
-        
-        # เน้นเฉพาะคำที่ Match จริงๆ
+
         match_count = sum(1 for kw in target_kws if kw.lower() in text)
-        # Saturation: เจอ 2-3 คำที่สำคัญมากพอแล้ว (สำหรับเอกสารราชการที่ข้อความไม่ยาวมาก)
-        keyword_score = min(match_count / 2.5, 1.0) 
+        expected = max(1, len(target_kws) * 0.25)
+        keyword_score = min((match_count / expected) ** 0.5, 1.0)
+        keyword_score = max(keyword_score, 0.15 if match_count >= 1 else 0.0)
 
-        # 6. Act-Hook Bonus (Neighbor Boost)
-        neighbor_bonus = 0.0
-        is_neighbor = evidence.get('is_neighbor', False) or meta.get('is_neighbor', False)
-        if is_neighbor:
-            # เพิ่มแต้มเพื่อให้หน้าบริบทไม่ถูกกรองทิ้ง (Threshold มักอยู่ที่ 0.35)
-            neighbor_bonus += 0.25 
+        # 6. PDCA Tag Bonus (สมดุล 0.30)
+        pdca_bonus = 0.0
+        pdca_tag = evidence.get('pdca_tag') or meta.get('pdca_tag')
+        if pdca_tag and str(pdca_tag).upper() in {'P', 'D', 'C', 'A'}:
+            pdca_bonus = 0.30
 
-        # 7. Specific Context Phrase Match
+        # 7. Neighbor Bonus
+        neighbor_bonus = 0.20 if evidence.get('is_neighbor', False) or meta.get('is_neighbor', False) else 0.0
+
+        # 8. Specific Rule Bonus
         specific_rule = cum_rules.get('specific_contextual_rule', '').lower()
-        rule_bonus = 0.25 if specific_rule and specific_rule in text else 0.0
+        rule_bonus = 0.20 if specific_rule and specific_rule in text else 0.0
 
-        # 8. รวมคะแนน (50/50 Ratio + Bonuses)
-        # เราใช้ 0.5/0.5 เพื่อให้ Keyword Match มีผลเท่ากับ Vector Search ในการตัดสินความเกี่ยวข้อง
-        final_score = (0.5 * normalized_rerank) + (0.5 * keyword_score) + source_bonus + neighbor_bonus + rule_bonus
+        # 9. รวมคะแนน (45% Rerank + 35% Keyword + 20% Bonuses)
+        final_score = (
+            0.45 * normalized_rerank +
+            0.35 * keyword_score +
+            source_bonus + pdca_bonus + neighbor_bonus + rule_bonus
+        )
+
+        # 10. Min floor สำหรับ rerank สูง (ป้องกัน miss good evidence)
+        if normalized_rerank > 0.80:
+            final_score = max(final_score, 0.40)
+
         final_score = min(max(final_score, 0.0), 1.0)
 
-        self.logger.debug(f"[{sub_id} L{level}] RelScore: {final_score:.4f} | Rerank: {normalized_rerank:.4f} | KW: {keyword_score:.4f} | Src: {source_bonus}")
+        # 11. Logging (ทั่วไป ไม่เฉพาะ 1.2)
+        if normalized_rerank > 0.75:
+            self.logger.info(
+                f"[HIGH-RERANK] {sub_id} L{level} | "
+                f"rerank={rerank_score:.4f} | kw={keyword_score:.4f} | "
+                f"pdca_bonus={pdca_bonus:.3f} | final={final_score:.4f} | "
+                f"tag={pdca_tag} | text={text[:100]}..."
+            )
+
+        self.logger.debug(
+            f"[{sub_id} L{level}] RelScore: {final_score:.4f} | Rerank: {normalized_rerank:.4f} | "
+            f"KW: {keyword_score:.4f} | Src: {source_bonus:.3f} | PDCA: {pdca_bonus:.3f}"
+        )
+
         return final_score
 
     def enhance_query_for_statement(
@@ -3438,19 +3889,40 @@ class SEAMPDCAEngine:
 
         logger.debug(f"Generated {len(final_queries)} enhanced queries for {id_anchor} L{level}")
         return final_queries
-    
-    def _get_baseline_summary_text(self, sub_id: str, level: int) -> str:
-        """ สรุปผลประเมินเลเวลก่อนหน้าให้ LLM (Fix AttributeError) """
-        if level <= 1:
-            return "ระดับเริ่มต้น (Starting Level): ไม่มีการประเมินก่อนหน้า"
+
+    def _get_semantic_tag(self, text: str, sub_id: str, level: int) -> str:
+        """
+        ใช้ _fetch_llm_response จาก llm_data_utils เพื่อติดป้าย PDCA
+        """
+        system_prompt = "You are a KM specialist. Classify text into P, D, C, or A."
         
-        prev_res = self.results.get(f"{sub_id}.L{level-1}", {})
-        if prev_res:
-            status = "ผ่าน ✅" if prev_res.get('is_passed') else "ไม่ผ่าน ❌"
-            return f"ผลประเมิน L{level-1}: {status} | เหตุผล: {prev_res.get('reason', 'N/A')[:200]}..."
-        
-        return f"ไม่พบข้อมูล L{level-1}"
-        
+        # บังคับโครงสร้าง JSON ให้ตรงกับที่ _fetch_llm_response คาดหวัง
+        user_prompt = f"""
+        Context: {sub_id} L{level}
+        Text: "{text[:500]}"
+        Return JSON with key "tag". Example: {{"tag": "P"}}
+        """
+
+        try:
+            # เรียกใช้ฟังก์ชันจาก Module llm_data_utils
+            raw_json_str = _fetch_llm_response(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                llm_executor=self.llm, # ส่งตัวแปร LLM ของคลาสเข้าไป
+                max_retries=2
+            )
+            
+            # แปลง String JSON เป็น Dict และดึง Tag
+            import json
+            result_data = json.loads(raw_json_str)
+            tag = result_data.get("tag", "Other").strip().upper()
+            
+            return tag if tag in ['P', 'D', 'C', 'A'] else "Other"
+
+        except Exception as e:
+            self.logger.error(f"Semantic Tagging Failed: {e}")
+            return "Other"
+
     def _run_single_assessment(
         self,
         sub_criteria: Dict[str, Any],
@@ -3462,150 +3934,200 @@ class SEAMPDCAEngine:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE REVISE 2026] - FULL MULTI-CHANNEL + EXPERT LOOP
-        - ระบบบูรณาการ PDCA Blocks และ build_multichannel_context_for_level
-        - รองรับระบบอุทธรณ์ (Expert Re-evaluation) เมื่อหลักฐานขัดแย้งกับผลตรวจ
-        - ใช้ Hybrid Evaluator (Low-Level vs Senior) ตามระดับเกณฑ์
+        [PRODUCTION-READY v2026.10 - FULLY REVISED & HYBRID TAGGING]
+        -----------------------------------------------------------------------
+        - Hybrid Discovery: Keyword (Fast) + Semantic LLM (Smart)
+        - Score Guard: ป้องกันคะแนนลดจากการ Post-process
+        - L1 Permissive: P+D score > 0.3 -> Passed
+        - Expert Re-check: ตรวจซ้ำถ้า Rerank สูงแต่ LLM ให้ไม่ผ่าน
+        - Force-Tag: แก้ปัญหา Block ว่างด้วย Feedback loop จาก LLM
         """
         start_time = time.time()
         sub_id = sub_criteria['sub_id']
         level = statement_data['level']
         statement_text = statement_data['statement']
-        sub_criteria_name = sub_criteria['sub_criteria_name']
-        
-        self.logger.info(f"🚀 [ULTIMATE ENGINE] {sub_id} L{level} | Attempt: {attempt}")
+        log_prefix = f"{sub_id} L{level}"
 
-        # 1. ดึงกฎเกณฑ์และกำหนดพารามิเตอร์ (Anchors & Constraints)
-        cum_rules = self.get_cumulative_rules(sub_id, level)
-        level_constraint = self._get_level_constraint_prompt(sub_id, level)
-        plan_kws = cum_rules.get('plan_keywords', [])
+        # 1. METADATA & RUBRIC SETUP
+        required_phases = kwargs.get('require_phase', [])
+        plan_kws = kwargs.get('plan_keywords', [])
 
-        # 2. ULTIMATE QUERY ENHANCER (Synonyms & Logic Expand)
-        enhanced_queries = self.enhance_query_for_statement(
-            statement_text=statement_text,
-            sub_id=sub_id,
-            statement_id=f"{sub_id}.L{level}",
-            level=level
-        )
+        main_id = sub_id.split('.')[0] if '.' in sub_id else sub_id
+        criteria_data = self.rubric.get("criteria", {}).get(main_id, {})
+        sub_data = criteria_data.get("subcriteria", {}).get(sub_id, {})
 
-        # 3. ADAPTIVE RAG RETRIEVAL (Dual-Loop Strategy)
+        full_sub_name = sub_data.get("name", sub_criteria.get('sub_criteria_name', 'Unknown'))
+        level_desc = sub_data.get("levels", {}).get(str(level), "ไม่มีคำอธิบายเกณฑ์")
+        focus_str = " | ".join(sub_data.get("focus_points", [])) or "ไม่ได้ระบุ"
+        evi_guide = sub_data.get("evidence_guidelines", {}).get(f"level_{level}", "ไม่ได้ระบุแนวทาง")
+
+        # 2. RETRIEVAL WITH BASELINE & LOOP
         mapped_stable_ids, priority_chunks = self._get_mapped_uuids_and_priority_chunks(
             sub_id=sub_id, level=level, statement_text=statement_text,
-            level_constraint=level_constraint, vectorstore_manager=vectorstore_manager
+            vectorstore_manager=vectorstore_manager, evidence_map=self.evidence_map
         )
 
+        enhanced_queries = self.enhance_query_for_statement(statement_text, sub_id, f"{sub_id}.L{level}", level)
         highest_rerank_score = -1.0
         final_top_evidences = []
 
-        for loop_idx in range(1, 3):
+        for loop_idx in range(1, 4):
             query_input = enhanced_queries if loop_idx == 1 else [statement_text]
             retrieval_result = self.rag_retriever(
                 query=query_input, doc_type=self.doc_type, sub_id=sub_id, level=level,
-                vectorstore_manager=vectorstore_manager, stable_doc_ids=mapped_stable_ids,
-                top_k=30 
+                vectorstore_manager=vectorstore_manager, stable_doc_ids=mapped_stable_ids, top_k=30
             )
-            
+
             all_candidates = retrieval_result.get("top_evidences", []) + priority_chunks
             if not all_candidates: continue
-            
+
             curr_max = max((ev.get('rerank_score', 0.0) for ev in all_candidates), default=0.0)
-            if curr_max >= highest_rerank_score:
+            if curr_max > highest_rerank_score:
                 highest_rerank_score = curr_max
                 final_top_evidences = all_candidates
-            if highest_rerank_score >= 0.75: break # มั่นใจมากพอแล้ว
 
-        # 4. CONTEXT CLEANING & FILTERING
-        relevant_filtered = [d for d in final_top_evidences if self.relevance_score_fn(d, sub_id, level) >= 0.35]
+            if highest_rerank_score >= 0.80: break
+
+        # 3. PRE-PROCESSING & HYBRID AUTO-CLASSIFY
+        current_threshold = 0.25 if highest_rerank_score >= 0.85 else (0.30 if highest_rerank_score >= 0.70 else 0.35)
         
-        # 5. [PRE-PROCESS] MULTI-CHANNEL SUMMARIZATION
-        # รวบรวมข้อมูลเลเวลก่อนหน้ามาทำ Baseline Summary
-        previous_evidence = self._collect_previous_level_evidences(sub_id, level) if level > 1 else {}
-        flat_previous = [item for sublist in previous_evidence.values() for item in sublist]
+        relevant_filtered = [
+            d for d in final_top_evidences 
+            if self.relevance_score_fn(d, sub_id, level) >= current_threshold
+        ]
 
-        # เรียกใช้ Multichannel Builder เพื่อสร้าง Summary สำหรับ Baseline และ Auxiliary
-        channels = build_multichannel_context_for_level(
-            level=level, 
-            top_evidences=relevant_filtered, 
-            previous_levels_evidence=flat_previous
-        )
+        if not relevant_filtered and priority_chunks:
+            relevant_filtered = priority_chunks[:10]
+            self.logger.warning(f"[FALLBACK] {log_prefix}: used priority_chunks")
 
-        # 6. [PRE-PROCESS] PDCA BLOCKS (DIRECT EVIDENCE)
-        plan_b, do_b, check_b, act_b, other_b = self._get_pdca_blocks_from_evidences(
-            evidences=relevant_filtered, 
-            baseline_evidences={k.split(".L")[-1]: v for k, v in previous_evidence.items()},
+        # --- [HYBRID CLASSIFICATION LOGIC] ---
+        for d in relevant_filtered:
+            text = d.get('text', '') or d.get('page_content', '')
+            if 'pdca_tag' not in d or d['pdca_tag'] == "Other":
+                # ขั้นที่ 1: ใช้ Keyword Matcher (เร็ว)
+                tag = classify_by_keyword(
+                    text=text, sub_id=sub_id, level=level,
+                    contextual_rules_map=self.contextual_rules_map,
+                    chunk_metadata=d.get('metadata'), debug=False
+                )
+                
+                # ขั้นที่ 2: ถ้าเป็น Other แต่คะแนน Rerank สูง ให้ LLM ช่วยวิเคราะห์ (Smart Discovery)
+                if tag == "Other" and d.get('rerank_score', 0) > 0.70:
+                    tag = self._get_semantic_tag(text, sub_id, level)
+                    self.logger.info(f"[SEMANTIC-DISCOVERY] {log_prefix} | Tagged '{tag}' via LLM (Rerank: {d.get('rerank_score'):.2f})")
+                
+                d['pdca_tag'] = tag
+                
+                # Debug Log สำหรับดูความเคลื่อนไหวของ Tag
+                preview = text[:150].replace('\n', ' ') + '...' if len(text) > 150 else text
+                self.logger.info(f"[TAG-DEBUG] {log_prefix} | Preview: {preview} → final_tag={tag}")
+
+        # 4. PDCA BLOCK GENERATION & INHERITANCE
+        previous_evidence = self._collect_previous_level_evidences(sub_id, level)
+        plan_b, do_b, check_b, act_b, _ = self._get_pdca_blocks_from_evidences(
+            evidences=relevant_filtered, baseline_evidences=previous_evidence,
             level=level, sub_id=sub_id, contextual_rules_map=self.contextual_rules_map
         )
 
-        # ประกอบร่าง Context แบบบูรณาการ
+        status_icons = " | ".join([f"{k}:{'✅' if v else '❌'}" for k, v in 
+                                {"P": bool(plan_b), "D": bool(do_b), "C": bool(check_b), "A": bool(act_b)}.items()])
+        self.logger.info(f"🎯 [ASSESSING] {log_prefix} | PDCA: {status_icons} | Top Rerank: {highest_rerank_score:.2f} | Relevant: {len(relevant_filtered)}")
+
+        # 5. LLM EVALUATION
         synthesized_context = (
-            f"--- [PRIMARY] DIRECT PDCA EVIDENCE ---\n"
-            f"<Plan>\n{plan_b or 'ไม่พบข้อมูล'}\n</Plan>\n"
-            f"<Do>\n{do_b or 'ไม่พบข้อมูล'}\n</Do>\n"
-            f"<Check>\n{check_b or 'ไม่พบข้อมูล'}\n</Check>\n"
-            f"<Act>\n{act_b or 'ไม่พบข้อมูล'}\n</Act>\n"
-            f"\n--- [CONTEXT] BASELINE & SUPPORTING ---\n"
-            f"- ประวัติการประเมินเลเวลก่อนหน้า (Baseline): {channels.get('baseline_summary')}\n"
-            f"- สรุปหลักฐานรอง (Auxiliary): {channels.get('aux_summary')}\n"
-            f"\n<Other_Context>\n{other_b}\n</Other_Context>"
+            f"--- PDCA CONTEXT BLOCKS ---\n"
+            f"<Plan>{plan_b or 'ไม่พบหลักฐาน'}</Plan>\n"
+            f"<Do>{do_b or 'ไม่พบหลักฐาน'}</Do>\n"
+            f"<Check>{check_b or 'ไม่พบหลักฐาน'}</Check>\n"
+            f"<Act>{act_b or 'ไม่พบหลักฐาน'}</Act>"
         )
 
-        # 7. HYBRID EVALUATOR SELECTION
-        is_strategic = "strategic" in cum_rules.get('specific_contextual_rule', '').lower()
-        llm_evaluator_to_use = evaluate_with_llm_low_level if (level <= 2 and not is_strategic) else evaluate_with_llm
-        
-        # คำนวณความมั่นใจเบื้องต้น (Confidence Guardrail)
-        processed_docs = [LcDocument(page_content=d['text'], metadata=d.get('metadata', {})) for d in relevant_filtered]
-        confidence_res = self.calculate_audit_confidence(processed_docs)
+        llm_evaluator_to_use = evaluate_with_llm_low_level if level <= 2 else evaluate_with_llm
 
-        # เตรียมพารามิเตอร์ (Sync with Prompt v35.9)
         eval_args = {
-            "context": synthesized_context,
-            "sub_criteria_name": sub_criteria_name,
-            "level": level,
-            "statement_text": statement_text,
-            "sub_id": sub_id,
-            "llm_executor": self.llm,
-            "plan_keywords": plan_kws,
-            "ai_confidence": confidence_res["level"],
-            "confidence_reason": confidence_res["reason"],
-            "max_rerank_score": highest_rerank_score,
-            "max_evidence_strength": 10.0,
-            "specific_contextual_rule": cum_rules.get('specific_contextual_rule', "ไม่มี"),
-            "level_constraint": level_constraint,
-            "avoid_keywords": cum_rules.get('avoid_keywords', "ไม่มี"),
-            "target_score_threshold": TARGET_SCORE_THRESHOLD_MAP.get(level, 2)
+            "context": synthesized_context, "sub_criteria_name": full_sub_name, "level": level,
+            "level_description": level_desc, "focus_points": focus_str, "evidence_guidelines": evi_guide,
+            "statement_text": statement_text, "sub_id": sub_id, "llm_executor": self.llm,
+            "require_phase": required_phases, "plan_keywords": plan_kws, "max_rerank_score": highest_rerank_score
         }
 
-        # 8. EVALUATION PASS 1
-        llm_result = llm_evaluator_to_use(**eval_args)
+        try:
+            llm_result = llm_evaluator_to_use(**eval_args)
+        except Exception as e:
+            self.logger.error(f"[LLM-FAIL] {log_prefix}: {str(e)}")
+            llm_result = {"score": 0.0, "is_passed": False, "reason": f"LLM error: {str(e)}"}
 
-        # 9. EXPERT RE-EVALUATION LOOP (ศาลอุทธรณ์)
-        # เงื่อนไข: ถ้าตก แต่คะแนน RAG สูง หรือมีคะแนนรายด้านบางส่วนที่น่าสนใจ
-        if not llm_result.get('is_passed', False) and (highest_rerank_score > 0.65 or llm_result.get('score', 0) > 1.0):
-            missing_tags = {tag for tag in ['P', 'D', 'C', 'A'] if llm_result.get(f'{tag}_Score', 0) == 0}
-            self.logger.info(f"⚖️ [EXPERT TRIGGER] High Rerank ({highest_rerank_score:.2f}) found. Re-evaluating...")
-            
+        # 6. EXPERT RE-CHECK LOGIC (คงไว้ห้ามนำออก)
+        expert_trigger_threshold = getattr(self.config, 'expert_trigger_threshold', 0.75)
+        if not llm_result.get('is_passed', False) and highest_rerank_score > expert_trigger_threshold:
+            self.logger.info(f"[EXPERT-RECHECK] Triggered for {log_prefix} (Rerank: {highest_rerank_score:.2f})")
             llm_result = self._run_expert_re_evaluation(
                 sub_id=sub_id, level=level, statement_text=statement_text,
-                context=synthesized_context, first_attempt_reason=llm_result.get('reason', 'N/A'),
-                missing_tags=missing_tags, highest_rerank_score=highest_rerank_score,
-                sub_criteria_name=sub_criteria_name, llm_evaluator_to_use=llm_evaluator_to_use,
+                context=synthesized_context, highest_rerank_score=highest_rerank_score,
+                sub_criteria_name=full_sub_name, llm_evaluator_to_use=llm_evaluator_to_use,
                 base_kwargs=eval_args
             )
 
-        # 10. FINAL SAVING & OUTPUT
-        llm_result = self.post_process_llm_result(llm_result, level)
-        self._save_level_evidences_and_calculate_strength(
-            level_temp_map=relevant_filtered, sub_id=sub_id, level=level,
-            llm_result=llm_result, highest_rerank_score=highest_rerank_score
-        )
+        # 7. COMPLIANCE & L1 PERMISSIVE
+        found_phases = [p for p in ['P', 'D', 'C', 'A'] if llm_result.get(f'{p}_Score', 0) > 0.3]
+        missing_required = [rp for rp in required_phases if rp not in found_phases]
+
+        # L1 permissive: P+D score > 0.3 → passed=true
+        if level == 1 and 'P' in found_phases and 'D' in found_phases:
+            missing_required = []
+
+        llm_result['is_passed'] = len(missing_required) == 0
+
+        # Coaching Insight
+        coaching_notes = []
+        if not llm_result['is_passed']:
+            coaching_notes.append(f"ขาด Phase บังคับ: {', '.join(missing_required)}")
+        else:
+            low_score_phases = [p for p in required_phases if llm_result.get(f'{p}_Score', 0) < 0.7]
+            if low_score_phases: coaching_notes.append(f"ควรเสริมรายละเอียดใน Phase: {', '.join(low_score_phases)}")
+            else: coaching_notes.append("ผ่านเกณฑ์ครบถ้วน หลักฐานครอบคลุมดีมาก")
+        llm_result['coaching_insight'] = "\n".join(coaching_notes)
+
+        # 8. FINALIZATION & SCORE GUARD
+        original_llm_score = llm_result.get('score', 0.0)
+        original_phase_scores = {
+            'P': llm_result.get('P_Plan_Score', 0) or llm_result.get('P_Score', 0),
+            'D': llm_result.get('D_Do_Score', 0) or llm_result.get('D_Score', 0),
+            'C': llm_result.get('C_Check_Score', 0) or llm_result.get('C_Score', 0),
+            'A': llm_result.get('A_Act_Score', 0) or llm_result.get('A_Score', 0)
+        }
+
+        llm_result = self.post_process_llm_result(llm_result, level, sub_id=sub_id)
+
+        # Score Guard: ป้องกัน Post-process ทำคะแนนดิ่ง
+        if llm_result.get('score', 0.0) < original_llm_score:
+            llm_result['score'] = original_llm_score
+            self.logger.debug(f"[SCORE-GUARD] {log_prefix}: restored original {original_llm_score:.1f}")
+
+        # 9. LLM FEEDBACK LOOP (FORCE-TAG & FORCE-BLOCK)
+        if relevant_filtered:
+            for phase, score in original_phase_scores.items():
+                if score > 0.4: # ถ้า LLM บอกว่ามีเนื้อหา (Score > 0.4) แต่ไม่มี Tag
+                    has_tag = any(d.get('pdca_tag') == phase for d in relevant_filtered)
+                    if not has_tag:
+                        top_chunk = max(relevant_filtered, key=lambda d: d.get('rerank_score', 0))
+                        top_chunk['pdca_tag'] = phase
+                        self.logger.info(f"[FORCE-TAG] {log_prefix} | Assigned '{phase}' to top chunk (LLM {phase}_Score = {score:.1f})")
+
+                        # Force-Block ถ้า Block ใน Context ยังว่างอยู่
+                        if phase == 'P' and not plan_b: plan_b = top_chunk.get('text', '')[:1000]
+                        elif phase == 'D' and not do_b: do_b = top_chunk.get('text', '')[:1000]
+
+        # 10. SAVE & FINALIZE
+        self._save_level_evidences_and_calculate_strength(relevant_filtered, sub_id, level, llm_result, highest_rerank_score)
+        
+        tag_counts = {p: sum(1 for d in relevant_filtered if d.get('pdca_tag') == p) for p in ['P', 'D', 'C', 'A', 'Other']}
+        duration = round(time.time() - start_time, 2)
+        
+        self.logger.info(f"[ASSESSMENT-DONE] {log_prefix} | Score: {llm_result.get('score', 0.0):.1f} | Passed: {llm_result['is_passed']} | PDCA tags: {tag_counts} | Time: {duration}s")
 
         return {
-            "sub_criteria_id": sub_id, "level": level,
-            "is_passed": llm_result.get('is_passed', False),
-            "score": float(llm_result.get('score', 0.0)),
-            "reason": llm_result.get('reason', "ไม่พบข้อสรุป"),
-            "audit_confidence": confidence_res,
-            "temp_map_for_level": relevant_filtered,
-            "duration": round(time.time() - start_time, 2)
+            "sub_criteria_id": sub_id, "level": level, "is_passed": llm_result.get('is_passed', False),
+            "score": float(llm_result.get('score', 0.0)), "reason": llm_result.get('reason', ""),
+            "coaching_insight": llm_result.get('coaching_insight', ""), "duration": duration
         }

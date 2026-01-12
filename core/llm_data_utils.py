@@ -1036,9 +1036,6 @@ def _get_context_for_level(context: str, level: int) -> str:
     # L3-L5 ใช้ค่าที่กำหนดใน global_vars เพื่อลด Latency
     return context[:MAX_EVAL_CONTEXT_LENGTH]  
 
-# =================================================================
-# ULTIMATE PRODUCTION: evaluate_with_llm (Audit-Grade v25.2 | L3-L5)
-# =================================================================
 def evaluate_with_llm(
     context: str, 
     sub_criteria_name: str, 
@@ -1046,142 +1043,53 @@ def evaluate_with_llm(
     statement_text: str, 
     sub_id: str, 
     llm_executor: Any = None, 
-    pdca_phase: str = "",
-    level_constraint: str = "",
-    must_include_keywords: str = "",
-    avoid_keywords: str = "",
+    require_phase: List[str] = None,      # 🎯 รับ List ของ Phase บังคับ
     max_rerank_score: float = 0.0,
     max_evidence_strength: float = 10.0,
     specific_contextual_rule: str = "N/A",
-    ai_confidence: str = "MEDIUM",        # 🛡️ รับค่าความมั่นใจจาก Engine (Pillar 1)
-    confidence_reason: str = "N/A",       # 🛡️ รับเหตุผลจาก Engine
+    ai_confidence: str = "MEDIUM",
+    confidence_reason: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
     """
-    [AUDIT-GRADE v25.2] Standard Evaluation for L3-L5
-    - บูรณาการ 4 เสาหลัก: Confidence, Consistency, Traceability, Hard-Fail
-    - ใช้ Baseline & Auxiliary Summary ในการตรวจสอบความเชื่อมโยง (PDCA Connectivity)
-    - รองรับการบังคับคะแนนตามเกณฑ์ SE-AM (เช่น L3 ต้องมี C, L4 ต้องมี A)
+    [AUDIT-GRADE v36.0] Standard Evaluation for L3-L5
+    - วิเคราะห์ความสอดคล้องเชิงลึก (Strategic Alignment)
+    - บังคับตรวจตาม required_phases
     """
-    import logging
-    import json
-
-    logger = logging.getLogger(__name__)
-
-    # ==================== 1. Context Preparation ====================
-    # ดึง Context ที่กรองตาม Level มาใช้งาน
     context_to_send_eval = _get_context_for_level(context, level) if context else ""
-
-    if not context_to_send_eval.strip():
-        logger.warning(
-            f"⚠️ L{level} Context is sparse for {sub_id}. "
-            f"Evaluation will focus on Baseline alignment. (Confidence: {ai_confidence})"
-        )
-
-    # ดึงข้อมูลสรุปจากระดับก่อนหน้าและข้อมูลเสริม (ถ้ามี)
+    phases_str = ", ".join(require_phase) if require_phase else "P, D, C, A"
+    
     baseline_summary = kwargs.get("baseline_summary", "").strip()
     aux_summary = kwargs.get("aux_summary", "").strip()
 
-    # ==================== 2. Prompt Building (Expert Level) ====================
-    system_prompt = "You are an expert SE-AM auditor. Respond only with valid JSON."
-
     try:
-        # ฉีดค่าความมั่นใจเพื่อให้ LLM วิเคราะห์ด้วยความระมัดระวัง (Professional Skepticism)
         system_prompt = SYSTEM_ASSESSMENT_PROMPT.format(
-            ai_confidence=ai_confidence,
-            confidence_reason=confidence_reason,
-            max_evidence_strength=f"{max_evidence_strength:.1f}"
-        )
-        system_prompt += "\n\nCRITICAL AUDIT RULES:\n- วิเคราะห์ความขัดแย้งของหลักฐานเสมอ\n- หากไม่พบหลักฐานเชิงประจักษ์ในมิตินั้นๆ ให้ 0.0 เท่านั้น"
-
-        # ฟอร์แมต User Prompt ด้วยตัวแปรทั้งหมด
-        user_prompt = USER_ASSESSMENT_PROMPT.format(
-            sub_criteria_name=sub_criteria_name,
-            sub_id=sub_id,
-            level=level,
-            pdca_phase=pdca_phase or "ทั่วไป",
-            statement_text=statement_text,
-            context=context_to_send_eval[:32000],  # กัน Token Overflow
-            level_constraint=level_constraint or "ไม่มีข้อจำกัดเพิ่มเติม",
-            must_include_keywords=must_include_keywords or "ไม่มี",
-            avoid_keywords=avoid_keywords or "ไม่มี",
-            max_rerank_score=f"{max_rerank_score:.4f}",
-            max_evidence_strength=f"{max_evidence_strength:.1f}",
-            target_score_threshold=kwargs.get("target_score_threshold", 2),
-            specific_contextual_rule=specific_contextual_rule.strip() if specific_contextual_rule != "N/A" else "พิจารณาตามเกณฑ์ SE-AM มาตรฐาน",
             ai_confidence=ai_confidence,
             confidence_reason=confidence_reason
         )
 
-        # ฉีด Context เสริมเพื่อตรวจสอบความต่อเนื่องของงาน (PDCA Integration)
-        if baseline_summary:
-            user_prompt += f"\n\n--- BASELINE DATA (Previous Levels) ---\n{baseline_summary}"
-        if aux_summary:
-            user_prompt += f"\n\n--- AUXILIARY DATA (Support Evidence) ---\n{aux_summary}"
-
-    except Exception as e:
-        logger.error(f"❌ Prompt formatting failed for {sub_id} L{level}: {e}")
-        user_prompt = f"Expert Evaluation Required: {sub_id} L{level}\nStatement: {statement_text}\nContext: {context_to_send_eval[:10000]}"
-
-    # ==================== 3. JSON Schema Enforcement ====================
-    # (Optional) สามารถฉีด Schema เข้าไปใน System Prompt เพื่อคุมโครงสร้างให้เป๊ะ 100%
-    system_prompt += "\nREQUIRED JSON STRUCTURE: { \"score\": float, \"reason\": string, \"is_passed\": bool, \"consistency_check\": bool, \"P_Plan_Score\": float, ... }"
-
-    # ==================== 4. LLM Execution ====================
-    try:
-        raw_response = _fetch_llm_response(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_retries=3,
-            llm_executor=llm_executor
+        user_prompt = USER_ASSESSMENT_PROMPT.format(
+            sub_criteria_name=sub_criteria_name,
+            sub_id=sub_id,
+            level=level,
+            statement_text=statement_text,
+            context=context_to_send_eval[:32000],
+            required_phases=phases_str,        # 🎯 ส่งต่อให้ Prompt v36.0
+            specific_contextual_rule=specific_contextual_rule if specific_contextual_rule != "N/A" else "พิจารณาตามเกณฑ์มาตรฐาน",
+            # ตัด target_score_threshold ออกเพื่อให้ AI โฟกัสที่เนื้อหา
         )
 
-        logger.info(f"🔍 High-Level Audit Response ({sub_id} L{level}): {raw_response[:500]}...")
-
-        parsed = _robust_extract_json(raw_response)
-        if not isinstance(parsed, dict):
-            logger.warning(f"⚠️ Failed to parse High-Level JSON for {sub_id}")
-            parsed = {}
-
-        # ==================== 5. Result Construction (Audit-Grade) ====================
-        result = {
-            "score": float(parsed.get("score", 0.0)),
-            "reason": parsed.get("reason", "วิเคราะห์หลักฐานไม่สำเร็จ").strip(),
-            "is_passed": bool(parsed.get("is_passed", False)),
-            
-            # 🎯 [Pillar 2] ตรวจสอบความขัดแย้งของข้อมูล (เช่น แผนบอกทำ 10 แต่ผลบอกทำ 5)
-            "consistency_check": bool(parsed.get("consistency_check", True)),
-            
-            # คะแนน PDCA
-            "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
-            "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
-            "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
-            "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
-            
-            # 🎯 [Pillar 3] Traceability: การดึงข้อความหลักฐานมาแสดงย้อนกลับ
-            "Extraction_P": parsed.get("Extraction_P", parsed.get("หลักฐาน P", "-")),
-            "Extraction_D": parsed.get("Extraction_D", parsed.get("หลักฐาน D", "-")),
-            "Extraction_C": parsed.get("Extraction_C", parsed.get("หลักฐาน C", "-")),
-            "Extraction_A": parsed.get("Extraction_A", parsed.get("หลักฐาน A", "-")),
-            
-            # ข้อมูลสำหรับการรัน Expert Loop หรือ Debug
-            "final_llm_context": context_to_send_eval,
-            "raw_llm_response": raw_response[:2000],
-            "ai_confidence_at_eval": ai_confidence
-        }
-
-        logger.info(f"✅ High-Level Audit Finished {sub_id} L{level}: Result={result['is_passed']}")
-        return result
+        # เพิ่มบริบทประวัติเดิม (PDCA Connectivity)
+        if baseline_summary:
+            user_prompt += f"\n\n--- BASELINE DATA (Previous Levels) ---\n{baseline_summary}"
 
     except Exception as e:
-        logger.exception(f"🛑 Critical Audit Failure {sub_id} L{level}: {e}")
-        return {
-            "score": 0.0, "is_passed": False, "consistency_check": False,
-            "reason": f"Audit Error: {str(e)}",
-            "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
-            "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
-            "final_llm_context": context_to_send_eval, "raw_llm_response": ""
-        }
+        return _create_fallback_error(sub_id, level, e, context_to_send_eval)
+
+    raw_response = _fetch_llm_response(system_prompt, user_prompt, llm_executor=llm_executor)
+    parsed = _robust_extract_json(raw_response)
+
+    return _build_audit_result_object(parsed, raw_response, context_to_send_eval, ai_confidence)
 
 # =========================
 # Patch for L1-L2 evaluation
@@ -1214,9 +1122,6 @@ def _extract_combined_assessment(parsed: Dict[str, Any], score_default_key: str 
     return result
 
 
-# =================================================================
-# ULTIMATE PRODUCTION: evaluate_with_llm_low_level (Audit-Grade v25.2)
-# =================================================================
 def evaluate_with_llm_low_level(
     context: str,
     sub_criteria_name: str,
@@ -1224,142 +1129,102 @@ def evaluate_with_llm_low_level(
     statement_text: str,
     sub_id: str,
     llm_executor: Any = None,
-    pdca_phase: str = "",
-    level_constraint: str = "",
-    must_include_keywords: str = "",
-    avoid_keywords: str = "",
+    require_phase: List[str] = None,      # 🎯 เปลี่ยนจาก pdca_phase เป็น require_phase
     max_rerank_score: float = 0.0,
     max_evidence_strength: float = 10.0,
-    contextual_rules_map: Optional[Dict[str, Any]] = None,
-    enabler_id: str = "KM",
     specific_contextual_rule: str = "N/A",
-    ai_confidence: str = "MEDIUM",        # 🛡️ รับค่าความมั่นใจจาก Engine
-    confidence_reason: str = "N/A",       # 🛡️ รับเหตุผลจาก Engine
+    ai_confidence: str = "MEDIUM",
+    confidence_reason: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
     """
-    [AUDIT-GRADE v25.2] Low-Level Evaluation (L1/L2)
-    - รองรับ AI Confidence Guardrail (Pillar 1: Independence & Evidence Strength)
-    - รองรับ Consistency Check (Pillar 2: ความสอดคล้องของเนื้อหา)
-    - ทนทานต่อการ Parse JSON และลดปัญหา UnboundLocalError
+    [AUDIT-GRADE v36.0] Low-Level Evaluation (L1/L2)
+    - เน้นตรวจสอบการมีอยู่ของหลักฐาน (Evidence Presence) ตาม Phase ที่กำหนด
     """
-
-    # ==================== 1. Context Preparation ====================
-    # ดึงเฉพาะส่วนของ Context ที่จำเป็นสำหรับ Level นั้นๆ
     context_to_send_eval = _get_context_for_level(context, level) if context else ""
+    phases_str = ", ".join(require_phase) if require_phase else "P, D"
 
-    if not context_to_send_eval.strip():
-        logger.warning(
-            f"⚠️ Context empty for {sub_id} L{level} - Evaluation will rely on keywords & confidence. "
-            f"(Confidence: {ai_confidence})"
-        )
+    # ดึง Plan Keywords จากกฎ (ใช้สำหรับ L1-L2)
+    plan_keywords = kwargs.get("plan_keywords", "วิสัยทัศน์, นโยบาย, แผนงาน, คำสั่ง")
 
-    # ==================== 2. Dynamic Plan Keywords ====================
-    # ดึง Keywords สำหรับการตรวจสอบเบื้องต้น (เน้น Plan ใน L1-L2)
-    plan_keywords = "วิสัยทัศน์, นโยบาย, ทิศทาง, เป้าหมาย, แผนงาน, กลยุทธ์, วัตถุประสงค์"
-    if contextual_rules_map:
-        sub_rules = contextual_rules_map.get(sub_id, {})
-        level_rules = sub_rules.get(f"L{level}", {}) or sub_rules.get("L1", {})
-        if level_rules and "plan_keywords" in level_rules:
-            plan_keywords = level_rules["plan_keywords"]
-
-    # ==================== 3. Prompt Building ====================
-    system_prompt = "You are an expert SE-AM auditor. Respond only with valid JSON."
-    
     try:
-        # 1. จัดการ System Prompt
         system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(
             ai_confidence=ai_confidence,
             confidence_reason=confidence_reason
         )
 
-        # 2. จัดการ User Prompt (เพิ่มตัวแปรที่ขาดหายไป)
         user_prompt = USER_LOW_LEVEL_PROMPT.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
             level=level,
             statement_text=statement_text,
             context=context_to_send_eval[:32000],
+            required_phases=phases_str,        # 🎯 ส่งสตริง "P, D" เข้า Prompt
             max_rerank_score=float(max_rerank_score),
             max_evidence_strength=float(max_evidence_strength),
             specific_contextual_rule=specific_contextual_rule,
             ai_confidence=ai_confidence,
             confidence_reason=confidence_reason,
-            plan_keywords=plan_keywords,     # 🛡️ ส่งค่าที่ดึงมาจากขั้นตอนที่ 2 ของฟังก์ชัน
-            avoid_keywords=avoid_keywords if avoid_keywords else "ไม่มี" # 🛡️ ส่งค่า avoid_keywords
+            plan_keywords=plan_keywords,
+            avoid_keywords=kwargs.get("avoid_keywords", "ไม่มี")
         )
-
     except Exception as e:
-        logger.error(f"❌ Prompt formatting failed for {sub_id} L{level}: {e}")
-        # Fallback User Prompt กรณี Error
-        user_prompt = (
-            f"ประเมินเกณฑ์: {sub_criteria_name} (L{level})\n"
-            f"คำถาม: {statement_text}\n"
-            f"ความมั่นใจระบบ: {ai_confidence}\n"
-            f"หลักฐาน: {context_to_send_eval[:15000]}"
-        )
+        return _create_fallback_error(sub_id, level, e, context_to_send_eval)
 
-    # ==================== 4. LLM Execution ====================
-    try:
-        raw_response = _fetch_llm_response(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_retries=3,
-            llm_executor=llm_executor
-        )
+    raw_response = _fetch_llm_response(system_prompt, user_prompt, llm_executor=llm_executor)
+    parsed = _robust_extract_json(raw_response)
 
-        logger.info(f"🔍 Raw LLM Response ({sub_id} L{level}): {raw_response[:400]}...")
+    return _build_audit_result_object(parsed, raw_response, context_to_send_eval, ai_confidence)
 
-        # สกัด JSON ออกจาก Text Response
-        parsed = _robust_extract_json(raw_response)
-        if not isinstance(parsed, dict):
-            logger.warning(f"⚠️ JSON parse failed for {sub_id} L{level} - using empty fallback")
-            parsed = {}
+def _build_audit_result_object(parsed: dict, raw_response: str, context: str, confidence: str) -> Dict[str, Any]:
+    """
+    [STANDARD OUTPUT BUILDER]
+    รวมโครงสร้างผลลัพธ์ให้เป็นระเบียบ เพื่อป้องกัน KeyError และส่งต่อข้อมูลได้ครบถ้วน
+    """
+    return {
+        "score": float(parsed.get("score", 0.0)),
+        "reason": parsed.get("reason", "วิเคราะห์ไม่สำเร็จ").strip(),
+        "is_passed": bool(parsed.get("is_passed", False)),
+        "consistency_check": bool(parsed.get("consistency_check", True)),
+        
+        # Breakdown Scores (P, D, C, A)
+        "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
+        "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
+        "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
+        "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
+        
+        # Evidence Extraction (Traceability)
+        "Extraction_P": parsed.get("Extraction_P", parsed.get("หลักฐาน P", "-")),
+        "Extraction_D": parsed.get("Extraction_D", parsed.get("หลักฐาน D", "-")),
+        "Extraction_C": parsed.get("Extraction_C", parsed.get("หลักฐาน C", "-")),
+        "Extraction_A": parsed.get("Extraction_A", parsed.get("หลักฐาน A", "-")),
+        
+        # Metadata
+        "final_llm_context": context,
+        "raw_llm_response": raw_response[:2000] if raw_response else "",
+        "ai_confidence_at_eval": confidence
+    }
 
-        # ==================== 5. Final Output Construction ====================
-        # รวบรวมผลลัพธ์พร้อมทั้ง Extraction ข้อมูลเพื่อใช้ในขั้นตอน Post-process
-        result = {
-            "score": float(parsed.get("score", 0.0)),
-            "reason": parsed.get("reason", "ไม่พบเหตุผลจากการวิเคราะห์").strip(),
-            "is_passed": bool(parsed.get("is_passed", False)),
-            
-            # 🎯 [Pillar 2] ความสอดคล้องของเนื้อหา
-            "consistency_check": bool(parsed.get("consistency_check", True)),
-            
-            # คะแนนรายด้าน (PDCA Breakdown)
-            "P_Plan_Score": float(parsed.get("P_Plan_Score", 0.0)),
-            "D_Do_Score": float(parsed.get("D_Do_Score", 0.0)),
-            "C_Check_Score": float(parsed.get("C_Check_Score", 0.0)),
-            "A_Act_Score": float(parsed.get("A_Act_Score", 0.0)),
-            
-            # 🎯 Extraction Keys — ใช้สำหรับการตรวจสอบย้อนกลับ (Traceability)
-            "Extraction_P": parsed.get("Extraction_P", parsed.get("หลักฐาน P", "-")),
-            "Extraction_D": parsed.get("Extraction_D", parsed.get("หลักฐาน D", "-")),
-            "Extraction_C": parsed.get("Extraction_C", parsed.get("หลักฐาน C", "-")),
-            "Extraction_A": parsed.get("Extraction_A", parsed.get("หลักฐาน A", "-")),
-            
-            # ข้อมูลเสริมสำหรับ Debug และ Expert Loop
-            "final_llm_context": context_to_send_eval,
-            "raw_llm_response": raw_response[:2000],
-            "ai_confidence_at_eval": ai_confidence
-        }
-
-        logger.info(f"✅ Final Low-Level Result {sub_id} L{level}: Score={result['score']:.1f} | Passed={result['is_passed']}")
-        return result
-
-    except Exception as e:
-        logger.exception(f"🛑 Critical failure in low_level_eval for {sub_id} L{level}: {e}")
-        return {
-            "score": 0.0,
-            "reason": f"ระบบเกิดข้อผิดพลาดในการประเมิน: {str(e)}",
-            "is_passed": False,
-            "consistency_check": False,
-            "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
-            "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
-            "final_llm_context": context_to_send_eval,
-            "raw_llm_response": ""
-        }
+def _create_fallback_error(sub_id: str, level: int, error: Exception, context: str) -> Dict[str, Any]:
+    """
+    [ERROR HANDLER]
+    กรณี LLM หรือการ Format Prompt เกิดความผิดพลาดรุนแรง ให้คืนค่า Object ที่ไม่พังระบบ
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"🛑 Critical Audit Failure {sub_id} L{level}: {str(error)}")
     
+    return {
+        "score": 0.0,
+        "reason": f"Audit Engine Error: {str(error)}",
+        "is_passed": False,
+        "consistency_check": False,
+        "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
+        "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
+        "final_llm_context": context,
+        "raw_llm_response": ""
+    }
+
 # ------------------------
 # Summarize (FULL VERSION)
 # ------------------------
@@ -1483,7 +1348,7 @@ def create_structured_action_plan(
     recommendation_statements: List[Dict[str, Any]],
     sub_id: str,
     sub_criteria_name: str,
-    enabler: str = "KM", # เพิ่มเพื่อรองรับ Universal Enablers
+    enabler: str = "KM",
     target_level: int = 5,
     llm_executor: Any = None,
     logger: logging.Logger = None,
@@ -1491,8 +1356,9 @@ def create_structured_action_plan(
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
     """
-    สร้าง Strategic Roadmap (Action Plan) ที่เป็นกลางและรองรับทุก Enabler
-    โดยเน้น Logic การซ่อมรากฐาน (Level 2) เพื่อยกระดับสู่เป้าหมาย (Level 4-5)
+    [FULL PRODUCTION VERSION]
+    สร้าง Strategic Roadmap โดยบูรณาการ Gaps, Coaching Insights และ Enabler Rules
+    รองรับระบบตรวจสอบความถูกต้องผ่าน ActionPlanResult Schema
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -1503,13 +1369,18 @@ def create_structured_action_plan(
     is_sustain_mode = not recommendation_statements
     is_quality_refinement = False
     
-    if not is_sustain_mode:
+    avg_score = 10.0
+    if recommendation_statements:
+        avg_score = sum([s.get('score', 0) for s in recommendation_statements]) / len(recommendation_statements)
         types = [s.get('recommendation_type') for s in recommendation_statements]
-        # ถ้าไม่มี FAILED หรือ GAP_ANALYSIS แสดงว่าเป็นผ่านหมดแต่หลักฐานอ่อน
-        if 'FAILED' not in types and 'GAP_ANALYSIS' not in types:
+        
+        # ถ้าผ่านเกณฑ์พื้นฐานหมดแล้วแต่คะแนนเฉลี่ย < 70% ให้เน้นการปรับปรุงคุณภาพ (Refinement)
+        if 'FAILED' not in types and 'GAP_ANALYSIS' not in types and avg_score < 7.0:
             is_quality_refinement = True
 
     # --- 2. ตั้งค่า Dynamic Params (Advice Focus) ให้เป็นกลางตาม Enabler ---
+    specific_rule = enabler_rules.get(enabler, enabler_rules.get("DEFAULT", ""))
+    
     if is_sustain_mode:
         advice_focus = f"การรักษาความเป็นเลิศ นวัตกรรม และการเป็นต้นแบบในหัวข้อ {sub_criteria_name} ({enabler})"
         dynamic_max_phases = 1
@@ -1519,26 +1390,34 @@ def create_structured_action_plan(
         dynamic_max_phases = 1
         max_steps = 3
     else:
-        # 🎯 CRITICAL LOGIC: บังคับให้ AI เช็คฐาน L2 ก่อนปีนไป L4-L5
+        # 🎯 CRITICAL LOGIC: บังคับให้ AI เช็คฐาน L2 (Policy/Structure) ก่อนปีนไป L4-L5
         advice_focus = (f"วิเคราะห์ความเชื่อมโยงจากโครงสร้างพื้นฐานใน Level 2 "
                         f"เพื่อปิดช่องว่างและยกระดับ {sub_criteria_name} ของ {enabler} สู่ Level {target_level}")
         dynamic_max_phases = 3 if target_level >= 4 else 2
         max_steps = 3
 
-    # --- 3. รวบรวมรายการ Gap (Statement Content) ---
+    if specific_rule:
+        advice_focus += f" โดยเน้นย้ำตามกฎเฉพาะ: {specific_rule}"
+
+    # --- 3. รวบรวมรายการ Gap (Statement Content) + Coaching Insights ---
     if is_sustain_mode:
-        stmt_content = f"บรรลุเกณฑ์ {enabler} ระดับสูงสุดแล้ว เน้นแผนรักษามาตรฐานและสร้างความยั่งยืน"
+        stmt_content = f"บรรลุเกณฑ์ {enabler} ระดับสูงสุดแล้ว เน้นแผนรักษามาตรฐานและสร้างความยั่งยืนต่อเนื่อง"
     else:
         unique_statements = {}
         for s in recommendation_statements:
             reason = (s.get('reason') or s.get('statement') or "").strip()
+            coaching = s.get('coaching_insight', '').strip()
+            # ผสาน Coaching Insight เข้ากับช่องว่างเพื่อความคมชัด
+            combined = f"{reason} [Insight: {coaching}]" if coaching else reason
+            
             lvl = s.get('level', 0)
-            if not reason: continue
-            if reason not in unique_statements or lvl > unique_statements[reason]:
-                unique_statements[reason] = lvl
+            if not combined: continue
+            if combined not in unique_statements or lvl > unique_statements[combined]:
+                unique_statements[combined] = lvl
+        
         stmt_content = "\n".join([f"- [Level {v}] {k}" for k, v in unique_statements.items()])
 
-    # --- 4. ประกอบ Prompt (เรียกใช้ Universal Template) ---
+    # --- 4. ประกอบ Prompt (ใช้ Template ที่เรา Revise ล่าสุด) ---
     human_prompt = ACTION_PLAN_PROMPT.format(
         enabler=enabler,
         sub_id=sub_id,
@@ -1552,7 +1431,7 @@ def create_structured_action_plan(
         language="ภาษาไทย"
     )
 
-    # --- 5. Execution Loop (พร้อมระบบป้องกัน JSON Error) ---
+    # --- 5. Execution Loop (พร้อมระบบ Robust Extraction & Validation) ---
     for attempt in range(1, max_retries + 1):
         try:
             logger.debug(f"Attempt {attempt}/{max_retries} for {sub_id}")
@@ -1563,66 +1442,47 @@ def create_structured_action_plan(
                 temperature=0.0 
             )
 
-            # Extract Text จาก Response
-            raw_text = response.generations[0][0].text if hasattr(response, 'generations') else str(response.content if hasattr(response, 'content') else response)
+            # 5.1 Extract Text
+            raw_text = ""
+            if hasattr(response, 'generations'):
+                raw_text = response.generations[0][0].text
+            elif hasattr(response, 'content'):
+                raw_text = response.content
+            else:
+                raw_text = str(response)
 
-            # Extract JSON Array
+            # 5.2 Extract JSON Array (กู้คืน JSON ที่พัง)
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items:
+                logger.warning(f"⚠️ No JSON array found in attempt {attempt}")
                 continue
 
-            # Normalize Keys ให้เป็น snake_case มาตรฐาน
+            # 5.3 Normalize Keys (Snake Case Enforcement)
             clean_items = action_plan_normalize_keys(items)
 
-            # Validation ผ่าน Pydantic (ใช้ Flexible Validation ที่รองรับทั้ง List และ Root Object)
+            # 5.4 Pydantic Validation (ใช้ Schema ที่สร้างไว้)
             try:
                 validated = ActionPlanResult.validate_flexible(clean_items)
                 logger.info(f"✅ Strategic Roadmap generated for {enabler} {sub_id}")
-                return validated.model_dump(by_alias=True)
+                # ส่งคืนข้อมูลในรูปแบบ List ของ Dict
+                if hasattr(validated, 'root'):
+                    return [item.model_dump() if hasattr(item, 'model_dump') else item for item in validated.root]
+                return [v.model_dump() for v in validated]
+
             except Exception as ve:
-                logger.error(f"❌ Validation Error (Attempt {attempt}): {ve}")
+                logger.error(f"❌ Schema Validation Error (Attempt {attempt}): {ve}")
                 continue
 
         except Exception as e:
-            logger.error(f"💥 Attempt {attempt} failed: {str(e)}")
+            logger.error(f"💥 Execution Error (Attempt {attempt}): {str(e)}")
             time.sleep(0.5)
 
-    # --- 6. Fallback Plan (ถ้าพังครบทุกครั้ง) ---
-    return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement, enabler)
-
-# =================================================================
-# Helper: Emergency Fallback (Universal Version)
-# =================================================================
-def _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement, enabler="KM"):
-    responsible_party = f"คณะทำงาน {enabler} / หน่วยงานเจ้าของเรื่อง"
-    
-    title = "Gap Remediation Roadmap"
-    rec = f"เร่งดำเนินการตามเกณฑ์ {sub_criteria_name} ให้ครบถ้วนตามวงจร PDCA"
-    
-    if is_sustain_mode:
-        title = "Sustainability Plan"
-        rec = f"รักษามาตรฐานความเป็นเลิศในหัวข้อ {sub_criteria_name}"
-    
-    return [{
-        "Phase": f"Phase 1: {title}",
-        "Goal": f"ยกระดับและรักษามาตรฐาน {sub_criteria_name} ({enabler})",
-        "Actions": [{
-            "statement_id": sub_id, 
-            "failed_level": target_level,
-            "recommendation": rec, 
-            "target_evidence_type": "Evidence Package",
-            "key_metric": "ความครบถ้วนของหลักฐาน 100%",
-            "steps": [
-                {
-                    "Step": 1, 
-                    "Description": f"ทบทวนช่องว่างและจัดทำสรุปผลการดำเนินงานตามเกณฑ์ {sub_criteria_name}", 
-                    "Responsible": responsible_party, 
-                    "Tools_Templates": "SE-AM Gap Template", 
-                    "Verification_Outcome": "summary_report.pdf"
-                }
-            ]
-        }]
-    }]
+    # --- 6. Emergency Fallback Plan ---
+    logger.warning(f"⚠️ Falling back to predefined emergency plan for {sub_id}")
+    return _get_emergency_fallback_plan(
+        sub_id, sub_criteria_name, target_level, 
+        is_sustain_mode, is_quality_refinement, enabler
+    )
 
 # =================================================================
 # 2. Key Normalizer: แก้ไขปัญหา LLM พ่น Key ไม่นิ่ง
@@ -1667,48 +1527,100 @@ def action_plan_normalize_keys(obj: Any) -> Any:
 # =================================================================
 # 3. JSON Extractor: ระบบกู้คืน JSON ที่พังหรือเจนไม่จบ
 # =================================================================
+def _get_emergency_fallback_plan(
+    sub_id: str, 
+    sub_criteria_name: str, 
+    target_level: int, 
+    is_sustain_mode: bool, 
+    is_quality_refinement: bool, 
+    enabler: str = "KM"
+) -> List[Dict[str, Any]]:
+    """
+    [SAFEGUARD] คืนค่าแผนงานมาตรฐานกรณี LLM พลาด เพื่อให้ระบบไม่ Error
+    """
+    responsible_party = f"คณะทำงาน {enabler} / หน่วยงานเจ้าของเรื่อง"
+    
+    title = "แผนการปิดช่องว่าง (Gap Remediation)"
+    rec = f"เร่งดำเนินการตามเกณฑ์ {sub_criteria_name} ให้ครบถ้วนตามวงจร PDCA"
+    
+    if is_sustain_mode:
+        title = "แผนรักษามาตรฐาน (Sustainability Plan)"
+        rec = f"รักษามาตรฐานความเป็นเลิศในหัวข้อ {sub_criteria_name} และสร้างต้นแบบนวัตกรรม"
+    elif is_quality_refinement:
+        title = "แผนเสริมความแข็งแกร่ง (Quality Enhancement)"
+        rec = f"ปรับปรุงรายละเอียดหลักฐานเชิงประจักษ์ของ {sub_criteria_name} ให้ชัดเจนยิ่งขึ้น"
+    
+    return [{
+        "phase": f"Phase 1: {title}",
+        "goal": f"ยกระดับและรักษามาตรฐาน {sub_criteria_name} ({enabler}) สู่ระดับ {target_level}",
+        "actions": [{
+            "statement_id": sub_id, 
+            "failed_level": target_level,
+            "recommendation": rec, 
+            "target_evidence_type": "Evidence Package / รายงานสรุปผล",
+            "key_metric": "ความครบถ้วนของหลักฐานตามเกณฑ์ระดับเป้าหมาย 100%",
+            "steps": [
+                {
+                    "step": 1, 
+                    "description": f"ทบทวนช่องว่างจากรายงานผลการประเมิน และจัดทำแผนปฏิบัติการเฉพาะหน้าเพื่อเก็บรวบรวมหลักฐาน", 
+                    "responsible": responsible_party, 
+                    "tools_templates": "SE-AM Gap Analysis Template", 
+                    "verification_outcome": "remediation_plan_report.pdf"
+                },
+                {
+                    "step": 2, 
+                    "description": "รวบรวมและตรวจสอบความถูกต้องของหลักฐานให้สอดคล้องกับหัวข้อที่ยังขาดหาย (PDCA)", 
+                    "responsible": responsible_party, 
+                    "tools_templates": "Checklist เกณฑ์ SE-AM", 
+                    "verification_outcome": "evidence_package_final.pdf"
+                }
+            ]
+        }]
+    }]
+
 def _extract_json_array_for_action_plan(text: Any, logger: logging.Logger) -> List[Dict[str, Any]]:
+    """
+    ระบบกู้คืน JSON ที่พังหรือเจนไม่จบ (Robust JSON Extractor)
+    """
     try:
         if not isinstance(text, str): text = str(text) if text is not None else ""
         if not text.strip(): return []
 
-        # ลบ Markdown tags
+        # 1. ลบ Markdown tags
         clean_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', text, flags=re.IGNORECASE).strip()
 
-        # ค้นหาขอบเขต JSON
+        # 2. ค้นหาขอบเขต JSON
         start_idx = clean_text.find('[')
         end_idx = clean_text.rfind(']')
 
         if start_idx == -1:
+            # ลองหาแบบ Object เดียว {} แล้วครอบด้วย []
             start_idx = clean_text.find('{')
             end_idx = clean_text.rfind('}')
             if start_idx == -1: return []
-            json_candidate = clean_text[start_idx:end_idx + 1]
+            json_candidate = f"[{clean_text[start_idx:end_idx + 1]}]"
         else:
             json_candidate = clean_text[start_idx:end_idx + 1]
 
-        # ล้าง Control characters
+        # 3. ล้าง Control characters และ Trailing commas
         json_candidate = "".join(char for char in json_candidate if ord(char) >= 32 or char in "\n\r\t")
+        json_candidate = re.sub(r',\s*([\]}])', r'\1', json_candidate) # ลบ comma ตัวสุดท้าย
 
         def try_parse(content):
             try:
                 data = json5.loads(content)
                 return data if isinstance(data, list) else [data]
-            except Exception: return None
+            except: return None
 
-        # พยายาม Parse และซ่อมแซม
+        # 4. พยายาม Parse และซ่อมแซมกรณีตัดจบ
         result = try_parse(json_candidate)
         if not result:
-            repaired = json_candidate.replace('“', '"').replace('”', '"').replace("'", '"')
-            result = try_parse(repaired)
-        
-        # กรณี LLM ตัดจบ (Truncated) พยายามเติมปิดท้ายให้
-        if not result:
+            # กรณี LLM พ่นมาไม่จบ พยายามเติมวงเล็บปิดให้
             for suffix in ["]", "}", "}]", "}\n]"]:
                 result = try_parse(json_candidate + suffix)
                 if result: break
 
         return result or []
     except Exception as e:
-        logger.error(f"Extraction failed: {str(e)}")
+        logger.error(f"JSON Extraction failed: {str(e)}")
         return []
