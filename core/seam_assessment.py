@@ -3892,36 +3892,59 @@ class SEAMPDCAEngine:
 
     def _get_semantic_tag(self, text: str, sub_id: str, level: int) -> str:
         """
-        ใช้ _fetch_llm_response จาก llm_data_utils เพื่อติดป้าย PDCA
+        [REVISED v2026.10] Optimized Semantic Tagging for PEA KM Context
+        - แก้ไขปัญหา แผน/ยุทธศาสตร์ หลุดไปเป็น D
+        - ใช้ _fetch_llm_response เป็นตัวขับเคลื่อนหลัก
         """
-        system_prompt = "You are a KM specialist. Classify text into P, D, C, or A."
-        
-        # บังคับโครงสร้าง JSON ให้ตรงกับที่ _fetch_llm_response คาดหวัง
-        user_prompt = f"""
-        Context: {sub_id} L{level}
-        Text: "{text[:500]}"
-        Return JSON with key "tag". Example: {{"tag": "P"}}
-        """
+        # 1. นิยามที่ปรับให้เข้ากับ KM Assessment ของ PEA โดยเฉพาะ
+        system_prompt = """
+        You are a KM Audit Specialist for PEA (Provincial Electricity Authority).
+        Your mission is to classify Thai text into ONE PDCA phase with high precision.
 
+        CLASSIFICATION RULES:
+        - P (Plan): High-level documents. Policy, Master Plan, Strategy, Objectives, KM Roadmaps, 
+          Appointment of committees, Budget approval, or Vision statements.
+        - D (Do): Execution and Activities. Training, Knowledge sharing sessions, COP, 
+          Implementing KM tools, Capturing tacit knowledge, Day-to-day KM operations.
+        - C (Check): Monitoring and Evaluation. KPI reports, Satisfaction surveys, Internal audits, 
+          Performance reviews against targets, Progress tracking.
+        - A (Act): Improvements and Systemic changes. Lessons learned, Rewarding systems, 
+          Process improvements based on feedback, Innovation from KM, Policy adjustments.
+        """
+        
+        # 2. ตัวอย่างการตอบกลับ (Few-Shot) เพื่อคุม Format
+        user_prompt = f"""
+        Analyze this KM-related text:
+        ---
+        Context: Criteria {sub_id}, Level {level}
+        Text: "{text[:600]}"
+        ---
+        Return ONLY a JSON object. 
+        Example: {{"tag": "P", "confidence": 0.9}}
+        
+        Result:
+        """
+        
         try:
-            # เรียกใช้ฟังก์ชันจาก Module llm_data_utils
-            raw_json_str = _fetch_llm_response(
+            # ใช้ temperature=0 เพื่อให้ผลลัพธ์คงที่ (Deterministic)
+            response_json_str = _fetch_llm_response(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                llm_executor=self.llm, # ส่งตัวแปร LLM ของคลาสเข้าไป
+                llm_executor=self.llm,
                 max_retries=2
             )
             
-            # แปลง String JSON เป็น Dict และดึง Tag
             import json
-            result_data = json.loads(raw_json_str)
-            tag = result_data.get("tag", "Other").strip().upper()
+            data = json.loads(response_json_str)
+            tag = data.get('tag', 'Other').strip().upper()
             
-            return tag if tag in ['P', 'D', 'C', 'A'] else "Other"
-
+            # Validation: ถ้า AI มั่ว Tag อื่นมา ให้ตีเป็น Other
+            valid_tags = ['P', 'D', 'C', 'A']
+            return tag if tag in valid_tags else 'Other'
+            
         except Exception as e:
-            self.logger.error(f"Semantic Tagging Failed: {e}")
-            return "Other"
+            self.logger.error(f"[SEMANTIC-TAG-ERROR] {sub_id} L{level}: {str(e)}")
+            return 'Other'
 
     def _run_single_assessment(
         self,
