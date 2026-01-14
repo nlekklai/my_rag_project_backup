@@ -217,30 +217,6 @@ def get_actual_score(ev: dict) -> float:
 
     return 0.0
 
-def merge_evidence_mappings(results_list: List[Any]) -> Dict[str, List[Dict]]:
-    merged_mapping = {}
-    
-    for item in results_list:
-        # ดึงเฉพาะส่วนที่เป็น map ออกมา
-        temp_map = item[1] if isinstance(item, tuple) and len(item) == 2 else {}
-        if not temp_map: continue
-
-        for level_key, evidence_list in temp_map.items():
-            if level_key not in merged_mapping:
-                merged_mapping[level_key] = []
-            
-            # สร้าง Index ของ ID ที่มีอยู่แล้วเพื่อกันซ้ำ
-            existing_ids = {str(e.get('doc_id') or e.get('chunk_uuid')) for e in merged_mapping[level_key]}
-            
-            for new_ev in evidence_list:
-                new_id = str(new_ev.get('doc_id') or new_ev.get('chunk_uuid'))
-                if new_id not in existing_ids:
-                    merged_mapping[level_key].append(new_ev)
-                    existing_ids.add(new_id)
-                    
-    return merged_mapping
-
-
 def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     """
     [ULTIMATE WORKER v2026.3] Isolated Execution for Parallel Assessment
@@ -1616,6 +1592,48 @@ class SEAMPDCAEngine:
             if tmp_path and os.path.exists(tmp_path):
                 try: os.unlink(tmp_path)
                 except: pass
+
+    def merge_evidence_mappings(self, results_list: List[Any]) -> Dict[str, List[Dict]]:
+        """
+        [REVISED METHOD v2026.1.15]
+        - ย้ายเข้าเป็น Method ของ Class SEAMPDCAEngine เรียบร้อย
+        - ใช้ Logic การแกะ Tuple (level_id, evidence_map) ของพี่ 100%
+        - ป้องกันข้อมูลซ้ำด้วย Indexing ของ doc_id/chunk_uuid
+        """
+        merged_mapping = {}
+        
+        self.logger.info(f"🧬 Starting to merge evidence mappings from {len(results_list)} levels...")
+
+        for item in results_list:
+            # 🎯 ดึงเฉพาะส่วนที่เป็น map ออกมาจาก Tuple (level_id, evidence_map)
+            # โครงสร้าง item ปกติจะเป็น: (1, {"L1": [...], "L2": [...]})
+            temp_map = item[1] if isinstance(item, tuple) and len(item) == 2 else {}
+            
+            # กรณีที่ item ไม่ใช่ tuple แต่เป็น dict อยู่แล้ว (กันพลาด)
+            if not temp_map and isinstance(item, dict):
+                temp_map = item
+
+            if not temp_map: 
+                continue
+
+            for level_key, evidence_list in temp_map.items():
+                if level_key not in merged_mapping:
+                    merged_mapping[level_key] = []
+                
+                # 🛡️ สร้าง Index เพื่อกันข้อมูลซ้ำ (Unique ID)
+                existing_ids = {
+                    str(e.get('doc_id') or e.get('chunk_uuid')) 
+                    for e in merged_mapping[level_key]
+                }
+                
+                for new_ev in evidence_list:
+                    new_id = str(new_ev.get('doc_id') or new_ev.get('chunk_uuid'))
+                    if new_id not in existing_ids:
+                        merged_mapping[level_key].append(new_ev)
+                        existing_ids.add(new_id)
+        
+        self.logger.info(f"✅ Merging completed. Levels detected: {list(merged_mapping.keys())}")
+        return merged_mapping
 
     def _load_evidence_map(self, is_for_merge: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """
