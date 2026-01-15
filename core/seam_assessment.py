@@ -1622,52 +1622,77 @@ class SEAMPDCAEngine:
 
     def merge_evidence_mappings(self, results_list: List[Any]) -> Dict[str, List[Dict]]:
         """
-        [REVISED v2026.1.16 — Complete Evidence Flow]
-        - รองรับทั้ง tuple และ dict จาก worker
-        - Clean ID มากขึ้น + ป้องกัน fallback/na
-        - Log ละเอียด + return map ที่พร้อมบันทึก
+        [ULTIMATE STABLE v2026.1.16 — Evidence Flow Fix]
+        - แก้ไขปัญหา TypeError: 'int' object is not iterable
+        - ตรวจสอบ Type ของ evidence_list ก่อนทำ Iteration
+        - รองรับโครงสร้างข้อมูลที่มาจาก _run_single_assessment (temp_map_for_level)
         """
         merged_mapping = {}
         
         self.logger.info(f"🧬 Starting to merge evidence mappings from {len(results_list)} levels...")
 
         for item in results_list:
-            # ดึง map จาก tuple หรือ dict
+            temp_map = {}
+            
+            # --- 1. การดึงข้อมูล Mapping ออกมาให้ถูกวิธี ---
             if isinstance(item, tuple) and len(item) == 2:
-                level_id, temp_map = item
+                # กรณีมาจาก Worker ที่ส่ง (id, map)
+                temp_map = item[1]
             elif isinstance(item, dict):
-                temp_map = item
+                # กรณีมาจาก _run_single_assessment ซึ่งเก็บไว้ใน 'temp_map_for_level'
+                # หรือถ้า item เองคือ map ของ level นั้นๆ (กรณีรันแบบ Sequential)
+                if 'temp_map_for_level' in item:
+                    # สร้าง key จำลองเพื่อให้ loop ข้างล่างทำงานได้สม่ำเสมอ
+                    level_key = f"{item.get('sub_id', 'Unknown')}_L{item.get('level', 0)}"
+                    temp_map = {level_key: item.get('temp_map_for_level', [])}
+                else:
+                    # ถ้าเป็น dict ทั่วไป ให้รับมาทั้งก้อน
+                    temp_map = item
             else:
+                self.logger.warning(f"⚠️ Skipping invalid item type: {type(item)}")
                 continue
 
-            if not temp_map:
+            if not temp_map or not isinstance(temp_map, dict):
                 continue
 
+            # --- 2. วน Loop รวมหลักฐาน (พร้อมตัวป้องกัน Error) ---
             for level_key, evidence_list in temp_map.items():
+                # [CRITICAL FIX] ป้องกัน 'int' object is not iterable
+                if not isinstance(evidence_list, list):
+                    # self.logger.debug(f"⏩ Skipping non-list key: {level_key}")
+                    continue 
+                
                 if level_key not in merged_mapping:
                     merged_mapping[level_key] = []
                 
+                # เตรียม Set ของ ID เดิมเพื่อป้องกันข้อมูลซ้ำ (Deduplication)
                 existing_ids = {
                     str(e.get('chunk_uuid') or e.get('doc_id') or "N/A").replace("-", "").lower()
                     for e in merged_mapping[level_key]
                 }
                 
                 for new_ev in evidence_list:
+                    # ป้องกันกรณีข้อมูลข้างในไม่ใช่ dict
                     if not isinstance(new_ev, dict):
                         continue
                     
+                    # คลีน ID สำหรับตรวจสอบความซ้ำซ้อน
                     raw_new_id = new_ev.get('chunk_uuid') or new_ev.get('doc_id') or "N/A"
                     clean_new_id = str(raw_new_id).replace("-", "").lower()
 
-                    if clean_new_id in ["na", "n/a", "fallback", "none", ""]:
+                    # ข้ามหลักฐานที่เป็นค่าว่างหรือ Fallback
+                    if clean_new_id in ["na", "n/a", "fallback", "none", "", "unknown"]:
                         continue
 
+                    # ถ้ายังไม่มีใน List ให้ Append เข้าไป
                     if clean_new_id not in existing_ids:
                         merged_mapping[level_key].append(new_ev)
                         existing_ids.add(clean_new_id)
         
+        # นับจำนวนรวมทั้งหมดเพื่อสรุปผล
         total_items = sum(len(v) for v in merged_mapping.values())
         self.logger.info(f"✅ Merging completed. Levels: {list(merged_mapping.keys())} | Total items: {total_items}")
+        
         return merged_mapping
 
     def _load_evidence_map(self, is_for_merge: bool = False) -> Dict[str, List[Dict[str, Any]]]:
@@ -3034,10 +3059,10 @@ class SEAMPDCAEngine:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE ASSEMBLY v2026.6.5 - FULL REVISED]
-        - บูรณาการระบบ Analytics และ Strategic Gaps เข้าสู่เล่มรายงาน
-        - [CLEANED] ใช้ _merge_worker_results แทน Inline Logic
-        - [FIXED] มั่นใจว่าสถิติภาพรวมถูกสรุปครบถ้วนก่อน Export
+        [ULTIMATE ASSEMBLY v2026.6.16 - FINAL STABLE]
+        - [FIXED] ข้อมูลหาย: โหลด Evidence Map เดิมขึ้นมาสะสมเสมอ ไม่ Reset ทิ้ง
+        - [FIXED] Record ID Bias: ยอมให้โหลดข้อมูลข้าม Record ID ได้ถ้าเป็นโปรเจกต์เดียวกัน
+        - [FIXED] Parallel Error: ประสานงานกับ merge_worker_results อย่างเป็นระบบ
         """
         start_ts = time.time()
         self.is_sequential = sequential
@@ -3055,13 +3080,17 @@ class SEAMPDCAEngine:
 
         self.logger.info(f"🎯 Assessment Start | Target: {target_sub_id} | Record ID: {record_id}")
 
-        # 2. 🔄 ระบบ Resumption (Load Baseline)
-        self.evidence_map = {}
-        loaded_data = self._load_evidence_map()
-        if loaded_data and isinstance(loaded_data, dict):
-            if loaded_data.get("record_id") == record_id:
-                self.evidence_map = loaded_data.get("evidence_map", {})
-                self.logger.info(f"🔄 Resumed Evidence Map: {len(self.evidence_map)} keys loaded")
+        # 2. 🔄 ระบบ Resumption (Load Baseline - ปรับปรุงใหม่)
+        # โหลดข้อมูลเดิมที่มีอยู่จากไฟล์ JSON มาตั้งต้น เพื่อป้องกันข้อมูลหัวข้ออื่นหาย
+        existing_data = self._load_evidence_map()
+        if isinstance(existing_data, dict):
+            # ดึงเฉพาะส่วนที่เป็น map ออกมา (ถ้าไม่มีให้เป็น {} )
+            # ไม่เช็ค record_id แบบ Strict เพื่อให้ข้อมูล 1.2 ที่รันไปก่อนหน้ายังคงอยู่
+            self.evidence_map = existing_data.get("evidence_map", {})
+            self.logger.info(f"🔄 Resumed Evidence Map: {len(self.evidence_map)} keys loaded from disk")
+        else:
+            self.evidence_map = {}
+            self.logger.info("🆕 Starting with fresh Evidence Map")
 
         # 3. ⚙️ ตั้งค่าการรัน (Parallel vs Sequential)
         max_workers = int(os.environ.get('MAX_PARALLEL_WORKERS', 4))
@@ -3090,44 +3119,48 @@ class SEAMPDCAEngine:
                 results_list.append(res)
 
         # 5. 🧩 Integration Phase (Merge Results)
-        # เรียกใช้ฟังก์ชันหลักของพี่ในการรวบรวมข้อมูล
+        # รวมผลลัพธ์จากรอบนี้เข้าสู่ Memory ของระบบ
         for res in results_list:
             if isinstance(res, tuple) and len(res) == 2:
                 # กรณีมาตรฐาน: (sub_result, temp_map)
                 self._merge_worker_results(res[0], res[1])
             elif isinstance(res, dict):
-                # กรณี Fallback: เฉพาะ sub_result
-                self._merge_worker_results(res, {})
+                # กรณี Fallback: ดึง temp_map_for_level จากใน dict มา merge
+                temp_map = res.get('temp_map_for_level', {})
+                if isinstance(temp_map, list): # ถ้าเป็น list ต้องแปลงเป็น dict key
+                    key = f"{res.get('sub_id')}_L{res.get('level')}"
+                    temp_map = {key: temp_map}
+                self._merge_worker_results(res, temp_map)
 
-        # 6. 💾 Persistence (Save Baseline)
-        if self.evidence_map:
-            try:
-                save_payload = {
-                    "record_id": record_id, 
-                    "evidence_map": self.evidence_map, 
-                    "timestamp": datetime.now().isoformat()
-                }
-                self._save_evidence_map(map_to_save=save_payload)
-                self.logger.info(f"✅ Baseline Evidence Saved for: {record_id}")
-            except Exception as e:
-                self.logger.error(f"❌ Persistence failed: {e}")
+        # 6. 💾 Persistence (Save Baseline - ปรับปรุงให้ Atomic)
+        # บันทึกสถานะล่าสุดลงไฟล์ทันที เพื่อไม่ให้เสียแรงเปล่าหากเกิด Crash ในภายหลัง
+        try:
+            save_payload = {
+                "record_id": record_id, 
+                "evidence_map": self.evidence_map, # รวมทั้งของเก่าและของใหม่ที่เพิ่งรัน
+                "timestamp": datetime.now().isoformat()
+            }
+            self._save_evidence_map(map_to_save=save_payload)
+            self.logger.info(f"✅ Baseline Evidence Saved Successfully (Total Keys: {len(self.evidence_map)})")
+        except Exception as e:
+            self.logger.error(f"❌ Persistence failed: {e}")
 
         # 7. 📊 Final Summary & Analytics
-        # คำนวณ PDCA Gaps และสถิติภาพรวมก่อน (CRITICAL STEP)
         self._calculate_overall_stats(target_sub_id)
         
-        # รวบรวม Coaching Insights สำหรับ Dashboard/Report
+        # รวบรวม Coaching Insights
         all_insights = []
         for res in self.final_subcriteria_results:
             details = res.get('level_details', {})
-            for lvl, data in details.items():
-                if data.get('coaching_insight'):
-                    all_insights.append({
-                        "sub_id": res.get('sub_id'),
-                        "level": str(lvl),
-                        "text": data['coaching_insight'],
-                        "status": "passed" if data.get('is_passed') else "failed"
-                    })
+            if isinstance(details, dict):
+                for lvl, data in details.items():
+                    if data.get('coaching_insight'):
+                        all_insights.append({
+                            "sub_id": res.get('sub_id'),
+                            "level": str(lvl),
+                            "text": data['coaching_insight'],
+                            "status": "passed" if data.get('is_passed') else "failed"
+                        })
         self.total_stats['global_coaching_brief'] = all_insights
 
         # 8. 📑 Final Response & Export
@@ -3140,8 +3173,8 @@ class SEAMPDCAEngine:
         }
 
         if export:
-            # ส่ง List ไปให้ _export_results (v2026.6) จัดการแปลงเป็น JSON อัตโนมัติ
             self.logger.info(f"💾 Exporting results to JSON...")
+            # ใช้ข้อมูลที่รวบรวมไว้ทั้งหมดส่งไป Export
             final_response["export_path"] = self._export_results(
                 self.final_subcriteria_results, 
                 target_sub_id, 
