@@ -200,13 +200,14 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [PRODUCTION READY - FIXED VERSION for Level 1 realism]
-    - AI STRENGTH SUMMARY: เพิ่ม prefix ตามระดับที่ผ่านจริง + ปรับน้ำหนักข้อความ
-    - ไม่ให้ดู "เกินจริง" เมื่อผ่านแค่ L1
-    - Roadmap: Steps เป็น Object ครบ 4 fields
-    - รองรับข้อมูลขาดหาย + fallback ที่สมเหตุสมผล
+    [PRODUCTION READY - v2026.6.18 — Final UI Ready]
+    - ดึง temp_map_for_level ครบ + fallback ถ้าขาด
+    - grouped_sources เรียงตาม score + text snippet
+    - strength_summary สมจริง + fallback
+    - Roadmap Steps ครบ 4 fields + fallback
+    - เพิ่ม evidences_by_level สำหรับ UI แสดงหลักฐานทุก level
     """
-    summary = raw_data.get("summary", {})
+    summary = raw_data.get("summary", {}) or {}
     sub_results = raw_data.get("sub_criteria_results", []) or []
 
     processed_sub_criteria: List[Dict[str, Any]] = []
@@ -226,7 +227,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     for res in sub_results:
         cid = res.get("sub_criteria_id", "N/A")
         cname = res.get("sub_criteria_name", f"เกณฑ์ย่อย {cid}")
-        highest_pass = int(res.get("highest_full_level") or 0)
+        highest_pass = int(res.get("highest_full_level") or res.get("highest_pass_level") or 0)
         raw_levels_list = res.get("raw_results_ref", []) or []
 
         # --- 2. Audit Confidence ---
@@ -278,16 +279,20 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         all_scores = []
         avg_confidence_per_level = {}
+        evidences_by_level = {}
 
         for lv_idx in range(1, 6):
             lv_scores = []
             lv_refs = [r for r in raw_levels_list if r.get("level") == lv_idx]
+            evidences = []
+
             for ref in lv_refs:
-                sources = ref.get("temp_map_for_level", []) or [ref]
+                sources = ref.get("temp_map_for_level", []) or ref.get("evidence_sources", []) or [ref]
+                
                 for s in sources:
                     meta = s.get("metadata", {})
-                    d_uuid = s.get("document_uuid") or meta.get("stable_doc_uuid") or s.get("doc_id")
-                    if not d_uuid:
+                    d_uuid = s.get("stable_doc_uuid") or meta.get("stable_doc_uuid") or s.get("doc_id") or "N/A"
+                    if not d_uuid or d_uuid == "N/A":
                         continue
 
                     score_val = float(s.get("rerank_score") or meta.get("rerank_score") or s.get("score") or 0.0)
@@ -297,17 +302,24 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 
                     pdca_tag = s.get("pdca_tag") or meta.get("pdca_tag") or "OTHER"
 
-                    grouped_sources[str(lv_idx)].append({
-                        "filename": s.get("filename") or meta.get("source") or "Evidence Document",
+                    evidence_item = {
+                        "filename": s.get("source_filename") or meta.get("source_filename") or s.get("filename") or meta.get("source") or "Evidence Document",
                         "page": str(meta.get("page") or meta.get("page_label") or "1"),
                         "text": (s.get("text") or "")[:300] + ("..." if len(s.get("text") or "") > 300 else ""),
                         "rerank_score": round(score_val * 100, 1),
                         "document_uuid": d_uuid,
                         "pdca_tag": str(pdca_tag).upper(),
                         "doc_type": s.get("doc_type", "evidence")
-                    })
+                    }
+
+                    evidences.append(evidence_item)
+                    grouped_sources[str(lv_idx)].append(evidence_item)
+
+            # เรียงตาม score
+            grouped_sources[str(lv_idx)] = sorted(grouped_sources[str(lv_idx)], key=lambda x: x["rerank_score"], reverse=True)
 
             avg_confidence_per_level[str(lv_idx)] = round((sum(lv_scores) / len(lv_scores) * 100), 1) if lv_scores else 0.0
+            evidences_by_level[str(lv_idx)] = evidences
 
         # --- 5. Roadmap ---
         ui_roadmap = []
@@ -358,10 +370,9 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "actions": phase_actions
             })
 
-        # --- 6. 🎯 AI STRENGTH SUMMARY - ปรับให้สมจริงตามระดับ ---
+        # --- 6. 🎯 AI STRENGTH SUMMARY ---
         base_reason = ui_audit_confidence["reason"].strip()
 
-        # กำหนด prefix และปรับน้ำหนักตามระดับที่ผ่านจริง
         level_num = highest_pass
         if level_num == 1:
             prefix = f"ในระดับพื้นฐาน (L{level_num}): พบหลักฐานเริ่มต้น"
@@ -378,23 +389,28 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 
         strength_summary = f"{prefix} {adjusted_reason}"
 
-        # ต่อด้วย summary_thai ถ้ามีประโยชน์
         content_analysis = res.get("summary_thai", "").strip()
-        if (content_analysis and
-            content_analysis != "ดำเนินการได้ตามแผนงาน" and
-            len(content_analysis) > 20 and
-            content_analysis not in strength_summary):
+        if content_analysis and len(content_analysis) > 20 and content_analysis not in strength_summary:
             strength_summary += f" {content_analysis}"
 
-        # Fallback สุดท้าย
         if not strength_summary or len(strength_summary) < 20:
             strength_summary = f"ในระดับ L{level_num}: หลักฐานมีความน่าเชื่อถือตามเกณฑ์พื้นฐาน"
 
-        # --- 7. Final Sub-Criteria Mapping ---
+        # --- 7. Final Mapping ---
         potential_level = max(
             [r.get("level") for r in raw_levels_list if r.get("is_passed")] + [highest_pass, 0]
         )
         current_score = float(raw_levels_list[-1].get("score") or 0.0) if raw_levels_list else (highest_pass * 0.2)
+
+        level_details_ui = {}
+        for lv_idx in range(1, 6):
+            level_details_ui[str(lv_idx)] = {
+                "level": lv_idx,
+                "is_passed": lv_idx <= highest_pass,
+                "score": 0.0,
+                "pdca_breakdown": pdca_matrix[lv_idx-1]["pdca"],
+                "evidences": evidences_by_level.get(str(lv_idx), [])
+            }
 
         processed_sub_criteria.append({
             "code": cid,
@@ -409,19 +425,19 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "audit_confidence": ui_audit_confidence,
             "roadmap": ui_roadmap,
             "grouped_sources": grouped_sources,
-            "summary_thai": strength_summary,  # <--- ข้อความที่สมจริงขึ้น
+            "summary_thai": strength_summary,
             "gap": "\n\n".join(all_gaps) if all_gaps else "บรรลุเป้าหมายตามเกณฑ์ปัจจุบัน",
-            "confidence_score": round((sum(all_scores) / len(all_scores) * 100) if all_scores else 0, 1)
+            "confidence_score": round((sum(all_scores) / len(all_scores) * 100) if all_scores else 0, 1),
+            "level_details": level_details_ui
         })
 
         radar_data.append({"axis": cid, "value": highest_pass})
 
-    # --- Final Return ---
     return {
         "status": "COMPLETED",
         "record_id": raw_data.get("record_id", "unknown"),
-        "tenant": str(summary.get("tenant", DEFAULT_TENANT)).upper(),
-        "year": str(summary.get("year", DEFAULT_YEAR)),
+        "tenant": str(summary.get("tenant", "unknown")).upper(),
+        "year": str(summary.get("year", "unknown")),
         "enabler": enabler_name,
         "level": overall_level,
         "score": total_score,
@@ -438,7 +454,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     doc = Document()
 
-    # --- ตั้งค่าหน้ากระดาษ ---
+    # ตั้งค่าหน้ากระดาษ
     section = doc.sections[0]
     section.top_margin = Inches(0.5)
     section.bottom_margin = Inches(0.5)
@@ -453,12 +469,12 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         if color:
             run.font.color.rgb = color
 
-    # --- 1. หน้าปก / หัวรายงาน ---
+    # 1. หน้าปก
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = title_p.add_run(f"{ui_data.get('enabler', 'KM')} ASSESSMENT REPORT\n")
     set_thai_font(run, size=24, bold=True, color=RGBColor(30, 58, 138))
-    
+
     # สรุปภาพรวม
     summary_table = doc.add_table(rows=0, cols=2)
     summary_table.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -467,9 +483,9 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         ("Record ID", ui_data.get('record_id', '-')),
         ("หน่วยงาน", ui_data.get('tenant', '-')),
         ("ปีงบประมาณ", ui_data.get('year', '-')),
-        ("ระดับความสามารถโดยรวม", f"L{ui_data.get('level', '0')}"),
+        ("ระดับความสามารถโดยรวม", ui_data.get('level', 'L0')),
         ("คะแนนรวม / คะแนนเต็ม", f"{ui_data.get('score', 0)} / {ui_data.get('full_score', 40)}"),
-        ("ความครบถ้วน (Completion)", f"{ui_data.get('metrics', {}).get('completion_rate', 0):.1f}%")
+        ("ความครบถ้วน", f"{ui_data.get('metrics', {}).get('completion_rate', 0):.1f}%")
     ]
 
     for label, value in summary_data:
@@ -479,68 +495,99 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
 
     doc.add_page_break()
 
-    # --- 2. รายละเอียดรายเกณฑ์ย่อย ---
+    # 2. Radar Chart (ถ้ามี radar_data)
+    if ui_data.get('radar_data'):
+        r_title = doc.add_paragraph()
+        set_thai_font(r_title.add_run("ภาพรวมระดับความสามารถแต่ละเกณฑ์ (Radar Chart)"), size=16, bold=True)
+        # เพิ่ม placeholder สำหรับ radar (ใน docx จริงอาจใช้ python-docx + matplotlib แทรกภาพ)
+        doc.add_paragraph("[Radar Chart Placeholder - แทรกภาพจาก UI]")
+
+    # 3. รายละเอียดรายเกณฑ์
     sub_criteria = ui_data.get('sub_criteria', [])
     for item in sub_criteria:
-        # หัวข้อเกณฑ์
         h = doc.add_paragraph()
         run = h.add_run(f"เกณฑ์ย่อย {item.get('code', '')}: {item.get('name', '')}")
         set_thai_font(run, size=18, bold=True, color=RGBColor(30, 58, 138))
 
-        # --- ส่วนที่เพิ่ม: Audit Confidence Metrics (เหมือนบน UI) ---
+        # Audit Confidence
         conf_table = doc.add_table(rows=1, cols=3)
         conf_table.style = 'Table Grid'
         cells = conf_table.rows[0].cells
         
-        # กล่อง 1: Independence
         p1 = cells[0].paragraphs[0]
         p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
         set_thai_font(p1.add_run("Independence"), size=10, bold=True)
         p1.add_run(f"\n{item.get('audit_confidence', {}).get('source_count', 0)} Files").font.size = Pt(14)
         
-        # กล่อง 2: Traceability
         p2 = cells[1].paragraphs[0]
         p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
         set_thai_font(p2.add_run("Traceability"), size=10, bold=True)
         trace_val = int(item.get('audit_confidence', {}).get('traceability_score', 0) * 100)
         p2.add_run(f"\n{trace_val}%").font.size = Pt(14)
         
-        # กล่อง 3: Consistency
         p3 = cells[2].paragraphs[0]
         p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
         set_thai_font(p3.add_run("Consistency"), size=10, bold=True)
         consist_txt = "VERIFIED" if item.get('audit_confidence', {}).get('consistency_check') else "CONFLICT"
         p3.add_run(f"\n{consist_txt}").font.size = Pt(14)
 
-        doc.add_paragraph() # เว้นบรรทัด
+        doc.add_paragraph()
 
-        # สรุปผลของ AI (Strength & Gap)
-        # Strength
+        # Strength & Gap
         s_title = doc.add_paragraph()
-        set_thai_font(s_title.add_run("บทสรุปจุดแข็ง (AI Strength Summary):"), size=14, bold=True, color=RGBColor(22, 101, 52))
+        set_thai_font(s_title.add_run("บทสรุปจุดแข็ง:"), size=14, bold=True, color=RGBColor(22, 101, 52))
         set_thai_font(doc.add_paragraph(item.get('summary_thai', '-')).runs[0], size=13)
 
-        # Gap
         g_title = doc.add_paragraph()
-        set_thai_font(g_title.add_run("ข้อเสนอแนะเพื่อการปรับปรุง (Critical Gaps):"), size=14, bold=True, color=RGBColor(154, 52, 18))
+        set_thai_font(g_title.add_run("ข้อเสนอแนะเพื่อการปรับปรุง:"), size=14, bold=True, color=RGBColor(154, 52, 18))
         set_thai_font(doc.add_paragraph(item.get('gap', 'ไม่พบข้อบกพร่องที่สำคัญ')).runs[0], size=13)
 
-        # Roadmap (ถ้ามี)
+        # PDCA Matrix
+        if item.get('pdca_matrix'):
+            pdca_title = doc.add_paragraph()
+            set_thai_font(pdca_title.add_run("PDCA Matrix:"), size=14, bold=True)
+            pdca_table = doc.add_table(rows=1, cols=5)
+            pdca_table.style = 'Table Grid'
+            headers = ["Level", "Passed", "P", "D", "C", "A"]
+            hdr_cells = pdca_table.add_row().cells
+            for i, h in enumerate(headers):
+                set_thai_font(hdr_cells[i].paragraphs[0].add_run(h), size=11, bold=True)
+
+            for entry in item['pdca_matrix']:
+                row = pdca_table.add_row().cells
+                set_thai_font(row[0].paragraphs[0].add_run(str(entry['level'])), size=11)
+                set_thai_font(row[1].paragraphs[0].add_run("Yes" if entry['is_passed'] else "No"), size=11)
+                pdca = entry['pdca']
+                for i, k in enumerate(["P", "D", "C", "A"], 2):
+                    set_thai_font(row[i].paragraphs[0].add_run("✔" if pdca.get(k) else "-"), size=11)
+
+        # Evidences (แสดง 3 อันดับแรกต่อ level)
+        if item.get('level_details'):
+            ev_title = doc.add_paragraph()
+            set_thai_font(ev_title.add_run("หลักฐานหลัก (Top Evidences):"), size=14, bold=True)
+            for lv, details in item['level_details'].items():
+                evs = details.get('evidences', [])[:3]  # แสดง 3 อันดับแรก
+                if evs:
+                    lv_p = doc.add_paragraph()
+                    set_thai_font(lv_p.add_run(f"Level {lv}:"), size=12, bold=True)
+                    for ev in evs:
+                        ev_p = doc.add_paragraph(style='List Bullet')
+                        txt = f"{ev.get('filename', '')} หน้า {ev.get('page', '1')} | Score: {ev.get('rerank_score', 0)}% | {ev.get('text_snippet', '')}"
+                        set_thai_font(ev_p.add_run(txt), size=11)
+
+        # Roadmap
         if item.get('roadmap'):
             r_title = doc.add_paragraph()
-            set_thai_font(r_title.add_run("Roadmap การพัฒนาเชิงกลยุทธ์:"), size=14, bold=True, color=RGBColor(30, 58, 138))
-            
+            set_thai_font(r_title.add_run("Roadmap การพัฒนา:"), size=14, bold=True)
             for phase in item['roadmap']:
-                p_text = f"ระยะ: {phase.get('phase', '')}"
+                p_text = f"ระยะ: {phase.get('phase', '')} - {phase.get('goal', '')}"
                 phase_p = doc.add_paragraph(style='List Bullet')
                 set_thai_font(phase_p.add_run(p_text), size=13, bold=True)
 
                 for act in phase.get('actions', []):
-                    # Recommendation
                     act_p = doc.add_paragraph(style='List Bullet 2')
-                    set_thai_font(act_p.add_run(f"เป้าหมาย L{act.get('level')}: {act.get('recommendation')}"), size=12, bold=True)
+                    set_thai_font(act_p.add_run(f"เป้าหมาย L{act.get('failed_level')}: {act.get('recommendation')}"), size=12, bold=True)
                     
-                    # Steps
                     for step in act.get('steps', []):
                         step_p = doc.add_paragraph(style='List Bullet 3')
                         set_thai_font(step_p.add_run(str(step)), size=11)
@@ -556,51 +603,84 @@ async def get_assessment_status(
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    Endpoint สำหรับดึงข้อมูลการประเมินราย Record:
-    1. ถ้างานกำลังรัน (ACTIVE_TASKS) จะส่ง Progress กลับไป
-    2. ถ้างานเสร็จแล้ว จะหาไฟล์ JSON บน Disk แล้วส่งข้อมูลที่ Transform แล้วกลับไป
+    [v2026.6.19 — Final Status + Robust Polling & Fallback]
+    - Polling PROGRESS ชัดเจน (progress %, message, estimated_time)
+    - Fallback ถ้าไม่เจอไฟล์ → ส่ง "NOT_FOUND" + suggestion
+    - สิทธิ์ check ปลอดภัย + fallback tenant/enabler
+    - Error handling แยกกรณี + log ละเอียด
     """
-    
-    # 1. เช็คใน Memory ก่อน (กรณีงานกำลังรัน - Polling)
-    # สมมติว่า ACTIVE_TASKS คือ Dict ที่เก็บสถานะงานใน RAM
-    if record_id in globals().get("ACTIVE_TASKS", {}):
-        return globals()["ACTIVE_TASKS"][record_id]
+    # 1. เช็คใน Memory ก่อน (Polling สำหรับงานกำลังรัน)
+    active_tasks = globals().get("ACTIVE_TASKS", {})
+    if record_id in active_tasks:
+        task = active_tasks[record_id]
+        progress = task.get("progress", 0)
+        message = task.get("message", "กำลังประมวลผล...")
+        estimated_remaining = task.get("estimated_remaining_seconds", None)
 
-    # 2. ถ้าไม่อยู่ใน Memory ให้ไปหาไฟล์ที่เสร็จแล้วบน Disk
+        return {
+            "status": "PROCESSING",
+            "record_id": record_id,
+            "progress": progress,
+            "message": message,
+            "estimated_remaining": estimated_remaining,
+            "started_at": task.get("started_at"),
+            "updated_at": datetime.now().isoformat()
+        }
+
+    # 2. หาไฟล์ที่เสร็จแล้วบน Disk
     file_path = _find_assessment_file(record_id, current_user)
     
+    if not file_path or not os.path.exists(file_path):
+        logger.warning(f"[Status] File not found for record_id: {record_id}")
+        return {
+            "status": "NOT_FOUND",
+            "record_id": record_id,
+            "message": "ไม่พบผลการประเมินนี้ อาจยังไม่เสร็จสิ้นหรือถูกลบ กรุณารอสักครู่หรือเริ่มการประเมินใหม่",
+            "suggestion": "ตรวจสอบสถานะอีกครั้งใน 1-2 นาที หรือติดต่อผู้ดูแลระบบ"
+        }
+
     try:
-        # 3. อ่านไฟล์ JSON ต้นฉบับ
+        # 3. อ่าน JSON ต้นฉบับ
         with open(file_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
 
-        # 4. ดึง Metadata มาตรวจสอบสิทธิ์เข้าถึง (Tenant Isolation)
-        summary = raw_data.get("summary", {})
+        # 4. ดึง Metadata + fallback tenant/enabler
+        summary = raw_data.get("summary", {}) or raw_data.get("metadata", {}) or {}
         file_enabler = (summary.get("enabler") or "KM").upper()
-        file_tenant = summary.get("tenant") or current_user.tenant
-        
-        # ตรวจสอบว่า User มีสิทธิ์ดูข้อมูลของ Tenant และ Enabler นี้จริงหรือไม่
-        check_user_permission(current_user, file_tenant, file_enabler)
+        file_tenant = summary.get("tenant") or current_user.tenant or "unknown"
 
-        # 5. 🔥 แปลงข้อมูล (Transform) ให้เป็น Format ที่ UI พร้อมแสดงผล
-        # หมายเหตุ: ใส่ current_user เข้าไปด้วยตาม Signature เดิมของคุณ
+        # ตรวจสอบสิทธิ์ (tenant + enabler)
+        try:
+            check_user_permission(current_user, file_tenant, file_enabler)
+        except Exception as perm_err:
+            logger.warning(f"[Status] Permission denied for {record_id}: {perm_err}")
+            raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์เข้าถึงผลการประเมินนี้")
+
+        # 5. Transform ให้ UI พร้อมใช้
         ui_result = _transform_result_for_ui(raw_data, current_user)
         
-        # 🛡️ จุดสำคัญ: ต้องใส่ status และ record_id กลับไปด้วยเสมอ 
-        # เพื่อให้ Frontend รู้ว่าต้อง "เลิกโหลด" และเปลี่ยนไปหน้า Result ได้แล้ว
+        # เพิ่ม status + metadata สำคัญ
         ui_result["status"] = "COMPLETED"
         ui_result["record_id"] = record_id
-        
-        logger.info(f"🚀 [Status] Returning COMPLETED status for: {record_id}")
+        ui_result["export_path"] = file_path
+        ui_result["exported_at"] = summary.get("export_at") or datetime.now().isoformat()
+
+        logger.info(f"🚀 [Status] Returning COMPLETED for {record_id} | Enabler: {file_enabler} | Tenant: {file_tenant}")
         return ui_result
 
     except json.JSONDecodeError:
-        logger.error(f"💥 [Status] Invalid JSON file format at: {file_path}")
-        raise HTTPException(status_code=500, detail="ไฟล์ข้อมูลเสียหาย ไม่สามารถเปิดได้")
+        logger.error(f"💥 [Status] Invalid JSON for {record_id} at {file_path}")
+        raise HTTPException(status_code=500, detail="ไฟล์ข้อมูลเสียหาย ไม่สามารถอ่านได้ กรุณาติดต่อผู้ดูแลระบบ")
+
+    except HTTPException as he:
+        raise he  # ส่งต่อ permission error
+
     except Exception as e:
-        logger.error(f"💥 [Status] Error processing result for {record_id}: {str(e)}")
-        # ป้องกัน UI นิ่งด้วยการบอก Error ที่ชัดเจน
-        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการโหลดผล: {str(e)}")
+        logger.error(f"💥 [Status] Error processing {record_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="เกิดข้อผิดพลาดในการโหลดผลการประเมิน กรุณาลองใหม่หรือติดต่อผู้ดูแลระบบ"
+        )
     
 @assessment_router.get("/history")
 async def get_assessment_history(
@@ -610,15 +690,19 @@ async def get_assessment_history(
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    Full Revised History Endpoint:
-    แก้ไขให้อ่านค่า Level จาก "Overall Maturity Level (Weighted)" หรือ "highest_pass_level"
-    เพื่อให้แสดงผลในหน้าประวัติได้อย่างถูกต้อง
+    [v2026.6.17 — Ultra Safe + Complete History]
+    - ดึง Level อย่างชาญฉลาด + fallback ทุก field
+    - Date parsing ปลอดภัยสุด (หลาย field + mtime fallback)
+    - Normalize scope/level/score/date ให้ไม่ crash
+    - Sort ด้วย datetime จริง + fallback วันที่เก่า
+    - Log ละเอียด + response stats (total_found, filtered, displayed)
     """
     # 1. ตรวจสอบสิทธิ์องค์กร
     check_user_permission(current_user, tenant)
 
     history_list = []
     from config.global_vars import DATA_STORE_ROOT
+    from datetime import datetime
     
     # 2. จัดการ Path (Tenant & Exports)
     norm_tenant = _n(tenant)
@@ -632,7 +716,7 @@ async def get_assessment_history(
 
     if not os.path.exists(tenant_export_root):
         logger.warning(f"⚠️ [History] ไม่พบข้อมูลของ {norm_tenant}")
-        return {"items": []}
+        return {"items": [], "total_found": 0, "filtered_by_permission": 0, "displayed": 0}
 
     # 3. เตรียม Filter
     user_allowed_enablers = [e.upper() for e in current_user.enablers]
@@ -644,6 +728,8 @@ async def get_assessment_history(
     else:
         search_years = [str(year)]
 
+    filtered_count = 0
+
     # 5. สแกนไฟล์และดึงข้อมูล
     for y in search_years:
         year_path = os.path.join(tenant_export_root, y)
@@ -652,126 +738,132 @@ async def get_assessment_history(
         for root, _, files in os.walk(year_path):
             for f in files:
                 if f.lower().endswith(".json"):
+                    file_path = os.path.join(root, f)
                     try:
-                        file_path = os.path.join(root, f)
                         with open(file_path, "r", encoding="utf-8") as jf:
                             data = json.load(jf)
-                            summary = data.get("summary", {})
-                            
-                            # ดึงข้อมูล Enabler และ Scope
-                            file_enabler = (summary.get("enabler") or "KM").upper()
-                            scope = (summary.get("sub_criteria_id") or "ALL").upper()
-                            
-                            # 🛡️ สิทธิ์การเข้าถึง Enabler
-                            if file_enabler not in user_allowed_enablers:
-                                continue
 
-                            # 🎯 กรองตามที่ User เลือก
-                            if target_enabler and file_enabler != target_enabler:
-                                continue
+                        # ดึง summary + metadata fallback
+                        summary = data.get("summary", {}) or data.get("metadata", {}) or {}
+                        file_enabler = (summary.get("enabler") or data.get("enabler") or "KM").upper()
+                        scope_raw = summary.get("sub_criteria_id") or data.get("sub_criteria_id") or "ALL"
+                        scope = str(scope_raw).strip().upper()
 
-                            # --- 🛠️ Logic การจัดการ Level (ปรับตาม JSON จริง) ---
-                            display_level = "-"
+                        # 🛡️ สิทธิ์การเข้าถึง Enabler
+                        if file_enabler not in user_allowed_enablers:
+                            logger.debug(f"Skip: {file_path} - No permission for enabler '{file_enabler}'")
+                            filtered_count += 1
+                            continue
+
+                        # 🎯 กรองตามที่ User เลือก
+                        if target_enabler and file_enabler != target_enabler:
+                            continue
+
+                        # --- 🛠️ Logic การจัดการ Level (fallback ทุก field) ---
+                        display_level = "N/A"
+                        
+                        if scope != "ALL":
+                            # 1. Overall Maturity Level (Weighted)
+                            raw_weighted = summary.get("Overall Maturity Level (Weighted)") or summary.get("overall_level_label")
+                            if raw_weighted:
+                                display_level = str(raw_weighted).strip()
                             
-                            if scope != "ALL":
-                                # 1. พยายามดึงจาก "Overall Maturity Level (Weighted)" (เช่น "L1")
-                                raw_weighted_level = summary.get("Overall Maturity Level (Weighted)")
-                                # 2. พยายามดึงจาก "highest_pass_level" (เช่น 1)
-                                raw_highest_level = summary.get("highest_pass_level")
-
-                                if raw_weighted_level:
-                                    display_level = str(raw_weighted_level)
-                                elif raw_highest_level is not None:
-                                    display_level = f"L{raw_highest_level}"
-                                else:
-                                    # Fallback: คำนวณจาก Score ถ้าไม่มีฟิลด์ข้างต้น
-                                    score_val = float(summary.get("Total Weighted Score Achieved") or 0)
-                                    if score_val >= 0.8: display_level = "L5"
-                                    elif score_val >= 0.6: display_level = "L4"
-                                    elif score_val >= 0.4: display_level = "L3"
-                                    elif score_val >= 0.2: display_level = "L2"
-                                    elif score_val > 0: display_level = "L1"
+                            # 2. highest_pass_level
+                            elif "highest_pass_level" in summary:
+                                raw_highest = summary.get("highest_pass_level")
+                                if raw_highest is not None:
+                                    try:
+                                        display_level = f"L{int(raw_highest)}"
+                                    except:
+                                        display_level = f"L{str(raw_highest)}"
                             
-                            # จัดการคะแนน (Score)
-                            total_score = round(float(summary.get("Total Weighted Score Achieved") or 0.0), 2)
-                            # --------------------------------------------------
+                            # 3. Fallback จาก score
+                            else:
+                                score_val = safe_float(summary.get("Total Weighted Score Achieved") or summary.get("total_weighted_score"))
+                                if score_val >= 0.8: display_level = "L5"
+                                elif score_val >= 0.6: display_level = "L4"
+                                elif score_val >= 0.4: display_level = "L3"
+                                elif score_val >= 0.2: display_level = "L2"
+                                elif score_val > 0: display_level = "L1"
+                                else: display_level = "L0"
 
-                            history_list.append({
-                                "record_id": data.get("record_id") or f.replace(".json", ""),
-                                "date": parse_safe_date(summary.get("export_timestamp"), file_path),
-                                "tenant": tenant,
-                                "year": y,
-                                "enabler": file_enabler,
-                                "scope": scope,
-                                "level": display_level,
-                                "score": total_score,
-                                "status": "COMPLETED"
-                            })
+                        # จัดการคะแนน (Score) - ปลอดภัย
+                        total_score = round(safe_float(summary.get("Total Weighted Score Achieved") or summary.get("total_weighted_score")), 2)
+
+                        # --- Date (safe parse + multi fallback) ---
+                        date_candidates = [
+                            summary.get("export_at"),
+                            summary.get("export_timestamp"),
+                            summary.get("timestamp"),
+                            summary.get("assessed_at"),
+                            summary.get("created_at")
+                        ]
+                        date_str = "N/A"
+                        parsed_dt = None
+
+                        for cand in date_candidates:
+                            if cand:
+                                try:
+                                    parsed_dt = datetime.fromisoformat(str(cand).replace('Z', '+00:00'))
+                                    date_str = parsed_dt.isoformat()
+                                    break
+                                except:
+                                    continue
+
+                        # Ultimate fallback: ใช้ mtime ของไฟล์
+                        if date_str == "N/A":
+                            try:
+                                mtime = os.path.getmtime(file_path)
+                                parsed_dt = datetime.fromtimestamp(mtime)
+                                date_str = parsed_dt.isoformat()
+                            except:
+                                pass
+
+                        history_list.append({
+                            "record_id": data.get("record_id") or data.get("metadata", {}).get("record_id") or f.replace(".json", ""),
+                            "date": date_str,
+                            "date_dt": parsed_dt,  # สำหรับ sort (ไม่ส่งให้ client)
+                            "tenant": tenant,
+                            "year": y,
+                            "enabler": file_enabler,
+                            "scope": scope,
+                            "level": display_level,
+                            "score": total_score,
+                            "status": "COMPLETED",
+                            "file_path": file_path  # debug เท่านั้น
+                        })
+
+                    except json.JSONDecodeError as je:
+                        logger.error(f"❌ JSON Error in {file_path}: {je}")
+                        continue
                     except Exception as e:
-                        logger.error(f"❌ Error parsing {f}: {e}")
+                        logger.error(f"❌ Error parsing {file_path}: {e}")
+                        continue
 
-    # 6. เรียงลำดับจากวันที่ล่าสุดขึ้นก่อน
-    return {"items": sorted(history_list, key=lambda x: x['date'], reverse=True)}
+    # 6. Sort ด้วย datetime จริง (fallback วันที่เก่า)
+    def parse_date_safe(item):
+        dt = item.get('date_dt')
+        return dt if dt else datetime.min
 
-
-# ------------------------------------------------------------------
-# 1. Start Assessment Endpoint
-# ------------------------------------------------------------------
-@assessment_router.post("/start")
-async def start_assessment(
-    request: StartAssessmentRequest, 
-    background_tasks: BackgroundTasks, 
-    current_user: UserMe = Depends(get_current_user)
-):
-    enabler_uc = request.enabler.upper()
-    target_year = str(request.year if request.year else (current_user.year or DEFAULT_YEAR)).strip()
-    target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
-
-    # ตรวจสอบสิทธิ์
-    check_user_permission(current_user, request.tenant, enabler_uc)
-
-    # ตรวจสอบ Path ฐานข้อมูล (Chroma)
-    vs_path = get_vectorstore_collection_path(request.tenant, target_year, "evidence", enabler_uc)
-    if not os.path.exists(vs_path):
-        raise HTTPException(status_code=400, detail=f"ไม่พบฐานข้อมูล {enabler_uc} ปี {target_year}")
-
-    # 3. สร้าง Record ID และบันทึกลง Database
-    record_id = uuid.uuid4().hex[:12]
-    
-    db = SessionLocal()
-    try:
-        new_task = AssessmentTaskTable(
-            record_id=record_id,
-            user_id=current_user.id,
-            tenant=request.tenant,
-            year=target_year,
-            enabler=enabler_uc,
-            sub_criteria=target_sub,
-            status="RUNNING",
-            progress_percent=5,
-            progress_message="กำลังเตรียมข้อมูล Vector Store..."
-        )
-        db.add(new_task)
-        db.commit()
-    except Exception as e:
-        logger.error(f"DB Error: {e}")
-        raise HTTPException(status_code=500, detail="ไม่สามารถสร้าง Task ในฐานข้อมูลได้")
-    finally:
-        db.close()
-
-    # 4. ส่งเข้า Background Task
-    background_tasks.add_task(
-        run_assessment_engine_task,
-        record_id=record_id,
-        tenant=request.tenant,
-        year=target_year,
-        enabler=enabler_uc,
-        sub_id=target_sub,
-        sequential=request.sequential_mode
+    sorted_history = sorted(
+        history_list,
+        key=parse_date_safe,
+        reverse=True
     )
 
-    return {"record_id": record_id, "status": "RUNNING"}
+    # ลบ date_dt ก่อนส่ง response
+    for item in sorted_history:
+        item.pop('date_dt', None)
+        item.pop('file_path', None)  # ไม่ส่ง path จริงให้ client
 
+    total_found = len(history_list)
+    return {
+        "items": sorted_history,
+        "total_found": total_found,
+        "filtered_by_permission": filtered_count,
+        "displayed": len(sorted_history),
+        "message": f"Found {total_found} assessments, filtered {filtered_count} by permission"
+    }
 
 # ------------------------------------------------------------------
 # 1. Start Assessment Endpoint
@@ -782,6 +874,13 @@ async def start_assessment(
     background_tasks: BackgroundTasks, 
     current_user: UserMe = Depends(get_current_user)
 ):
+    """
+    [FINAL v2026.6.20 — Start Assessment + Friendly Response]
+    - Permission + Data Integrity Check
+    - Persistent Task Entry (DB)
+    - Background Worker Delegation
+    - Response เป็นมิตร + estimated_time
+    """
     enabler_uc = request.enabler.upper()
     target_year = str(request.year if request.year else (current_user.year or DEFAULT_YEAR)).strip()
     target_sub = str(request.sub_criteria).strip().lower() if request.sub_criteria else "all"
@@ -806,15 +905,17 @@ async def start_assessment(
             year=target_year,
             enabler=enabler_uc,
             sub_criteria=target_sub,
-            status="RUNNING",
+            status="QUEUED",
             progress_percent=5,
             progress_message="กำลังคิวงานประเมิน..."
         )
         db.add(new_task)
         db.commit()
+        db.refresh(new_task)
     except Exception as e:
         logger.error(f"❌ Initial DB Error: {e}")
-        raise HTTPException(status_code=500, detail="ไม่สามารถลงทะเบียนงานประเมินได้")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="ไม่สามารถลงทะเบียนงานประเมินได้ กรุณาลองใหม่")
     finally:
         db.close()
 
@@ -826,13 +927,16 @@ async def start_assessment(
         year=target_year,
         enabler=enabler_uc,
         sub_id=target_sub,
-        sequential=request.sequential_mode # True สำหรับ Mac
+        sequential=request.sequential_mode  # True สำหรับ Mac (sequential)
     )
 
     return {
-        "record_id": record_id, 
-        "status": "RUNNING", 
-        "message": f"เริ่มการประเมิน {enabler_uc} เรียบร้อยแล้ว"
+        "record_id": record_id,
+        "status": "QUEUED",
+        "message": f"เริ่มการประเมิน {enabler_uc} เรียบร้อยแล้ว (กำลังคิวงาน)",
+        "estimated_time": "20-40 นาที (ขึ้นกับจำนวนเอกสารและโหมด sequential)",
+        "poll_url": f"/api/assess/status/{record_id}",
+        "poll_interval_seconds": 15
     }
 
 # ------------------------------------------------------------------
@@ -842,13 +946,15 @@ async def run_assessment_engine_task(
     record_id: str, tenant: str, year: str, enabler: str, sub_id: str, sequential: bool
 ):
     """
-    Worker ที่ทำหน้าที่ดึงทรัพยากร รัน AI Engine และบันทึกผล
-    ทำงานในโหมด Non-blocking โดยใช้ asyncio.to_thread สำหรับ CPU-bound tasks
+    [v2026.6.20 — Robust Background Worker + Progress Update]
+    - Update progress ทุกขั้นตอนสำคัญ
+    - Use asyncio.to_thread สำหรับ CPU-bound
+    - Error handling + DB update เมื่อ fail
     """
     try:
         logger.info(f"⚙️ [Task {record_id}] Processing Started...")
-        
-        # --- Step 1: Resource Hydration ---
+
+        # Step 1: Resource Hydration
         db_update_task_status(record_id, 10, "เชื่อมต่อ Vector Database และโหลด Mapping...")
         
         vsm = await asyncio.to_thread(
@@ -858,10 +964,9 @@ async def run_assessment_engine_task(
         doc_map_raw = await asyncio.to_thread(
             load_doc_id_mapping, EVIDENCE_DOC_TYPES, tenant, year, enabler
         )
-        # ปรับ Mapping ให้ใช้งานง่ายสำหรับ Engine
         doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
 
-        # --- Step 2: Engine & Model Setup ---
+        # Step 2: Engine & Model Setup
         db_update_task_status(record_id, 20, f"โหลด AI Model ({DEFAULT_LLM_MODEL_NAME})...")
         
         llm = await asyncio.to_thread(
@@ -871,7 +976,7 @@ async def run_assessment_engine_task(
         config = AssessmentConfig(
             enabler=enabler, tenant=tenant, year=year, 
             force_sequential=sequential,
-            export_path=None # ใช้ค่า default ตามโครงสร้าง folder
+            export_path=None
         )
         
         engine = SEAMPDCAEngine(
@@ -883,10 +988,9 @@ async def run_assessment_engine_task(
             document_map=doc_map
         )
 
-        # --- Step 3: Core Assessment (The Heavy Part) ---
+        # Step 3: Core Assessment
         db_update_task_status(record_id, 35, "AI กำลังตรวจสอบหลักฐาน (RAG Assessment)...")
         
-        # รันการประเมินหลัก (รันยาวนานที่สุด)
         result = await asyncio.to_thread(
             engine.run_assessment, 
             target_sub_id=sub_id, 
@@ -896,12 +1000,11 @@ async def run_assessment_engine_task(
             sequential=sequential
         )
 
-        # --- Step 4: Finalize & Persistence ---
+        # Step 4: Finalize
         if isinstance(result, dict) and result.get("status") == "FAILED":
             error_msg = result.get("error_message", "AI Engine Error")
             db_update_task_status(record_id, 0, f"ล้มเหลว: {error_msg}", status="FAILED")
         else:
-            # ใช้ db_finish_task เพื่อรวมคะแนนและบันทึก JSON ก้อนเดียว
             await asyncio.to_thread(db_finish_task, record_id, result)
             db_update_task_status(record_id, 100, "การประเมินเสร็จสมบูรณ์", status="COMPLETED")
             logger.info(f"✅ [Task {record_id}] Finished Successfully")
@@ -910,43 +1013,40 @@ async def run_assessment_engine_task(
         logger.error(f"💥 [Task {record_id}] Critical Failure: {str(e)}", exc_info=True)
         db_update_task_status(record_id, 0, f"ระบบขัดข้อง: {str(e)}", status="FAILED")
 
+
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     """
-    [HYBRID SEARCH v2026.2] ค้นหาไฟล์ผลการประเมินแบบ 2 ชั้น
-    1. Fast-Track: ค้นหาจาก Database (AssessmentResultTable)
-    2. Fallback: สแกนหาไฟล์บน Disk (กรณีไฟล์ถูกย้ายหรือรันจาก CLI)
+    [HYBRID SEARCH v2026.2 — Final Robust]
+    - ชั้น 1: DB (fast)
+    - ชั้น 2: Disk scan (fallback) + tenant check
     """
-    
     norm_tenant = _n(current_user.tenant)
     norm_search = _n(search_id).lower()
 
-    # --- ชั้นที่ 1: ค้นหาจาก Database (Fastest) ---
+    # ชั้น 1: DB Hit
     db = SessionLocal()
     try:
-        # พยายามหา Record ที่ตรงกับ search_id (record_id)
         res_record = db.query(AssessmentResultTable).filter(
             AssessmentResultTable.record_id == search_id
         ).first()
         
         if res_record and res_record.full_result_json:
-            # ถ้าใน DB มี path ที่เคยบันทึกไว้ ให้เช็คว่าไฟล์ยังอยู่ไหม
             try:
                 data = json.loads(res_record.full_result_json)
                 db_path = data.get("export_path_used") or data.get("metadata", {}).get("full_path")
                 if db_path and os.path.exists(db_path):
-                    logger.info(f"⚡ [Search] DB Hit! Found path: {db_path}")
+                    logger.info(f"⚡ [Search] DB Hit! Found: {db_path}")
                     return db_path
             except:
-                pass # ถ้า JSON พังให้ไปสแกน Disk ต่อ
+                pass
     finally:
         db.close()
 
-    # --- ชั้นที่ 2: Robust Disk Scanning (Fallback) ---
-    # รายการตำแหน่งที่อาจเก็บไฟล์ไว้
+    # ชั้น 2: Disk Scan
     search_paths = [
         os.path.join(DATA_STORE_ROOT, norm_tenant, "exports"),
         os.path.join("data_store", norm_tenant, "exports"),
-        "/app/data_store/{}/exports".format(norm_tenant) # Docker Path
+        "/app/data_store/{}/exports".format(norm_tenant)
     ]
     
     logger.info(f"🔍 [Search] DB Miss. Scanning Disk for ID: {norm_search}...")
@@ -957,22 +1057,17 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
             
         for root, _, files in os.walk(s_path):
             for f in files:
-                # 🟢 ตรวจสอบไฟล์ JSON และเช็คว่า ID อยู่ในชื่อไฟล์หรือไม่
-                # รองรับทั้ง ID เต็ม และ ID แบบย่อ (Prefix matching)
                 norm_filename = _n(f).lower()
                 if norm_filename.endswith(".json") and norm_search in norm_filename:
-                    # ป้องกันการดึงไฟล์ผิด Tenant (Security Check)
-                    # ตรวจสอบว่าใน Path มีชื่อ Tenant ปรากฏอยู่จริง
                     if norm_tenant.lower() in _n(root).lower() or "exports" in root:
                         found_path = os.path.join(root, f)
                         logger.info(f"✅ [Search] Disk Scan Success: {found_path}")
                         return found_path
                     
-    # --- กรณีหาไม่เจอเลย ---
     logger.error(f"❌ [Search] Total Failure for ID: {norm_search}")
     raise HTTPException(
         status_code=404, 
-        detail=f"ไม่พบไฟล์ผลการประเมิน (ID: {search_id}) ในระบบ กรุณาตรวจสอบประวัติการประเมินหรือลองรันใหม่อีกครั้ง"
+        detail=f"ไม่พบไฟล์ผลการประเมิน (ID: {search_id}) กรุณารอสักครู่หรือเริ่มการประเมินใหม่"
     )
 
 # ------------------------------------------------------------------

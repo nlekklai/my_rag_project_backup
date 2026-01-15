@@ -1210,128 +1210,149 @@ def _create_fallback_error(sub_id: str, level: int, error: Exception, context: s
     }
 
 # ------------------------
-# Summarize (FULL VERSION)
+# Summarize (FULL VERSION - v2026.4 Ultra-Robust & Zero-Error)
 # ------------------------
 def create_context_summary_llm(
-    context: str, 
-    sub_criteria_name: str, 
-    level: int, 
-    sub_id: str, 
-    llm_executor: Any 
+    context: str,
+    sub_criteria_name: str,
+    level: int,
+    sub_id: str,
+    statement_text: str = "",           # Default ว่าง → ไม่ error ถ้าไม่ส่ง
+    next_level: int = None,             # Default คำนวณเอง
+    llm_executor: Any = None
 ) -> Dict[str, Any]:
     """
-    [SUMMARIZER v2026.1] - ระบบสรุปหลักฐานภาษาไทยแบบทนทานสูง
-    - รองรับการล้าง Control Characters และขยะภาษาไทย
-    - ใช้ระบบ Retry และ Robust JSON Extraction
+    [SUMMARIZER v2026.4 — Ultra-Robust & Zero-Error]
+    - เพิ่ม default สำหรับ statement_text และ next_level → ไม่ error ถ้าเรียกไม่ครบ
+    - Fallback ใน prompt ถ้า statement_text ว่าง (สรุปทั่วไป)
+    - Log เฉพาะเมื่อใช้ fallback + clean บริบทก่อนส่ง
+    - รองรับ retry 4 ครั้ง + hint ใน prompt รอบ retry
     """
     logger = logging.getLogger("AssessmentApp")
 
     # 1. Validation เบื้องต้น
-    if llm_executor is None: 
+    if llm_executor is None:
+        logger.warning("⚠️ LLM executor is None - returning fallback")
         return {
-            "summary": "ระบบ LLM ไม่พร้อมใช้งาน", 
-            "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ"
+            "summary": "ระบบ LLM ไม่พร้อมใช้งาน",
+            "suggestion_for_next_level": "โปรดตรวจสอบการเชื่อมต่อ LLM",
+            "compliance_note": "ไม่สามารถประมวลผลได้",
+            "evidence_integrity_score": 0.0
         }
 
     context_safe = (context or "").strip()
-    # ปรับเกณฑ์ขั้นต่ำเล็กน้อยเพื่อให้ทำงานได้แม้หลักฐานไม่เยอะ
     if len(context_safe) < 30:
         return {
-            "summary": "หลักฐานที่พบมีเนื้อหาน้อยเกินกว่าจะสรุปได้ชัดเจน", 
-            "suggestion_for_next_level": "กรุณาเพิ่มเอกสารหลักฐานที่เกี่ยวข้องในระบบเพื่อให้เห็นภาพรวมการดำเนินงาน"
+            "summary": "หลักฐานที่พบมีเนื้อหาน้อยเกินกว่าจะสรุปได้ชัดเจน",
+            "suggestion_for_next_level": "กรุณาเพิ่มเอกสารหลักฐานที่เกี่ยวข้อง",
+            "compliance_note": "ไม่เพียงพอต่อการประเมิน",
+            "evidence_integrity_score": 0.1
         }
 
-    # 2. เตรียม Prompt และ Parameter
-    # ป้องกัน Token Overflow สำหรับรุ่น 8b (จำกัดที่ ~6000-8000 chars)
-    context_to_send = context_safe[:7000] 
-    next_level = min(level + 1, 5)
+    # Fallback next_level ถ้าไม่ส่ง
+    if next_level is None:
+        next_level = min(level + 1, 5)
+        logger.debug(f"[SUMMARY] next_level fallback to {next_level} for {sub_id} L{level}")
 
+    # 2. Clean context ก่อนส่ง (เพิ่มเติมจากเดิม)
+    context_to_send = re.sub(r'[\x00-\x1F\x7F-\x9F]', ' ', context_safe)[:6500]
+
+    # 3. เตรียม Prompt
     try:
-        # ใช้ Template ที่คุณกำหนดไว้ (มั่นใจว่ามี USER_EVIDENCE_DESCRIPTION_TEMPLATE ใน scope)
+        fallback_statement = statement_text or "ไม่ระบุ statement (สรุปหลักฐานโดยรวม)"
         human_prompt = USER_EVIDENCE_DESCRIPTION_TEMPLATE.format(
             sub_id=f"{sub_id} - {sub_criteria_name}",
+            sub_criteria_name=sub_criteria_name,
             level=level,
+            statement_text=fallback_statement,
             next_level=next_level,
             context=context_to_send
         )
     except Exception as e:
         logger.error(f"❌ Formatting Error in Summary Prompt: {e}")
-        return {"summary": "Error formatting prompt", "suggestion_for_next_level": "N/A"}
+        return {
+            "summary": "เกิดข้อผิดพลาดในการจัดรูปแบบ prompt",
+            "suggestion_for_next_level": "N/A",
+            "compliance_note": "ไม่สามารถประมวลผลได้",
+            "evidence_integrity_score": 0.0
+        }
 
-    # ปรับ System Instruction ให้ AI เข้าใจว่าต้องตอบ JSON เท่านั้น
+    # System Instruction เข้มงวด + รองรับ fallback
     system_instruction = (
         f"{SYSTEM_EVIDENCE_DESCRIPTION_PROMPT}\n"
-        "### STRICT RULES ###\n"
-        "1. RETURN ONLY A VALID JSON OBJECT.\n"
-        "2. NO MARKDOWN BLOCKS (No ```json).\n"
-        "3. NO PREAMBLE/EXPLANATION.\n"
-        "4. USE THAI LANGUAGE for values."
+        "### STRICT RULES (ต้องปฏิบัติตามทุกข้อ) ###\n"
+        "1. RETURN ONLY VALID JSON OBJECT. ห้ามมีข้อความใด ๆ นอก JSON\n"
+        "2. ห้ามใช้ ```json หรือ markdown block\n"
+        "3. ใช้ภาษาไทยล้วนในทุก value\n"
+        "4. ห้ามมโนข้อมูลที่ไม่มีใน context\n"
+        "5. ถ้า statement_text ว่างหรือเป็น 'ไม่ระบุ' ให้สรุปหลักฐานโดยรวมโดยไม่ประเมิน compliance\n"
+        "6. ถ้ามี statement_text ให้ประเมิน compliance กับ statement จริง ๆ"
     )
 
-    # 3. Execution Loop with Advanced Parsing
-    max_retries = 2
+    # 4. Execution Loop with Advanced Parsing + Retry
+    max_retries = 4  # เพิ่มเป็น 4 รอบ
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"🔄 Generating Summary {sub_id} L{level} (Attempt {attempt})")
-            
-            # เรียก LLM (รองรับทั้ง LangChain invoke หรือ generate ตามสถาปัตยกรรมของคุณ)
+
+            # เรียก LLM (รองรับทั้ง LangChain & Ollama-style)
             if hasattr(llm_executor, 'generate'):
                 raw_response = llm_executor.generate(system=system_instruction, prompts=[human_prompt])
-            else:
-                # Fallback สำหรับการเรียกแบบตรงๆ
+            elif hasattr(llm_executor, 'invoke'):
                 raw_response = llm_executor.invoke(human_prompt)
-
-            # --- 🎯 Robust Text Extraction จาก Object ที่ LLM คืนมา ---
-            res_text = ""
-            if hasattr(raw_response, 'generations'): 
-                res_text = raw_response.generations[0][0].text
-            elif hasattr(raw_response, 'content'):   
-                res_text = str(raw_response.content)
             else:
-                res_text = str(raw_response)
+                raw_response = llm_executor(system_instruction + "\n" + human_prompt)
 
-            # -------------------------------------------------------
-            # ✨ ขั้นตอนการทำความสะอาดข้อความ (Critical for Thai RAG)
-            # -------------------------------------------------------
+            # Robust Text Extraction
+            res_text = ""
+            if hasattr(raw_response, 'generations'):
+                res_text = raw_response.generations[0][0].text.strip()
+            elif hasattr(raw_response, 'content'):
+                res_text = str(raw_response.content).strip()
+            else:
+                res_text = str(raw_response).strip()
+
+            # 5. ขั้นตอนทำความสะอาดข้อความ (Thai-safe)
             if res_text:
-                # 1. ลบ Non-breaking space และขยะ Unicode
                 res_text = res_text.replace('\xa0', ' ').replace('\u200b', '')
-                # 2. ล้าง Control characters (รหัส 0-31) ที่ทำให้ JSON พัง
-                res_text = "".join(char for char in res_text if ord(char) >= 32 or char in "\n\r\t")
-                # 3. ลบ Markdown Code Blocks (```json ... ```)
-                res_text = re.sub(r'```(?:json)?\n?|```', '', res_text).strip()
+                res_text = "".join(c for c in res_text if ord(c) >= 32 or c in "\n\r\t")
+                res_text = re.sub(r'```(?:json)?\s*|\s*```', '', res_text).strip()
+                res_text = re.sub(r'^[^{\[]+', '', res_text).strip()
 
-            # -------------------------------------------------------
-            # 🎯 ใช้ Ultimate Extractor ที่คุณเขียนมาช่วย Parse
-            # -------------------------------------------------------
+            # 6. Robust JSON Extraction
             parsed = _extract_normalized_dict(res_text)
 
-            # 4. Final Value Validation & Key Mapping
             if parsed and isinstance(parsed, dict):
-                # ดึงค่าโดยรองรับทั้งภาษาไทยและอังกฤษ (เพราะ _normalize_keys จัดการให้แล้วส่วนหนึ่ง)
-                sum_text = parsed.get("summary")
-                sug_text = parsed.get("suggestion_for_next_level")
-                
-                if sum_text and str(sum_text).strip() != "":
-                    logger.info(f"✅ Summary Generated Successfully on Attempt {attempt}")
+                summary_val = parsed.get("summary") or parsed.get("สรุป") or ""
+                suggestion = parsed.get("suggestion_for_next_level") or parsed.get("คำแนะนำระดับถัดไป") or ""
+                compliance = parsed.get("compliance_note") or parsed.get("หมายเหตุความสอดคล้อง") or "ไม่ระบุ"
+                score = float(parsed.get("evidence_integrity_score", 0.5))
+
+                if summary_val.strip():
+                    logger.info(f"✅ Summary Generated Successfully (Attempt {attempt})")
                     return {
-                        "summary": str(sum_text).strip(),
-                        "suggestion_for_next_level": str(sug_text).strip() if sug_text else "ดำเนินการตามเกณฑ์ระดับถัดไป",
-                        "integrity_score": parsed.get("evidence_integrity_score", 1.0)
+                        "summary": str(summary_val).strip(),
+                        "suggestion_for_next_level": str(suggestion).strip() or "ดำเนินการตามเกณฑ์ระดับถัดไป",
+                        "compliance_note": str(compliance).strip(),
+                        "evidence_integrity_score": max(0.0, min(1.0, score))
                     }
-            
-            logger.warning(f"⚠️ Attempt {attempt}: JSON Parsing failed or empty. Retrying...")
-            # เพิ่ม Hint ในรอบถัดไป
-            human_prompt += "\n\n(IMPORTANT: Provide only the JSON object, start with '{' and end with '}')"
-            
+
+            logger.warning(f"⚠️ Attempt {attempt}: Invalid/empty JSON. Retrying...")
+            human_prompt += "\n\n(สำคัญมาก: ตอบเฉพาะ JSON เริ่มต้นด้วย { และจบด้วย } ห้ามมีข้อความอื่นใด)"
+
+            time.sleep(0.8)  # พักนานขึ้นนิดหน่อย
+
         except Exception as e:
             logger.error(f"❌ Attempt {attempt} Error: {str(e)}")
-            time.sleep(0.5) # พักให้ Ollama หายเหนื่อย
+            time.sleep(1.2)
 
-    # 5. Fallback - เมื่อทำทุกทางแล้วยังไม่ได้ผล
+    # 7. Ultimate Fallback
+    logger.error(f"❌ All attempts failed for {sub_id} L{level}")
     return {
-        "summary": f"ตรวจพบหลักฐานการดำเนินงานในระดับ {level} (ระบบประมวลผลคำบรรยายขัดข้อง)",
-        "suggestion_for_next_level": f"ศึกษาเกณฑ์มาตรฐาน SE-AM ระดับ {next_level} เพื่อเตรียมเอกสารเพิ่มเติม"
+        "summary": f"ตรวจพบหลักฐานการดำเนินงานในระดับ {level} แต่ระบบไม่สามารถสรุปได้อย่างสมบูรณ์",
+        "suggestion_for_next_level": f"กรุณาตรวจสอบเอกสารเพิ่มเติมสำหรับเกณฑ์ระดับ {next_level or level+1}",
+        "compliance_note": "ไม่สามารถประเมินความสอดคล้องได้เนื่องจากข้อผิดพลาด",
+        "evidence_integrity_score": 0.3
     }
 
 def create_structured_action_plan(
@@ -1346,68 +1367,69 @@ def create_structured_action_plan(
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
     """
-    [FULL PRODUCTION VERSION]
-    สร้าง Strategic Roadmap โดยบูรณาการ Gaps, Coaching Insights และ Enabler Rules
-    รองรับระบบตรวจสอบความถูกต้องผ่าน ActionPlanResult Schema
+    [STRATEGIC ROADMAP ENGINE v2026.6.15]
+    - สร้างแผนงานเชิงยุทธศาสตร์แบบ Phase-based
+    - บูรณาการ Gaps รายเลเวลเข้ากับ Coaching Insights
+    - มีระบบ Safety Net (Emergency Fallback) ที่แม่นยำ
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    logger.info(f"🚀 Generating Universal Strategic Roadmap for {enabler} | {sub_id} (Target L{target_level})")
+    logger.info(f"🚀 [ROADMAP START] Generating plan for {enabler} | {sub_id} (Target L{target_level})")
 
-    # --- 1. วิเคราะห์สถานะ (Mode Analysis) ---
+    # --- 1. วิเคราะห์สถานะ (Condition Mode) ---
     is_sustain_mode = not recommendation_statements
     is_quality_refinement = False
     
-    avg_score = 10.0
+    avg_score = 0.0
     if recommendation_statements:
-        avg_score = sum([s.get('score', 0) for s in recommendation_statements]) / len(recommendation_statements)
-        types = [s.get('recommendation_type') for s in recommendation_statements]
+        scores = [float(s.get('score', 0.0)) for s in recommendation_statements]
+        avg_score = sum(scores) / len(scores)
+        types = [str(s.get('recommendation_type', '')) for s in recommendation_statements]
         
-        # ถ้าผ่านเกณฑ์พื้นฐานหมดแล้วแต่คะแนนเฉลี่ย < 70% ให้เน้นการปรับปรุงคุณภาพ (Refinement)
-        if 'FAILED' not in types and 'GAP_ANALYSIS' not in types and avg_score < 7.0:
+        # ถ้าผ่านเกณฑ์พื้นฐานแต่คะแนนรายข้อไม่เต็ม (เฉลี่ย < 80%)
+        if all(t not in ['FAILED_REMEDIATION'] for t in types) and avg_score < 0.8:
             is_quality_refinement = True
 
-    # --- 2. ตั้งค่า Dynamic Params (Advice Focus) ให้เป็นกลางตาม Enabler ---
+    # --- 2. ตั้งค่า Advice Focus (ตัวชี้นำ AI) ---
     specific_rule = enabler_rules.get(enabler, enabler_rules.get("DEFAULT", ""))
     
     if is_sustain_mode:
-        advice_focus = f"การรักษาความเป็นเลิศ นวัตกรรม และการเป็นต้นแบบในหัวข้อ {sub_criteria_name} ({enabler})"
-        dynamic_max_phases = 1
-        max_steps = 5
+        advice_focus = f"รักษามาตรฐานความเป็นเลิศ (Best Practice) และขยายผลสู่นวัตกรรมระดับองค์กรสำหรับ {sub_criteria_name}"
+        dynamic_max_phases, max_steps = 1, 4
     elif is_quality_refinement:
-        advice_focus = f"การเสริมความแข็งแกร่งของระบบการวัดผลและหลักฐานเชิงประจักษ์สำหรับ {sub_criteria_name}"
-        dynamic_max_phases = 1
-        max_steps = 3
+        advice_focus = f"ยกระดับคุณภาพของหลักฐานเชิงประจักษ์ (Evidence Quality) และการวัดผลความสำเร็จ (KPI) ให้คมชัดขึ้น"
+        dynamic_max_phases, max_steps = 1, 3
     else:
-        # 🎯 CRITICAL LOGIC: บังคับให้ AI เช็คฐาน L2 (Policy/Structure) ก่อนปีนไป L4-L5
-        advice_focus = (f"วิเคราะห์ความเชื่อมโยงจากโครงสร้างพื้นฐานใน Level 2 "
-                        f"เพื่อปิดช่องว่างและยกระดับ {sub_criteria_name} ของ {enabler} สู่ Level {target_level}")
+        # 🎯 CORE LOGIC: ต้องซ่อมฐาน (Level ต่ำ) ก่อนปีน Level สูง
+        advice_focus = (f"เน้นการปิดช่องว่าง (Gap Remediation) ตามวงจร PDCA "
+                        f"โดยเริ่มจากพื้นฐานนโยบาย (P) สู่การปฏิบัติจริง (D) และการวัดผล (C/A)")
         dynamic_max_phases = 3 if target_level >= 4 else 2
         max_steps = 3
 
     if specific_rule:
-        advice_focus += f" โดยเน้นย้ำตามกฎเฉพาะ: {specific_rule}"
+        advice_focus += f" (กฎเฉพาะ: {specific_rule})"
 
-    # --- 3. รวบรวมรายการ Gap (Statement Content) + Coaching Insights ---
+    # --- 3. เตรียมข้อมูล Gaps & Insights (เรียงลำดับ Level) ---
     if is_sustain_mode:
-        stmt_content = f"บรรลุเกณฑ์ {enabler} ระดับสูงสุดแล้ว เน้นแผนรักษามาตรฐานและสร้างความยั่งยืนต่อเนื่อง"
+        stmt_content = f"บรรลุเกณฑ์ระดับ {target_level} อย่างสมบูรณ์แบบ เน้นแผนงานเพื่อความยั่งยืนและการเป็น Role Model"
     else:
-        unique_statements = {}
+        # รวบรวมและกำจัดความซ้ำซ้อน โดยให้ความสำคัญกับเหตุผลที่ชัดเจนที่สุด
+        unique_gaps = {}
         for s in recommendation_statements:
-            reason = (s.get('reason') or s.get('statement') or "").strip()
-            coaching = s.get('coaching_insight', '').strip()
-            # ผสาน Coaching Insight เข้ากับช่องว่างเพื่อความคมชัด
-            combined = f"{reason} [Insight: {coaching}]" if coaching else reason
-            
             lvl = s.get('level', 0)
-            if not combined: continue
-            if combined not in unique_statements or lvl > unique_statements[combined]:
-                unique_statements[combined] = lvl
+            reason = (s.get('context') or s.get('reason') or "ไม่ระบุช่องว่าง").strip()
+            # ดึง Missing PDCA Phases มาโชว์ใน Roadmap ด้วย
+            missing = s.get('missing_phases', [])
+            pdca_suffix = f" [Missing: {','.join(missing)}]" if missing else ""
+            
+            unique_gaps[lvl] = f"{reason}{pdca_suffix}"
         
-        stmt_content = "\n".join([f"- [Level {v}] {k}" for k, v in unique_statements.items()])
+        # เรียงจาก L1 -> L5 เพื่อให้ AI เขียนแผนเป็นขั้นตอน
+        stmt_content = "\n".join([f"- Level {l}: {unique_gaps[l]}" for l in sorted(unique_gaps.keys())])
 
-    # --- 4. ประกอบ Prompt (ใช้ Template ที่เรา Revise ล่าสุด) ---
+    # --- 4. ประกอบ Prompt สำหรับ AI Engine ---
+    # ใช้ Global Variable ACTION_PLAN_PROMPT ที่พี่กำหนดไว้
     human_prompt = ACTION_PLAN_PROMPT.format(
         enabler=enabler,
         sub_id=sub_id,
@@ -1417,61 +1439,53 @@ def create_structured_action_plan(
         advice_focus=advice_focus,
         max_phases=dynamic_max_phases,
         max_steps=max_steps,
-        max_words_per_step=150,
+        max_words_per_step=120,
         language="ภาษาไทย"
     )
 
-    # --- 5. Execution Loop (พร้อมระบบ Robust Extraction & Validation) ---
+    # --- 5. Execution Loop (Retry & Recovery) ---
     for attempt in range(1, max_retries + 1):
         try:
-            logger.debug(f"Attempt {attempt}/{max_retries} for {sub_id}")
-
             response = llm_executor.generate(
                 system=SYSTEM_ACTION_PLAN_PROMPT,
                 prompts=[human_prompt],
-                temperature=0.0 
+                temperature=0.0 # ใช้ 0 เพื่อความนิ่งของโครงสร้าง JSON
             )
 
-            # 5.1 Extract Text
-            raw_text = ""
+            # Extract text safely
+            raw_text = getattr(response, 'content', str(response))
             if hasattr(response, 'generations'):
                 raw_text = response.generations[0][0].text
-            elif hasattr(response, 'content'):
-                raw_text = response.content
-            else:
-                raw_text = str(response)
 
-            # 5.2 Extract JSON Array (กู้คืน JSON ที่พัง)
+            # กู้คืน JSON Array
             items = _extract_json_array_for_action_plan(raw_text, logger)
-            if not items:
-                logger.warning(f"⚠️ No JSON array found in attempt {attempt}")
-                continue
+            if not items: continue
 
-            # 5.3 Normalize Keys (Snake Case Enforcement)
+            # Normalize Keys & Validate
             clean_items = action_plan_normalize_keys(items)
-
-            # 5.4 Pydantic Validation (ใช้ Schema ที่สร้างไว้)
+            
             try:
+                # ตรวจสอบกับ Pydantic Schema
                 validated = ActionPlanResult.validate_flexible(clean_items)
-                logger.info(f"✅ Strategic Roadmap generated for {enabler} {sub_id}")
-                # ส่งคืนข้อมูลในรูปแบบ List ของ Dict
+                logger.info(f"✅ [SUCCESS] Roadmap Built for {sub_id} (Attempt {attempt})")
+                
+                # คืนค่าเป็น List ของ Dict
                 if hasattr(validated, 'root'):
-                    return [item.model_dump() if hasattr(item, 'model_dump') else item for item in validated.root]
+                    return [i.model_dump() for i in validated.root]
                 return [v.model_dump() for v in validated]
 
             except Exception as ve:
-                logger.error(f"❌ Schema Validation Error (Attempt {attempt}): {ve}")
+                logger.warning(f"⚠️ Schema mismatch (Attempt {attempt}): {ve}")
                 continue
 
         except Exception as e:
-            logger.error(f"💥 Execution Error (Attempt {attempt}): {str(e)}")
-            time.sleep(0.5)
+            logger.error(f"💥 Attempt {attempt} failed: {str(e)}")
+            time.sleep(0.3)
 
-    # --- 6. Emergency Fallback Plan ---
-    logger.warning(f"⚠️ Falling back to predefined emergency plan for {sub_id}")
+    # --- 6. Emergency Fallback ---
+    logger.warning(f"🆘 Using Predefined Emergency Roadmap for {sub_id}")
     return _get_emergency_fallback_plan(
-        sub_id, sub_criteria_name, target_level, 
-        is_sustain_mode, is_quality_refinement, enabler
+        sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement, enabler
     )
 
 # =================================================================
