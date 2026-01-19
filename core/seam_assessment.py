@@ -64,7 +64,6 @@ try:
         create_context_summary_llm,
         retrieve_context_by_doc_ids,
         _fetch_llm_response,
-        build_multichannel_context_for_level,
         _get_emergency_fallback_plan,
         _check_and_handle_empty_context
     )
@@ -127,7 +126,6 @@ except ImportError as e:
     def retrieve_context_for_low_levels(*args, **kwargs): return {"top_evidences": [], "aggregated_context": ""}
     def evaluate_with_llm_low_level(*args, **kwargs): return {"score": 0, "is_passed": False}
     def set_llm_data_mock_mode(mode): pass
-    def build_multichannel_context_for_level(*args, **kwargs): return ""
     
     class VectorStoreManager: pass
     def load_all_vectorstores(*args, **kwargs): return None
@@ -3792,7 +3790,144 @@ class SEAMPDCAEngine:
                 self.logger.info(f"🔍 [EXTRACT-TRACE] {sub_id} L{level} | {' | '.join(extract_parts[:2])}")
 
         except Exception as e:
-            self.logger.error(f"❌ Error in _log_pdca_status: {str(e)}")    
+            self.logger.error(f"❌ Error in _log_pdca_status: {str(e)}")   
+
+    def _summarize_evidence_list_short(self, evidences: list, max_sentences: int = 3) -> str:
+        """
+        [REVISED v2026.SUMMARY.4]
+        - เปลี่ยนเป็น Method เพื่อใช้ self.logger
+        - เน้นดึง Source และ Page เพื่อสร้าง Audit Traceability
+        - ปรับ Formatting ให้เป็น Bullet points (LLM อ่านง่ายกว่า Pipe '|')
+        """
+        if not evidences:
+            return "ไม่พบข้อมูลหลักฐานเพิ่มเติม"
+        
+        parts = []
+        # เลือกเฉพาะหลักฐานที่มีคุณภาพ (มีเนื้อหา) และจำกัดจำนวนตาม max_sentences
+        valid_evidences = [
+            ev for ev in evidences 
+            if isinstance(ev, dict) and (ev.get("text") or ev.get("content", "")).strip()
+        ]
+        
+        # ตัดจำนวนตามที่ต้องการ (ไม่เกินจำนวนที่มีจริง)
+        target_count = max(1, min(len(valid_evidences), max_sentences))
+        
+        for ev in valid_evidences[:target_count]:
+            # 1. สกัดข้อมูลแหล่งที่มา (Source Mapping)
+            filename = (ev.get("file_name") or ev.get("source") or 
+                        ev.get("source_filename") or "ไม่ระบุชื่อไฟล์")
+            page = ev.get("page", "-")
+            
+            # 2. ทำความสะอาดเนื้อหา (Data Cleaning)
+            raw_text = ev.get("text") or ev.get("content") or ""
+            # ลบการขึ้นบรรทัดใหม่ที่เกินจำเป็น และตัดเอาเฉพาะส่วนต้น
+            clean_text = " ".join(raw_text.split()).strip()
+            text_preview = clean_text[:150] # เพิ่มความยาวเป็น 150 เพื่อให้ได้บริบทที่ชัดขึ้น
+            
+            # 3. ประกอบร่าง (Formatting)
+            if text_preview:
+                parts.append(f"• [{filename}, หน้า {page}]: \"{text_preview}...\"")
+            else:
+                parts.append(f"• [{filename}, หน้า {page}]: (พบความเกี่ยวข้องแต่ไม่สามารถสรุปเนื้อหาได้)")
+
+        # เชื่อมด้วยการขึ้นบรรทัดใหม่เพื่อให้ AI แยกแยะแต่ละชิ้นได้ง่าย
+        return "\n".join(parts) 
+
+    def _build_multichannel_context_for_level( # เปลี่ยนเป็น Private Method
+        self, # เพิ่ม self
+        level: int,
+        top_evidences: List[Dict[str, Any]],
+        previous_levels_map: Optional[Dict[str, Any]] = None,
+        previous_levels_evidence: Optional[List[Dict[str, Any]]] = None,
+        max_main_context_tokens: int = 3000, 
+        max_summary_sentences: int = 4,
+        max_context_length: Optional[int] = None, 
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        [ULTIMATE OPTIMIZED v2026.8 - REFACTORED AS CLASS METHOD]
+        """
+        K_MAIN = 5
+        # ใช้ค่าจาก Config ใน Class ได้เลยถ้ามี เช่น self.config.l1_threshold
+        MIN_RELEVANCE_FOR_AUX = 0.15 if level == 1 else 0.4 
+
+        # 1. Baseline Summary
+        baseline_evidence = previous_levels_evidence or []
+        if previous_levels_map:
+            for lvl_ev in previous_levels_map.values():
+                baseline_evidence.extend(lvl_ev)
+
+        # Normalize list (ตาม Logic เดิมของคุณที่แก้บั๊ก Slice แล้ว)
+        baseline_evidence_list = []
+        if isinstance(baseline_evidence, list):
+            baseline_evidence_list = baseline_evidence
+        elif isinstance(baseline_evidence, dict):
+            baseline_evidence_list = list(baseline_evidence.values())
+        
+        summarizable_baseline = [
+            item for item in baseline_evidence_list[:40] 
+            if isinstance(item, dict) and (item.get("text") or item.get("content", "")).strip()
+        ]
+
+        if not summarizable_baseline:
+            baseline_summary = "ไม่มีหลักฐานจากระดับก่อนหน้า (เริ่มต้นที่ Level 1)"
+        else:
+            # เรียกใช้ผ่าน self
+            baseline_summary = self._summarize_evidence_list_short(
+                summarizable_baseline,
+                max_sentences=max_summary_sentences
+            )
+
+        # 2. Direct + Aux Separation
+        direct, aux_candidates = [], []
+
+        for idx, ev in enumerate(top_evidences[:40], 1):
+            if not isinstance(ev, dict): continue
+
+            tag = (ev.get("pdca_tag") or ev.get("PDCA") or "Other").upper()
+            relevance = ev.get("rerank_score") or ev.get("score", 0.0)
+            text_preview = (ev.get('text', '')[:80] + "...") if ev.get('text') else "[No text]"
+
+            # ใช้ self.logger ได้เลย
+            self.logger.debug(f"[TAG-CHECK L{level} #{idx}] Rel: {relevance:.3f} | Tag: {tag} | Preview: {text_preview}")
+
+            if tag in {"P", "PLAN", "D", "DO", "C", "CHECK", "A", "ACT"}:
+                direct.append(ev)
+            elif relevance >= MIN_RELEVANCE_FOR_AUX:
+                aux_candidates.append(ev)
+
+        # 3. Logic การย้าย Aux และ Fallback (เหมือนเดิม แต่เปลี่ยนเป็น self.logger)
+        if len(direct) < K_MAIN:
+            need = K_MAIN - len(direct)
+            moved = aux_candidates[:need]
+            direct.extend(moved)
+            aux_candidates = aux_candidates[need:]
+            self.logger.info(f"[DIRECT-FILL] Moved {need} aux chunks to direct (total direct: {len(direct)})")
+
+        if level == 1 and len(direct) == 0 and top_evidences:
+            need = min(K_MAIN, len(top_evidences))
+            forced_chunks = sorted(top_evidences, key=lambda e: e.get("rerank_score", 0) or e.get("score", 0), reverse=True)[:need]
+            direct.extend(forced_chunks)
+            self.logger.warning(f"[L1-ULTRA-FALLBACK] No PDCA tag at all → Forced top {need} chunks to direct")
+
+        # 5. สร้าง aux_summary (เรียกผ่าน self)
+        aux_summary = self._summarize_evidence_list_short(aux_candidates, max_sentences=3) if aux_candidates else \
+            "ไม่มีหลักฐานรองที่มีคุณภาพเพียงพอ"
+
+        # 6. Return พร้อม Debug Meta
+        self.logger.info(f"Context L{level} → Direct:{len(direct)} | Aux:{len(aux_candidates)} | Baseline:{len(summarizable_baseline)}")
+
+        return {
+            "baseline_summary": baseline_summary,
+            "direct_context": "", 
+            "aux_summary": aux_summary,
+            "debug_meta": {
+                "level": level,
+                "direct_count": len(direct),
+                "aux_count": len(aux_candidates),
+                "top_relevance": max((ev.get("rerank_score", 0) for ev in top_evidences), default=0)
+            },
+        }
 
     def _perform_adaptive_retrieval(self, sub_id: str, level: int, stmt: str, vectorstore_manager: Any):
         """
@@ -3973,7 +4108,7 @@ class SEAMPDCAEngine:
     # 3. Adaptive Retrieval: (_perform_adaptive_retrieval) Multi-loop RAG ค้นหาข้อมูลเชิงลึก
     # 4. Quality Gate & Diversity: (_apply_diversity_filter) กรองความซ้ำซ้อนของเนื้อหา
     # 5. Neighbor Expansion: (_expand_context_with_neighbor_pages) เติมเต็มบริบทจากหน้าข้างเคียง
-    # 6. Multichannel Context: (build_multichannel_context_for_level) แยกหมวดหมู่ P,D,C,A & Baseline
+    # 6. Multichannel Context: (_build_multichannel_context_for_level) แยกหมวดหมู่ P,D,C,A & Baseline
     # 7. PDCA Blocks Construction: (_get_pdca_blocks_from_evidences & _build_pdca_context)
     # 8. Dual-Round Evaluation: (evaluate_with_llm -> _build_audit_result_object) ประเมิน & ประกอบร่าง
     # 9. Expert Safety Net: (High Rerank Boost) ตรวจสอบความขัดแย้งระหว่าง Score และ Evidence
@@ -4026,7 +4161,7 @@ class SEAMPDCAEngine:
                 diverse_docs = self._expand_context_with_neighbor_pages(diverse_docs, f"evidence_{self.enabler.lower()}")
 
             # --- STEP 6: MULTICHANNEL CONTEXT BUILDING ---
-            multichannel_data = build_multichannel_context_for_level(
+            multichannel_data = self._build_multichannel_context_for_level( # เพิ่ม self. และ _
                 level=level,
                 top_evidences=diverse_docs,
                 previous_levels_evidence=previous_evidences
