@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict, ValidationError
+from pydantic import BaseModel, Field, field_validator, RootModel, ConfigDict, ValidationError, AliasChoices
 from typing import List, Any, Dict, Optional, Union
 import re
 import logging
@@ -14,17 +14,17 @@ class StepDetail(BaseModel):
         extra="ignore"
     )
 
-    step: int = Field(..., alias="Step")
-    description: str = Field(..., alias="Description")
-    responsible: str = Field("หน่วยงานที่เกี่ยวข้อง", alias="Responsible")
-    tools_templates: str = Field("-", alias="Tools_Templates")
-    verification_outcome: str = Field("หลักฐานเชิงประจักษ์ตามแผน", alias="Verification_Outcome")
+    # ใช้ AliasChoices เพื่อให้รับได้ทั้ง "Step", "step", "STEP"
+    step: int = Field(..., validation_alias=AliasChoices("Step", "step", "Step_No"))
+    description: str = Field(..., validation_alias=AliasChoices("Description", "description", "desc"))
+    responsible: str = Field("หน่วยงานที่เกี่ยวข้อง", validation_alias=AliasChoices("Responsible", "responsible", "owner"))
+    tools_templates: str = Field("-", validation_alias=AliasChoices("Tools_Templates", "tools_templates", "tools"))
+    verification_outcome: str = Field("หลักฐานเชิงประจักษ์ตามแผน", validation_alias=AliasChoices("Verification_Outcome", "verification_outcome", "outcome"))
 
     @field_validator("step", mode="before")
     @classmethod
     def parse_step_number(cls, v: Any) -> int:
         if isinstance(v, (int, float)): return int(v)
-        # ดึงตัวเลขแรกที่เจอ เช่น "Step 01" -> 1
         found = re.search(r'\d+', str(v))
         return int(found.group()) if found else 1
 
@@ -33,7 +33,6 @@ class StepDetail(BaseModel):
     def sanitize_text(cls, v: Any) -> str:
         if v is None: return "-"
         text = str(v).strip()
-        # ลบ Markdown characters ที่อาจหลงมา เช่น "**" หรือ "_"
         return re.sub(r'[*_#]', '', text) or "-"
 
 # ---------------------------------------------------------
@@ -45,35 +44,37 @@ class ActionItem(BaseModel):
         extra="ignore"
     )
 
-    statement_id: str = Field(..., alias="Statement_ID")
-    failed_level: int = Field(..., alias="Failed_Level")
-    recommendation: str = Field("ดำเนินการพัฒนาตามเกณฑ์มาตรฐาน", alias="Recommendation")
-    target_evidence_type: str = Field("Evidence Package / Report", alias="Target_Evidence_Type")
-    key_metric: str = Field("ความสำเร็จตามตัวชี้วัดที่กำหนด (100%)", alias="Key_Metric")
-    steps: List[StepDetail] = Field(default_factory=list, alias="Steps")
+    # แก้จุดตายที่ Error ใน Log: ดักจับทั้ง Statement_ID, statement_id, statementid
+    statement_id: str = Field(..., validation_alias=AliasChoices("Statement_ID", "statement_id", "statementid"))
+    failed_level: int = Field(..., validation_alias=AliasChoices("Failed_Level", "failed_level", "failedlevel"))
+    recommendation: str = Field("ดำเนินการพัฒนาตามเกณฑ์มาตรฐาน", validation_alias=AliasChoices("Recommendation", "recommendation"))
+    target_evidence_type: str = Field("Evidence Package / Report", validation_alias=AliasChoices("Target_Evidence_Type", "target_evidence_type"))
+    key_metric: str = Field("ความสำเร็จตามตัวชี้วัดที่กำหนด (100%)", validation_alias=AliasChoices("Key_Metric", "key_metric"))
+    steps: List[StepDetail] = Field(default_factory=list, validation_alias=AliasChoices("Steps", "steps"))
+
+    @field_validator("failed_level", mode="before")
+    @classmethod
+    def parse_failed_level(cls, v: Any) -> int:
+        if isinstance(v, (int, float)): return int(v)
+        # กรณี AI พ่น "Level 1" หรือ "L1"
+        found = re.search(r'\d+', str(v))
+        return int(found.group()) if found else 0
 
     @field_validator("steps", mode="before")
     @classmethod
     def handle_variadic_steps(cls, v: Any) -> List[Dict]:
         if not v: return []
-        if isinstance(v, str): # กรณี AI พ่นมาเป็นประโยคเดียว
-            return [{"Step": 1, "Description": v.strip()}]
+        if isinstance(v, str): 
+            return [{"step": 1, "description": v.strip()}]
         
         raw_list = v if isinstance(v, list) else [v]
         normalized = []
         for i, item in enumerate(raw_list):
             if isinstance(item, str):
-                normalized.append({"Step": i + 1, "Description": item})
+                normalized.append({"step": i + 1, "description": item})
             elif isinstance(item, dict):
-                # เทคนิค Case-Insensitive Mapping
-                mapping = {
-                    "step": "Step", "description": "Description", 
-                    "responsible": "Responsible", "tools_templates": "Tools_Templates", 
-                    "verification_outcome": "Verification_Outcome",
-                    "tools": "Tools_Templates", "outcome": "Verification_Outcome"
-                }
-                new_item = {mapping.get(k.lower().replace("_", ""), k): val for k, val in item.items()}
-                if "Step" not in new_item: new_item["Step"] = i + 1
+                # ทำให้ keys เป็นตัวเล็กและไม่มี underscore เพื่อให้ตรงกับ Model
+                new_item = {k.lower().replace("_", ""): val for k, val in item.items()}
                 normalized.append(new_item)
         return normalized
 
@@ -83,9 +84,9 @@ class ActionItem(BaseModel):
 class ActionPlanActions(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    phase: str = Field(..., alias="Phase")
-    goal: str = Field(..., alias="Goal")
-    actions: List[ActionItem] = Field(default_factory=list, alias="Actions")
+    phase: str = Field(..., validation_alias=AliasChoices("Phase", "phase"))
+    goal: str = Field(..., validation_alias=AliasChoices("Goal", "goal"))
+    actions: List[ActionItem] = Field(default_factory=list, validation_alias=AliasChoices("Actions", "actions"))
 
 # ---------------------------------------------------------
 # 4. ActionPlanResult: ตัวเชื่อมต่อระดับ Root
@@ -96,51 +97,44 @@ class ActionPlanResult(RootModel):
     @classmethod
     def validate_flexible(cls, data: Any) -> "ActionPlanResult":
         """
-        ระบบอัจฉริยะสำหรับกู้คืนข้อมูล JSON จาก LLM ในทุกรูปแบบ
+        ปรับปรุง Logic การแกะ List ให้ทนทานต่อ Dict ที่ AI มโน Key ขึ้นมาหุ้ม
         """
         if not data: return cls.model_validate([])
 
-        # เตรียมข้อมูลเบื้องต้น (Normalize keys ให้เป็นตัวเล็กเพื่อการเช็ค)
-        if isinstance(data, dict):
-            lowered_data = {k.lower(): v for k, v in data.items()}
-            
-            # กรณี 1: ข้อมูลหุ้มด้วย Key มาตรฐาน
-            for key in ["root", "phases", "actionplan", "roadmap"]:
-                if key in lowered_data and isinstance(lowered_data[key], list):
-                    return cls.model_validate(lowered_data[key])
-            
-            # กรณี 2: ข้อมูลเป็นเฟสเดียวแต่ถูกส่งมาเป็น Dict ชั้นเดียว
-            if "phase" in lowered_data:
-                return cls.model_validate([data])
-
-        # กรณี 3: ข้อมูลเป็น List ตรงๆ (Best Practice)
         if isinstance(data, list):
             return cls.model_validate(data)
-            
-        return cls.model_validate([data])
 
-    def __iter__(self): return iter(self.root)
-    def __len__(self): return len(self.root)
-    def __getitem__(self, idx): return self.root[idx]
+        if isinstance(data, dict):
+            # ตรวจสอบหา List ของ Actions ภายใน Dict
+            for key, value in data.items():
+                if isinstance(value, list) and len(value) > 0:
+                    # ถ้าเจอ List ที่มีสมาชิกตัวแรกมีแววว่าเป็น Phase
+                    if isinstance(value[0], dict) and any(k.lower() == 'phase' for k in value[0].keys()):
+                        return cls.model_validate(value)
+            
+            # ถ้าเป็น Dict ชั้นเดียวที่มีข้อมูลเฟสงาน
+            if any(k.lower() == 'phase' for k in data.keys()):
+                return cls.model_validate([data])
+
+        return cls.model_validate(data)
 
 # ---------------------------------------------------------
-# 5. Helper: สำหรับดึง Schema ไปใส่ใน Prompt
+# 5. Helper: ปรับ Schema ให้ LLM ไม่สับสนเรื่อง Case
 # ---------------------------------------------------------
 def get_clean_action_plan_schema() -> Dict[str, Any]:
-    """ คืนค่า Schema ที่ Clean ที่สุดเพื่อให้ LLM เข้าใจง่าย """
     return {
         "format": "array",
-        "items_structure": {
-            "phase": "string (ชื่อเฟสเชิงกลยุทธ์)",
-            "goal": "string (เป้าหมาย)",
+        "description": "MUST be a valid JSON array of strategic phases.",
+        "example_item": {
+            "phase": "Foundation Build",
+            "goal": "Establish KM Policy",
             "actions": [
                 {
-                    "statement_id": "string",
-                    "failed_level": "integer",
-                    "recommendation": "string",
-                    "target_evidence_type": "string",
+                    "statement_id": "1.1",
+                    "failed_level": 1,
+                    "recommendation": "Draft KM Policy for Board approval",
                     "steps": [
-                        {"step": "int", "description": "string", "responsible": "string"}
+                        {"step": 1, "description": "Gather requirements", "responsible": "KM Unit"}
                     ]
                 }
             ]

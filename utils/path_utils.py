@@ -343,47 +343,6 @@ def resolve_filepath_to_absolute(path: str) -> str:
     # 2. 🟢 เปลี่ยนจาก NFKC เป็น NFC เพื่อป้องกันสระไทย (เช่น สระอำ) ถูกแปลงรหัสจนไฟล์หาไม่เจอ
     return unicodedata.normalize('NFC', abs_path)
 
-# ==================== 9. EVIDENCE MAPPING ====================
-def load_evidence_mapping(
-    tenant=DEFAULT_TENANT,
-    year=DEFAULT_YEAR,
-    enabler=DEFAULT_ENABLER
-):
-    path = get_evidence_mapping_file_path(tenant, year, enabler)
-
-    if not os.path.exists(path):
-        return {}
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load evidence mapping: {path} | {e}")
-        return {}
-
-
-def save_evidence_mapping(
-    data,
-    tenant=DEFAULT_TENANT,
-    year=DEFAULT_YEAR,
-    enabler=DEFAULT_ENABLER
-):
-    path = get_evidence_mapping_file_path(tenant, year, enabler)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    tmp_path = f"{path}.tmp"
-
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        os.replace(tmp_path, path)  # ✅ atomic write
-    except Exception as e:
-        logger.error(f"Failed to save evidence mapping: {path} | {e}")
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise
-
-
 # ==================== 10. UPDATE MAPPINGS ====================
 def _update_doc_id_mapping(
     new_entries: Dict[str, Any],
@@ -583,8 +542,6 @@ __all__ = [
     "get_mapping_tenant_root_path",
     "load_doc_id_mapping",
     "save_doc_id_mapping",
-    "load_evidence_mapping",      # ✅ เพิ่ม
-    "save_evidence_mapping",      # ✅ เพิ่ม
     "_update_doc_id_mapping",     # ✅ เพิ่ม
     "_update_evidence_mapping",   # ✅ เพิ่ม
     "parse_collection_name",

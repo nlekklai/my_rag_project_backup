@@ -838,6 +838,7 @@ def build_multichannel_context_for_level(
     - Ultra fallback สำหรับ L1: ถ้า direct ยัง 0 → force top chunks เข้า direct + pdca_groups (P/D)
     - Debug log ละเอียดสุด: tag, relevance, text preview, force detail
     - Robust handling: ว่าง → ข้อความ fallback ที่ LLM เข้าใจว่า "มีหลักฐานแต่ไม่ชัดเจน"
+    - FIXED: KeyError on slice(None, 40, None) by normalizing baseline_evidence to list
     """
     logger = logging.getLogger(__name__)
     K_MAIN = 5
@@ -849,8 +850,23 @@ def build_multichannel_context_for_level(
         for lvl_ev in previous_levels_map.values():
             baseline_evidence.extend(lvl_ev)
 
+    # FIXED: Normalize baseline_evidence to list before slice
+    baseline_evidence_list = []
+    if isinstance(baseline_evidence, list):
+        baseline_evidence_list = baseline_evidence
+    elif isinstance(baseline_evidence, dict):
+        # ถ้าเป็น dict → เอา values (สมมติ values เป็น chunks)
+        baseline_evidence_list = list(baseline_evidence.values())
+    elif baseline_evidence:
+        # ถ้าเป็น iterable อื่น → ลองแปลง
+        try:
+            baseline_evidence_list = list(baseline_evidence)
+        except:
+            logger.warning(f"[BASELINE NORMALIZE FAIL] Type: {type(baseline_evidence)} - Using empty list")
+    
+    # Slice ได้ปลอดภัยแล้ว
     summarizable_baseline = [
-        item for item in baseline_evidence[:40]  # เพิ่มเป็น 40 เพื่อครบถ้วน
+        item for item in baseline_evidence_list[:40]  # เพิ่มเป็น 40 เพื่อครบถ้วน
         if isinstance(item, dict) and (item.get("text") or item.get("content", "")).strip()
     ]
 
@@ -873,7 +889,7 @@ def build_multichannel_context_for_level(
         relevance = ev.get("rerank_score") or ev.get("score", 0.0)
         text_preview = (ev.get('text', '')[:80] + "...") if ev.get('text') else "[No text]"
 
-        # Debug ทุก chunk (ช่วยหาว่าทำไมไม่เข้า direct)
+        # Debug ทุก chunk (ช่วยหาว่าทำไมไม่เข้าส่วน direct)
         logger.debug(f"[TAG-CHECK L{level} #{idx}] Rel: {relevance:.3f} | Tag: {tag} | Preview: {text_preview}")
 
         if tag in {"P", "PLAN", "D", "DO", "C", "CHECK", "A", "ACT"}:
@@ -926,7 +942,6 @@ def build_multichannel_context_for_level(
         "debug_meta": debug_meta,
     }
 
-
 # ------------------------
 # LLM fetcher
 # ------------------------
@@ -937,88 +952,94 @@ def _fetch_llm_response(
     llm_executor: Any = None 
 ) -> str:
     """
-    เรียก LLM ผ่าน LangChain/Ollama พร้อมระบบป้องกัน Format ผิดเพี้ยน:
-    - บังคับ JSON output ด้วย Strict English Prompt
-    - ใช้ Regex Extraction ดึงเฉพาะส่วน { ... } เพื่อตัดคำบรรยายภาษาอังกฤษออก
-    - Log raw response เต็มๆ เพื่อใช้ในการ Debug
-    - Retry พร้อม Exponential Backoff เมื่อเกิด Error
+    Ultimate Robust LLM Fetcher v2026.1.19-final
+    - คืน STRING เสมอ ไม่เคยคืน None
+    - ป้องกัน NoneType.strip() ทุกจุด
+    - Log ชัดเจนเพื่อ debug
     """
     global _MOCK_FLAG
+    import time
+    import re
+    import json
 
-    # ตรวจสอบว่ามี LLM Instance พร้อมใช้งานหรือไม่
-    if llm_executor is None and not _MOCK_FLAG: 
-        raise ConnectionError("LLM instance not initialized (Missing llm_executor).")
+    if llm_executor is None and not _MOCK_FLAG:
+        raise ConnectionError("LLM instance not initialized.")
 
-    # 1. 🛠️ ENFORCED PROMPT (ภาษาอังกฤษมักคุม Format ได้ดีกว่าสำหรับโมเดลขนาดเล็ก)
-    enforced_system_prompt = system_prompt.strip() + (
-        "\n\n"
-        "### STRICT OUTPUT RULES ###\n"
-        "1. ANSWER IN VALID JSON OBJECT ONLY.\n"
-        "2. NO EXPLANATIONS, NO PREFACE, NO CONVERSATION.\n"
-        "3. START WITH '{' AND END WITH '}'.\n"
-        "4. DO NOT USE MARKDOWN CODE BLOCKS (```json).\n"
-        "5. IF NO EVIDENCE FOUND, RETURN: {\"score\": 0, \"reason\": \"No evidence\", \"is_passed\": false}"
+    # Enforced prompt (ปรับให้เข้มขึ้นอีกนิด)
+    enforced_system_prompt = (system_prompt or "").strip() + (
+        "\n\n### STRICT OUTPUT RULES - FOLLOW EXACTLY ###\n"
+        "1. Respond with ONLY valid JSON object. No other text.\n"
+        "2. Start with '{' and end with '}'.\n"
+        "3. No markdown, no explanations, no prefixes.\n"
+        "4. If no evidence: {\"score\": 0, \"reason\": \"No evidence\", \"is_passed\": false}"
     )
 
     messages = [
         {"role": "system", "content": enforced_system_prompt},
-        {"role": "user",   "content": user_prompt}
+        {"role": "user",   "content": (user_prompt or "").strip()}
     ]
 
     for attempt in range(1, max_retries + 1):
         try:
-            # --- MOCK MODE CASE ---
             if _MOCK_FLAG:
-                mock_json = '{"score": 1, "reason": "Mock mode active", "is_passed": true}'
-                logger.critical(f"LLM RAW RESPONSE (DEBUG MOCK): {mock_json}")
-                return mock_json
+                mock = '{"score": 1, "reason": "Mock active", "is_passed": true}'
+                logger.critical(f"LLM RAW (MOCK): {mock}")
+                return mock
 
-            # --- ACTUAL LLM CALL (OLLAMA / LANGCHAIN) ---
-            # ใช้ temperature=0.0 เพื่อความแม่นยำสูงสุด
+            # LLM CALL
             response = llm_executor.invoke(messages, config={"temperature": 0.0})
-            
-            # ดึง Text ออกมาจาก Response Object
+
+            # SAFE EXTRACTION - รวม patch ของคุณ
             raw_text = ""
-            if hasattr(response, "content"):
-                raw_text = str(response.content)
+            if response is None:
+                logger.warning("Response object is None")
+            elif hasattr(response, "content"):
+                raw_text = str(response.content or "")
+            elif hasattr(response, "text"):
+                raw_text = str(response.text or "")
             elif isinstance(response, str):
                 raw_text = response
             else:
-                raw_text = str(response)
+                raw_text = str(response or "")
 
-            # 🔍 บรรทัดที่คุณเห็นใน Log คือบรรทัดนี้ (Log ก่อน Clean เพื่อดูพฤติกรรมโมเดล)
-            logger.critical(f"LLM RAW RESPONSE (DEBUG): {raw_text[:1000]}{'...' if len(raw_text) > 1000 else ''}")
+            # Log raw ก่อน clean
+            preview = (raw_text[:1000] + "...") if len(raw_text) > 1000 else raw_text
+            logger.critical(f"LLM RAW RESPONSE (attempt {attempt}): {preview}")
 
-            # 2. 🧹 CLEANING LOGIC (Regex Extraction)
-            # แก้ปัญหา LLM ตอบ "Based on the text... { ... }"
-            raw_text_stripped = raw_text.strip()
-            
-            # ค้นหาข้อความที่อยู่ในปีกกาคู่แรก { ... }
-            json_match = re.search(r'(\{.*\})', raw_text_stripped, re.DOTALL)
-            
+            # Clean - ปลอดภัยแน่นอน
+            raw_text_stripped = (raw_text or "").strip()
+
+            # หา JSON block
+            json_match = re.search(r'\{[\s\S]*?\}', raw_text_stripped, re.DOTALL)
             if json_match:
-                extracted_json = json_match.group(1)
+                extracted = json_match.group(0)
                 try:
-                    # ทดสอบว่าสิ่งที่ดึงมาเป็น JSON ที่ถูกต้องหรือไม่
-                    json.loads(extracted_json) 
-                    return extracted_json
+                    json.loads(extracted)  # ทดสอบก่อน
+                    return extracted
                 except json.JSONDecodeError:
-                    logger.warning(f"Extracted string is not valid JSON: {extracted_json[:100]}")
-            
-            # 3. 🛡️ FALLBACK: ถ้า Regex ไม่เจอ หรือ Parse ไม่ได้
-            # ตรวจดูว่า raw_text (ที่ตัดหัวท้าย) พอลุ้นเป็น JSON ได้ไหม
-            return raw_text_stripped
+                    logger.warning(f"Extracted not valid JSON: {extracted[:120]}...")
+
+            # Fallback: ลอง parse ทั้งหมด
+            try:
+                parsed = json.loads(raw_text_stripped)
+                return json.dumps(parsed, ensure_ascii=False)
+            except json.JSONDecodeError:
+                pass
+
+            # Ultimate safe return - บังคับ string เสมอ (ตามที่คุณแนะนำ)
+            final_return = str(raw_text_stripped or "").strip()
+            logger.debug(f"No valid JSON → returning cleaned string (len={len(final_return)})")
+            return final_return
 
         except Exception as e:
-            logger.error(f"LLM call failed (attempt {attempt}/{max_retries}): {e}")
+            logger.error(f"Attempt {attempt} failed: {str(e)}", exc_info=True)
             if attempt < max_retries:
-                # Exponential backoff: 2s, 4s, 8s...
-                time.sleep(2 ** attempt)  
+                time.sleep(2 ** attempt)
             else:
-                logger.critical("All LLM attempts failed – returning safe fallback JSON")
-                return '{"score": 0, "reason": "LLM_TIMEOUT_OR_FAILURE", "is_passed": false}'
+                logger.critical("All retries failed")
+                return '{"score": 0, "reason": "LLM failed after retries", "is_passed": false}'
 
-    return '{"score": 0, "reason": "Unknown execution error"}'
+    return '{"score": 0, "reason": "Unknown error", "is_passed": false}'
 
 # ------------------------
 # Evaluation
@@ -1044,16 +1065,45 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
         }
     return None
 
-
-def _get_context_for_level(context: str, level: int) -> str:
-    """Return context string with appropriate length limit for each level."""
+def _get_context_for_level(
+    context: str,
+    level: int,
+    chunks: list = None,  # ส่ง chunks มาจาก _run_single_assessment
+    max_chars_l1_l2: int = 15000,  # เพิ่มจาก 6000
+    max_chars_l3_up: int = 10000,
+    max_chunks_l1_l2: int = 40,
+    max_chunks_l3_up: int = 25
+) -> str:
     if not context:
-        return ""
-    # L1-L2: เน้นกว้างเพื่อหาหลักฐานการมีอยู่
-    if level <= 2:
-        return context[:6000]  
-    # L3-L5: ใช้ค่าคงที่ที่กำหนดไว้ (ลด Latency บน Server)
-    return context[:MAX_EVAL_CONTEXT_LENGTH]  
+        return "ไม่พบข้อมูลหลักฐาน"
+
+    # ถ้ามี chunks → เรียงตาม score แล้วเลือก top
+    if chunks:
+        sorted_chunks = sorted(
+            chunks,
+            key=lambda c: float(c.get('rerank_score', 0) or c.get('score', 0)),
+            reverse=True
+        )
+        max_chunks = max_chunks_l1_l2 if level <= 2 else max_chunks_l3_up
+        selected = sorted_chunks[:max_chunks]
+
+        parts = []
+        for i, c in enumerate(selected, 1):
+            score = c.get('rerank_score', 'N/A')
+            source = c.get('source', 'ไม่ระบุ')
+            text = c.get('text', '').strip()
+            if text:
+                parts.append(f"[Chunk {i} | Score: {score} | {source}]\n{text}\n{'-'*80}\n")
+
+        final = "".join(parts)
+        max_chars = max_chars_l1_l2 if level <= 2 else max_chars_l3_up
+        if len(final) > max_chars:
+            final = final[:max_chars] + "\n... (ตัดเพื่อความเหมาะสม)"
+        return final
+
+    # fallback เดิม
+    max_chars = max_chars_l1_l2 if level <= 2 else max_chars_l3_up
+    return context[:max_chars] + ("... [truncated]" if len(context) > max_chars else "")
 
 def evaluate_with_llm(
     context: str, 
@@ -1062,50 +1112,59 @@ def evaluate_with_llm(
     statement_text: str, 
     sub_id: str, 
     llm_executor: Any = None, 
-    require_phase: List[str] = None,
+    required_phases: List[str] = None,
     specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
     confidence_reason: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
-    """[SENIOR-AUDIT v36.4] สำหรับระดับ Maturity L3-L5"""
-    context_to_send_eval = _get_context_for_level(context, level)
-    phases_str = ", ".join(require_phase) if require_phase else "P, D, C, A"
-    baseline_summary = kwargs.get("baseline_summary", "").strip()
+
+    # 1. Safe casting + default ที่ชัดเจน
+    ctx_raw = str(context or "")
+    s_name = str(sub_criteria_name or "N/A")
+    sid = str(sub_id or "N/A")
+    s_text = str(statement_text or "N/A")
+    
+    context_to_send_eval = _get_context_for_level(ctx_raw, level) or ""  # เพิ่ม or "" เผื่อ _get_context_for_level คืน None
+    
+    # 2. Safe phases
+    phases_str = ", ".join(str(p).strip() for p in (required_phases or [])) if required_phases else "P, D, C, A"
+
+    # 3. Baseline ต้อง clean ก่อน
+    baseline_raw = kwargs.get("baseline_summary")
+    baseline_summary = str(baseline_raw or "").strip()   # ปรับตรงนี้ให้ครอบคลุม None + ว่าง
 
     try:
-        # แมปค่าให้ตรงกับ USER_ASSESSMENT_PROMPT ใน seam_prompts.py
-        system_prompt = SYSTEM_ASSESSMENT_PROMPT.format(
-            level=level,
-            ai_confidence=ai_confidence,
-            confidence_reason=confidence_reason
-        )
-
-        user_prompt = USER_ASSESSMENT_PROMPT.format(
-            sub_criteria_name=sub_criteria_name,
-            sub_id=sub_id,
-            level=level,
-            statement_text=statement_text,
+        full_prompt = USER_ASSESSMENT_PROMPT.format(
+            sub_criteria_name=s_name,
+            sub_id=sid,
+            level=int(level),
+            statement_text=s_text,
             context=context_to_send_eval[:32000],
             required_phases=phases_str,
-            specific_contextual_rule=specific_contextual_rule,
-            ai_confidence=ai_confidence,
-            confidence_reason=confidence_reason
+            specific_contextual_rule=str(specific_contextual_rule or "พิจารณาตามเกณฑ์"),
+            ai_confidence=str(ai_confidence or "MEDIUM"),
+            confidence_reason=str(confidence_reason or "N/A")
         )
 
         if baseline_summary:
-            user_prompt += f"\n\n--- BASELINE DATA ---\n{baseline_summary}"
+            full_prompt += f"\n\n--- BASELINE DATA ---\n{baseline_summary}"
 
-        raw_response = _fetch_llm_response(system_prompt, user_prompt, llm_executor=llm_executor)
+        # 4. LLM call + guard ทันที
+        raw_response = _fetch_llm_response(None, full_prompt, llm_executor=llm_executor)
+        raw_response = str(raw_response or "").strip()  # เพิ่มบรรทัดนี้เพื่อความชัวร์
+
         parsed = _robust_extract_json(raw_response)
 
         return _build_audit_result_object(
             parsed, raw_response, context_to_send_eval, ai_confidence, 
-            level=level, sub_id=sub_id
+            level=level, sub_id=sid
         )
 
     except Exception as e:
-        return _create_fallback_error(sub_id, level, e, context_to_send_eval)
+        logger.error(f"Evaluation Error L{level} {sid}: {str(e)}", exc_info=True)
+        return _create_fallback_error(sid, level, e, context_to_send_eval)
+    
 
 def evaluate_with_llm_low_level(
     context: str,
@@ -1114,81 +1173,134 @@ def evaluate_with_llm_low_level(
     statement_text: str,
     sub_id: str,
     llm_executor: Any = None,
-    require_phase: List[str] = None,
+    required_phases: List[str] = None,
+    specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
-    confidence_reason: str = "N/A",
     **kwargs
 ) -> Dict[str, Any]:
-    """[FOUNDATION-AUDIT v36.4] สำหรับระดับ L1/L2"""
-    context_to_send_eval = _get_context_for_level(context, level)
-    phases_str = ", ".join(require_phase) if require_phase else "P, D"
-    plan_keywords = kwargs.get("plan_keywords", "วิสัยทัศน์, นโยบาย, แผนงาน, คำสั่ง")
+
+    # 1. Safe casting
+    ctx = str(context or "ไม่พบข้อมูลหลักฐาน")
+    s_name = str(sub_criteria_name or "N/A")
+    s_text = str(statement_text or "N/A")
+    sid = str(sub_id or "N/A")
+    
+    plan_kws = str(kwargs.get("plan_keywords") or "นโยบาย, แผนงาน, ยุทธศาสตร์")
+    baseline_summary = str(kwargs.get("baseline_summary") or "ไม่มีข้อมูลระดับก่อนหน้า").strip()
+    conf_reason = str(kwargs.get("confidence_reason") or "วิเคราะห์ตามเนื้องาน")
+    
+    phases_str = ", ".join(str(p) for p in (required_phases or [])) if required_phases else "P, D"
 
     try:
-        system_prompt = SYSTEM_LOW_LEVEL_PROMPT.format(
-            ai_confidence=ai_confidence,
-            confidence_reason=confidence_reason
-        )
-
-        user_prompt = USER_LOW_LEVEL_PROMPT.format(
-            sub_id=sub_id,
-            sub_criteria_name=sub_criteria_name,
-            level=level,
-            statement_text=statement_text,
-            context=context_to_send_eval[:32000],
+        full_prompt = USER_LOW_LEVEL_PROMPT.format(
+            sub_id=sid,
+            sub_criteria_name=s_name,
+            level=int(level),
+            statement_text=s_text,
+            context=ctx[:32000],
             required_phases=phases_str,
-            plan_keywords=plan_keywords,
-            ai_confidence=ai_confidence,
-            confidence_reason=confidence_reason
+            plan_keywords=plan_kws,
+            baseline_summary=baseline_summary,
+            specific_contextual_rule=str(specific_contextual_rule or "ตรวจตามเกณฑ์"),
+            ai_confidence=str(ai_confidence or "MEDIUM"),
+            confidence_reason=conf_reason
         )
 
-        raw_response = _fetch_llm_response(system_prompt, user_prompt, llm_executor=llm_executor)
+        raw_response = _fetch_llm_response(None, full_prompt, llm_executor=llm_executor)
+        raw_response = str(raw_response or "").strip()  # เพิ่มบรรทัดนี้เหมือนกัน
+
         parsed = _robust_extract_json(raw_response)
 
         return _build_audit_result_object(
-            parsed, raw_response, context_to_send_eval, ai_confidence, 
-            level=level, sub_id=sub_id
+            parsed, raw_response, ctx, ai_confidence, level=level, sub_id=sid
         )
 
     except Exception as e:
-        return _create_fallback_error(sub_id, level, e, context_to_send_eval)
-
+        logger.error(f"Error in evaluate_with_llm_low_level {sid} L{level}: {str(e)}", exc_info=True)
+        return {
+            "sub_id": sid,
+            "level": level,
+            "score": 0.0,
+            "is_passed": False,
+            "reason": f"Audit Engine Error: {str(e)}",
+            "summary_thai": "เกิดข้อผิดพลาดในการประมวลผลข้อมูล",
+            "P_Plan_Score": 0.0,
+            "D_Do_Score": 0.0,
+            "C_Check_Score": 0.0,
+            "A_Act_Score": 0.0,
+            "final_llm_context": ctx,
+            "raw_llm_response": "",
+            "ai_confidence_at_eval": "ERROR"
+        }
+    
 def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, confidence: str, **kwargs):
-    """ประกอบร่าง JSON Object พร้อมระบบป้องกันข้อมูลหาย"""
+    """
+    [ULTIMATE-SYNC v2] Revised for 100% Stability & Zero-Log-Loss
+    - แก้ปัญหา NoneType error จากการเรียก .strip() บนค่าว่าง
+    - รองรับ Key หลากหลายรูปแบบ (En/Th) เพื่อดึงเลข (0) ออกมาเป็นค่าจริง
+    """
     level = kwargs.get('level', 1)
     sub_id = kwargs.get('sub_id', 'Unknown')
 
+    # Helper: ป้องกันการ Error เมื่อพยายามจัดการตัวเลข
     def clean_score(val, default=0.0):
+        if val is None: return default
         try:
             return float(val)
-        except:
+        except (ValueError, TypeError):
             return default
 
+    # 🛡️ 1. ป้องกัน parsed ไม่ใช่ dict
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    # 2. จัดการคะแนนและการตัดสิน (Decision Logic)
     score = clean_score(parsed.get("score"))
     is_passed = parsed.get("is_passed")
-    
-    # ถ้า AI ตอบไม่ชัดเจน ให้ใช้คะแนนเป็นตัวตัดสิน (Logic ของ New Branch)
     if is_passed is None:
         is_passed = score >= 0.7 if level <= 2 else score >= 1.0
 
+    # 3. การสกัดหลักฐาน (Extraction) - ***แก้ไข: ป้องกัน .strip() พัง***
+    # ใช้ str(val or "-") ก่อนเรียก .strip() เพื่อการันตีว่าเป็น string แน่นอน
+    ext_p = str(parsed.get("Extraction_P") or parsed.get("หลักฐาน P") or parsed.get("p_plan_extraction") or "-").strip()
+    ext_d = str(parsed.get("Extraction_D") or parsed.get("หลักฐาน D") or parsed.get("d_do_extraction") or "-").strip()
+    ext_c = str(parsed.get("Extraction_C") or parsed.get("หลักฐาน C") or parsed.get("c_check_extraction") or "-").strip()
+    ext_a = str(parsed.get("Extraction_A") or parsed.get("หลักฐาน A") or parsed.get("a_act_extraction") or "-").strip()
+
+    # 4. จัดการคะแนนรายด้าน (PDCA Scores) - เพิ่มคีย์ที่ LLM ชอบตอบผิด
+    p_plan_score = clean_score(parsed.get("P_Plan_Score") or parsed.get("P_Score") or parsed.get("plan_score"))
+    d_do_score = clean_score(parsed.get("D_Do_Score") or parsed.get("D_Score") or parsed.get("do_score"))
+    c_check_score = clean_score(parsed.get("C_Check_Score") or parsed.get("C_Score") or parsed.get("check_score"))
+    a_act_score = clean_score(parsed.get("A_Act_Score") or parsed.get("A_Score") or parsed.get("act_score"))
+
+    # Fallback Logic สำหรับ L1-L2 (ตามกฎ origin main)
+    if bool(is_passed) and level <= 2:
+        if p_plan_score == 0: p_plan_score = score
+
+    # 5. ประกอบ Object สุดท้าย
     return {
         "sub_id": str(sub_id),
         "level": int(level),
         "score": score,
         "is_passed": bool(is_passed),
-        "reason": parsed.get("reason", "ไม่พบเหตุผลจาก LLM"),
-        "P_Plan_Score": clean_score(parsed.get("P_Plan_Score"), score if is_passed else 0.0),
-        "D_Do_Score": clean_score(parsed.get("D_Do_Score"), score if is_passed else 0.0),
-        "C_Check_Score": clean_score(parsed.get("C_Check_Score")),
-        "A_Act_Score": clean_score(parsed.get("A_Act_Score")),
-        "Extraction_P": parsed.get("Extraction_P", "-"),
-        "Extraction_D": parsed.get("Extraction_D", "-"),
-        "Extraction_C": parsed.get("Extraction_C", "-"),
-        "Extraction_A": parsed.get("Extraction_A", "-"),
-        "final_llm_context": context,
-        "raw_llm_response": raw_response,
-        "ai_confidence_at_eval": confidence,
-        "consistency_check": parsed.get("consistency_check", True)
+        "reason": str(parsed.get("reason") or parsed.get("เหตุผล") or "ไม่พบเหตุผลจาก LLM").strip(),
+        "summary_thai": str(parsed.get("summary_thai") or parsed.get("บทสรุป") or "").strip(),
+        "coaching_insight": str(parsed.get("coaching_insight") or parsed.get("ข้อแนะนำ") or "").strip(),
+        
+        "P_Plan_Score": p_plan_score,
+        "D_Do_Score": d_do_score,
+        "C_Check_Score": c_check_score,
+        "A_Act_Score": a_act_score,
+
+        "Extraction_P": ext_p,
+        "Extraction_D": ext_d,
+        "Extraction_C": ext_c,
+        "Extraction_A": ext_a,
+        
+        "final_llm_context": str(context or ""),
+        "raw_llm_response": str(raw_response or ""),
+        "ai_confidence_at_eval": str(confidence or "MEDIUM"),
+        "consistency_check": bool(parsed.get("consistency_check", True))
     }
 
 def _create_fallback_error(sub_id: str, level: int, error: Exception, context: str) -> Dict[str, Any]:
@@ -1367,69 +1479,67 @@ def create_structured_action_plan(
     enabler_rules: Dict[str, Any] = {}
 ) -> List[Dict[str, Any]]:
     """
-    [STRATEGIC ROADMAP ENGINE v2026.6.15]
-    - สร้างแผนงานเชิงยุทธศาสตร์แบบ Phase-based
-    - บูรณาการ Gaps รายเลเวลเข้ากับ Coaching Insights
-    - มีระบบ Safety Net (Emergency Fallback) ที่แม่นยำ
+    [STRATEGIC ROADMAP ENGINE v2026.6.15 - REVISED FOR COACHING INSIGHT]
+    - บูรณาการ coaching_insight จากต้นทางเข้าสู่กระบวนการเจนเนอเรท Roadmap
+    - บังคับให้ AI คืนค่าบทวิเคราะห์เชิงลึกในรูปแบบ JSON
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
     logger.info(f"🚀 [ROADMAP START] Generating plan for {enabler} | {sub_id} (Target L{target_level})")
 
-    # --- 1. วิเคราะห์สถานะ (Condition Mode) ---
+    # --- 1. วิเคราะห์สถานะ ---
     is_sustain_mode = not recommendation_statements
     is_quality_refinement = False
     
-    avg_score = 0.0
     if recommendation_statements:
         scores = [float(s.get('score', 0.0)) for s in recommendation_statements]
-        avg_score = sum(scores) / len(scores)
+        avg_score = sum(scores) / len(scores) if scores else 0
         types = [str(s.get('recommendation_type', '')) for s in recommendation_statements]
-        
-        # ถ้าผ่านเกณฑ์พื้นฐานแต่คะแนนรายข้อไม่เต็ม (เฉลี่ย < 80%)
         if all(t not in ['FAILED_REMEDIATION'] for t in types) and avg_score < 0.8:
             is_quality_refinement = True
 
-    # --- 2. ตั้งค่า Advice Focus (ตัวชี้นำ AI) ---
+    # --- 2. ตั้งค่า Advice Focus ---
     specific_rule = enabler_rules.get(enabler, enabler_rules.get("DEFAULT", ""))
-    
     if is_sustain_mode:
-        advice_focus = f"รักษามาตรฐานความเป็นเลิศ (Best Practice) และขยายผลสู่นวัตกรรมระดับองค์กรสำหรับ {sub_criteria_name}"
+        advice_focus = f"รักษามาตรฐานความเป็นเลิศ (Best Practice) และขยายผลสู่นวัตกรรม"
         dynamic_max_phases, max_steps = 1, 4
     elif is_quality_refinement:
-        advice_focus = f"ยกระดับคุณภาพของหลักฐานเชิงประจักษ์ (Evidence Quality) และการวัดผลความสำเร็จ (KPI) ให้คมชัดขึ้น"
+        advice_focus = f"ยกระดับคุณภาพหลักฐาน (Evidence Quality) และ KPI ให้คมชัดขึ้น"
         dynamic_max_phases, max_steps = 1, 3
     else:
-        # 🎯 CORE LOGIC: ต้องซ่อมฐาน (Level ต่ำ) ก่อนปีน Level สูง
-        advice_focus = (f"เน้นการปิดช่องว่าง (Gap Remediation) ตามวงจร PDCA "
-                        f"โดยเริ่มจากพื้นฐานนโยบาย (P) สู่การปฏิบัติจริง (D) และการวัดผล (C/A)")
+        advice_focus = f"เน้นการปิดช่องว่าง (Gap Remediation) ตามวงจร PDCA และวิเคราะห์แนวทางแก้ปัญหาเชิงโครงสร้าง"
         dynamic_max_phases = 3 if target_level >= 4 else 2
         max_steps = 3
 
     if specific_rule:
         advice_focus += f" (กฎเฉพาะ: {specific_rule})"
 
-    # --- 3. เตรียมข้อมูล Gaps & Insights (เรียงลำดับ Level) ---
+    # --- 3. เตรียมข้อมูล Gaps & Insights (ส่วนที่แก้ไขเพื่อดึง Coaching Insight) ---
     if is_sustain_mode:
-        stmt_content = f"บรรลุเกณฑ์ระดับ {target_level} อย่างสมบูรณ์แบบ เน้นแผนงานเพื่อความยั่งยืนและการเป็น Role Model"
+        stmt_content = f"บรรลุเกณฑ์ระดับ {target_level} อย่างสมบูรณ์แบบ"
     else:
-        # รวบรวมและกำจัดความซ้ำซ้อน โดยให้ความสำคัญกับเหตุผลที่ชัดเจนที่สุด
-        unique_gaps = {}
-        for s in recommendation_statements:
+        stmt_list = []
+        # เรียงลำดับจาก Level ต่ำไปสูงเพื่อให้ AI เห็นความต่อเนื่อง
+        for s in sorted(recommendation_statements, key=lambda x: x.get('level', 0)):
             lvl = s.get('level', 0)
             reason = (s.get('context') or s.get('reason') or "ไม่ระบุช่องว่าง").strip()
-            # ดึง Missing PDCA Phases มาโชว์ใน Roadmap ด้วย
+            # 🎯 ดึง coaching_insight ที่ถูกกู้คืนมาจาก _generate_action_plan_safe
+            insight = s.get('coaching_insight', '').strip()
             missing = s.get('missing_phases', [])
-            pdca_suffix = f" [Missing: {','.join(missing)}]" if missing else ""
+            pdca_suffix = f" [Missing PDCA: {','.join(missing)}]" if missing else ""
             
-            unique_gaps[lvl] = f"{reason}{pdca_suffix}"
+            # รวมบริบททั้งหมดส่งให้ AI
+            context_text = f"Level {lvl}: {reason}"
+            if insight:
+                context_text += f" | บทวิเคราะห์เบื้องต้น: {insight}"
+            context_text += pdca_suffix
+            
+            stmt_list.append(f"- {context_text}")
         
-        # เรียงจาก L1 -> L5 เพื่อให้ AI เขียนแผนเป็นขั้นตอน
-        stmt_content = "\n".join([f"- Level {l}: {unique_gaps[l]}" for l in sorted(unique_gaps.keys())])
+        stmt_content = "\n".join(stmt_list)
 
-    # --- 4. ประกอบ Prompt สำหรับ AI Engine ---
-    # ใช้ Global Variable ACTION_PLAN_PROMPT ที่พี่กำหนดไว้
+    # --- 4. ประกอบ Prompt ---
     human_prompt = ACTION_PLAN_PROMPT.format(
         enabler=enabler,
         sub_id=sub_id,
@@ -1449,27 +1559,23 @@ def create_structured_action_plan(
             response = llm_executor.generate(
                 system=SYSTEM_ACTION_PLAN_PROMPT,
                 prompts=[human_prompt],
-                temperature=0.0 # ใช้ 0 เพื่อความนิ่งของโครงสร้าง JSON
+                temperature=0.0
             )
 
-            # Extract text safely
             raw_text = getattr(response, 'content', str(response))
             if hasattr(response, 'generations'):
                 raw_text = response.generations[0][0].text
 
-            # กู้คืน JSON Array
             items = _extract_json_array_for_action_plan(raw_text, logger)
             if not items: continue
 
-            # Normalize Keys & Validate
+            # 🎯 Normalize Keys (จุดสำคัญเพื่อให้ coaching_insight ไม่หาย)
             clean_items = action_plan_normalize_keys(items)
             
             try:
-                # ตรวจสอบกับ Pydantic Schema
                 validated = ActionPlanResult.validate_flexible(clean_items)
-                logger.info(f"✅ [SUCCESS] Roadmap Built for {sub_id} (Attempt {attempt})")
+                logger.info(f"✅ [SUCCESS] Roadmap & Coaching built for {sub_id}")
                 
-                # คืนค่าเป็น List ของ Dict
                 if hasattr(validated, 'root'):
                     return [i.model_dump() for i in validated.root]
                 return [v.model_dump() for v in validated]
@@ -1482,47 +1588,68 @@ def create_structured_action_plan(
             logger.error(f"💥 Attempt {attempt} failed: {str(e)}")
             time.sleep(0.3)
 
-    # --- 6. Emergency Fallback ---
-    logger.warning(f"🆘 Using Predefined Emergency Roadmap for {sub_id}")
-    return _get_emergency_fallback_plan(
-        sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement, enabler
-    )
+    return _get_emergency_fallback_plan(sub_id, sub_criteria_name, target_level, is_sustain_mode, is_quality_refinement, enabler)
 
 # =================================================================
 # 2. Key Normalizer: แก้ไขปัญหา LLM พ่น Key ไม่นิ่ง
 # =================================================================
 def action_plan_normalize_keys(obj: Any) -> Any:
-    if isinstance(obj, list): return [action_plan_normalize_keys(i) for i in obj]
+    """
+    ระบบล้างข้อมูลและแมป Key เพื่อรองรับฟิลด์ coaching_insight จากทุกความเป็นไปได้
+    """
+    if isinstance(obj, list): 
+        return [action_plan_normalize_keys(i) for i in obj]
+    
     if isinstance(obj, dict):
         field_mapping = {
-            'phase': 'phase', 'goal': 'goal', 'actions': 'actions',
-            'statementid': 'statement_id', 'statement_id': 'statement_id',
-            'failedlevel': 'failed_level', 'failed_level': 'failed_level',
+            'phase': 'phase', 
+            'goal': 'goal', 
+            'actions': 'actions',
+            'statement_id': 'statement_id',
+            'failed_level': 'failed_level',
             'recommendation': 'recommendation',
-            'targetevidencetype': 'target_evidence_type', 'target_evidence_type': 'target_evidence_type',
-            'keymetric': 'key_metric', 'key_metric': 'key_metric',
-            'steps': 'steps', 'step': 'step', 
-            'description': 'description', 'responsible': 'responsible',
-            'toolstemplates': 'tools_templates', 'tools_templates': 'tools_templates',
-            'verificationoutcome': 'verification_outcome', 'verification_outcome': 'verification_outcome'
+            # 🎯 CRITICAL MAPPING FOR COACHING
+            'coaching_insight': 'coaching_insight',
+            'coachinginsight': 'coaching_insight',
+            'insight': 'coaching_insight',
+            'coaching_suggestion': 'coaching_insight',
+            'audit_note': 'coaching_insight',
+            # --------------------------------
+            'target_evidence_type': 'target_evidence_type',
+            'key_metric': 'key_metric',
+            'steps': 'steps', 
+            'step': 'step', 
+            'description': 'description', 
+            'responsible': 'responsible',
+            'tools_templates': 'tools_templates',
+            'verification_outcome': 'verification_outcome'
         }
         
         new_obj = {}
         for k, v in obj.items():
-            # กวาดล้าง Key ให้เหลือแต่ตัวพิมพ์เล็กและตัวเลขเพื่อเปรียบเทียบ
+            # กวาดล้าง Key (Lowercase + Remove underscores/spaces)
             k_raw = str(k).lower().replace(' ', '').replace('_', '').strip()
             k_raw = re.sub(r'[^a-z0-9]', '', k_raw)
             
-            target_key = field_mapping.get(k_raw) or k_raw
+            target_key = field_mapping.get(k_raw)
             
-            # Enforcement: บังคับ Integer สำหรับ Level และ Step
+            # Fuzzy Logic: ถ้า AI พ่น Key มาแปลกๆ แต่มีคำว่า coach หรือ insight ให้แมปเข้า coaching_insight
+            if not target_key:
+                if 'coach' in k_raw or 'insight' in k_raw:
+                    target_key = 'coaching_insight'
+                else:
+                    target_key = k_raw # เก็บชื่อเดิมไว้ก่อนถ้าไม่เข้าพวก
+            
+            # จัดการค่าที่เป็นตัวเลขให้ถูกต้อง
             if target_key in ['failed_level', 'step']:
                 try:
-                    if isinstance(v, (int, float)): v = int(v)
+                    if isinstance(v, (int, float)): 
+                        v = int(v)
                     else:
                         nums = re.findall(r'\d+', str(v))
                         v = int(nums[0]) if nums else 0
-                except: v = 0
+                except: 
+                    v = 0
             
             new_obj[target_key] = action_plan_normalize_keys(v)
         return new_obj

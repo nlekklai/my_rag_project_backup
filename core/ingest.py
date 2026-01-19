@@ -84,20 +84,13 @@ from utils.path_utils import (
     get_doc_type_collection_key,
     get_vectorstore_collection_path,
     get_mapping_file_path,
-    get_vectorstore_tenant_root_path, # ใช้สำหรับ wipe
     get_evidence_mapping_file_path, # ใช้สำหรับ Evidence Map
     load_doc_id_mapping,
     save_doc_id_mapping,
-    # 💡 FIX: เพิ่ม load/save_evidence_mapping
-    load_evidence_mapping,
-    save_evidence_mapping,
     get_normalized_metadata,
     parse_collection_name,
-    get_mapping_tenant_root_path,
-    _update_evidence_mapping,
     get_mapping_key_from_physical_path,
     _update_doc_id_mapping,
-    resolve_filepath_to_absolute,
     _n
 )
 # ---------------------------------------------------------------------
