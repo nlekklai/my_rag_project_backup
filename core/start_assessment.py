@@ -139,7 +139,8 @@ def main():
         logger_instance=logger,             
         doc_type=EVIDENCE_DOC_TYPES, 
         vectorstore_manager=vsm, 
-        document_map=document_map
+        document_map=document_map,
+        record_id=record_id  # 👈 เพิ่มบรรทัดนี้ครับ!
     )
 
     # 5. Run Assessment 

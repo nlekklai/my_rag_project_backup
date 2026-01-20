@@ -189,29 +189,45 @@ EVIDENCE_DOC_TYPES: Final[str] = "evidence"
 DEFAULT_DOC_TYPES: Final[str] = "document"
 
 # ================================================================
-# Enabler & Assessment Constants
+# Enabler & Assessment Constants (Enhanced)
 # ================================================================
 SUPPORTED_ENABLERS: Final[List[str]] = [
     "CG", "SP", "RM&IC", "SCM", "DT", "HCM", "KM", "IM", "IA",
 ]
 
+# เพิ่ม mapping ชื่อเต็มภาษาอังกฤษ (ใช้ใน prompt/report ได้ทั้งไทย/อังกฤษ)
+SEAM_ENABLER_FULL_NAME_EN: Final[Dict[str, str]] = {
+    "CG": "Corporate Governance",
+    "SP": "Strategic Planning",
+    "RM&IC": "Risk Management & Internal Control",
+    "SCM": "Stakeholder & Customer Focus",
+    "DT": "Digital Transformation",
+    "HCM": "Human Capital Management",
+    "KM": "Knowledge Management",
+    "IM": "Innovation Management",
+    "IA": "Internal Audit",
+}
+
+# ชื่อเต็มภาษาไทย (ใช้ใน log/report)
+SEAM_ENABLER_FULL_NAME_TH: Final[Dict[str, str]] = {
+    "CG": "การกำกับดูแลที่ดีและการนำองค์กร",
+    "SP": "การวางแผนเชิงยุทธศาสตร์",
+    "RM&IC": "การบริหารความเสี่ยงและการควบคุมภายใน",
+    "SCM": "การมุ่งเน้นผู้มีส่วนได้ส่วนเสีย และลูกค้า",
+    "DT": "การพัฒนาเทคโนโลยีดิจิทัล",
+    "HCM": "การบริหารทุนมนุษย์",
+    "KM": "การจัดการความรู้",
+    "IM": "การจัดการนวัตกรรม",
+    "IA": "การตรวจสอบภายใน",
+}
+
 MAX_LEVEL: Final[int] = 5
 INITIAL_LEVEL: Final[int] = 1
 
-# ================================================================
-# SE-AM Enabler Mapping
-# ================================================================
-SEAM_ENABLER_MAP: Final[Dict[str, str]] = {
-    "CG": "1 การกำกับดูแลที่ดีและการนำองค์กร",
-    "SP": "2 การวางแผนเชิงยุทธศาสตร์",
-    "RM&IC": "3 การบริหารความเสี่ยงและการควบคุมภายใน",
-    "SCM": "4 การมุ่งเน้นผู้มีส่วนได้ส่วนเสีย และลูกค้า",
-    "DT": "5 การพัฒนาเทคโนโลยีดิจิทัล",
-    "HCM": "6 การบริหารทุนมนุษย์",
-    "KM": "7-1 การจัดการความรู้",
-    "IM": "7-2 การจัดการนวัตกรรม",
-    "IA": "8 การตรวจสอบภายใน",
-}
+# โหมดการคำนวณคะแนน: 
+# 'STEP_LADDER' = คิดตาม Level สูงสุดที่ผ่านต่อเนื่องเท่านั้น
+# 'PARTIAL_PDCA' = คิดคะแนนเก็บตกจาก PDCA ใน Level ที่ยังไม่ผ่านด้วย
+SCORING_MODE = 'PARTIAL_PDCA'
 
 # ================================================================
 # PDCA Phase Mapping per Level

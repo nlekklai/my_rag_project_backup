@@ -422,32 +422,49 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
 
 def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     """
-    ตรวจจับ sub_topic และ page number จากข้อความของ chunk
+    [ULTIMATE DETECTOR v2026] 
+    ตรวจจับ sub_topic และ page number โดยเน้นความแม่นยำภาษาไทยและโครงสร้าง PEA
     """
     result = {"sub_topic": None, "page_number": None}
+    if not text: return result
 
-    # 1. จับ page number (เช่น "หน้า 1-1", "หน้า 243")
-    page_match = re.search(r'หน้า\s*(\d+(?:-\d+)?)', text)
-    if page_match:
-        result["page_number"] = page_match.group(1)
-
-    # 2. จับ sub_topic เช่น "4.1", "7-20", "KM topic 4.1"
-    for pattern, code in [
-        (r'(?:KM|topic)?\s*(\d+\.\d+)', None),
-        (r'(\d+-\d+)', None),
-        (r'(\d+\.\d+)', None),
-    ]:
-        match = re.search(pattern, text, re.IGNORECASE)
+    # 1. 🎯 จับ Page Number (เน้นเลขหน้าที่อยู่เดี่ยวๆ หรือมีคำนำหน้า)
+    # รองรับ: "หน้า 1", "Page 5", "- 10 -", "(หน้า 12)"
+    page_patterns = [
+        r'(?:หน้า|Page|P\.)\s*(\d+)',           # หน้า 1, Page 5
+        r'[\s\(]-?\s*(\d+)\s*-?[\s\)]',         # - 10 -, ( 11 ) มักอยู่ท้าย/หัวกระดาษ
+    ]
+    for p in page_patterns:
+        match = re.search(p, text, re.IGNORECASE)
         if match:
-            key = match.group(1).replace("-", ".")
-            if key in SEAM_SUBTOPIC_MAP:
-                result["sub_topic"] = SEAM_SUBTOPIC_MAP[key]
+            p_num = match.group(1)
+            # Sanity Check: เลขหน้าไม่ควรเกิน 1000 สำหรับเอกสารประเมินทั่วไป
+            if 0 < int(p_num) < 1000:
+                result["page_number"] = p_num
                 break
 
-    # 3. ถ้ายังไม่เจอ ให้ลองจับจากหัวข้อเต็ม (เช่น "4.1 กระบวนการจัดการความรู้ที่เป็นระบบ")
-    if not result["sub_topic"]:
+    # 2. 🎯 จับ Sub-topic (รหัสเกณฑ์ SEAM)
+    # ปรับ Pattern ให้เน้น "จุดเริ่มต้นบรรทัด" หรือ "มีช่องว่างล้อมรอบ" เพื่อกันเลขสถิติ
+    patterns = [
+        r'(?:KM|หมวด|เกณฑ์)?\s*(\d\.\d+)',      # KM 1.2, 4.1
+        r'\b(\d+-\d+)\b',                       # 1-02 (Format PEA บางปี)
+    ]
+    
+    found_key = None
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            found_key = match.group(1).replace("-", ".")
+            break
+
+    # 3. 🎯 ตรวจสอบกับ SEAM_SUBTOPIC_MAP (ข้ามการวน Loop ใหญ่ถ้าเจอ Key แล้ว)
+    if found_key and found_key in SEAM_SUBTOPIC_MAP:
+        result["sub_topic"] = SEAM_SUBTOPIC_MAP[found_key]
+    else:
+        # Fallback: ค้นหาชื่อหัวข้อเต็ม (ยืดหยุ่นด้วยการลบช่องว่างออก)
+        clean_text = text.replace(" ", "")
         for key, code in SEAM_SUBTOPIC_MAP.items():
-            if key.replace(".", "-") in text or key in text:
+            if key in text or key.replace(".", "-") in text:
                 result["sub_topic"] = code
                 break
 

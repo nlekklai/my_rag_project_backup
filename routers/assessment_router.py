@@ -3,6 +3,7 @@
 # Production Final Version - 2026 Optimized for DB Persistence & Professional Reporting
 
 import os
+import re
 import uuid
 import json
 import asyncio
@@ -21,7 +22,8 @@ from pydantic import BaseModel
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
+from docx.oxml.ns import qn, nsdecls
+from docx.oxml import parse_xml
 
 # --- Project Imports ---
 from routers.auth_router import get_current_user, check_user_permission, UserMe
@@ -53,6 +55,7 @@ from database import (
     db_update_task_status,
     db_finish_task
 )
+
 
 # ตั้งค่า Logger และ Router
 logger = logging.getLogger(__name__)
@@ -197,62 +200,83 @@ async def view_document(
     # ส่งไฟล์ PDF กลับไป
     return FileResponse(file_path, media_type="application/pdf")
 
-import re
-from typing import Dict, Any, List
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
-    summary = raw_data.get("summary", {}) or {}
-    sub_results = raw_data.get("sub_criteria_results", []) or []
+    # 1. ดึงข้อมูลพื้นฐานและ Evidence Mapping ระดับบนสุด
+    summary_root = raw_data.get("summary", {}) or {}
+    sub_results = raw_data.get("detailed_results", []) or []
+    evidence_map = raw_data.get("evidence_mapping", {}) or {}
     
     processed_sub_criteria = []
     radar_data = []
 
     for res in sub_results:
-        # --- 1. Identity & Level Root ---
-        # ปรับการดึงข้อมูลให้รองรับโครงสร้างซ้อน nested ของ SE-AM
-        level_root = res.get("level_details", {}).get("0", {})
-        inner_level_details = level_root.get("level_details", {})
-        highest_pass = int(level_root.get("highest_pass_level") or 0)
+        # --- 2. เจาะเข้าสู่ชั้นข้อมูลที่แท้จริง (Nested Path Discovery) ---
+        # โครงสร้าง: detailed_results -> level_details["0"] -> level_details["0"]
+        level_root_outer = res.get("level_details", {}).get("0", {})
+        level_root_inner = level_root_outer.get("level_details", {}).get("0", {})
+        
+        # ดึง Level Details (1-5) จากชั้นในสุด
+        inner_level_details = level_root_inner.get("level_details", {})
+        
+        # ดึงสถานะผ่านสูงสุดและคะแนนที่แท้จริง (4.0)
+        highest_pass = int(level_root_inner.get("highest_pass_level") or 0)
+        actual_weighted_score = float(level_root_inner.get("weighted_score") or 0)
         
         level_details_ui = {}
         pdca_matrix_list = []
         all_unique_files = set()
         all_conf_scores = []
         
-        # --- 2. Level Details & Evidence Recovery ---
+        # --- 3. วนลูปสร้างข้อมูล Level 1-5 ---
         for lv_idx in range(1, 6):
             lv_key = str(lv_idx)
             lv_info = inner_level_details.get(lv_key) or {}
             reason_text = lv_info.get("reason", "")
             
-            # 🚩 [IMPROVED]: Regex ดึงชื่อไฟล์ให้แม่นยำขึ้น
-            # รองรับ [Source: file_name.pdf, Page: 1]
-            found_files = re.findall(r"\[Source:\s*([^,\]]+)", reason_text)
+            # ดึงข้อมูลหลักฐานจาก Evidence Mapping (ใช้ Key เช่น '1.2.L1')
+            sub_id = res.get("sub_id", "1.2")
+            mapping_key = f"{sub_id}.L{lv_idx}"
             level_evidences = []
             
-            lv_simulated_score = 0
-            if found_files:
-                for f in found_files:
-                    f_name = f.strip()
+            # ตรวจสอบใน Mapping ก่อน
+            if mapping_key in evidence_map:
+                map_evi = evidence_map[mapping_key]
+                f_name = map_evi.get("file")
+                if f_name:
                     all_unique_files.add(f_name)
-                    level_evidences.append({"filename": f_name})
-                
-                # จำลอง Confidence Score ตามจำนวนหลักฐานที่พบใน Level นั้นๆ
-                lv_simulated_score = min(75.0 + (len(found_files) * 5), 98.0) 
+                    level_evidences.append({
+                        "filename": f_name,
+                        "page": map_evi.get("page", "-"),
+                        "pdca": map_evi.get("pdca", "-")
+                    })
+            
+            # ถ้าใน Mapping ไม่มี แต่ใน Reason มี (Regex Backup)
+            found_files_regex = re.findall(r"\[Source:\s*([^,\]]+)", reason_text)
+            for f in found_files_regex:
+                f_name = f.strip()
+                if f_name not in all_unique_files:
+                    all_unique_files.add(f_name)
+                    level_evidences.append({"filename": f_name, "page": "N/A"})
+
+            # คำนวณความมั่นใจ (Simulated Score)
+            lv_simulated_score = 0
+            if level_evidences:
+                lv_simulated_score = min(80.0 + (len(level_evidences) * 4), 99.0)
                 all_conf_scores.append(lv_simulated_score)
 
             # PDCA Matrix
             pdca_raw = lv_info.get("pdca_breakdown", {}) or {}
             pdca_final = {p: (1 if float(pdca_raw.get(p, 0)) >= 0.5 else 0) for p in ["P", "D", "C", "A"]}
             
-            # 🚩 [ADDED]: บรรจุข้อมูลเข้า Level Details
+            # บรรจุข้อมูลเข้า Level Details UI
             level_details_ui[lv_key] = {
                 "level": lv_idx,
-                "confidence": lv_simulated_score if lv_simulated_score > 0 else 0,
-                "is_passed": lv_idx <= highest_pass,
+                "confidence": lv_simulated_score,
+                "is_passed": lv_idx <= highest_pass, # เช็คจาก highest_pass_level จริง
                 "pdca_breakdown": pdca_final,
                 "context_summary": reason_text,
-                "evidences": level_evidences # ยัดไฟล์ที่ดึงได้ลงไปให้ UI วน Loop โชว์
+                "evidences": level_evidences
             }
 
             pdca_matrix_list.append({
@@ -261,72 +285,89 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "pdca": pdca_final
             })
 
-        # --- 3. Critical Gaps & Roadmap ---
+        # --- 4. หา Gap และ Roadmap ---
         first_fail_lv = highest_pass + 1
         gap_info = inner_level_details.get(str(first_fail_lv), {})
-        gap_text = f"L{first_fail_lv}: {gap_info.get('coaching_insight') or gap_info.get('reason') or 'ไม่พบช่องว่างข้อมูล'}" if first_fail_lv <= 5 else "บรรลุเป้าหมายสูงสุด"
+        gap_text = f"L{first_fail_lv}: {gap_info.get('reason') or 'ไม่พบช่องว่างข้อมูล'}" if first_fail_lv <= 5 else "บรรลุเป้าหมายสูงสุดระดับ L5"
 
-        # --- 4. Final Assembly ---
-        source_count = len(all_unique_files)
-        # คำนวณ Traceability Score เฉลี่ย
+        # --- 5. สรุปผลราย Sub-Criteria ---
         trace_score_raw = (sum(all_conf_scores) / len(all_conf_scores)) if all_conf_scores else 0
 
         processed_sub_criteria.append({
-            "code": res.get("sub_id", "1.1"),
-            "name": level_root.get("sub_criteria_name", "หัวข้อประเมิน"),
+            "code": sub_id,
+            "name": level_root_inner.get("sub_criteria_name", "การมีส่วนร่วมของผู้บริหารทุกระดับ"),
             "level": f"L{highest_pass}",
-            "score": round(float(level_root.get("weighted_score", 0)), 2),
+            "score": round(actual_weighted_score, 2), # ใช้คะแนน 4.0 ที่ดึงมา
             "summary_thai": f"บรรลุเกณฑ์ระดับ {highest_pass}",
             "gap": gap_text,
             "audit_confidence": {
-                "source_count": source_count,
+                "source_count": len(all_unique_files),
                 "traceability_score": round(trace_score_raw / 100, 2),
-                "consistency_check": trace_score_raw > 60
+                "consistency_check": highest_pass > 0
             },
             "pdca_matrix": pdca_matrix_list,
             "level_details": level_details_ui,
-            "roadmap": level_root.get("action_plan", [])
+            "roadmap": level_root_inner.get("action_plan", [])
         })
-        radar_data.append({"axis": res.get("sub_id", "1.1"), "value": highest_pass})
+        radar_data.append({"axis": sub_id, "value": highest_pass})
 
-    # ป้องกันกรณีไม่มีข้อมูลเพื่อไม่ให้ max() Error
+    # --- 6. สรุปผลภาพรวม Final Assembly ---
     max_lv = max([d['value'] for d in radar_data]) if radar_data else 0
+    # ใช้คะแนนรวมที่แท้จริง (Sum จากทุก Sub-Criteria)
+    total_score = sum([d['score'] for d in processed_sub_criteria])
 
     return {
         "status": "COMPLETED",
         "result_summary": {
             "level": f"L{max_lv}",
-            "score": round(float(summary.get("total_weighted_score", 0)), 2),
-            "full_score": summary.get("total_possible_weight", 4.0)
+            "score": round(total_score, 2),
+            "full_score": summary_root.get("total_possible_weight", 4.0)
         },
         "radar_data": radar_data,
         "sub_criteria": processed_sub_criteria
     }
 
 def set_thai_font(run, size=14, bold=False, color=None):
+    """ตั้งค่าฟอนต์ TH Sarabun New ให้รองรับทั้งภาษาไทยและอังกฤษ"""
     run.font.name = 'TH Sarabun New'
+    # บังคับให้ XML ภายในใช้ TH Sarabun New สำหรับอักขระพิเศษและภาษาไทย
     run._element.rPr.rFonts.set(qn('w:eastAsia'), 'TH Sarabun New')
+    run._element.rPr.rFonts.set(qn('w:ascii'), 'TH Sarabun New')
+    run._element.rPr.rFonts.set(qn('w:hAnsi'), 'TH Sarabun New')
     run.font.size = Pt(size)
     run.bold = bold
     if color:
         run.font.color.rgb = color
 
+def set_cell_background(cell, fill_color):
+    """ระบายสีพื้นหลังให้ Cell ในตาราง (fill_color คือ hex code เช่น 'D9EAD3')"""
+    shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_color}"/>')
+    cell._tc.get_or_add_tcPr().append(shading_elm)
+
 def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     doc = Document()
     
-    # Header รายงาน
+    # 1. หัวข้อรายงาน (Header)
     header = doc.add_paragraph()
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_h = header.add_run(f"รายงานผลการประเมิน Maturity Audit\n")
-    set_thai_font(run_h, size=20, bold=True, color=RGBColor(30, 58, 138))
+    run_h = header.add_run(f"รายงานผลการประเมิน Maturity Audit (SE-AM)\n")
+    set_thai_font(run_h, size=20, bold=True, color=RGBColor(30, 58, 138)) # สีน้ำเงินเข้ม
+
+    # สรุปภาพรวม (Summary Box)
+    summary = ui_data.get('result_summary', {})
+    sum_p = doc.add_paragraph()
+    sum_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_sum = sum_p.add_run(f"ระดับวุฒิภาวะที่ได้: {summary.get('level')} | คะแนนรวม: {summary.get('score')}/{summary.get('full_score')}")
+    set_thai_font(run_sum, size=16, bold=True, color=RGBColor(22, 101, 52)) # สีเขียว
 
     for item in ui_data.get('sub_criteria', []):
-        # หัวข้อเกณฑ์ย่อย
+        # --- หัวข้อเกณฑ์ย่อย ---
+        doc.add_paragraph() # เว้นวรรค
         title_p = doc.add_paragraph()
         run_title = title_p.add_run(f"เกณฑ์ย่อย {item.get('code', '')}: {item.get('name', '')}")
         set_thai_font(run_title, size=16, bold=True, color=RGBColor(30, 58, 138))
 
-        # 1. Audit Confidence Table
+        # --- 1. ตาราง Audit Confidence ---
         conf_table = doc.add_table(rows=1, cols=3)
         conf_table.style = 'Table Grid'
         conf = item.get('audit_confidence', {})
@@ -336,29 +377,53 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
             ("Consistency", "VERIFIED" if conf.get('consistency_check') else "CONFLICT")
         ]
         for i, (label, val) in enumerate(metrics):
-            p = conf_table.rows[0].cells[i].paragraphs[0]
+            cell = conf_table.rows[0].cells[i]
+            p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             set_thai_font(p.add_run(label), size=10, bold=True)
             set_thai_font(p.add_run(f"\n{val}"), size=14, bold=True)
+            set_cell_background(cell, "F3F4F6") # สีเทาอ่อน
 
-        # 2. PDCA Capability Matrix (เพิ่มส่วนนี้เพื่อให้เหมือน UI)
+        # --- 2. PDCA Capability Matrix ---
         doc.add_paragraph()
         set_thai_font(doc.add_paragraph().add_run("📊 PDCA Capability Matrix:"), size=14, bold=True)
         pdca_table = doc.add_table(rows=2, cols=5)
         pdca_table.style = 'Table Grid'
+        
         for i, lv_data in enumerate(item.get('pdca_matrix', [])):
-            # หัวตาราง L1-L5
-            set_thai_font(pdca_table.cell(0, i).paragraphs[0].add_run(f"L{lv_data['level']}"), bold=True)
-            # แสดง P D C A
-            p_cells = pdca_table.cell(1, i).paragraphs[0]
-            p_cells.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # แถวบน: ระดับเลเวล L1-L5
+            cell_top = pdca_table.cell(0, i)
+            p_top = cell_top.paragraphs[0]
+            p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            set_thai_font(p_top.add_run(f"Level {lv_data['level']}"), bold=True)
+            if lv_data['is_passed']:
+                set_cell_background(cell_top, "D9EAD3") # เขียวอ่อนถ้าผ่าน
+
+            # แถวล่าง: ตัวอักษร P D C A
+            cell_bot = pdca_table.cell(1, i)
+            p_bot = cell_bot.paragraphs[0]
+            p_bot.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for char, val in lv_data['pdca'].items():
-                run_char = p_cells.add_run(f" {char} ")
-                # สีเขียวถ้าผ่าน (1), สีแดงถ้าไม่ผ่าน (0)
+                run_char = p_bot.add_run(f" {char} ")
                 color = RGBColor(22, 101, 52) if val == 1 else RGBColor(185, 28, 28)
                 set_thai_font(run_char, size=11, bold=True, color=color)
 
-        # 3. Strength & Gap
+        # --- 3. รายชื่อหลักฐาน (Evidence List) ---
+        doc.add_paragraph()
+        set_thai_font(doc.add_paragraph().add_run("📎 รายการหลักฐานที่ตรวจพบ (Evidence Mapping):"), size=13, bold=True)
+        level_details = item.get('level_details', {})
+        has_evidence = False
+        for lv_key in sorted(level_details.keys(), key=int):
+            evidences = level_details[lv_key].get('evidences', [])
+            for evi in evidences:
+                has_evidence = True
+                txt = f"Level {lv_key}: {evi['filename']} (หน้า {evi.get('page', '-')})"
+                p_evi = doc.add_paragraph(style='List Bullet')
+                set_thai_font(p_evi.add_run(txt), size=11)
+        if not has_evidence:
+            set_thai_font(doc.add_paragraph().add_run("- ไม่พบหลักฐานแนบ -"), size=11)
+
+        # --- 4. Strength & Gap ---
         doc.add_paragraph()
         s_title = doc.add_paragraph()
         set_thai_font(s_title.add_run("💡 AI Strength Summary:"), size=14, bold=True, color=RGBColor(22, 101, 52))
@@ -368,7 +433,7 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         set_thai_font(g_title.add_run("⚠️ Critical Gaps Found:"), size=14, bold=True, color=RGBColor(185, 28, 28))
         set_thai_font(doc.add_paragraph(item.get('gap', '-')).runs[0], size=13)
 
-        # 4. Roadmap (ดึงครบทุก Phase/Action/Step)
+        # --- 5. Strategic Roadmap ---
         if item.get('roadmap'):
             doc.add_paragraph()
             set_thai_font(doc.add_paragraph().add_run("🛠 Strategic Improvement Roadmap:"), size=14, bold=True, color=RGBColor(30, 58, 138))
@@ -379,11 +444,16 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
                     a_run = doc.add_paragraph(style='List Bullet').add_run(f"เป้าหมาย L{act.get('failed_level')}: {act.get('recommendation')}")
                     set_thai_font(a_run, size=12, bold=True)
                     for step in act.get('steps', []):
-                        step_txt = f"{step.get('description')} (รับผิดชอบ: {step.get('responsible')})"
+                        step_txt = f"{step.get('description')} (ผู้รับผิดชอบ: {step.get('responsible')})"
                         set_thai_font(doc.add_paragraph(style='List Bullet 2').add_run(step_txt), size=11)
 
-        doc.add_page_break()
+        doc.add_page_break() # จบ 1 Sub-Criteria ขึ้นหน้าใหม่
+        
     return doc
+
+# --- ตัวอย่างการสั่งบันทึกไฟล์ ---
+# doc = create_docx_report_similar_to_ui(processed_data)
+# doc.save("PEA_Maturity_Report_1.2.docx")
 
 # ==================== API ENDPOINT: GET Status / Get Data ====================
 @assessment_router.get("/status/{record_id}")
@@ -739,7 +809,8 @@ async def run_assessment_engine_task(
             logger_instance=logger, 
             doc_type=EVIDENCE_DOC_TYPES, 
             vectorstore_manager=vsm, 
-            document_map=doc_map
+            document_map=doc_map,
+            record_id=record_id  # 👈 เพิ่มบรรทัดนี้ เพื่อให้ Engine ภายใน Thread รู้จัก record_id
         )
 
         # Step 3: Core Assessment

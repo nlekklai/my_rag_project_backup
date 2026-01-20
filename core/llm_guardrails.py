@@ -6,7 +6,7 @@ import logging
 
 from config.global_vars import (
     SUPPORTED_ENABLERS,
-    SEAM_ENABLER_MAP,
+    SEAM_ENABLER_FULL_NAME_TH,
 )
 
 # ================================================================
@@ -63,8 +63,8 @@ def detect_intent(
                 intent["sub_topic"] = m.group(2) or m.group(3)
                 break
 
-    if intent["enabler_hint"] in SEAM_ENABLER_MAP:
-        intent["enabler_full_name"] = SEAM_ENABLER_MAP[intent["enabler_hint"]]
+    if intent["enabler_hint"] in SEAM_ENABLER_FULL_NAME_TH:
+        intent["enabler_full_name"] = SEAM_ENABLER_FULL_NAME_TH[intent["enabler_hint"]]
 
     # --- Step 2: Route Intent by Priority ---
 
