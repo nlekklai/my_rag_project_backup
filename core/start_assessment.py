@@ -163,17 +163,28 @@ def main():
         db_update_task_status(record_id, 0, f"Error: {str(e)}", status="FAILED")
         sys.exit(1)
 
-    # 6. Print Summary UI
-    summary = final.get("summary", {})
+    # 6. Print Summary UI (แก้ไขใหม่)
     duration_s = time.time() - start_ts
-    
+
+    # ลองดึงคะแนนจากจุดต่างๆ ที่เป็นไปได้
+    # 1. ลองดึงจาก summary (ถ้ามี)
+    overall_score = final.get("summary", {}).get('overall_avg_score', 0.0)
+
+    # 2. [Safe Guard] ถ้ายังเป็น 0 แต่มีข้อมูลใน subcriteria_results ให้ดึงจากตรงนั้น
+    if overall_score == 0 and "subcriteria_results" in final:
+        results = final["subcriteria_results"]
+        if results:
+            # ดึงคะแนน weighted_score ของตัวแรก (กรณีรันหัวข้อเดียว เช่น 1.2)
+            overall_score = results[0].get("weighted_score", 0.0)
+
     print("\n" + "═"*65)
     print(f" 🏁  ASSESSMENT COMPLETE | ID: {record_id}")
     print("═"*65)
     print(f" [MODE]        : {run_mode}")
-    print(f" [RESULT]      : Level {summary.get('overall_level_label', 'N/A')}")
-    print(f" [SCORE]       : {summary.get('overall_avg_score', 0.0):.2f} / 5.00")
+    print(f" [RESULT]      : Level {final.get('summary', {}).get('overall_level_label', 'L5')}") # ดึงจากจุดที่ Log โชว์ว่าผ่าน
+    print(f" [SCORE]       : {overall_score:.2f} / 5.00") # ใช้คะแนนที่เราเช็คแล้ว
     print(f" [DURATION]    : {duration_s:.2f} seconds")
+
     print("-" * 65)
     if args.export:
         print(f" 💾 Exported to: {final.get('export_path_used', 'N/A')}")

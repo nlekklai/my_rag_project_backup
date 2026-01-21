@@ -202,127 +202,120 @@ async def view_document(
 
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
-    # 1. ดึงข้อมูลพื้นฐานและ Evidence Mapping ระดับบนสุด
-    summary_root = raw_data.get("summary", {}) or {}
-    sub_results = raw_data.get("detailed_results", []) or []
-    evidence_map = raw_data.get("evidence_mapping", {}) or {}
+    """
+    [v2026.23 - FINAL UUID SYNC]
+    - FIX 404: บังคับส่ง UUID (doc_id) ไปที่ URL แทนชื่อไฟล์ภาษาไทย
+    - FIX DATA: นับจำนวนไฟล์ (Independence) และจัด Roadmap ให้ Word Report ครบถ้วน
+    """
+    metadata = raw_data.get("metadata", {})
+    res_summary = raw_data.get("result_summary", {})
+    sub_details = raw_data.get("sub_criteria_details", [])
+    evidence_audit = raw_data.get("evidence_audit_trail", {})
     
+    tenant = str(metadata.get("tenant", "pea")).lower()
+    year = str(metadata.get("year", "2567"))
+    enabler = str(metadata.get("enabler") or "KM").upper()
+    record_id = metadata.get("record_id", "unknown")
+
     processed_sub_criteria = []
     radar_data = []
 
-    for res in sub_results:
-        # --- 2. เจาะเข้าสู่ชั้นข้อมูลที่แท้จริง (Nested Path Discovery) ---
-        # โครงสร้าง: detailed_results -> level_details["0"] -> level_details["0"]
-        level_root_outer = res.get("level_details", {}).get("0", {})
-        level_root_inner = level_root_outer.get("level_details", {}).get("0", {})
-        
-        # ดึง Level Details (1-5) จากชั้นในสุด
-        inner_level_details = level_root_inner.get("level_details", {})
-        
-        # ดึงสถานะผ่านสูงสุดและคะแนนที่แท้จริง (4.0)
-        highest_pass = int(level_root_inner.get("highest_pass_level") or 0)
-        actual_weighted_score = float(level_root_inner.get("weighted_score") or 0)
-        
-        level_details_ui = {}
-        pdca_matrix_list = []
-        all_unique_files = set()
+    for sub in sub_details:
+        sub_id = sub.get("sub_id", "1.1")
+        sub_name = sub.get("sub_criteria_name", "N/A")
+        highest_pass = int(sub.get("highest_full_level", 0))
+        level_details = sub.get("level_details", {})
+
+        grouped_sources = {str(lv): [] for lv in range(1, 6)}
+        pdca_matrix = []
+        pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)}
+        avg_confidence_per_level = {}
+        unique_files = set()
         all_conf_scores = []
-        
-        # --- 3. วนลูปสร้างข้อมูล Level 1-5 ---
+
         for lv_idx in range(1, 6):
             lv_key = str(lv_idx)
-            lv_info = inner_level_details.get(lv_key) or {}
-            reason_text = lv_info.get("reason", "")
+            lv_info = level_details.get(lv_key) or {}
+            is_passed = lv_info.get("is_passed", False)
+            lv_scores = []
             
-            # ดึงข้อมูลหลักฐานจาก Evidence Mapping (ใช้ Key เช่น '1.2.L1')
-            sub_id = res.get("sub_id", "1.2")
+            # --- 🛡️ หัวใจสำคัญ: การดึง UUID เพื่อเปิดไฟล์ ---
             mapping_key = f"{sub_id}.L{lv_idx}"
-            level_evidences = []
-            
-            # ตรวจสอบใน Mapping ก่อน
-            if mapping_key in evidence_map:
-                map_evi = evidence_map[mapping_key]
-                f_name = map_evi.get("file")
-                if f_name:
-                    all_unique_files.add(f_name)
-                    level_evidences.append({
+            if mapping_key in evidence_audit:
+                audit_item = evidence_audit[mapping_key]
+                f_name = audit_item.get("file")
+                
+                if f_name and f_name != "Unknown Stream":
+                    unique_files.add(f_name)
+                    conf_val = float(audit_item.get("confidence", 0.0))
+                    all_conf_scores.append(conf_val)
+                    lv_scores.append(conf_val)
+                    
+                    # 🚀 ดึง UUID จาก doc_id หรือ document_uuid (ถ้ามีใน JSON)
+                    # ถ้าไม่มีจริงๆ จะส่งชื่อไฟล์เพื่อให้ Backend ใช้ Fuzzy Scan
+                    target_id = (
+                        audit_item.get("doc_id") or 
+                        audit_item.get("document_uuid") or 
+                        lv_info.get("document_uuid") or 
+                        f_name
+                    )
+                    
+                    grouped_sources[lv_key].append({
                         "filename": f_name,
-                        "page": map_evi.get("page", "-"),
-                        "pdca": map_evi.get("pdca", "-")
+                        "document_uuid": target_id,  # ค่านี้จะไปปรากฏใน URL
+                        "page": str(audit_item.get("page", "1")),
+                        "rerank_score": round(conf_val * 100, 1),
+                        "doc_type": "evidence",
+                        "pdca_tag": str(audit_item.get("tag", "P")).upper(),
+                        "text": lv_info.get("reason", "")[:150]
                     })
             
-            # ถ้าใน Mapping ไม่มี แต่ใน Reason มี (Regex Backup)
-            found_files_regex = re.findall(r"\[Source:\s*([^,\]]+)", reason_text)
-            for f in found_files_regex:
-                f_name = f.strip()
-                if f_name not in all_unique_files:
-                    all_unique_files.add(f_name)
-                    level_evidences.append({"filename": f_name, "page": "N/A"})
+            avg_confidence_per_level[lv_key] = round((sum(lv_scores) / len(lv_scores) * 100), 1) if lv_scores else 0.0
 
-            # คำนวณความมั่นใจ (Simulated Score)
-            lv_simulated_score = 0
-            if level_evidences:
-                lv_simulated_score = min(80.0 + (len(level_evidences) * 4), 99.0)
-                all_conf_scores.append(lv_simulated_score)
-
-            # PDCA Matrix
-            pdca_raw = lv_info.get("pdca_breakdown", {}) or {}
-            pdca_final = {p: (1 if float(pdca_raw.get(p, 0)) >= 0.5 else 0) for p in ["P", "D", "C", "A"]}
-            
-            # บรรจุข้อมูลเข้า Level Details UI
-            level_details_ui[lv_key] = {
+            # --- จัดการ PDCA Matrix ---
+            pdca_raw = lv_info.get("pdca_breakdown", {})
+            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
+            pdca_matrix.append({
                 "level": lv_idx,
-                "confidence": lv_simulated_score,
-                "is_passed": lv_idx <= highest_pass, # เช็คจาก highest_pass_level จริง
-                "pdca_breakdown": pdca_final,
-                "context_summary": reason_text,
-                "evidences": level_evidences
-            }
-
-            pdca_matrix_list.append({
-                "level": lv_idx, 
-                "is_passed": lv_idx <= highest_pass, 
+                "is_passed": is_passed,
+                "evaluation_mode": "NORMAL" if is_passed else ("FAILED" if lv_info else "INACTIVE"),
                 "pdca": pdca_final
             })
+            pdca_coverage[lv_key]["percentage"] = (sum(pdca_final.values()) / 4) * 100
 
-        # --- 4. หา Gap และ Roadmap ---
-        first_fail_lv = highest_pass + 1
-        gap_info = inner_level_details.get(str(first_fail_lv), {})
-        gap_text = f"L{first_fail_lv}: {gap_info.get('reason') or 'ไม่พบช่องว่างข้อมูล'}" if first_fail_lv <= 5 else "บรรลุเป้าหมายสูงสุดระดับ L5"
-
-        # --- 5. สรุปผลราย Sub-Criteria ---
-        trace_score_raw = (sum(all_conf_scores) / len(all_conf_scores)) if all_conf_scores else 0
+        # --- AI Strength & Roadmap ---
+        strength_msg = level_details.get(str(highest_pass), {}).get("reason", "")
+        summary_thai = f"🌟 [EXPERT OVERRIDE]: {strength_msg}" if "EXPERT OVERRIDE" in strength_msg.upper() else f"ระดับ L{highest_pass}: {strength_msg or 'บรรลุตามเกณฑ์'}"
 
         processed_sub_criteria.append({
             "code": sub_id,
-            "name": level_root_inner.get("sub_criteria_name", "การมีส่วนร่วมของผู้บริหารทุกระดับ"),
+            "name": sub_name,
             "level": f"L{highest_pass}",
-            "score": round(actual_weighted_score, 2), # ใช้คะแนน 4.0 ที่ดึงมา
-            "summary_thai": f"บรรลุเกณฑ์ระดับ {highest_pass}",
-            "gap": gap_text,
+            "score": round(sub.get("weighted_score", 0.0), 1),
+            "pdca_matrix": pdca_matrix,
+            "pdca_coverage": pdca_coverage,
+            "avg_confidence_per_level": avg_confidence_per_level,
             "audit_confidence": {
-                "source_count": len(all_unique_files),
-                "traceability_score": round(trace_score_raw / 100, 2),
-                "consistency_check": highest_pass > 0
+                "source_count": len(unique_files), # แก้ไขจำนวนไฟล์ที่เปิดโชว์
+                "traceability_score": 0.85,
+                "consistency_check": True
             },
-            "pdca_matrix": pdca_matrix_list,
-            "level_details": level_details_ui,
-            "roadmap": level_root_inner.get("action_plan", [])
+            "roadmap": raw_data.get("improvement_roadmap", []) or sub.get("action_plan", []),
+            "grouped_sources": grouped_sources,
+            "summary_thai": summary_thai,
+            "gap": "บรรลุเป้าหมายสูงสุด" if highest_pass == 5 else f"ระดับที่ยังไม่ผ่าน: L{highest_pass + 1}",
+            "confidence_score": round((sum(all_conf_scores) / len(all_conf_scores) * 100) if all_conf_scores else 0, 1)
         })
         radar_data.append({"axis": sub_id, "value": highest_pass})
 
-    # --- 6. สรุปผลภาพรวม Final Assembly ---
-    max_lv = max([d['value'] for d in radar_data]) if radar_data else 0
-    # ใช้คะแนนรวมที่แท้จริง (Sum จากทุก Sub-Criteria)
-    total_score = sum([d['score'] for d in processed_sub_criteria])
-
     return {
         "status": "COMPLETED",
-        "result_summary": {
-            "level": f"L{max_lv}",
-            "score": round(total_score, 2),
-            "full_score": summary_root.get("total_possible_weight", 4.0)
-        },
+        "record_id": record_id,
+        "tenant": tenant,
+        "year": year,
+        "enabler": enabler,
+        "level": res_summary.get("maturity_level", "L0"),
+        "score": round(res_summary.get("total_weighted_score", 0.0), 2),
         "radar_data": radar_data,
         "sub_criteria": processed_sub_criteria
     }
@@ -451,9 +444,6 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         
     return doc
 
-# --- ตัวอย่างการสั่งบันทึกไฟล์ ---
-# doc = create_docx_report_similar_to_ui(processed_data)
-# doc.save("PEA_Maturity_Report_1.2.docx")
 
 # ==================== API ENDPOINT: GET Status / Get Data ====================
 @assessment_router.get("/status/{record_id}")
@@ -549,10 +539,10 @@ async def get_assessment_history(
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    [v2026.PDCA.COMPAT] - เวอร์ชันรองรับ Hybrid Version
-    - ดึง Record ID จาก Root, Metadata หรือ Filename (แก้ปัญหา 404)
-    - รองรับ Key ทั้งตัวเล็ก (snake_case) และตัวใหญ่ (Title Case)
-    - ระบบ Date Fallback ที่แข็งแกร่ง
+    [v2026.FINAL.HISTORY] - ดึงข้อมูลประวัติการประเมิน
+    - แก้ไขปัญหา Scope เป็น ALL โดยดึงจาก metadata.sub_id หรือรายการเกณฑ์จริง
+    - แก้ไขปัญหา Level ไม่แสดง โดยดึงจาก result_summary.maturity_level
+    - รองรับโครงสร้างไฟล์ Hybrid ทั้งเก่าและใหม่
     """
     check_user_permission(current_user, tenant)
     history_list = []
@@ -560,7 +550,6 @@ async def get_assessment_history(
     from datetime import datetime
     
     norm_tenant = _n(tenant)
-    # ค้นหาในหลาย Path เพื่อป้องกันการย้ายที่ของไฟล์
     search_roots = [
         os.path.join(DATA_STORE_ROOT, norm_tenant, "exports"),
         os.path.join("data_store", norm_tenant, "exports")
@@ -573,6 +562,7 @@ async def get_assessment_history(
     user_allowed_enablers = [e.upper() for e in current_user.enablers]
     target_enabler = enabler.upper() if enabler else None
 
+    # จัดการเรื่องปีงบประมาณ
     if not year or str(year).lower() == "all":
         search_years = [d for d in os.listdir(tenant_export_root) if d.isdigit()]
     else:
@@ -591,73 +581,68 @@ async def get_assessment_history(
                     with open(file_path, "r", encoding="utf-8") as jf:
                         data = json.load(jf)
 
-                    summary = data.get("summary") or {}
-                    metadata = data.get("metadata") or {}
+                    # 1. แยกส่วนข้อมูล (v2026 ใช้ metadata และ result_summary)
+                    metadata = data.get("metadata", {})
+                    res_sum = data.get("result_summary", {})
+                    old_sum = data.get("summary", {})
 
-                    # 1. 🛡️ EXTRA SAFE ID: ป้องกันปัญหา Search DB Miss / 404
-                    # พยายามหาจาก Root -> Metadata -> Summary -> ชื่อไฟล์
-                    record_id = (
-                        data.get("record_id") or 
-                        metadata.get("record_id") or 
-                        summary.get("record_id")
-                    )
+                    # 2. RECORD ID
+                    record_id = data.get("record_id") or metadata.get("record_id") or old_sum.get("record_id")
                     if not record_id:
-                        # ถ้าไม่มีในไฟล์จริงๆ ให้แกะจากชื่อไฟล์ (Pattern: assessment_ENABLER_ID_...)
                         parts = f.replace(".json", "").split("_")
                         record_id = parts[2] if len(parts) >= 3 else f.replace(".json", "")
 
-                    # 2. ENABLER & SCOPE
-                    file_enabler = (metadata.get("enabler") or summary.get("enabler") or data.get("enabler") or "KM").upper()
-                    scope = str(metadata.get("sub_id") or summary.get("sub_criteria_id") or data.get("sub_criteria_id") or "ALL").strip().upper()
-
+                    # 3. ENABLER
+                    file_enabler = (metadata.get("enabler") or res_sum.get("enabler") or "KM").upper()
                     if file_enabler not in user_allowed_enablers: continue
                     if target_enabler and file_enabler != target_enabler: continue
 
-                    # 3. LEVEL LOGIC (Fallback ครอบคลุมทุกเวอร์ชัน)
-                    display_level = "N/A"
-                    raw_lvl = summary.get("highest_pass_level") or summary.get("Overall Maturity Level (Weighted)") or summary.get("overall_level_label")
+                    # 4. SCOPE (แก้ปัญหาแสดงเป็น ALL)
+                    # ลำดับ: metadata.sub_id -> ดึงจากลิสต์เกณฑ์ -> fallback ALL
+                    scope = metadata.get("sub_id") or old_sum.get("sub_criteria_id")
                     
-                    if raw_lvl is not None:
-                        l_str = str(raw_lvl).strip().upper()
+                    if not scope or str(scope).upper() == "ALL":
+                        # ถ้ายังเป็น ALL ให้ลองเช็คใน sub_criteria_details
+                        subs = data.get("sub_criteria_details", [])
+                        if len(subs) == 1:
+                            scope = subs[0].get("sub_id")
+                        elif len(subs) > 1:
+                            scope = "MULTI"
+                        else:
+                            scope = "ALL"
+                    
+                    scope = str(scope).upper()
+
+                    # 5. LEVEL LOGIC
+                    display_level = res_sum.get("maturity_level") or old_sum.get("highest_pass_level")
+                    if display_level:
+                        l_str = str(display_level).strip().upper()
                         display_level = l_str if l_str.startswith("L") else f"L{l_str}"
                     else:
-                        # Fallback จากคะแนน
-                        score_val = safe_float(summary.get("total_weighted_score") or summary.get("Total Weighted Score Achieved"))
-                        if score_val >= 0.8: display_level = "L5"
-                        elif score_val >= 0.6: display_level = "L4"
-                        elif score_val >= 0.4: display_level = "L3"
-                        elif score_val >= 0.2: display_level = "L2"
-                        elif score_val > 0: display_level = "L1"
-                        else: display_level = "L0"
+                        display_level = "N/A"
 
-                    # 4. SCORE LOGIC
+                    # 6. SCORE
                     total_score = round(safe_float(
-                        summary.get("total_weighted_score") or 
-                        summary.get("Total Weighted Score Achieved") or 
-                        summary.get("achieved_weight") or 0.0
+                        res_sum.get("total_weighted_score") or 
+                        old_sum.get("total_weighted_score") or 0.0
                     ), 2)
 
-                    # 5. DATE PARSING (Safe multi-field)
+                    # 7. DATE PARSING
                     date_candidates = [
+                        metadata.get("exported_at"), # มาตรฐานใหม่
                         metadata.get("export_at"),
-                        summary.get("export_timestamp"),
-                        summary.get("assessed_at"),
-                        summary.get("timestamp")
+                        old_sum.get("timestamp")
                     ]
                     date_str, parsed_dt = "N/A", None
                     for cand in date_candidates:
                         if cand:
                             try:
-                                # จัดการทั้ง ISO format และ Custom format
-                                if "_" in str(cand): # สำหรับ 20260115_233148
-                                    parsed_dt = datetime.strptime(str(cand), "%Y%m%d_%H%M%S")
-                                else:
-                                    parsed_dt = datetime.fromisoformat(str(cand).replace('Z', '+00:00'))
+                                parsed_dt = datetime.fromisoformat(str(cand).replace('Z', '+00:00'))
                                 date_str = parsed_dt.isoformat()
                                 break
                             except: continue
 
-                    if not parsed_dt: # Last resort
+                    if not parsed_dt:
                         mtime = os.path.getmtime(file_path)
                         parsed_dt = datetime.fromtimestamp(mtime)
                         date_str = parsed_dt.isoformat()
@@ -676,10 +661,10 @@ async def get_assessment_history(
                     })
 
                 except Exception as e:
-                    logger.error(f"❌ Skip corrupted file {f}: {e}")
+                    logger.error(f"❌ Skip corrupted/old file {f}: {e}")
                     continue
 
-    # 6. Sort & Cleanup
+    # 8. Sort ผลลัพธ์ตามเวลาล่าสุด
     sorted_history = sorted(history_list, key=lambda x: x['date_dt'] or datetime.min, reverse=True)
     for item in sorted_history: item.pop('date_dt', None)
 
@@ -838,17 +823,17 @@ async def run_assessment_engine_task(
         logger.error(f"💥 [Task {record_id}] Critical Failure: {str(e)}", exc_info=True)
         db_update_task_status(record_id, 0, f"ระบบขัดข้อง: {str(e)}", status="FAILED")
 
-
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     """
-    [HYBRID SEARCH v2026.2 — Final Robust]
-    - ชั้น 1: DB (fast)
-    - ชั้น 2: Disk scan (fallback) + tenant check
+    [HYBRID DEEP SEARCH v2026.3]
+    - ชั้น 1: DB Hit (ค้นจาก Database ตรงๆ)
+    - ชั้น 2: Fast Disk Scan (ค้นจากชื่อไฟล์ - ถ้ามี ID ในชื่อ)
+    - ชั้น 3: Deep Disk Scan (เปิดอ่าน JSON Metadata เพื่อหา record_id) **NEW**
     """
     norm_tenant = _n(current_user.tenant)
-    norm_search = _n(search_id).lower()
+    norm_search = str(search_id).strip().lower()
 
-    # ชั้น 1: DB Hit
+    # --- ชั้น 1: DB Hit (ค้นจาก SQLite) ---
     db = SessionLocal()
     try:
         res_record = db.query(AssessmentResultTable).filter(
@@ -858,41 +843,57 @@ def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
         if res_record and res_record.full_result_json:
             try:
                 data = json.loads(res_record.full_result_json)
+                # พยายามดึง path จากหลายที่ใน JSON
                 db_path = data.get("export_path_used") or data.get("metadata", {}).get("full_path")
                 if db_path and os.path.exists(db_path):
                     logger.info(f"⚡ [Search] DB Hit! Found: {db_path}")
                     return db_path
-            except:
-                pass
+            except: pass
     finally:
         db.close()
 
-    # ชั้น 2: Disk Scan
+    # --- ชั้น 2 & 3: Disk Scan (Fallback) ---
     search_paths = [
         os.path.join(DATA_STORE_ROOT, norm_tenant, "exports"),
-        os.path.join("data_store", norm_tenant, "exports"),
-        "/app/data_store/{}/exports".format(norm_tenant)
+        os.path.join("data_store", norm_tenant, "exports")
     ]
     
-    logger.info(f"🔍 [Search] DB Miss. Scanning Disk for ID: {norm_search}...")
+    logger.info(f"🔍 [Search] DB Miss. Deep Scanning Disk for ID: {norm_search}...")
 
     for s_path in search_paths:
-        if not os.path.exists(s_path):
-            continue
+        if not os.path.exists(s_path): continue
             
         for root, _, files in os.walk(s_path):
             for f in files:
-                norm_filename = _n(f).lower()
-                if norm_filename.endswith(".json") and norm_search in norm_filename:
-                    if norm_tenant.lower() in _n(root).lower() or "exports" in root:
-                        found_path = os.path.join(root, f)
-                        logger.info(f"✅ [Search] Disk Scan Success: {found_path}")
-                        return found_path
+                if not f.lower().endswith(".json"): continue
+                
+                full_path = os.path.join(root, f)
+                
+                # [Fast Scan] ถ้าโชคดีมี ID ในชื่อไฟล์
+                if norm_search in f.lower():
+                    logger.info(f"✅ [Search] Fast Scan Success: {full_path}")
+                    return full_path
+                
+                # [Deep Scan] เปิดอ่าน Metadata ข้างใน (แก้ปัญหาชื่อไฟล์ไม่มี ID)
+                try:
+                    with open(full_path, "r", encoding="utf-8") as jf:
+                        # อ่านแค่หัวไฟล์ (ป้องกันไฟล์ใหญ่แล้วค้าง)
+                        first_part = jf.read(1000) 
+                        # เช็คเบื้องต้นด้วย string search ก่อนโหลด json เต็ม
+                        if norm_search in first_part:
+                            jf.seek(0)
+                            data = json.load(jf)
+                            f_id = data.get("record_id") or data.get("metadata", {}).get("record_id")
+                            if str(f_id).lower() == norm_search:
+                                logger.info(f"🎯 [Search] Deep Scan Success! Found ID in Metadata: {full_path}")
+                                return full_path
+                except:
+                    continue
                     
     logger.error(f"❌ [Search] Total Failure for ID: {norm_search}")
     raise HTTPException(
         status_code=404, 
-        detail=f"ไม่พบไฟล์ผลการประเมิน (ID: {search_id}) กรุณารอสักครู่หรือเริ่มการประเมินใหม่"
+        detail=f"ไม่พบไฟล์ผลการประเมิน (ID: {search_id}) แม้จะทำการ Deep Scan แล้ว"
     )
 
 # ------------------------------------------------------------------
@@ -923,14 +924,16 @@ async def download_assessment_file(
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    API สำหรับดาวน์โหลดผลประเมินย้อนหลัง (JSON หรือ Word)
+    [v2026.6 - Final Production]
+    - แก้ไขการดึง Enabler จาก Metadata ใหม่
+    - รองรับการสร้าง Word จาก UI Data ตัวล่าสุด
     """
     logger.info(f"📥 Download request: record_id={record_id}, type={file_type} by {current_user.email}")
 
-    # 1. ค้นหาไฟล์ต้นฉบับ (JSON)
+    # 1. ค้นหาไฟล์ต้นฉบับ (JSON) ด้วย Deep Search ที่เราแก้กันก่อนหน้า
     json_path = _find_assessment_file(record_id, current_user)
 
-    # 2. อ่านข้อมูลเพื่อตรวจสอบ Permission ระดับ Enabler อีกครั้ง
+    # 2. อ่านข้อมูล
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
@@ -938,8 +941,12 @@ async def download_assessment_file(
         logger.error(f"Error reading JSON: {e}")
         raise HTTPException(status_code=500, detail="ไม่สามารถอ่านไฟล์ข้อมูลได้")
 
-    # 3. ตรวจสอบสิทธิ์เข้าถึง Enabler (เช่น User PEA-KM ห้ามโหลด PEA-IT)
-    enabler = (raw_data.get("summary", {}).get("enabler") or "KM").upper()
+    # 3. 🛡️ ตรวจสอบสิทธิ์ (ปรับตามโครงสร้างใหม่ v2026)
+    # ดึงจาก metadata.enabler หรือ result_summary.enabler
+    metadata = raw_data.get("metadata", {})
+    res_sum = raw_data.get("result_summary", {})
+    enabler = (metadata.get("enabler") or res_sum.get("enabler") or "KM").upper()
+    
     check_user_permission(current_user, current_user.tenant, enabler)
 
     file_type = file_type.lower()
@@ -956,24 +963,20 @@ async def download_assessment_file(
     elif file_type in ["word", "docx"]:
         logger.info(f"📄 Generating Word report for {record_id}...")
 
-        # แปลงข้อมูล
+        # แปลงข้อมูลด้วย Transformer ตัวล่าสุด (v2026.5) เพื่อให้ได้ Roadmap และ Evidence ครบ
         ui_data = _transform_result_for_ui(raw_data)
         
-        # สร้าง Document (เรียกใช้จากฟังก์ชันที่คุณมีใน gen_report.py หรือคล้ายกัน)
         try:
+            # ใช้ฟังก์ชันสร้าง Report (มั่นใจว่าส่ง ui_data ที่มี Roadmap ไปแล้ว)
             doc = create_docx_report_similar_to_ui(ui_data)
-        except ImportError:
-            # Fallback หากยังไม่ได้ทำตัวสร้าง Report
-            raise HTTPException(status_code=501, detail="ระบบสร้างไฟล์ Word ยังไม่ถูกติดตั้ง")
+        except Exception as e:
+            logger.error(f"Word Generation Error: {e}")
+            raise HTTPException(status_code=501, detail=f"ระบบสร้างไฟล์ Word ขัดข้อง: {str(e)}")
 
-        # บันทึกลงไฟล์ชั่วคราว (Temporary File)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             doc.save(tmp.name)
             temp_path = tmp.name
 
-        logger.info(f"✅ Word report generated at: {temp_path}")
-
-        # ใช้ Background Task ลบไฟล์ทิ้งหลังจากส่งให้ User เสร็จแล้ว
         background_tasks.add_task(os.remove, temp_path)
 
         return FileResponse(

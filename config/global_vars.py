@@ -71,8 +71,6 @@ OLLAMA_BASE_URL: Final[str] = os.environ.get("OLLAMA_BASE_URL", "http://localhos
 # จำนวน Workers (Mac อาจใช้ 2, Server L40S อาจใช้ 8)
 MAX_PARALLEL_WORKERS: Final[int] = int(os.environ.get("MAX_PARALLEL_WORKERS", "2"))
 
-LLM_TEMPERATURE: Final[float] = 0.0
-
 # ================================================================
 # Embedding & Reranker Models
 # ================================================================
@@ -164,6 +162,28 @@ QUERY_INITIAL_K: Final[int] = 20
 # ================================================================
 LIMIT_CHUNKS_PER_PRIORITY_DOC: Final[int] = 5
 PRIORITY_CHUNK_LIMIT: Final[int] = 30
+
+MAX_CHUNKS_LOW = int(os.getenv("MAX_CHUNKS_LOW_LEVEL", 45))
+MAX_CHUNKS_HIGH = int(os.getenv("MAX_CHUNKS_HIGH_LEVEL", 30))
+
+
+# ================================================================
+# Action Plan Generation Control (ย้ายขึ้นมาไว้ตรงนี้)
+# ================================================================
+MAX_ACTION_PLAN_PHASES: Final[int] = 3
+MAX_STEPS_PER_ACTION: Final[int] = 2
+ACTION_PLAN_STEP_MAX_WORDS: Final[int] = int(os.environ.get("LLM_MAX_WORDS_PER_STEP", "25"))
+MAX_ACTION_PLAN_TOKENS: Final[int] = int(os.environ.get("LLM_MAX_TOKENS", "2048"))
+MAX_ACTION_PLAN_RETRIES: Final[int] = int(os.environ.get("MAX_ACTION_PLAN_RETRIES", "3"))
+ACTION_PLAN_LANGUAGE: Final[str] = os.environ.get("ACTION_PLAN_LANGUAGE", "th")
+
+# ================================================================
+# LLM Inference Optimization (Generation Settings)
+# ================================================================
+LLM_TEMPERATURE: Final[float] = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
+
+# คราวนี้จะใช้ MAX_ACTION_PLAN_TOKENS ได้แล้วเพราะประกาศไว้ข้างบนแล้ว
+LLM_NUM_PREDICT: Final[int] = MAX_ACTION_PLAN_TOKENS 
 
 
 # ================================================================
@@ -283,14 +303,6 @@ EXPORTS_DIR: Final[str] = os.path.join(PROJECT_ROOT, "exports")
 
 DOCUMENT_ID_MAPPING_FILENAME_SUFFIX: Final[str] = "_doc_id_mapping.json"
 EVIDENCE_MAPPING_FILENAME_SUFFIX: Final[str] = "_evidence_mapping.json"
-
-# ================================================================
-# Action Plan Generation Control
-# ================================================================
-MAX_ACTION_PLAN_PHASES: Final[int] = 3
-MAX_STEPS_PER_ACTION: Final[int] = 2
-ACTION_PLAN_STEP_MAX_WORDS: Final[int] = 15
-ACTION_PLAN_LANGUAGE: Final[str] = "th"  # "th" or "en"
 
 # ================================================================
 # PDCA Rules & Scoring
