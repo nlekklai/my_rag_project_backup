@@ -3917,6 +3917,102 @@ class SEAMPDCAEngine:
         
         return filtered_list
     
+    def _generate_action_plan_safe(
+        self, 
+        sub_id: str, 
+        name: str, 
+        enabler: str, 
+        results: List[Dict]
+    ) -> Any:
+        """
+        [ULTIMATE STRATEGIC REVISE v2026.3.23 - Production Ready]
+        - ปรับปรุงให้รองรับ Pydantic-validated output จาก llm_data_utils
+        - ปรับปรุง Error Handling ให้ครอบคลุมกรณี Validation พัง
+        """
+        try:
+            self.logger.info(f"🚀 [ACTION PLAN] Generating for {sub_id} - {name}")
+
+            to_recommend = []
+            has_major_gap = False
+
+            # 1. จัดเรียงและวิเคราะห์ Gaps จากผลประเมิน
+            sorted_results = sorted(results, key=lambda x: x.get('level', 0))
+
+            for r in sorted_results:
+                level = r.get('level', 0)
+                is_passed = r.get('is_passed', False)
+                score = float(r.get('score', 0.0))
+                pdca_raw = r.get('pdca_breakdown', {})
+
+                # ตรวจสอบหา PDCA Phase ที่หายไป (คะแนนต่ำกว่า 0.5)
+                missing = [p for p in ['P', 'D', 'C', 'A'] if float(pdca_raw.get(p, 0.0)) < 0.5]
+
+                coaching = r.get('coaching_insight', '').strip()
+                # ถ้าผ่านและคะแนนสูง ให้ดึง summary_thai มาเป็นจุดแข็ง
+                strength = r.get('summary_thai', r.get('reason', '')).strip() if is_passed and score >= 0.8 else ""
+
+                payload = {
+                    "level": level,
+                    "is_passed": is_passed,
+                    "score": score,
+                    "missing_phases": missing,
+                    "coaching_insight": coaching,
+                    "strength_context": strength,
+                    "recommendation_type": "FAILED_REMEDIATION" if not is_passed else
+                                          "QUALITY_REFINEMENT" if missing or score < 1.0 else
+                                          "EXCELLENCE_MAINTENANCE"
+                }
+
+                if not is_passed or missing:
+                    has_major_gap = True
+                to_recommend.append(payload)
+
+            # 2. กรณีผ่านหมด (Excellence) -> ส่งกลับสถานะพิเศษ
+            if not has_major_gap:
+                self.logger.info(f"🌟 {sub_id} EXCELLENT - No major gaps")
+                return {
+                    "status": "EXCELLENT",
+                    "message": "บรรลุเกณฑ์ทั้งหมดอย่างสมบูรณ์",
+                    "coaching_summary": "รักษามาตรฐานและพัฒนาเป็น Best Practice ต่อไป"
+                }
+
+            # 3. เตรียม Args และเรียกใช้ Strategic Action Plan Engine
+            action_plan_args = {
+                "recommendation_statements": to_recommend,
+                "sub_id": sub_id,
+                "sub_criteria_name": name,
+                "enabler": enabler,
+                "target_level": getattr(self.config, 'target_level', 5),
+                "llm_executor": self.llm,
+                "logger": self.logger,
+                "enabler_rules": getattr(self.config, 'enabler_rules', {})
+            }
+
+            self.logger.info(f"[ACTION PLAN] Invoking engine with {len(to_recommend)} items")
+            
+            # เรียกใช้ฟังก์ชันใน llm_data_utils.py ที่คุณเพิ่งปรับปรุง (ซึ่งใช้ Pydantic ด้านใน)
+            action_plan_result = create_structured_action_plan(**action_plan_args)
+
+            # ตรวจสอบผลลัพธ์: ถ้าได้ค่าว่าง (จากการที่ LLM พ่นขยะและ Pydantic ดักทิ้ง) ให้เข้า Fallback
+            if not action_plan_result:
+                raise ValueError("Engine returned empty or invalid action plan after validation")
+
+            return action_plan_result
+
+        except Exception as e:
+            self.logger.error(f"❌ Action Plan Failed for {sub_id}: {str(e)}")
+            # ใช้ Emergency Fallback Plan เพื่อให้ User ยังได้รับ Roadmap อย่างน้อย 1 Phase
+            return _get_emergency_fallback_plan(
+                sub_id=sub_id, 
+                sub_criteria_name=name, 
+                target_level=getattr(self.config, 'target_level', 5), 
+                is_sustain_mode=False, 
+                is_quality_refinement=False, 
+                enabler=enabler,
+                recommendation_statements=to_recommend
+            )
+
+
     # ------------------------------------------------------------------------------------------
     # [ULTIMATE ORCHESTRATOR v2026.3] run_assessment - COMPLETE 5 LEVELS EDITION
     # ------------------------------------------------------------------------------------------
@@ -4028,102 +4124,6 @@ class SEAMPDCAEngine:
         self.db_update_task_status(progress=100, message="✅ การประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
     
-    
-    def _generate_action_plan_safe(
-        self, 
-        sub_id: str, 
-        name: str, 
-        enabler: str, 
-        results: List[Dict]
-    ) -> Any:
-        """
-        [ULTIMATE STRATEGIC REVISE v2026.3.23 - Production Ready]
-        - ปรับปรุงให้รองรับ Pydantic-validated output จาก llm_data_utils
-        - ปรับปรุง Error Handling ให้ครอบคลุมกรณี Validation พัง
-        """
-        try:
-            self.logger.info(f"🚀 [ACTION PLAN] Generating for {sub_id} - {name}")
-
-            to_recommend = []
-            has_major_gap = False
-
-            # 1. จัดเรียงและวิเคราะห์ Gaps จากผลประเมิน
-            sorted_results = sorted(results, key=lambda x: x.get('level', 0))
-
-            for r in sorted_results:
-                level = r.get('level', 0)
-                is_passed = r.get('is_passed', False)
-                score = float(r.get('score', 0.0))
-                pdca_raw = r.get('pdca_breakdown', {})
-
-                # ตรวจสอบหา PDCA Phase ที่หายไป (คะแนนต่ำกว่า 0.5)
-                missing = [p for p in ['P', 'D', 'C', 'A'] if float(pdca_raw.get(p, 0.0)) < 0.5]
-
-                coaching = r.get('coaching_insight', '').strip()
-                # ถ้าผ่านและคะแนนสูง ให้ดึง summary_thai มาเป็นจุดแข็ง
-                strength = r.get('summary_thai', r.get('reason', '')).strip() if is_passed and score >= 0.8 else ""
-
-                payload = {
-                    "level": level,
-                    "is_passed": is_passed,
-                    "score": score,
-                    "missing_phases": missing,
-                    "coaching_insight": coaching,
-                    "strength_context": strength,
-                    "recommendation_type": "FAILED_REMEDIATION" if not is_passed else
-                                          "QUALITY_REFINEMENT" if missing or score < 1.0 else
-                                          "EXCELLENCE_MAINTENANCE"
-                }
-
-                if not is_passed or missing:
-                    has_major_gap = True
-                to_recommend.append(payload)
-
-            # 2. กรณีผ่านหมด (Excellence) -> ส่งกลับสถานะพิเศษ
-            if not has_major_gap:
-                self.logger.info(f"🌟 {sub_id} EXCELLENT - No major gaps")
-                return {
-                    "status": "EXCELLENT",
-                    "message": "บรรลุเกณฑ์ทั้งหมดอย่างสมบูรณ์",
-                    "coaching_summary": "รักษามาตรฐานและพัฒนาเป็น Best Practice ต่อไป"
-                }
-
-            # 3. เตรียม Args และเรียกใช้ Strategic Action Plan Engine
-            action_plan_args = {
-                "recommendation_statements": to_recommend,
-                "sub_id": sub_id,
-                "sub_criteria_name": name,
-                "enabler": enabler,
-                "target_level": getattr(self.config, 'target_level', 5),
-                "llm_executor": self.llm,
-                "logger": self.logger,
-                "enabler_rules": getattr(self.config, 'enabler_rules', {})
-            }
-
-            self.logger.info(f"[ACTION PLAN] Invoking engine with {len(to_recommend)} items")
-            
-            # เรียกใช้ฟังก์ชันใน llm_data_utils.py ที่คุณเพิ่งปรับปรุง (ซึ่งใช้ Pydantic ด้านใน)
-            action_plan_result = create_structured_action_plan(**action_plan_args)
-
-            # ตรวจสอบผลลัพธ์: ถ้าได้ค่าว่าง (จากการที่ LLM พ่นขยะและ Pydantic ดักทิ้ง) ให้เข้า Fallback
-            if not action_plan_result:
-                raise ValueError("Engine returned empty or invalid action plan after validation")
-
-            return action_plan_result
-
-        except Exception as e:
-            self.logger.error(f"❌ Action Plan Failed for {sub_id}: {str(e)}")
-            # ใช้ Emergency Fallback Plan เพื่อให้ User ยังได้รับ Roadmap อย่างน้อย 1 Phase
-            return _get_emergency_fallback_plan(
-                sub_id=sub_id, 
-                sub_criteria_name=name, 
-                target_level=getattr(self.config, 'target_level', 5), 
-                is_sustain_mode=False, 
-                is_quality_refinement=False, 
-                enabler=enabler,
-                recommendation_statements=to_recommend
-            )
-
     # ------------------------------------------------------------------------------------------
     # 🚀 CORE WORKER: Assessment Execution (FINAL v2026.1.26 - STABLE + ANTI-CRASH)
     # ------------------------------------------------------------------------------------------
