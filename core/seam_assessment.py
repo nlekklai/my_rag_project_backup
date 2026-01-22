@@ -25,6 +25,8 @@ import unicodedata
 import json5
 import random
 
+from core.json_extractor import _robust_extract_json
+
 # -------------------- 1. PROTECTIVE IMPORTS --------------------
 # จัดการเรื่อง FileLock และ Database ก่อนเพื่อนเพื่อให้ส่วนอื่นเรียกใช้ได้ชัวร์ๆ
 try:
@@ -65,7 +67,7 @@ try:
     from core.llm_data_utils import ( 
         evaluate_with_llm, retrieve_context_with_filter, 
         retrieve_context_for_low_levels, action_plan_normalize_keys,
-        _extract_json_array_for_action_plan, evaluate_with_llm_low_level, 
+        evaluate_with_llm_low_level, 
         LOW_LEVEL_K, create_context_summary_llm, _fetch_llm_response,
         _check_and_handle_empty_context, set_mock_control_mode as set_llm_data_mock_mode
     )
@@ -141,7 +143,6 @@ except ImportError as e:
     def set_llm_data_mock_mode(m): pass
     def action_plan_normalize_keys(d): return d
     def create_context_summary_llm(*args, **kwargs): return {"summary": "N/A", "coaching": "N/A"}
-    def _extract_json_array_for_action_plan(t): return []
     def _check_and_handle_empty_context(*args, **kwargs): return None, False
 
     ATOMIC_ACTION_PROMPT = "Level {level}: {coaching_insight}"
@@ -4451,6 +4452,9 @@ class SEAMPDCAEngine:
     # ------------------------------------------------------------------
     # 🏛️ [TIER-3 METHOD] synthesize_strategic_roadmap - REVISED v2026
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 🏛️ [TIER-3 METHOD] synthesize_strategic_roadmap - FINAL PRODUCTION
+    # ------------------------------------------------------------------
     def synthesize_strategic_roadmap(
         self,
         sub_criteria_results: List[Dict[str, Any]],
@@ -4459,42 +4463,43 @@ class SEAMPDCAEngine:
     ) -> Dict[str, Any]:
         """
         [TIER-3 STRATEGIC ORCHESTRATOR - v2026.3.26]
-        รวบรวมข้อมูลจาก Tier-2 (Atomic Plans) ของทุก Sub-Criteria มาสังเคราะห์เป็นแผนภาพรวม
+        รวบรวมข้อมูลจาก Tier-2 (Atomic Plans) ของทุก Sub-Criteria มาสังเคราะห์เป็นยุทธศาสตร์ภาพรวม
         """
         self.logger.info(f"🌐 [TIER-3] Starting Master Strategic Roadmap Synthesis for {enabler_name}")
         
+        if not sub_criteria_results:
+            self.logger.warning("⚠️ No sub-criteria results available for synthesis")
+            return {"status": "INCOMPLETE", "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผน"}
+
         aggregated_insights = []
         
-        # 1. 📂 Data Collection & Pre-processing
+        # 1. 📂 Data Collection & Pre-processing (Insight Aggregation)
         for res in sub_criteria_results:
             sub_id = res.get("sub_id", "Unknown")
             sub_name = res.get("sub_criteria_name", "N/A")
             level = res.get("highest_full_level", 0)
             
-            # ดึงคำแนะนำจาก Atomic Action Plan (ที่เก็บไว้ในแต่ละ Level)
-            # หรือดึงจาก master_roadmap ของราย Sub (ถ้ามี)
+            # ดึงคำแนะนำจาก Level ที่ไม่ผ่าน (Gap Analysis)
             level_details = res.get("level_details", {})
-            key_recs = []
+            gap_recs = []
 
-            # รวบรวม Coaching Insights จาก Level ที่ไม่ผ่าน
-            for lvl_str, detail in level_details.items():
-                if not detail.get("is_passed", False):
+            # รวบรวม Coaching Insights จาก Level ที่มีปัญหา
+            for lvl_idx in range(1, 6):
+                detail = level_details.get(str(lvl_idx), {})
+                # เก็บ Insight ถ้าไม่ผ่าน หรือคะแนนต่ำกว่า 0.7 (แม้จะผ่านแบบคาบเส้น)
+                if not detail.get("is_passed", False) or float(detail.get("score", 0)) < 0.7:
                     insight = detail.get("coaching_insight")
-                    if insight and insight not in key_recs:
-                        key_recs.append(insight)
+                    if insight and insight not in gap_recs:
+                        gap_recs.append(insight)
 
-            # สรุป Insight ให้สั้นลงเพื่อป้องกัน Token Overflow (Tier-3 Limit)
-            short_insight = " | ".join(key_recs[:2]) if key_recs else "เน้นการรักษามาตรฐานและต่อยอดความต่อเนื่อง"
-            aggregated_insights.append(f"📌 [{sub_id}] {sub_name} (Current: L{level}): {short_insight}")
+            # สรุปข้อมูลราย Sub-Criteria ให้กระชับเพื่อส่งให้ LLM สังเคราะห์ต่อ
+            insight_text = " | ".join(gap_recs[:2]) if gap_recs else "รักษามาตรฐานและขยายผลความสำเร็จ"
+            aggregated_insights.append(f"📌 [{sub_id}] {sub_name} (L{level}): {insight_text}")
 
-        if not aggregated_insights:
-            self.logger.warning("⚠️ No sub-criteria insights available for synthesis")
-            return {"status": "INCOMPLETE", "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผนภาพรวม"}
-
-        # 2. 🧠 LLM Orchestration
+        # 2. 🧠 LLM Orchestration (The Synthesis Step)
         formatted_insights_text = "\n".join(aggregated_insights)
         
-        # เตรียม Prompt โดยใช้ Template จาก seam_prompts.py
+        # ดึง Prompt Template (มั่นใจว่าใน seam_prompts.py มี MASTER_ROADMAP_PROMPT แล้ว)
         final_prompt = MASTER_ROADMAP_PROMPT.format(
             sub_id="OVERALL",
             sub_criteria_name=enabler_name, 
@@ -4503,48 +4508,102 @@ class SEAMPDCAEngine:
         )
 
         try:
-            # ใช้ Low Temperature (0.3) เพื่อความแม่นยำเชิงยุทธศาสตร์ ไม่ให้ LLM เพ้อเจ้อ
+            # ใช้ Temperature 0.2 เพื่อให้แผนงานมีความเป็นเหตุเป็นผลและเป็นทางการ
             response = llm_executor.generate(
                 system=SYSTEM_MASTER_ROADMAP_PROMPT, 
                 prompts=[final_prompt], 
-                temperature=0.3
+                temperature=0.2
             )
             
-            # ดึง Content จาก Response (รองรับทั้ง Object และ String)
+            # ดึงข้อความดิบ
             raw_text = getattr(response, 'content', str(response)).strip()
             
-            # 3. 🧹 Robust JSON Extraction & Normalization
-            # ใช้ regex สกัด JSON จากเครื่องหมาย [ ] หรือ { }
-            extracted_data = _extract_json_array_for_action_plan(raw_text, self.logger)
+            # 3. 🧹 Robust JSON Extraction (Using our new tool)
+            # เปลี่ยนจากระบบเดิมมาใช้ core.json_extractor._robust_extract_json
+            strategic_plan = _robust_extract_json(raw_text)
             
-            if extracted_data:
-                # ตรวจสอบว่าเป็น List หรือ Dict และส่งไป Normalize Key
-                data_to_normalize = extracted_data[0] if isinstance(extracted_data, list) else extracted_data
-                strategic_plan = action_plan_normalize_keys(data_to_normalize)
-                
+            if strategic_plan and (strategic_plan.get("roadmap") or strategic_plan.get("strategic_roadmap")):
                 self.logger.info(f"✅ [TIER-3] Master Roadmap Synthesized Successfully")
+                
+                # มาตรฐาน Key: roadmap (List), overall_strategy (String)
+                final_roadmap = strategic_plan.get("roadmap") or strategic_plan.get("strategic_roadmap") or []
+                
                 return {
                     "status": "SUCCESS",
-                    "overall_strategy": strategic_plan.get("overall_strategy", "แผนยกระดับมาตรฐาน Enabler"),
-                    "roadmap": strategic_plan.get("roadmap", []),
+                    "overall_strategy": strategic_plan.get("overall_strategy") or strategic_plan.get("summary") or "แผนยกระดับยุทธศาสตร์การจัดการองค์กร",
+                    "roadmap": final_roadmap,
                     "metadata": {
                         "generated_at": datetime.now().isoformat(),
-                        "input_sub_count": len(sub_criteria_results)
+                        "input_sub_count": len(sub_criteria_results),
+                        "enabler": enabler_name
                     }
                 }
             
+            # Fallback หากสกัด JSON ไม่สำเร็จแต่ได้ Text
+            self.logger.error("❌ Tier-3 JSON extraction failed, using fallback summary")
             return {
-                "status": "INCOMPLETE", 
-                "overall_strategy": "สกัดข้อมูลจาก LLM ไม่สำเร็จ",
-                "raw_preview": raw_text[:200]
+                "status": "PARTIAL", 
+                "overall_strategy": "สกัดข้อมูลแผนงานแบบละเอียดไม่ได้ แต่ตรวจพบข้อแนะนำเบื้องต้น",
+                "roadmap": [{"step": 1, "action": raw_text[:300], "priority": "High"}]
             }
 
         except Exception as e:
             self.logger.error(f"💥 Master Roadmap Critical Error: {str(e)}", exc_info=True)
             return {
                 "status": "ERROR", 
-                "reason": f"เกิดข้อผิดพลาดทางเทคนิค: {str(e)}"
+                "reason": f"ข้อผิดพลาดขณะสังเคราะห์แผน: {str(e)}"
             }
+    
+    def create_atomic_action_plan(self, insight: str, level: int) -> List[Dict[str, Any]]:
+        """
+        [v2026.3.26 - ROBUST VERSION]
+        สร้างแผนงานย่อย (Tier-2) โดยใช้ Robust JSON Extractor 
+        เพื่อป้องกันปัญหา JSON พังจาก LLM
+        """
+        try:
+            if not insight or insight in ["-", "N/A", "none"]:
+                return []
+                
+            human_prompt = ATOMIC_ACTION_PROMPT.format(
+                coaching_insight=insight[:300], # ขยายขอบเขตให้นิดหน่อยเพื่อให้ LLM มีบริบทมากขึ้น
+                level=level
+            )
+            
+            response = self.llm.generate(
+                system=SYSTEM_ATOMIC_ACTION_PROMPT,
+                prompts=[human_prompt],
+                temperature=0.1 # ใช้ค่าต่ำเพื่อความแม่นยำของ JSON Structure
+            )
+            
+            # 1. ดึงข้อความดิบจาก LLM
+            raw_text = getattr(response, 'content', str(response)).strip()
+            
+            # 2. [UPGRADED] ใช้ Robust Extractor แทนระบบเดิม
+            # ตัวนี้จะจัดการล้าง Unicode, Markdown และ Normalize Keys ให้เสร็จสรรพ
+            extracted_data = _robust_extract_json(raw_text)
+            
+            # 3. สกัดแผนงานออกมา (รองรับหลาย Key ที่ LLM อาจจะตอบมามั่วๆ)
+            # เราหาจาก 'atomic_action_plan' ก่อน ถ้าไม่มีให้ลองหา 'action_plan' หรือ 'suggestion_for_next_level'
+            actions = (
+                extracted_data.get("atomic_action_plan") or 
+                extracted_data.get("action_plan") or 
+                extracted_data.get("suggestion_for_next_level")
+            )
+            
+            # 4. Data Normalization: มั่นใจว่าผลลัพธ์จะเป็น List เสมอ
+            if isinstance(actions, list):
+                return actions[:5] # เอาแค่ 3-5 แผนงานหลักพอสำหรับ Dashboard
+            elif isinstance(actions, dict):
+                return [actions]
+            elif isinstance(actions, str) and len(actions) > 5:
+                return [{"action": actions, "priority": "Medium"}]
+            
+            return []
+
+        except Exception as e:
+            self.logger.error(f"🚀 Atomic Action Failed (L{level}): {str(e)}")
+            # Fallback สุดท้าย: คืนค่าเป็น empty list เพื่อไม่ให้ Engine หลักพัง
+            return []
         
     def create_atomic_action_plan(self, insight: str, level: int) -> List[Dict[str, Any]]:
         """สร้างแผนงานขนาดเล็กราย Level (JSON พังยากมาก)"""
@@ -4570,123 +4629,97 @@ class SEAMPDCAEngine:
             self.logger.error(f"Atomic Action Error (L{level}): {str(e)}")
             return []
     
+    # ------------------------------------------------------------------
+    # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026
+    # ------------------------------------------------------------------
     def generate_master_roadmap(self, sub_id, sub_criteria_name, enabler, aggregated_insights):
         """
-        [TIER-3 STRATEGIC SYNTHESIS - FULL REVISE v2026.1.25]
-        สังเคราะห์ Roadmap โดยรวมข้อมูลจากทุก Level (L1-L5) เพื่อสร้างแผนพัฒนาที่เป็นเอกภาพ
-        - Crash-proof: รองรับ aggregated_insights ว่าง/None
-        - Robust prompt + extraction (ใช้ _extract_json_array_for_action_plan)
-        - Audit-friendly: log ชัด + fallback plan ที่มี traceability
-        - Performance: condensed insights เพื่อป้องกัน context overflow
+        [TIER-3 STRATEGIC SYNTHESIS - v2026.3.26]
+        สังเคราะห์ Roadmap ภาพรวมราย Sub-Criteria โดยเชื่อมต่อกับ Robust JSON Extractor
+        - ป้องกัน Token Overflow ด้วยการบีบอัด Insight ราย Level
+        - ใช้ _robust_extract_json เพื่อความถึกในการ Parsing
+        - มีระบบ Emergency Fallback หาก LLM ตอบนอกกรอบ
         """
+        from core.json_extractor import _robust_extract_json
+        
         self.logger.info(f"🔮 [MASTER-ROADMAP] Starting synthesis for {sub_id} ({sub_criteria_name})")
 
-        # 1. Pre-processing: ตรวจสอบและบีบอัดข้อมูล
-        if not aggregated_insights or not isinstance(aggregated_insights, (list, tuple)):
-            self.logger.warning(f"[AUDIT WARNING] No aggregated insights for {sub_id} - Using emergency fallback")
+        # 1. 📂 Pre-processing: ขัดเกลาข้อมูลก่อนส่งให้ AI
+        if not aggregated_insights:
+            self.logger.warning(f"⚠️ No insights for {sub_id} - Using emergency fallback")
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, error_msg="No insights provided")
 
         condensed_insights = []
         for item in aggregated_insights:
-            status = "ผ่าน (PASSED)" if item.get('is_passed') or item.get('status') == "PASSED" else "ไม่ผ่าน (FAILED)"
+            # ตรวจสอบสถานะการผ่านเกณฑ์
+            status = "✅ ผ่าน" if item.get('is_passed') or item.get('status') == "PASSED" else "❌ ไม่ผ่าน"
             lv = item.get('level', '?')
-            insight = item.get('insight_summary', 'ไม่มีข้อมูลรายละเอียด')[:200]  # ตัดสั้น
-            condensed_insights.append(f"Level {lv} [{status}]: {insight}")
+            # ดึงใจความสำคัญเพียงเล็กน้อยเพื่อประหยัด Token
+            insight = item.get('insight_summary') or item.get('reason') or 'ไม่มีข้อมูลรายละเอียด'
+            condensed_insights.append(f"Level {lv} [{status}]: {insight[:150]}...")
 
         summary_text = "\n".join(condensed_insights)
-        if not summary_text.strip():
-            summary_text = "ไม่มีข้อมูลสรุปจากระดับต่าง ๆ"
 
-        # 2. Robust Prompt Formatting
+        # 2. 📝 Robust Prompt Formatting
         try:
-            if hasattr(MASTER_ROADMAP_PROMPT, 'format'):
-                formatted_prompt = MASTER_ROADMAP_PROMPT.format(
-                    sub_id=sub_id,
-                    sub_criteria_name=sub_criteria_name,
-                    enabler=enabler,
-                    aggregated_insights=summary_text
-                )
-                # ถ้าเป็น LangChain PromptTemplate → แปลงเป็น string
-                if hasattr(formatted_prompt, 'to_string'):
-                    formatted_prompt = formatted_prompt.to_string()
-            else:
-                formatted_prompt = str(MASTER_ROADMAP_PROMPT).format(
-                    sub_id=sub_id,
-                    sub_criteria_name=sub_criteria_name,
-                    enabler=enabler,
-                    aggregated_insights=summary_text
-                )
+            # มั่นใจว่า Prompt Template ถูกฉีดข้อมูลเข้าไปอย่างถูกต้อง
+            formatted_prompt = MASTER_ROADMAP_PROMPT.format(
+                sub_id=sub_id,
+                sub_criteria_name=sub_criteria_name,
+                enabler=enabler,
+                aggregated_insights=summary_text
+            )
         except Exception as fe:
-            self.logger.error(f"Prompt formatting error: {fe}")
-            formatted_prompt = f"Summarize roadmap for {sub_criteria_name} using these insights: {summary_text}"
+            self.logger.error(f"❌ Prompt formatting error: {fe}")
+            formatted_prompt = f"Summarize roadmap for {sub_criteria_name} using: {summary_text}"
 
-        # 3. LLM Execution (with reliability)
+        # 3. 🧠 LLM Execution
         try:
-            self.logger.info(f"[MASTER-ROADMAP] Executing LLM for {sub_id}...")
-            
             response = self.llm.generate(
                 system=SYSTEM_MASTER_ROADMAP_PROMPT,
                 prompts=[formatted_prompt],
-                temperature=0.3  # ต่ำเพื่อความแม่นยำเชิงยุทธศาสตร์
+                temperature=0.2 # ปรับลงมาที่ 0.2 เพื่อให้แผนงานดูเป็นทางการและนิ่งขึ้น
             )
             
             raw_text = getattr(response, 'content', str(response)).strip()
-            self.logger.debug(f"[MASTER-ROADMAP] Raw LLM response length: {len(raw_text)}")
 
-            # 4. Advanced JSON Extraction
-            master_data = _extract_json_array_for_action_plan(raw_text)
+            # 4. 🧹 [UPGRADED] Robust JSON Extraction
+            # ใช้ฟังก์ชันใหม่ที่เราเตรียมไว้ ซึ่งจัดการทั้ง Markdown และ Unicode
+            master_data = _robust_extract_json(raw_text)
             
-            # Fallback ถ้า extraction fail
-            if not master_data or not isinstance(master_data, (dict, list)):
-                self.logger.warning(f"[AUDIT WARNING] Heavy extraction failed for {sub_id} - Using fallback")
-                master_data = self._get_emergency_fallback_plan(sub_id, sub_criteria_name, error_msg="JSON extraction failed")
+            if not master_data or master_data.get("score") == 0 and "reason" in master_data:
+                # ถ้า score เป็น 0 จาก extractor แสดงว่า parse ไม่ได้เลย
+                self.logger.warning(f"⚠️ Heavy extraction failed for {sub_id} - Using text fallback")
+                return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, error_msg="JSON parse failed")
 
-            # 5. UI-Ready Normalization
-            if isinstance(master_data, dict):
-                return {
-                    "overall_strategy": master_data.get("overall_strategy") or master_data.get("summary", "พัฒนาตามเกณฑ์มาตรฐาน"),
-                    "phases": master_data.get("phases") or master_data.get("roadmap", []),
-                    "status": "SUCCESS",
-                    "generated_at": datetime.now().isoformat(),
-                    "source_insights_count": len(aggregated_insights)
-                }
+            # 5. 🏗️ UI-Ready Normalization (Mapping Keys)
+            # ดึง Roadmap (Phases) และ Strategy ออกมา
+            # ตัว extractor ของเราทำ Normalize Keys มาให้แล้วบางส่วน
             
-            if isinstance(master_data, list):
-                return {
-                    "overall_strategy": "แผนพัฒนาระบบตามเกณฑ์ (จากหลายเฟส)",
-                    "phases": master_data,
-                    "status": "SUCCESS",
-                    "generated_at": datetime.now().isoformat(),
-                    "source_insights_count": len(aggregated_insights)
-                }
+            final_strategy = (
+                master_data.get("overall_strategy") or 
+                master_data.get("summary") or 
+                f"แนวทางการพัฒนายกระดับ {sub_criteria_name}"
+            )
+            
+            final_phases = (
+                master_data.get("phases") or 
+                master_data.get("roadmap") or 
+                master_data.get("atomic_action_plan") or []
+            )
 
-            # Ultimate fallback
-            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name)
+            self.logger.info(f"✅ [MASTER-ROADMAP] Synthesis Success for {sub_id}")
+            return {
+                "overall_strategy": final_strategy,
+                "phases": final_phases if isinstance(final_phases, list) else [final_phases],
+                "status": "SUCCESS",
+                "generated_at": datetime.now().isoformat(),
+                "source_insights_count": len(aggregated_insights)
+            }
 
         except Exception as e:
-            self.logger.error(f"Critical error in roadmap synthesis for {sub_id}: {str(e)}", exc_info=True)
+            self.logger.error(f"💥 Critical error in roadmap {sub_id}: {str(e)}", exc_info=True)
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, error_msg=str(e))
-
-    def _extract_simple_json_array(self, text: str) -> List[Dict[str, Any]]:
-        """
-        Helper สำหรับสกัด JSON ก้อนเล็กๆ จาก LLM Response
-        เน้นความเร็วและความถึก (Robustness)
-        """
-        try:
-            # 1. พยายามหาช่วงที่เป็น [ ... ] หรือ { ... }
-            match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
-            if match:
-                clean_json = match.group(1)
-                data = json.loads(clean_json)
-                return data if isinstance(data, list) else [data]
-            
-            # 2. ถ้าหาไม่เจอเลย ให้ลอง split บรรทัด (Fallback)
-            lines = [line.strip("- ").strip() for line in text.split('\n') if line.strip()]
-            return [{"action": line, "priority": "Medium"} for line in lines[:3]]
-            
-        except Exception as e:
-            self.logger.error(f"JSON Simple Extraction Failed: {e}")
-            return []
         
     def _get_emergency_fallback_plan(self, sub_id, name, error_msg=""):
         """สร้างแผนสำรองกรณี LLM พัง เพื่อไม่ให้ระบบหยุดทำงาน"""

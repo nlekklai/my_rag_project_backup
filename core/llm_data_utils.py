@@ -23,13 +23,6 @@ from langchain_core.documents import Document
 import os
 import unicodedata
 
-# --- เตรียม JSON Schema ---
-try:
-    from core.action_plan_schema import get_clean_action_plan_schema
-    schema_json = json.dumps(get_clean_action_plan_schema(), ensure_ascii=False, indent=2)
-except Exception as e:
-    logger.error(f"Schema load failed: {e}")
-
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
 try:
@@ -84,7 +77,6 @@ from core.seam_prompts import (
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
 from core.assessment_schema import CombinedAssessment, EvidenceSummary
-from core.action_plan_schema import ActionPlanActions, ActionPlanResult
 
 try:
     from core.assessment_schema import StatementAssessment
@@ -1464,146 +1456,3 @@ def action_plan_normalize_keys(obj: Any) -> Any:
         return new_obj
 
     return obj
-
-
-# =================================================================
-# 3. JSON Extractor: ระบบกู้คืน JSON ที่พังหรือเจนไม่จบ
-# =================================================================
-def _get_emergency_fallback_plan(
-    sub_id: str, 
-    sub_criteria_name: str, 
-    target_level: int, 
-    is_sustain_mode: bool, 
-    is_quality_refinement: bool, 
-    enabler: str = "KM",
-    recommendation_statements: List[Dict] = None
-) -> List[Dict[str, Any]]:
-    """
-    [SAFE FALLBACK] สร้างแผนงานสำรองกรณี LLM พัง 
-    โดยพยายามดึงข้อมูลจาก recommendation_statements มาใช้ให้มากที่สุด
-    """
-    # ดึง Insight จริงตัวแรกที่เจอมาทำเป็นคำแนะนำ
-    top_insight = "ดำเนินการตามเกณฑ์มาตรฐานให้ครบถ้วนตามวงจร PDCA"
-    if recommendation_statements and len(recommendation_statements) > 0:
-        # พยายามหาเลเวลที่ตกก่อน
-        gaps = [s for s in recommendation_statements if not (s.get('is_passed') or s.get('status') == "PASSED")]
-        source_data = gaps[0] if gaps else recommendation_statements[0]
-        
-        top_insight = source_data.get('action_suggestion') or \
-                      source_data.get('coaching_insight') or \
-                      source_data.get('reason') or top_insight
-
-    title = "แผนงานปรับปรุงและปิดช่องว่าง (Remediation Plan)"
-    if is_sustain_mode: title = "แผนงานรักษามาตรฐานและต่อยอด (Sustain Plan)"
-    
-    return [{
-        "phase": f"Phase 1: {title}",
-        "goal": f"ยกระดับ {sub_criteria_name} ให้สอดคล้องตามเกณฑ์มาตรฐาน",
-        "actions": [{
-            "statement_id": sub_id, 
-            "failed_level": target_level,
-            "recommendation": f"ข้อเสนอแนะหลัก: {top_insight}", 
-            "target_evidence_type": "เอกสารรายงานผล / บันทึกการดำเนินงาน",
-            "key_metric": "ความครบถ้วนของหลักฐานตามเกณฑ์",
-            "steps": [
-                {
-                    "step": 1, 
-                    "description": "ทบทวนหลักฐานและจัดทำรายงานสรุปผลการดำเนินงาน", 
-                    "responsible": f"ทีมงาน {enabler}", 
-                    "verification_outcome": "remediation_report.pdf"
-                }
-            ]
-        }]
-    }]
-    
-def _extract_json_array_for_action_plan(
-    raw_text: Any,
-    logger: logging.Logger
-) -> List[Dict[str, Any]]:
-    """
-    [ULTIMATE FINAL REVISED v2026.3.26]
-    Robust JSON Array extractor with Strategic Key Recovery
-    """
-    try:
-        if not isinstance(raw_text, str):
-            raw_text = str(raw_text) if raw_text is not None else ""
-
-        raw_text = raw_text.strip()
-        if not raw_text: return []
-
-        # 1. 🧹 Cleaning (Remove Markdown & Control Chars)
-        text = re.sub(r"```(?:json)?", "", raw_text, flags=re.IGNORECASE)
-        text = re.sub(r"```", "", text)
-        text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t").strip()
-
-        # 2. 🔍 Candidate Extraction (Support TH/EN Keys)
-        candidate = None
-        # ค้นหา Array ของ Object [ { ... } ]
-        array_match = re.search(r"\[\s*\{.*?\}\s*\]", text, flags=re.DOTALL | re.MULTILINE)
-        if array_match:
-            candidate = array_match.group(0)
-        
-        # กรณีมาเป็น Object เดียว (รองรับ Key ภาษาไทย 'เฟส' หรือ 'ขั้นตอน')
-        if candidate is None:
-            obj_match = re.search(r"\{\s*['\"]?(phase|goal|actions|เฟส|ขั้นตอน|roadmap)['\"]?\s*:\s*.*?\}", 
-                                  text, flags=re.IGNORECASE | re.DOTALL | re.MULTILINE)
-            if obj_match:
-                candidate = f"[{obj_match.group(0)}]"
-
-        if candidate is None: candidate = text
-
-        # 3. 🛠️ Structural Cleanup (Trailing Commas & Unclosed Brackets)
-        candidate = re.sub(r",\s*([\]}])", r"\1", candidate).strip()
-
-        # 4. 🧩 JSON Parsing (json5 tolerant)
-        def try_parse(payload: str):
-            try:
-                # พยายามใช้ json5 ก่อนเพื่อความทนทาน
-                return json5.loads(payload)
-            except:
-                try: return json.loads(payload)
-                except: return None
-
-        result = try_parse(candidate)
-
-        # 5. 🔧 Deep Recovery (Fixing Truncated JSON)
-        if result is None:
-            logger.debug("🔧 Attempting deep JSON recovery for truncated response...")
-            # นับจำนวนวงเล็บที่เปิดทิ้งไว้
-            open_b, close_b = candidate.count("{"), candidate.count("}")
-            open_sq, close_sq = candidate.count("["), candidate.count("]")
-
-            fixed = candidate
-            if open_b > close_b: fixed += "}" * (open_b - close_b)
-            if open_sq > close_sq: fixed += "]" * (open_sq - close_sq)
-            
-            result = try_parse(fixed)
-            if result: logger.info("✅ JSON recovery successful via structural repair")
-
-        if result is None:
-            logger.warning(f"⚠️ JSON parse failed. Raw preview: {raw_text[:200]}...")
-            return []
-
-        # 6. 📏 Normalization to List
-        if isinstance(result, dict):
-            result = [result]
-        elif not isinstance(result, list):
-            return []
-
-        # 7. 🛡️ Final Validation (Check for Strategic Content)
-        final_items = []
-        for item in result:
-            if not isinstance(item, dict): continue
-            
-            # ทำความสะอาด Key เพื่อเช็คความถูกต้อง
-            lowered_keys = [str(k).lower() for k in item.keys()]
-            valid_indicators = ("phase", "goal", "actions", "เฟส", "ขั้นตอนหลัก", "roadmap", "overall_strategy")
-            
-            if any(ind in k for ind in valid_indicators for k in lowered_keys):
-                final_items.append(item)
-
-        return final_items
-
-    except Exception as e:
-        logger.error(f"💥 Extraction Error: {str(e)}")
-        return []
