@@ -168,7 +168,11 @@ def main():
 
     # ลองดึงคะแนนจากจุดต่างๆ ที่เป็นไปได้
     # 1. ลองดึงจาก summary (ถ้ามี)
-    overall_score = final.get("summary", {}).get('overall_avg_score', 0.0)
+    overall_score = 0.0
+    if final is not None and isinstance(final, dict):
+        overall_score = final.get("summary", {}).get('overall_avg_score', 0.0)
+    else:
+        logger.critical("[CRASH PREVENTED] Final result is None - Default score 0.0")
 
     # 2. [Safe Guard] ถ้ายังเป็น 0 แต่มีข้อมูลใน subcriteria_results ให้ดึงจากตรงนั้น
     if overall_score == 0 and "subcriteria_results" in final:
@@ -176,6 +180,9 @@ def main():
         if results:
             # ดึงคะแนน weighted_score ของตัวแรก (กรณีรันหัวข้อเดียว เช่น 1.2)
             overall_score = results[0].get("weighted_score", 0.0)
+
+    if final is None:
+        final = {"summary": {"overall_avg_score": 0.0, "overall_level_label": "L0"}}
 
     print("\n" + "═"*65)
     print(f" 🏁  ASSESSMENT COMPLETE | ID: {record_id}")

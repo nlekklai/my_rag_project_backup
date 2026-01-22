@@ -18,12 +18,9 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Callable, TypeVar, Set
 import json5
-from utils.enabler_keyword_map import ENABLER_KEYWORD_MAP, DEFAULT_KEYWORDS
 from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
-from langchain_community.retrievers import BM25Retriever # FIX: Import BM25 จาก community
 import os
-from pydantic import ValidationError
 import unicodedata
 
 # --- เตรียม JSON Schema ---
@@ -79,18 +76,10 @@ from core.json_extractor import (
 from core.seam_prompts import (
     SYSTEM_ASSESSMENT_PROMPT,
     USER_ASSESSMENT_PROMPT,
-    SYSTEM_ACTION_PLAN_PROMPT,
-    ACTION_PLAN_PROMPT,
     SYSTEM_EVIDENCE_DESCRIPTION_PROMPT,
     EVIDENCE_DESCRIPTION_PROMPT,
-    SYSTEM_LOW_LEVEL_PROMPT,
     USER_LOW_LEVEL_PROMPT,
-    USER_LOW_LEVEL_PROMPT_TEMPLATE,
     USER_EVIDENCE_DESCRIPTION_TEMPLATE,
-    EXCELLENCE_ADVICE_PROMPT, 
-    SYSTEM_EXCELLENCE_PROMPT,
-    SYSTEM_QUALITY_PROMPT,
-    QUALITY_REFINEMENT_PROMPT
 )
 
 from core.vectorstore import VectorStoreManager, get_global_reranker, ChromaRetriever
@@ -1412,262 +1401,68 @@ def create_context_summary_llm(
         "compliance_note": "ไม่สามารถประเมินความสอดคล้องได้เนื่องจากข้อผิดพลาด",
         "evidence_integrity_score": 0.3
     }
-
-
-def create_structured_action_plan(
-    recommendation_statements: List[Dict[str, Any]],
-    sub_id: str,
-    sub_criteria_name: str,
-    enabler: str = "KM",
-    target_level: int = 5,
-    llm_executor: Any = None,
-    logger: logging.Logger = None,
-    max_retries: int = 3,
-    enabler_rules: Dict[str, Any] = {}
-) -> List[Dict[str, Any]]:
-    """
-    สร้างแผนปฏิบัติการเชิงยุทธศาสตร์จากข้อเสนอแนะที่ได้จากการประเมิน
-    Rev v36.9.9: Robustness & better fallback
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-
-    if llm_executor is None:
-        logger.error("No llm_executor provided → returning emergency fallback plan")
-        return _get_emergency_fallback_plan(
-            sub_id, sub_criteria_name, target_level,
-            is_sustain_mode=not recommendation_statements,
-            is_quality_refinement=False,
-            enabler=enabler,
-            recommendation_statements=recommendation_statements
-        )
-
-    # --- 1. วิเคราะห์สถานะและเลือกโหมดการทำงาน ---
-    is_sustain_mode = not recommendation_statements
-    is_quality_refinement = False
-
-    if recommendation_statements:
-        scores = [float(s.get('score', 0.0)) for s in recommendation_statements]
-        avg_score = sum(scores) / len(scores) if scores else 0.0
-        types = [str(s.get('recommendation_type', '')) for s in recommendation_statements]
-        if all(t not in ['FAILED_REMEDIATION'] for t in types) and avg_score < 0.8:
-            is_quality_refinement = True
-
-    # --- 2. ตั้งค่า Advice Focus ---
-    specific_rule = enabler_rules.get(enabler, enabler_rules.get("DEFAULT", ""))
     
-    if is_sustain_mode:
-        mode_label = "SUSTAIN (Maintenance)"
-        advice_focus = "รักษามาตรฐานความเป็นเลิศ (Best Practice) และขยายผลสู่นวัตกรรม"
-        dynamic_max_phases, max_steps = 1, 4
-    elif is_quality_refinement:
-        mode_label = "QUALITY REFINEMENT"
-        advice_focus = "ยกระดับคุณภาพหลักฐาน (Evidence Quality) และ KPI ให้คมชัดขึ้น"
-        dynamic_max_phases, max_steps = 1, 3
-    else:
-        mode_label = "GAP REMEDIATION"
-        advice_focus = "เน้นการปิดช่องว่าง (Gap Remediation) ตามวงจร PDCA และจี้จุดบกพร่องตามหลักฐานจริง"
-        dynamic_max_phases = 3 if target_level >= 4 else 2
-        max_steps = 3
-
-    if specific_rule:
-        advice_focus += f" (กฎเฉพาะ: {specific_rule})"
-
-    logger.info(f"🚀 [ACTION-PLAN START] {sub_id} | Mode: {mode_label} | Target: L{target_level}")
-
-    # --- 3. เตรียมข้อมูล Gaps & Insights + REAL FILE SOURCES ---
-    stmt_list = []
-    real_files = set()
-    insight_count = 0
-
-    if is_sustain_mode:
-        stmt_content = f"บรรลุเกณฑ์ระดับ {target_level} อย่างสมบูรณ์แบบ (Sustain Mode)"
-    else:
-        for s in sorted(recommendation_statements, key=lambda x: x.get('level', 0)):
-            lvl = s.get('level', 0)
-            reason = (s.get('context') or s.get('reason') or "ไม่ระบุช่องว่าง").strip()
-            insight = s.get('coaching_insight', '').strip()
-            source = s.get('source', s.get('file_name', '')).strip()
-
-            if source and source != "-":
-                real_files.add(source)
-
-            context_text = f"Level {lvl}: {reason}"
-            if insight:
-                context_text += f" | บทวิเคราะห์เชิงลึก: {insight}"
-                insight_count += 1
-            if source:
-                context_text += f" | อ้างอิงไฟล์: {source}"
-
-            stmt_list.append(f"- {context_text}")
-
-        file_list_str = f"\n\n[Available Real Files]: {', '.join(real_files)}" if real_files else ""
-        stmt_content = "\n".join(stmt_list) + file_list_str
-
-    logger.info(f"📊 [GAP-STAT] Levels: {len(stmt_list)} | Insights: {insight_count} | Real Files: {len(real_files)}")
-
-    # --- 4. ประกอบ Prompt ---
-    human_prompt = ACTION_PLAN_PROMPT.format(
-        enabler=enabler,
-        sub_id=sub_id,
-        sub_criteria_name=sub_criteria_name,
-        target_level=target_level,
-        recommendation_statements_list=stmt_content,
-        advice_focus=advice_focus,
-        max_phases=dynamic_max_phases,
-        max_steps=max_steps,
-        max_words_per_step=ACTION_PLAN_STEP_MAX_WORDS,
-        language="ภาษาไทย"
-    )
-
-    # --- 5. Execution Loop (Revised) ---
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info(f"🤖 Generating Action Plan (Attempt {attempt}/{max_retries})...")
-
-            response = llm_executor.generate(
-                system=SYSTEM_ACTION_PLAN_PROMPT,
-                prompts=[human_prompt],
-                temperature=LLM_TEMPERATURE,
-                max_tokens=MAX_ACTION_PLAN_TOKENS
-            )
-            raw_text = getattr(response, 'content', str(response)).strip()
-
-            # เปลี่ยนมาใช้ Single Entry Point ที่เรารวม Extractor + Pydantic ไว้ด้วยกัน
-            # ตัวนี้จะคืนค่าเป็น List[ActionPlanActions] (Pydantic Objects)
-            validated_items = build_action_plan_from_llm(raw_text, logger)
-
-            if validated_items:
-                logger.info(f"✅ Strategic Roadmap built for {sub_id} with {len(validated_items)} valid phases")
-                # แปลงเป็น Dict เพื่อให้รองรับระบบดั้งเดิม (ถ้าจำเป็น)
-                return [item.model_dump() for item in validated_items]
-            else:
-                logger.warning(f"[RETRY] Validation failed or empty result (Attempt {attempt})")
-
-        except Exception as e:
-            logger.error(f"💥 Attempt {attempt} failed: {str(e)}")
-            time.sleep(0.7 * attempt)
-
-    # --- 6. Fallback ---
-    logger.critical(f"❌ [MAX-RETRIES] Failed to build Action Plan for {sub_id}. Using fallback.")
-    return _get_emergency_fallback_plan(
-        sub_id, sub_criteria_name, target_level,
-        is_sustain_mode=is_sustain_mode,
-        is_quality_refinement=is_quality_refinement,
-        enabler=enabler,
-        recommendation_statements=recommendation_statements
-    )
-
 # =================================================================
 # 2. Key Normalizer: แก้ไขปัญหา LLM พ่น Key ไม่นิ่ง
 # =================================================================
 def action_plan_normalize_keys(obj: Any) -> Any:
     """
-    [FINAL PRODUCTION v2026.3.25]
-    - Kill whitespace / newline / invisible char bugs (e.g. '\\n    phase')
-    - Canonical key normalization (LLM-unstable safe)
-    - Robust numeric coercion (step / failed_level)
-    - Coaching insight auto-detection (fuzzy)
-    - Recursive + order-safe
+    [ULTIMATE NORMALIZER v2026.3.26]
+    - จัดการปัญหา Key ภาษาไทยที่ LLM อาจเผลอพ่นออกมา (เช่น 'ขั้นตอน' -> 'steps')
+    - ล้างอักขระพิเศษและ Newline ที่ทำให้ JSON พัง
+    - บังคับ Type ข้อมูลให้ตรงเกณฑ์ (Coercion) เพื่อความปลอดภัยของระบบ UI/Frontend
     """
-
-    # -----------------------------
-    # Recursive list handling
-    # -----------------------------
     if isinstance(obj, list):
         return [action_plan_normalize_keys(i) for i in obj]
 
-    # -----------------------------
-    # Dict handling
-    # -----------------------------
     if isinstance(obj, dict):
-
-        # Canonical schema map (normalized_key -> target_key)
+        # แผนผังการแปลง Key แบบครอบจักรวาล (รวมภาษาไทยและตัวย่อ)
         FIELD_MAPPING = {
-            # Phase structure
-            "phase": "phase",
-            "goal": "goal",
-            "actions": "actions",
+            # Level 1: Phase
+            "phase": "phase", "เฟส": "phase", "ขั้นตอนหลัก": "phase",
+            "goal": "goal", "เป้าหมาย": "goal", "วัตถุประสงค์": "goal",
+            "actions": "actions", "กิจกรรม": "actions", "รายการแก้ไข": "actions",
 
-            # Action level
-            "statementid": "statement_id",
-            "failedlevel": "failed_level",
-            "recommendation": "recommendation",
+            # Level 2: Action Detail
+            "statementid": "statement_id", "id": "statement_id",
+            "failedlevel": "failed_level", "ระดับที่ไม่ผ่าน": "failed_level",
+            "recommendation": "recommendation", "คำแนะนำ": "recommendation",
+            "coachinginsight": "coaching_insight", "insight": "coaching_insight",
+            "targetevidencetype": "target_evidence_type", "เอกสารที่ต้องมี": "target_evidence_type",
+            "keymetric": "key_metric", "ตัวชี้วัด": "key_metric",
 
-            # Coaching / Insight (CRITICAL)
-            "coachinginsight": "coaching_insight",
-            "coaching": "coaching_insight",
-            "insight": "coaching_insight",
-            "coachingsuggestion": "coaching_insight",
-            "auditnote": "coaching_insight",
-            "note": "coaching_insight",
-
-            # Evidence & metric
-            "targetevidencetype": "target_evidence_type",
-            "keymetric": "key_metric",
-
-            # Steps
-            "steps": "steps",
-            "step": "step",
-            "description": "description",
-            "responsible": "responsible",
-            "verificationoutcome": "verification_outcome",
-
-            # Optional
-            "toolstemplates": "tools_templates"
+            # Level 3: Steps
+            "steps": "steps", "ขั้นตอนย่อย": "steps",
+            "step": "step", "ลำดับ": "step",
+            "description": "description", "รายละเอียด": "description",
+            "responsible": "responsible", "ผู้รับผิดชอบ": "responsible",
+            "verificationoutcome": "verification_outcome", "ผลลัพธ์ที่ต้องเห็น": "verification_outcome"
         }
 
         new_obj = {}
-
         for raw_key, raw_value in obj.items():
+            # 1. Clean Key: ตัดช่องว่าง, Newline และแปลงเป็น Lowercase
+            clean_k = str(raw_key).strip().lower().replace("_", "").replace(" ", "")
+            
+            # 2. Map Key: ถ้าไม่เจอใน Map ให้ใช้ Key เดิมที่ล้างแล้ว
+            target_key = FIELD_MAPPING.get(clean_k, clean_k)
 
-            # -----------------------------
-            # 1) HARD CLEAN KEY (anti '\n    phase')
-            # -----------------------------
-            k = str(raw_key)
-            k = k.strip()                      # remove \n \t spaces
-            k = k.lower()
-            k = re.sub(r'[\s_]+', '', k)       # remove spaces + underscores
-            k = re.sub(r'[^a-z0-9]', '', k)    # remove symbols
-
-            # -----------------------------
-            # 2) Resolve target key
-            # -----------------------------
-            target_key = FIELD_MAPPING.get(k)
-
-            # Fuzzy coaching detection
-            if not target_key:
-                if "coach" in k or "insight" in k or "audit" in k:
-                    target_key = "coaching_insight"
-                else:
-                    # fallback: preserve sanitized key (never raw)
-                    target_key = k
-
-            # -----------------------------
-            # 3) Numeric coercion
-            # -----------------------------
-            if target_key in {"failed_level", "step"}:
+            # 3. Value Normalization: ถ้าเป็นเลข ต้องเป็นเลขจริงๆ
+            if target_key in ["failed_level", "step"]:
                 try:
-                    if isinstance(raw_value, (int, float)):
-                        value = int(raw_value)
-                    else:
-                        nums = re.findall(r"\d+", str(raw_value))
+                    if isinstance(raw_value, str):
+                        nums = re.findall(r"\d+", raw_value)
                         value = int(nums[0]) if nums else 0
-                except Exception:
-                    value = 0
+                    else:
+                        value = int(raw_value)
+                except: value = 0
             else:
                 value = raw_value
 
-            # -----------------------------
-            # 4) Recursive normalize value
-            # -----------------------------
+            # 4. Recursive Call: ทำต่อในชั้นลูก
             new_obj[target_key] = action_plan_normalize_keys(value)
-
         return new_obj
 
-    # -----------------------------
-    # Primitive passthrough
-    # -----------------------------
     return obj
 
 
@@ -1681,200 +1476,134 @@ def _get_emergency_fallback_plan(
     is_sustain_mode: bool, 
     is_quality_refinement: bool, 
     enabler: str = "KM",
-    recommendation_statements: List[Dict] = None # เพิ่มรับค่านี้เข้ามา
+    recommendation_statements: List[Dict] = None
 ) -> List[Dict[str, Any]]:
-    
-    # ดึง Insight จริงตัวแรกมาทำเป็นคำแนะนำ (ถ้ามี)
-    top_insight = "ดำเนินการตามเกณฑ์ SE-AM ให้ครบถ่วงตามวงจร PDCA"
-    if recommendation_statements:
-        top_insight = recommendation_statements[0].get('coaching_insight') or \
-                      recommendation_statements[0].get('reason') or top_insight
+    """
+    [SAFE FALLBACK] สร้างแผนงานสำรองกรณี LLM พัง 
+    โดยพยายามดึงข้อมูลจาก recommendation_statements มาใช้ให้มากที่สุด
+    """
+    # ดึง Insight จริงตัวแรกที่เจอมาทำเป็นคำแนะนำ
+    top_insight = "ดำเนินการตามเกณฑ์มาตรฐานให้ครบถ้วนตามวงจร PDCA"
+    if recommendation_statements and len(recommendation_statements) > 0:
+        # พยายามหาเลเวลที่ตกก่อน
+        gaps = [s for s in recommendation_statements if not (s.get('is_passed') or s.get('status') == "PASSED")]
+        source_data = gaps[0] if gaps else recommendation_statements[0]
+        
+        top_insight = source_data.get('action_suggestion') or \
+                      source_data.get('coaching_insight') or \
+                      source_data.get('reason') or top_insight
 
-    title = "แผนงานฟื้นฟูมาตรฐานและปิดช่องว่าง"
-    if is_sustain_mode: title = "แผนรักษามาตรฐานความเป็นเลิศ"
+    title = "แผนงานปรับปรุงและปิดช่องว่าง (Remediation Plan)"
+    if is_sustain_mode: title = "แผนงานรักษามาตรฐานและต่อยอด (Sustain Plan)"
     
     return [{
         "phase": f"Phase 1: {title}",
-        "goal": f"ยกระดับ {sub_criteria_name} สู่ระดับ {target_level}",
+        "goal": f"ยกระดับ {sub_criteria_name} ให้สอดคล้องตามเกณฑ์มาตรฐาน",
         "actions": [{
             "statement_id": sub_id, 
             "failed_level": target_level,
-            "recommendation": f"ปรับปรุงตามข้อเสนอแนะ: {top_insight}", 
-            "target_evidence_type": "เอกสารรายงานผล / Evidence Package",
-            "key_metric": "ความครบถ้วนของหลักฐาน 100%",
+            "recommendation": f"ข้อเสนอแนะหลัก: {top_insight}", 
+            "target_evidence_type": "เอกสารรายงานผล / บันทึกการดำเนินงาน",
+            "key_metric": "ความครบถ้วนของหลักฐานตามเกณฑ์",
             "steps": [
                 {
                     "step": 1, 
-                    "description": "จัดทำรายงานสรุปผลการดำเนินงานอ้างอิงตามเกณฑ์ SE-AM", 
-                    "responsible": "คณะทำงาน KM", 
-                    "verification_outcome": "assessment_report.pdf"
+                    "description": "ทบทวนหลักฐานและจัดทำรายงานสรุปผลการดำเนินงาน", 
+                    "responsible": f"ทีมงาน {enabler}", 
+                    "verification_outcome": "remediation_report.pdf"
                 }
             ]
         }]
     }]
-
-def build_action_plan_from_llm(raw_llm_text: str, logger_instance: Optional[logging.Logger] = None) -> List[ActionPlanActions]:
-    """
-    [SINGLE ENTRY POINT] ประสานงาน Extractor และ Pydantic
-    """
-    log = logger_instance or logger
-    extracted_data = _extract_json_array_for_action_plan(raw_llm_text, log)
-    try:
-        validated_result = ActionPlanResult.validate_flexible(extracted_data)
-        return validated_result.root
-    except ValidationError as e:
-        log.error(f"❌ Validation Error: {e.json()}")
-        return []
     
 def _extract_json_array_for_action_plan(
     raw_text: Any,
     logger: logging.Logger
 ) -> List[Dict[str, Any]]:
     """
-    [ULTIMATE FINAL v2026.3.24]
-    Robust JSON Array extractor for Action Plan
-
-    Capabilities:
-    - Strip markdown / prose noise
-    - Recover truncated or malformed JSON
-    - Normalize key casing (Phase vs phase)
-    - High-signal debug logging when extraction fails
+    [ULTIMATE FINAL REVISED v2026.3.26]
+    Robust JSON Array extractor with Strategic Key Recovery
     """
-
     try:
-        # --------------------------------------------------
-        # 0) Normalize input
-        # --------------------------------------------------
         if not isinstance(raw_text, str):
             raw_text = str(raw_text) if raw_text is not None else ""
 
         raw_text = raw_text.strip()
-        if not raw_text:
-            return []
+        if not raw_text: return []
 
-        # --------------------------------------------------
-        # 1) Pre-cleaning (LLM noise removal)
-        # --------------------------------------------------
-        # Remove markdown code fences
+        # 1. 🧹 Cleaning (Remove Markdown & Control Chars)
         text = re.sub(r"```(?:json)?", "", raw_text, flags=re.IGNORECASE)
+        text = re.sub(r"```", "", text)
+        text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t").strip()
 
-        # Remove control characters (except whitespace)
-        text = "".join(
-            ch for ch in text
-            if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t"
-        ).strip()
-
-        # --------------------------------------------------
-        # 2) Candidate JSON segment extraction
-        # --------------------------------------------------
+        # 2. 🔍 Candidate Extraction (Support TH/EN Keys)
         candidate = None
-
-        # Case A: Proper JSON array [ { ... } ]
-        array_match = re.search(
-            r"\[\s*\{.*?\}\s*\]",
-            text,
-            flags=re.DOTALL | re.MULTILINE
-        )
+        # ค้นหา Array ของ Object [ { ... } ]
+        array_match = re.search(r"\[\s*\{.*?\}\s*\]", text, flags=re.DOTALL | re.MULTILINE)
         if array_match:
             candidate = array_match.group(0)
-
-        # Case B: Single object { "phase": ... }
+        
+        # กรณีมาเป็น Object เดียว (รองรับ Key ภาษาไทย 'เฟส' หรือ 'ขั้นตอน')
         if candidate is None:
-            obj_match = re.search(
-                r"\{\s*['\"]?phase['\"]?\s*:\s*.*?\}",
-                text,
-                flags=re.DOTALL | re.MULTILINE
-            )
+            obj_match = re.search(r"\{\s*['\"]?(phase|goal|actions|เฟส|ขั้นตอน|roadmap)['\"]?\s*:\s*.*?\}", 
+                                  text, flags=re.IGNORECASE | re.DOTALL | re.MULTILINE)
             if obj_match:
                 candidate = f"[{obj_match.group(0)}]"
 
-        # Case C: Fallback – try entire text
-        if candidate is None:
-            candidate = text
+        if candidate is None: candidate = text
 
-        # --------------------------------------------------
-        # 3) Structural cleanup (trailing commas, whitespace)
-        # --------------------------------------------------
+        # 3. 🛠️ Structural Cleanup (Trailing Commas & Unclosed Brackets)
         candidate = re.sub(r",\s*([\]}])", r"\1", candidate).strip()
 
-        # --------------------------------------------------
-        # 4) JSON parsing (json5 tolerant)
-        # --------------------------------------------------
+        # 4. 🧩 JSON Parsing (json5 tolerant)
         def try_parse(payload: str):
             try:
+                # พยายามใช้ json5 ก่อนเพื่อความทนทาน
                 return json5.loads(payload)
-            except Exception:
-                return None
+            except:
+                try: return json.loads(payload)
+                except: return None
 
         result = try_parse(candidate)
 
-        # --------------------------------------------------
-        # 5) Deep recovery (truncated JSON)
-        # --------------------------------------------------
+        # 5. 🔧 Deep Recovery (Fixing Truncated JSON)
         if result is None:
-            logger.debug("🔧 Attempting deep JSON recovery...")
+            logger.debug("🔧 Attempting deep JSON recovery for truncated response...")
+            # นับจำนวนวงเล็บที่เปิดทิ้งไว้
+            open_b, close_b = candidate.count("{"), candidate.count("}")
+            open_sq, close_sq = candidate.count("["), candidate.count("]")
 
-            open_braces = candidate.count("{")
-            close_braces = candidate.count("}")
-
-            fixes = []
-            if open_braces > close_braces:
-                diff = open_braces - close_braces
-                fixes.append(candidate + ("}" * diff) + "]")
-                fixes.append(candidate + ("}" * diff))
-
-            for fixed in fixes:
-                result = try_parse(fixed)
-                if result is not None:
-                    logger.info("✅ JSON recovery successful via brace completion")
-                    break
+            fixed = candidate
+            if open_b > close_b: fixed += "}" * (open_b - close_b)
+            if open_sq > close_sq: fixed += "]" * (open_sq - close_sq)
+            
+            result = try_parse(fixed)
+            if result: logger.info("✅ JSON recovery successful via structural repair")
 
         if result is None:
-            logger.warning(
-                "⚠️ JSON parse failed entirely. "
-                f"Raw length: {len(raw_text)}"
-            )
-            logger.debug(f"🔍 Raw preview (500):\n{raw_text[:500]}")
+            logger.warning(f"⚠️ JSON parse failed. Raw preview: {raw_text[:200]}...")
             return []
 
-        # --------------------------------------------------
-        # 6) Normalize to list
-        # --------------------------------------------------
+        # 6. 📏 Normalization to List
         if isinstance(result, dict):
             result = [result]
         elif not isinstance(result, list):
             return []
 
-        # --------------------------------------------------
-        # 7) Final validation (phase / goal / actions guard)
-        # --------------------------------------------------
-        final_items: List[Dict[str, Any]] = []
-
+        # 7. 🛡️ Final Validation (Check for Strategic Content)
+        final_items = []
         for item in result:
-            if not isinstance(item, dict):
-                continue
-
-            # Normalize keys (case-insensitive)
-            lowered = {str(k).lower(): v for k, v in item.items()}
-
-            if any(k in lowered for k in ("phase", "goal", "actions")):
+            if not isinstance(item, dict): continue
+            
+            # ทำความสะอาด Key เพื่อเช็คความถูกต้อง
+            lowered_keys = [str(k).lower() for k in item.keys()]
+            valid_indicators = ("phase", "goal", "actions", "เฟส", "ขั้นตอนหลัก", "roadmap", "overall_strategy")
+            
+            if any(ind in k for ind in valid_indicators for k in lowered_keys):
                 final_items.append(item)
-
-        if not final_items:
-            logger.warning(
-                "⚠️ Extraction finished but no valid phases found. "
-                f"Raw length: {len(raw_text)}"
-            )
-            logger.debug(
-                f"🔍 Failed Content Preview (first 500):\n{raw_text[:500]}"
-            )
-            logger.debug(
-                f"🔍 Candidate Segment Used (first 500):\n{candidate[:500]}"
-            )
 
         return final_items
 
     except Exception as e:
-        logger.error(f"💥 Critical Extraction Error: {str(e)}")
-        logger.debug(f"🔍 Raw text preview:\n{str(raw_text)[:500]}")
+        logger.error(f"💥 Extraction Error: {str(e)}")
         return []

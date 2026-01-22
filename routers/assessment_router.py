@@ -200,124 +200,150 @@ async def view_document(
     # ส่งไฟล์ PDF กลับไป
     return FileResponse(file_path, media_type="application/pdf")
 
-
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [v2026.23 - FINAL UUID SYNC]
-    - FIX 404: บังคับส่ง UUID (doc_id) ไปที่ URL แทนชื่อไฟล์ภาษาไทย
-    - FIX DATA: นับจำนวนไฟล์ (Independence) และจัด Roadmap ให้ Word Report ครบถ้วน
+    [v2026.3.26 - ULTIMATE HYBRID PRODUCTION]
+    แปลงผลลัพธ์จาก Engine (Backend) เป็น UI-Ready JSON สำหรับ Dashboard
+    - รองรับการแสดงผลแบบ Drill-down ตั้งแต่ภาพรวม Enabler จนถึงหลักฐานราย Level
+    - คำนวณ PDCA Coverage และ Audit Confidence สำหรับแต่ละหัวข้อ
     """
+    if not raw_data:
+        return {"status": "FAILED", "message": "No data to transform"}
+
     metadata = raw_data.get("metadata", {})
     res_summary = raw_data.get("result_summary", {})
     sub_details = raw_data.get("sub_criteria_details", [])
     evidence_audit = raw_data.get("evidence_audit_trail", {})
     
+    # 1. Basic Metadata
     tenant = str(metadata.get("tenant", "pea")).lower()
     year = str(metadata.get("year", "2567"))
     enabler = str(metadata.get("enabler") or "KM").upper()
     record_id = metadata.get("record_id", "unknown")
 
+    # 2. Strategic Synthesis (Tier-3)
+    # ดึงแผนยุทธศาสตร์ภาพรวมที่ผ่านการสรุปจาก LLM มาแล้ว
+    strategic_roadmap = raw_data.get("strategic_roadmap") or raw_data.get("strategic_synthesis") or {}
+
     processed_sub_criteria = []
     radar_data = []
+    total_unique_files = set()
 
+    # 3. Process Each Sub-Criteria
     for sub in sub_details:
-        sub_id = sub.get("sub_id", "1.1")
-        sub_name = sub.get("sub_criteria_name", "N/A")
+        sub_id = sub.get("sub_id", "N/A")
+        sub_name = sub.get("sub_criteria_name", "Unknown Criteria")
         highest_pass = int(sub.get("highest_full_level", 0))
         level_details = sub.get("level_details", {})
-
+        
+        # เตรียมถังเก็บข้อมูลรายหัวข้อ
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         pdca_matrix = []
-        pdca_coverage = {str(lv): {"percentage": 0} for lv in range(1, 6)}
-        avg_confidence_per_level = {}
-        unique_files = set()
-        all_conf_scores = []
+        pdca_coverage = {}
+        level_breakdown = {}
+        
+        sub_unique_files = set()
+        sub_conf_scores = []
 
+        # 4. Level-by-Level Processing (L1 - L5)
         for lv_idx in range(1, 6):
             lv_key = str(lv_idx)
             lv_info = level_details.get(lv_key) or {}
             is_passed = lv_info.get("is_passed", False)
-            lv_scores = []
             
-            # --- 🛡️ หัวใจสำคัญ: การดึง UUID เพื่อเปิดไฟล์ ---
+            # --- [A] Atomic Info (Tier-2) ---
+            level_breakdown[lv_key] = {
+                "is_passed": is_passed,
+                "score": round(float(lv_info.get("score", 0.0)), 2),
+                "reason": lv_info.get("reason", "ไม่มีข้อมูลการประเมิน"),
+                "coaching_insight": lv_info.get("coaching_insight", ""),
+                "atomic_action_plan": lv_info.get("atomic_action_plan", []) # แผนงานย่อยราย Level
+            }
+            
+            # --- [B] Evidence Mapping ---
+            # ดึงหลักฐานที่ถูก Mapping ไว้สำหรับหัวข้อและเลเวลนี้
             mapping_key = f"{sub_id}.L{lv_idx}"
-            if mapping_key in evidence_audit:
-                audit_item = evidence_audit[mapping_key]
-                f_name = audit_item.get("file")
-                
+            audit_items = evidence_audit.get(mapping_key, [])
+            if isinstance(audit_items, dict): audit_items = [audit_items] # Normalize if single object
+            
+            for item in audit_items:
+                f_name = item.get("file")
                 if f_name and f_name != "Unknown Stream":
-                    unique_files.add(f_name)
-                    conf_val = float(audit_item.get("confidence", 0.0))
-                    all_conf_scores.append(conf_val)
-                    lv_scores.append(conf_val)
+                    sub_unique_files.add(f_name)
+                    total_unique_files.add(f_name)
                     
-                    # 🚀 ดึง UUID จาก doc_id หรือ document_uuid (ถ้ามีใน JSON)
-                    # ถ้าไม่มีจริงๆ จะส่งชื่อไฟล์เพื่อให้ Backend ใช้ Fuzzy Scan
-                    target_id = (
-                        audit_item.get("doc_id") or 
-                        audit_item.get("document_uuid") or 
-                        lv_info.get("document_uuid") or 
-                        f_name
-                    )
+                    conf_val = float(item.get("confidence", 0.0))
+                    sub_conf_scores.append(conf_val)
                     
                     grouped_sources[lv_key].append({
                         "filename": f_name,
-                        "document_uuid": target_id,  # ค่านี้จะไปปรากฏใน URL
-                        "page": str(audit_item.get("page", "1")),
+                        "document_uuid": item.get("document_uuid") or item.get("doc_id") or f_name,
+                        "page": str(item.get("page", "1")),
                         "rerank_score": round(conf_val * 100, 1),
-                        "doc_type": "evidence",
-                        "pdca_tag": str(audit_item.get("tag", "P")).upper(),
-                        "text": lv_info.get("reason", "")[:150]
+                        "pdca_tag": str(item.get("tag", "P")).upper(),
+                        "text_snippet": item.get("text", "")[:200]
                     })
-            
-            avg_confidence_per_level[lv_key] = round((sum(lv_scores) / len(lv_scores) * 100), 1) if lv_scores else 0.0
 
-            # --- จัดการ PDCA Matrix ---
+            # --- [C] PDCA Coverage & Matrix ---
             pdca_raw = lv_info.get("pdca_breakdown", {})
-            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
+            # ตัดเกณฑ์ที่ 0.5 เพื่อระบุว่าเฟสนั้นๆ แข็งแรงพอหรือไม่
+            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) >= 0.5 else 0) for k in ["P", "D", "C", "A"]}
+            
             pdca_matrix.append({
                 "level": lv_idx,
                 "is_passed": is_passed,
-                "evaluation_mode": "NORMAL" if is_passed else ("FAILED" if lv_info else "INACTIVE"),
+                "status": "PASSED" if is_passed else ("FAILED" if lv_info else "INACTIVE"),
                 "pdca": pdca_final
             })
-            pdca_coverage[lv_key]["percentage"] = (sum(pdca_final.values()) / 4) * 100
+            
+            coverage_pct = (sum(pdca_final.values()) / 4) * 100
+            pdca_coverage[lv_key] = {"percentage": round(coverage_pct, 1)}
 
-        # --- AI Strength & Roadmap ---
-        strength_msg = level_details.get(str(highest_pass), {}).get("reason", "")
-        summary_thai = f"🌟 [EXPERT OVERRIDE]: {strength_msg}" if "EXPERT OVERRIDE" in strength_msg.upper() else f"ระดับ L{highest_pass}: {strength_msg or 'บรรลุตามเกณฑ์'}"
+        # 5. Sub-Criteria Summary Assembly
+        # ดึง Roadmap รายหัวข้อ (Synthesized Roadmap)
+        master_roadmap = sub.get("master_roadmap") or {}
+        
+        # สรุปผลสำหรับแสดงใน Card หัวข้อ
+        current_reason = level_details.get(str(highest_pass or 1), {}).get("reason", "")
+        avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores) * 100) if sub_conf_scores else 0
 
         processed_sub_criteria.append({
             "code": sub_id,
             "name": sub_name,
             "level": f"L{highest_pass}",
-            "score": round(sub.get("weighted_score", 0.0), 1),
+            "score": round(float(sub.get("weighted_score", 0.0)), 2),
             "pdca_matrix": pdca_matrix,
             "pdca_coverage": pdca_coverage,
-            "avg_confidence_per_level": avg_confidence_per_level,
+            "level_breakdown": level_breakdown,
             "audit_confidence": {
-                "source_count": len(unique_files), # แก้ไขจำนวนไฟล์ที่เปิดโชว์
-                "traceability_score": 0.85,
-                "consistency_check": True
+                "source_count": len(sub_unique_files),
+                "avg_rerank": round(avg_conf, 1)
             },
-            "roadmap": raw_data.get("improvement_roadmap", []) or sub.get("action_plan", []),
+            "sub_roadmap": master_roadmap, # Roadmap รายข้อ
             "grouped_sources": grouped_sources,
-            "summary_thai": summary_thai,
-            "gap": "บรรลุเป้าหมายสูงสุด" if highest_pass == 5 else f"ระดับที่ยังไม่ผ่าน: L{highest_pass + 1}",
-            "confidence_score": round((sum(all_conf_scores) / len(all_conf_scores) * 100) if all_conf_scores else 0, 1)
+            "summary_thai": f"บรรลุ L{highest_pass}: {current_reason}" if current_reason else "รอการประเมิน",
+            "next_step": "เป้าหมายสูงสุดบรรลุแล้ว" if highest_pass == 5 else f"เตรียมยกระดับสู่ L{highest_pass + 1}"
         })
+        
+        # Data สำหรับ Radar Chart
         radar_data.append({"axis": sub_id, "value": highest_pass})
 
+    # 6. Final UI Object Construction
     return {
         "status": "COMPLETED",
         "record_id": record_id,
         "tenant": tenant,
         "year": year,
         "enabler": enabler,
-        "level": res_summary.get("maturity_level", "L0"),
-        "score": round(res_summary.get("total_weighted_score", 0.0), 2),
+        "overall_summary": {
+            "maturity_level": res_summary.get("maturity_level", f"L{highest_pass}"),
+            "total_score": round(float(res_summary.get("total_weighted_score", 0.0)), 2),
+            "evidence_count": len(total_unique_files),
+            "evaluated_at": datetime.now().isoformat()
+        },
         "radar_data": radar_data,
-        "sub_criteria": processed_sub_criteria
+        "sub_criteria": processed_sub_criteria,
+        "strategic_roadmap": strategic_roadmap # แผนยุทธศาสตร์ระดับ Enabler (Executive Summary)
     }
 
 def set_thai_font(run, size=14, bold=False, color=None):

@@ -114,52 +114,6 @@ Enabler: {enabler_full_name} ({enabler_code}) | ระดับ: Level {level}
 """
 
 # =================================================================
-# 4. ACTION_PLAN_PROMPT (Rev v2026.3.22 - Anti-Preamble Edition)
-# =================================================================
-SYSTEM_ACTION_PLAN_PROMPT: Final[str] = """
-คุณคือที่ปรึกษาอาวุโสด้านยุทธศาสตร์รัฐวิสาหกิจ (Senior SE-AM Consultant)
-ภารกิจ: ออกแบบ Roadmap เป็น JSON Array เท่านั้น ห้ามมีคำเกริ่นนำหรือ Markdown ใดๆ
-"""
-
-ACTION_PLAN_TEMPLATE: Final[str] = """
-### [Strategic Gap Analysis]
-- รหัสเกณฑ์: {sub_id}
-- ทิศทางกลยุทธ์: {advice_focus}
-- ข้อมูล Gaps & Insights: 
-{recommendation_statements_list}
-
-[INSTRUCTIONS]:
-- สั่งการแก้ไขโดยอ้างอิง "ชื่อไฟล์จริง" ที่ปรากฏในข้อมูลประกอบเท่านั้น
-- กระจายแผนงานตาม PDCA: P (ปรับแผน/เกณฑ์), D (เพิ่มหลักฐานจริง), C/A (ติดตามผล)
-- ห้ามหยุดเขียนจนกว่าจะปิดเครื่องหมาย ] ให้สมบูรณ์
-
-[OUTPUT SCHEMA]:
-[
-  {{
-    "phase": "Phase X: [ชื่อเฟส เช่น การปรับปรุงรากฐานหลักฐานเชิงประจักษ์]",
-    "goal": "[เป้าหมายสั้นๆ]",
-    "actions": [
-      {{
-        "statement_id": "{sub_id}",
-        "failed_level": {target_level},
-        "recommendation": "[คำแนะนำแก้ไขจากบทวิเคราะห์เชิงลึก]",
-        "target_evidence_type": "[ประเภทเอกสารที่ต้องการ]",
-        "key_metric": "[ตัวชี้วัดความสำเร็จ]",
-        "steps": [
-          {{
-            "step": 1,
-            "description": "[ขั้นตอนสั้นๆ ไม่เกิน 20 คำ]",
-            "responsible": "[ตำแหน่งผู้รับผิดชอบ]",
-            "verification_outcome": "[ชื่อไฟล์ที่จะได้รับจริง]"
-          }}
-        ]
-      }}
-    ]
-  }}
-]
-"""
-
-# =================================================================
 # 5. EVIDENCE DESCRIPTION PROMPT (Evidence Summary)
 # =================================================================
 SYSTEM_EVIDENCE_DESCRIPTION_PROMPT: Final[str] = """
@@ -218,6 +172,71 @@ QUALITY_REFINEMENT_TEMPLATE: Final[str] = """
 """
 
 # =================================================================
+# 8. MASTER STRATEGIC ROADMAP (Tier-2 Consolidation)
+# =================================================================
+SYSTEM_MASTER_ROADMAP_PROMPT: Final[str] = """
+คุณคือหัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ (Chief Strategic Officer) 
+ภารกิจ: นำ Coaching Insights จากการประเมินราย Level มาสังเคราะห์เป็นแผนงานเดียว
+[Rules]:
+1. **[Synthesis Only]**: ไม่ต้องวิเคราะห์หลักฐานซ้ำ ให้เชื่อข้อมูลสรุปที่ส่งมา
+2. **[Priority First]**: แผนงานต้องแก้ Level ต่ำสุดที่ไม่ผ่านก่อนเสมอ
+3. **[Actionable Language]**: ใช้ภาษากลยุทธ์ที่ชัดเจน เช่น "จัดตั้งคณะทำงาน..." หรือ "จัดทำรายงานวิเคราะห์ผล..."
+4. **[Strict JSON]**: ตอบกลับเป็น JSON Object ตาม Schema ที่กำหนดเท่านั้น
+"""
+
+MASTER_ROADMAP_TEMPLATE: Final[str] = """
+### [Target Evaluation]
+- หัวข้อ: {sub_criteria_name} ({sub_id})
+- Enabler: {enabler}
+
+### [Aggregated Gaps from L1-L5]
+{aggregated_insights}
+
+จงสร้าง Master Roadmap ในรูปแบบ JSON:
+{{
+  "status": "GAP_REMEDIATION",
+  "overall_strategy": "สรุปทิศทางหลักในการแก้ไข",
+  "roadmap": [
+    {{
+      "phase": "Phase 1: [ชื่อเฟส เช่น การสร้างรากฐานและระบบการรายงาน]",
+      "target_levels": [1, 2],
+      "main_objective": "เป้าหมายหลักของเฟสนี้",
+      "key_actions": ["Action 1...", "Action 2..."],
+      "expected_outcome": "ผลลัพธ์เชิงประจักษ์"
+    }},
+    {{
+      "phase": "Phase 2: [ชื่อเฟส เช่น การยกระดับสู่การวิเคราะห์และปรับปรุง]",
+      "target_levels": [3, 4, 5],
+      "main_objective": "เป้าหมายการยกระดับ",
+      "key_actions": ["Action 1...", "Action 2..."],
+      "expected_outcome": "ผลลัพธ์เชิงประจักษ์"
+    }}
+  ]
+}}
+"""
+
+
+# -----------------------------------------------------------------
+# [NEW] ATOMIC ACTION PLAN (For Per-Level Feedback)
+# -----------------------------------------------------------------
+SYSTEM_ATOMIC_ACTION_PROMPT: Final[str] = """
+คุณคือผู้เชี่ยวชาญการสรุปแผนปฏิบัติการ (Action Plan) 
+หน้าที่: เปลี่ยน 'บทวิเคราะห์' ให้เป็น 'คำแนะนำเชิงปฏิบัติ' สั้นๆ 1-2 ข้อ
+[Rule]: ตอบเป็น JSON Array ของ Object ที่มี key: action, target_evidence เท่านั้น ห้ามมี Markdown
+"""
+
+USER_ATOMIC_ACTION_TEMPLATE: Final[str] = """
+Coaching Insight: "{coaching_insight}"
+ระดับที่ประเมิน: Level {level}
+จงสร้างแผนปฏิบัติการแบบสั้น (Atomic Action) เป็นภาษาไทย
+"""
+
+ATOMIC_ACTION_PROMPT = PromptTemplate(
+    input_variables=["coaching_insight", "level"],
+    template=SYSTEM_ATOMIC_ACTION_PROMPT + USER_ATOMIC_ACTION_TEMPLATE
+)
+
+# =================================================================
 # TEMPLATE OBJECTS BINDING
 # =================================================================
 USER_ASSESSMENT_PROMPT = PromptTemplate(
@@ -228,11 +247,6 @@ USER_ASSESSMENT_PROMPT = PromptTemplate(
 USER_LOW_LEVEL_PROMPT = PromptTemplate(
     input_variables=["sub_id", "sub_criteria_name", "level", "required_phases", "context", "pdca_context", "statement_text", "plan_keywords", "ai_confidence", "confidence_reason", "specific_contextual_rule", "enabler_full_name", "enabler_code"],
     template=SYSTEM_LOW_LEVEL_PROMPT + USER_LOW_LEVEL_PROMPT_TEMPLATE
-)
-
-ACTION_PLAN_PROMPT = PromptTemplate(
-    input_variables=["enabler", "sub_id", "sub_criteria_name", "target_level", "recommendation_statements_list", "advice_focus", "max_phases", "max_steps", "max_words_per_step", "language"],
-    template=SYSTEM_ACTION_PLAN_PROMPT + ACTION_PLAN_TEMPLATE
 )
 
 EVIDENCE_DESCRIPTION_PROMPT = PromptTemplate(
@@ -248,4 +262,9 @@ EXCELLENCE_ADVICE_PROMPT = PromptTemplate(
 QUALITY_REFINEMENT_PROMPT = PromptTemplate(
     input_variables=["sub_id", "sub_criteria_name", "target_level", "assessment_context", "advice_focus", "recommendation_statements_list", "max_steps", "language"],
     template=SYSTEM_QUALITY_PROMPT + QUALITY_REFINEMENT_TEMPLATE
+)
+
+MASTER_ROADMAP_PROMPT = PromptTemplate(
+    input_variables=["sub_id", "sub_criteria_name", "enabler", "aggregated_insights"],
+    template=SYSTEM_MASTER_ROADMAP_PROMPT + MASTER_ROADMAP_TEMPLATE
 )
