@@ -114,7 +114,7 @@ def get_mapping_file_path(
     # === 1. กรณีเป็น Evidence เท่านั้นที่จะไปหาใน Folder ปี (2568/...) ===
     if dt == evidence_type:
         # ป้องกัน error ถ้าลืมส่งปีหรือ enabler มาสำหรับ evidence
-        safe_year = year if year else "default_year"
+        safe_year = year if year else DEFAULT_YEAR
         safe_enabler = _n(enabler) if enabler else "default"
         
         return os.path.join(

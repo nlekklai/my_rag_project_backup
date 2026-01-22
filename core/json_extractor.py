@@ -287,3 +287,30 @@ def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
         result.setdefault(k, safe_result[k])
 
     return result
+
+def _robust_extract_json_list(llm_response: str) -> list:
+    """
+    เวอร์ชันพิเศษสำหรับดึง List [{}, {}] โดยเฉพาะ (ใช้สำหรับ Roadmap/Actions)
+    """
+    raw = ""
+    if hasattr(llm_response, 'content'):
+        raw = str(llm_response.content).strip()
+    else:
+        raw = str(llm_response).strip()
+
+    # 1. พยายามหา [ ] ก้อนที่ใหญ่ที่สุด
+    match = re.search(r"\[[\s\S]*\]", raw, re.DOTALL)
+    if match:
+        try:
+            data = json5.loads(match.group(0))
+            if isinstance(data, list):
+                return data
+        except:
+            pass
+            
+    # 2. ถ้าหา [ ] ไม่เจอ แต่เป็น { } ก้อนเดียว ให้จับใส่ List ให้
+    single_dict = _extract_normalized_dict(raw)
+    if single_dict:
+        return [single_dict]
+        
+    return []

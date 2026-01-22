@@ -13,19 +13,15 @@ from dataclasses import dataclass, field
 import multiprocessing 
 from functools import partial
 import pathlib, uuid
-from langchain_core.documents import Document as LcDocument
 from copy import deepcopy
 import tempfile
 import shutil
 import re
 import hashlib
-import copy
-import psutil
 import unicodedata 
-import json5
 import random
 
-from core.json_extractor import _robust_extract_json
+from core.json_extractor import _robust_extract_json, _robust_extract_json_list
 
 # -------------------- 1. PROTECTIVE IMPORTS --------------------
 # จัดการเรื่อง FileLock และ Database ก่อนเพื่อนเพื่อให้ส่วนอื่นเรียกใช้ได้ชัวร์ๆ
@@ -4556,77 +4552,86 @@ class SEAMPDCAEngine:
     
     def create_atomic_action_plan(self, insight: str, level: int) -> List[Dict[str, Any]]:
         """
-        [v2026.3.26 - ROBUST VERSION]
-        สร้างแผนงานย่อย (Tier-2) โดยใช้ Robust JSON Extractor 
-        เพื่อป้องกันปัญหา JSON พังจาก LLM
+        [v2026.3.28 - ULTIMATE ROBUST REVISE]
+        สร้างแผนงานย่อย (Atomic Actions) สำหรับ Roadmap 
+        โดยใช้ Hybrid Extraction (List-First, Dict-Fallback)
         """
         try:
-            if not insight or insight in ["-", "N/A", "none"]:
+            # 1. Pre-flight Check: ถ้าไม่มี Insight หรือเป็นค่าว่าง ไม่ต้องเสียเวลาถาม AI
+            if not insight or str(insight).lower() in ["-", "n/a", "none", "ไม่มีข้อมูล"]:
+                self.logger.debug(f"⏩ [Atomic-Plan] Skip L{level}: No insight provided.")
                 return []
                 
+            # 2. Prompt Preparation
+            # บีบข้อมูล Insight ให้อยู่ในระยะที่ LLM ประมวลผลได้ดีที่สุด
             human_prompt = ATOMIC_ACTION_PROMPT.format(
-                coaching_insight=insight[:300], # ขยายขอบเขตให้นิดหน่อยเพื่อให้ LLM มีบริบทมากขึ้น
+                coaching_insight=insight[:400], 
                 level=level
             )
             
+            # 3. LLM Generation
+            # ใช้ temperature ต่ำเพื่อให้โครงสร้าง JSON นิ่งที่สุด
             response = self.llm.generate(
                 system=SYSTEM_ATOMIC_ACTION_PROMPT,
                 prompts=[human_prompt],
-                temperature=0.1 # ใช้ค่าต่ำเพื่อความแม่นยำของ JSON Structure
+                temperature=0.1 
             )
             
-            # 1. ดึงข้อความดิบจาก LLM
+            # ดึงข้อความดิบออกมา
             raw_text = getattr(response, 'content', str(response)).strip()
+            if not raw_text:
+                return []
+
+            # 4. Hybrid Extraction Logic
+            # 💡 ชั้นที่ 1: พยายามดึงแบบ List ตรงๆ [{}, {}] ก่อน (เพราะ Roadmap คือรายการแผนงาน)
+            from core.json_extractor import _robust_extract_json, _robust_extract_json_list
             
-            # 2. [UPGRADED] ใช้ Robust Extractor แทนระบบเดิม
-            # ตัวนี้จะจัดการล้าง Unicode, Markdown และ Normalize Keys ให้เสร็จสรรพ
-            extracted_data = _robust_extract_json(raw_text)
+            actions = _robust_extract_json_list(raw_text)
             
-            # 3. สกัดแผนงานออกมา (รองรับหลาย Key ที่ LLM อาจจะตอบมามั่วๆ)
-            # เราหาจาก 'atomic_action_plan' ก่อน ถ้าไม่มีให้ลองหา 'action_plan' หรือ 'suggestion_for_next_level'
-            actions = (
-                extracted_data.get("atomic_action_plan") or 
-                extracted_data.get("action_plan") or 
-                extracted_data.get("suggestion_for_next_level")
-            )
+            # 💡 ชั้นที่ 2: ถ้าดึงแบบ List ไม่เจอ (AI อาจจะตอบแบบครอบ Key มา) ให้ดึงแบบ Dict
+            if not actions:
+                extracted_dict = _robust_extract_json(raw_text)
+                # พยายามหา Key ที่เป็นไปได้ทั้งหมดที่ LLM มักจะตั้งชื่อมา
+                actions = (
+                    extracted_dict.get("atomic_action_plan") or 
+                    extracted_dict.get("action_plan") or 
+                    extracted_dict.get("actions") or
+                    extracted_dict.get("roadmap") or
+                    extracted_dict.get("suggestion_for_next_level")
+                )
+
+            # 5. Result Normalization & Formatting
+            # มั่นใจว่า Output ที่ออกไปจะเป็น List[Dict] ตามที่ UI/Word ต้องการเสมอ
+            final_actions = []
             
-            # 4. Data Normalization: มั่นใจว่าผลลัพธ์จะเป็น List เสมอ
             if isinstance(actions, list):
-                return actions[:5] # เอาแค่ 3-5 แผนงานหลักพอสำหรับ Dashboard
-            elif isinstance(actions, dict):
-                return [actions]
-            elif isinstance(actions, str) and len(actions) > 5:
-                return [{"action": actions, "priority": "Medium"}]
+                # กรณีได้ List มาแล้ว: ตรวจสอบความสะอาดของแต่ละ Item
+                for item in actions:
+                    if isinstance(item, dict) and (item.get("action") or item.get("step")):
+                        final_actions.append(item)
+                    elif isinstance(item, str) and len(item) > 3:
+                        final_actions.append({"action": item, "priority": "Medium"})
             
-            return []
+            elif isinstance(actions, dict):
+                # กรณีได้ Dict ก้อนเดียวมา: จับใส่ List
+                if actions: final_actions = [actions]
+                
+            elif isinstance(actions, str) and len(actions) > 10:
+                # กรณีหลุดมาเป็น String ยาวๆ: แปลงเป็นโครงสร้าง Action
+                final_actions = [{"action": actions, "priority": "High"}]
+
+            # 6. Post-Processing: จำกัดจำนวนและทำความสะอาด
+            # เอาแค่ 3-5 ข้อ เพื่อความสวยงามในหน้า Dashboard และตารางใน Word
+            processed_actions = final_actions[:5]
+            
+            if processed_actions:
+                self.logger.info(f"✅ [Atomic-Plan] L{level} Success: Generated {len(processed_actions)} actions.")
+            
+            return processed_actions
 
         except Exception as e:
-            self.logger.error(f"🚀 Atomic Action Failed (L{level}): {str(e)}")
-            # Fallback สุดท้าย: คืนค่าเป็น empty list เพื่อไม่ให้ Engine หลักพัง
-            return []
-        
-    def create_atomic_action_plan(self, insight: str, level: int) -> List[Dict[str, Any]]:
-        """สร้างแผนงานขนาดเล็กราย Level (JSON พังยากมาก)"""
-        try:
-            if not insight or insight == "-":
-                return []
-                
-            human_prompt = ATOMIC_ACTION_PROMPT.format(
-                coaching_insight=insight[:200], # บีบ input สั้นๆ
-                level=level
-            )
-            
-            response = self.llm.generate(
-                system=SYSTEM_ATOMIC_ACTION_PROMPT,
-                prompts=[human_prompt],
-                temperature=0.1
-            )
-            
-            raw_text = getattr(response, 'content', str(response)).strip()
-            # ใช้ helper สกัด JSON (ก้อนเล็ก)
-            return self._extract_simple_json_array(raw_text)
-        except Exception as e:
-            self.logger.error(f"Atomic Action Error (L{level}): {str(e)}")
+            # ใช้ Error Logging ที่ระบุระดับ Level ชัดเจนเพื่อการ Debug
+            self.logger.error(f"❌ [Atomic-Plan] Error at L{level}: {str(e)}", exc_info=True)
             return []
     
     # ------------------------------------------------------------------
@@ -4739,6 +4744,9 @@ class SEAMPDCAEngine:
     # ------------------------------------------------------------------------------------------
     # 🧠 [TIER-1 & TIER-2 WORKER] Sequential Assessment (HYDRATED) - REVISED v2026.3.26
     # ------------------------------------------------------------------------------------------
+    # ------------------------------------------------------------------------------------------
+    # 🧠 [TIER-1 & TIER-2 WORKER] Sequential Assessment (HYDRATED) - FULL REVISED
+    # ------------------------------------------------------------------------------------------
     def _run_sub_criteria_assessment_worker(
         self,
         sub_criteria: Dict[str, Any],
@@ -4746,34 +4754,37 @@ class SEAMPDCAEngine:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [PRODUCTION REVISE v2026.3.26]
-        ประเมินราย Sub-Criteria โดยแบ่ง Action Plan เป็น 2 ระดับ:
-        1. Atomic (ราย Level) - เพื่อความเสถียรของ JSON และ Feedback ที่รวดเร็ว
-        2. Strategic (Master Roadmap) - เพื่อสังเคราะห์ยุทธศาสตร์ภาพรวมหลังจบ 5 เลเวล
+        [PRODUCTION READY - v2026.3.28]
+        แก้ไข Bug: ส่ง keyword_guide ให้ Tier-1 Assessment
+        แก้ไข Flow: มั่นใจว่าข้อมูลไหลเข้าสู่ Tier-2 (Atomic) และ Tier-3 (Master) อย่างถูกต้อง
         """
+        # 1. ข้อมูลพื้นฐาน
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
         sub_weight = float(sub_criteria.get("weight", 0.0))
-        target_limit = getattr(self.config, "target_level", 5)
+        
+        # ป้องกัน AttributeError ถ้า self.config ไม่มี target_level
+        target_limit = getattr(self.config, "target_level", 5) if hasattr(self, 'config') else 5
         enabler = getattr(self, "enabler", "KM")
 
         vsm = vectorstore_manager or getattr(self, "vectorstore_manager", None)
         current_highest_level = 0
         level_details = {}
-        
-        # สำหรับสะสม Insights ไปรวบยอดใน Tier-3 Master Roadmap
         roadmap_input_bundle = []
 
-        # Baseline Memory (Evidence Hydration)
+        # 2. Evidence Hydration Memory
         baseline_memory = {sub_id: list(initial_baseline or [])}
         levels = sorted(sub_criteria.get("levels", []), key=lambda x: x.get("level", 0))
+
+        self.logger.info(f"🚀 [START-SUB] {sub_id} | Target Level: {target_limit}")
 
         for stmt in levels:
             level = int(stmt.get("level", 0))
             if level == 0 or level > target_limit: 
                 continue
 
-            # --- STEP 1: Core Assessment (Tier-1) ---
+            # --- 🔥 STEP 1: Core Assessment (Tier-1) ---
+            # แก้ไข Bug: เพิ่ม keyword_guide ให้ตรงตาม Parameter requirements
             res = self._run_single_assessment(
                 sub_id=sub_id, 
                 level=level,
@@ -4782,54 +4793,54 @@ class SEAMPDCAEngine:
                     "statement": stmt.get("statement", ""), 
                     "sub_criteria_name": sub_name
                 },
-                keyword_guide=stmt.get("keywords", []),
+                keyword_guide=stmt.get("keywords", []), # ✅ FIXED: ส่ง Keywords จาก rubric
                 baseline_evidences=baseline_memory.get(sub_id, []),
                 vectorstore_manager=vsm,
             )
 
             is_passed = bool(res.get("is_passed", False))
             
-            # 🔄 Evidence Hydration (ส่งต่อหลักฐานไปเลเวลถัดไป)
+            # 🔄 Evidence Hydration (ส่งต่อหลักฐาน)
             if is_passed:
                 current_highest_level = max(current_highest_level, level)
                 new_chunks = res.get("top_chunks_data", [])
-                baseline_memory[sub_id].extend(new_chunks)
-                # เก็บเฉพาะ Chunks สำคัญเพื่อประหยัด Token
-                baseline_memory[sub_id] = baseline_memory[sub_id][-5:]
+                if new_chunks:
+                    baseline_memory[sub_id].extend(new_chunks)
+                    # เก็บเฉพาะ 5 Chunks ล่าสุดเพื่อคุม Token
+                    baseline_memory[sub_id] = baseline_memory[sub_id][-5:]
 
-            # --- 🔥 STEP 2: ATOMIC ACTION PLAN (Tier-2 ราย Level) ---
-            # ใช้ Atomic เพื่อให้ JSON มีโครงสร้างแบบ Flat ป้องกัน Error 6,362 ตัวอักษร
-            self.logger.info(f"🛠️ [ATOMIC-PLAN] Generating Level {level} Actions for {sub_id}")
+            # --- 🔥 STEP 2: Atomic Action Plan (Tier-2 ราย Level) ---
+            # สร้าง Feedback ทันทีเพื่อให้ User เห็นแผนพัฒนารายระดับ
+            self.logger.info(f"🛠️ [ATOMIC] Level {level} for {sub_id}")
             
             atomic_actions = self.create_atomic_action_plan(
                 insight=res.get("coaching_insight", ""),
                 level=level
             )
 
-            # เก็บรายละเอียดราย Level ลง Memory
+            # เก็บรายละเอียดราย Level ลงโครงสร้างข้อมูลหลัก
             level_details[str(level)] = {
                 "level": level, 
                 "is_passed": is_passed, 
                 "score": float(res.get("score", 0.0)),
                 "reason": res.get("reason", ""),
                 "coaching_insight": res.get("coaching_insight", ""),
-                "atomic_action_plan": atomic_actions, # 🎯 ใช้สำหรับแสดงใน Accordion รายเลเวล
+                "atomic_action_plan": atomic_actions, 
                 "pdca_breakdown": res.get("pdca_breakdown", {}),
                 "audit_confidence": res.get("audit_confidence", {})
             }
 
-            # 📦 บีบอัด Insight (Condensed) เพื่อส่งต่อให้ Master Roadmap ในตอนจบ
+            # 📦 สะสมข้อมูลส่งต่อให้ Master Roadmap (Tier-3)
             roadmap_input_bundle.append({
                 "level": level,
                 "status": "PASSED" if is_passed else "FAILED",
-                "insight_summary": res.get("coaching_insight", "")[:150] # 🎯 ตัดให้สั้นเพื่อกัน Context Overflow
+                "insight_summary": res.get("coaching_insight", "")[:200]
             })
 
-        # --- STEP 3: STRATEGIC MASTER ROADMAP (Tier-3 สรุปจบ) ---
-        # หลังจากประเมินครบทุกเลเวล ค่อยสร้างแผนยุทธศาสตร์ที่ซับซ้อน (มี Phase/Steps)
-        self.logger.info(f"🔮 [MASTER-ROADMAP] Synthesizing Final Strategy for {sub_id}")
+        # --- 🔥 STEP 3: Strategic Master Roadmap (Tier-3 สังเคราะห์ภาพรวม) ---
+        # รวบรวม Insights ทั้งหมดมาสร้าง Phase พัฒนาในระยะยาว
+        self.logger.info(f"🔮 [MASTER] Synthesis for {sub_id}")
         
-        # ใช้ข้อมูลที่สรุปมาแล้ว (roadmap_input_bundle) แทนการใช้ Raw Chunks
         master_roadmap = self.generate_master_roadmap(
             sub_id=sub_id,
             sub_criteria_name=sub_name,
@@ -4837,16 +4848,15 @@ class SEAMPDCAEngine:
             aggregated_insights=roadmap_input_bundle
         )
 
-        # ------------------------------------------------------------------
-        # STEP 4: Final Output Assembly
-        # ------------------------------------------------------------------
+        # 4. Final Output Assembly
+        # ข้อมูลชุดนี้จะถูกส่งไปที่ Transformer และ UI React
         return {
             "sub_id": sub_id, 
             "sub_criteria_name": sub_name, 
             "highest_full_level": current_highest_level,
             "weighted_score": round(current_highest_level * sub_weight, 2),
             "level_details": level_details, 
-            "master_roadmap": master_roadmap # 🎯 แผน Roadmap ที่มีโครงสร้าง Phase/Actions/Steps
+            "master_roadmap": master_roadmap 
         }, baseline_memory
 
     # ------------------------------------------------------------------------------------------
