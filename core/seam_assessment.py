@@ -56,7 +56,8 @@ try:
         PDCA_PHASE_MAP, INITIAL_TOP_K, FINAL_K_RERANKED,
         MAX_CHUNKS_PER_FILE, MAX_CHUNKS_PER_BLOCK, MATURITY_LEVEL_GOALS,
         SEAM_ENABLER_FULL_NAME_TH, SEAM_ENABLER_FULL_NAME_EN,
-        SCORING_MODE, MAX_CHUNKS_LOW, MAX_CHUNKS_HIGH
+        SCORING_MODE, MAX_CHUNKS_LOW, MAX_CHUNKS_HIGH,
+        CRITICAL_CA_THRESHOLD
     )
     
     # --- Utilities ---
@@ -3831,8 +3832,8 @@ class SEAMPDCAEngine:
         current_tenant = getattr(self.config, "tenant", "PEA").upper()
         
         # ปรับค่าเหล่านี้ให้เหมาะสมกับ BGE-M3 บน Mac
-        EXIT_SCORE_THRESHOLD = 0.60    # เจอคะแนน 0.60 ถือว่าเก่งมากแล้วสำหรับไทย
-        LOCAL_RERANK_FLOOR = 0.20      # ยอมรับคะแนนขั้นต่ำที่ 0.20 (สัมพันธ์กับ .env)
+        EXIT_SCORE_THRESHOLD = CRITICAL_CA_THRESHOLD
+        LOCAL_RERANK_FLOOR = RERANK_THRESHOLD      # ยอมรับคะแนนขั้นต่ำที่ 0.20 (สัมพันธ์กับ .env)
         MAX_LOOP_QUERIES = 6           # รันสูงสุด 6 loops เพื่อไม่ให้ช้าเกินไป
         
         candidates: List[Dict] = []
