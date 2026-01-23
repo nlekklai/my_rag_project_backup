@@ -66,7 +66,8 @@ def create_llm_instance(
             base_url=base_url,
             timeout=600,
             # num_predict คือหัวใจหลักที่แก้ปัญหา JSON ตัดจบ
-            num_predict=selected_predict 
+            num_predict=selected_predict,
+            format="json" 
         )
 
         logger.info(f"✅ LLM Instance created successfully")

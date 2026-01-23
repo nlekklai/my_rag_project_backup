@@ -35,6 +35,7 @@ GLOBAL_RULES: Final[str] = """
 17. **[No Strict KMS Requirement]**: ห้ามตีความว่า "ขาดระบบ KMS" เป็นเหตุ fail ถ้าพบแผนงานหรือกิจกรรมจริงในระดับ L1-L3
 18. **[Partial Evidence Acceptance]**: สำหรับ L1-L3 หากหลักฐานมี PDCA บางส่วน (เช่น มี P และ D แต่ขาด C) ให้ให้คะแนนรวม >= 1.0 และถือว่าผ่านได้ ถ้าคะแนน phase ที่พบ >= 0.5 ต่อ phase และมีหลักฐานจริงอย่างน้อย 10 chunks
 19. **[No Zero on High Volume]**: หากมี chunks >= 15 และพบ PDCA อย่างน้อย 2 phase ให้คะแนนรวมไม่ต่ำกว่า 1.0 และอธิบายเหตุผลชัดเจน ห้ามให้ 0.0 ถ้าพบหลักฐานบางส่วน
+20. **[No Double Quotes in Values]**: ห้ามใช้เครื่องหมาย " ซ้อนในค่าของ JSON ให้ใช้ ' แทนเสมอ เพื่อป้องกัน JSON Syntax Error
 """
 
 # =================================================================
@@ -45,6 +46,8 @@ SYSTEM_ASSESSMENT_PROMPT: Final[str] = f"""
 วิเคราะห์ความเชื่อมโยงระดับระบบ (Systemic Integration) และให้ข้อเสนอแนะเชิงยุทธศาสตร์
 ความมั่นใจระบบ: {{ai_confidence}} (เหตุผล: {{confidence_reason}})
 ตอบเฉพาะ JSON ห้ามมีข้อความอื่นใด
+
+**[Output Trimming]**: เขียน Extraction_P/D/C/A เฉพาะใจความสำคัญ สั้น กระชับ ไม่เกิน 2-3 บรรทัดต่อหัวข้อ ห้ามคัดลอกข้อความมายาวเกินไป
 """
 
 USER_ASSESSMENT_TEMPLATE: Final[str] = """
@@ -221,8 +224,14 @@ MASTER_ROADMAP_TEMPLATE: Final[str] = """
 # -----------------------------------------------------------------
 SYSTEM_ATOMIC_ACTION_PROMPT: Final[str] = """
 คุณคือผู้เชี่ยวชาญการสรุปแผนปฏิบัติการ (Action Plan) 
-หน้าที่: เปลี่ยน 'บทวิเคราะห์' ให้เป็น 'คำแนะนำเชิงปฏิบัติ' สั้นๆ 1-2 ข้อ
-[Rule]: ตอบเป็น JSON Array ของ Object ที่มี key: action, target_evidence เท่านั้น ห้ามมี Markdown
+หน้าที่: สรุป Coaching Insight ให้เป็น Action Plan สั้นๆ 1-2 ข้อ
+
+[JSON OUTPUT RULE]:
+1. ต้องตอบเป็น JSON ARRAY เท่านั้น เริ่มต้นด้วย [ และจบด้วย ]
+2. ห้ามมีข้อความเกริ่นนำ ห้ามมี Markdown (ไม่ต้องใส่ ```json)
+3. ในเนื้อหาห้ามมีเครื่องหมาย " (Double Quote) ให้ใช้ ' (Single Quote) แทน
+4. ห้ามใส่จุดไข่ปลา (...) ในเนื้อหา JSON
+5. ตัวอย่าง: [{"action": "จัดทำรายงานสรุปผล", "target_evidence": "เล่มรายงานผล KM ปี 2567"}]
 """
 
 USER_ATOMIC_ACTION_TEMPLATE: Final[str] = """

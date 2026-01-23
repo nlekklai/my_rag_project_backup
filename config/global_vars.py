@@ -39,14 +39,20 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 else:
     TARGET_DEVICE: Final[str] = "cpu"
 
-# กำหนด Batch Size ตามความแรงของ Device
-# L40S (cuda) ใช้ 32, Mac (mps) ใช้ 8, CPU ใช้ 4
 if TARGET_DEVICE == "cuda":
-    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 32
+    suggested_batch_size = 128
 elif TARGET_DEVICE == "mps":
-    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 8
+    suggested_batch_size = 16
 else:
-    DEFAULT_EMBED_BATCH_SIZE: Final[int] = 4
+    suggested_batch_size = 4
+
+# 2. อ่านจาก .env (ถ้ามี) ถ้าไม่มีให้ใช้ค่าแนะนำ (suggested_batch_size)
+DEFAULT_EMBED_BATCH_SIZE: Final[int] = int(
+    os.environ.get("DEFAULT_EMBED_BATCH_SIZE",  # ชื่อที่คุณใช้ใน .env ล่าสุด
+    os.environ.get("BATCH_SIZE",                 # ชื่อสำรอง
+    str(suggested_batch_size)))                 # ค่าเริ่มต้นถ้าไม่เจอทั้งคู่
+)
+
 
 # ================================================================
 # Ollama / LLM Request Control
@@ -118,12 +124,12 @@ FINAL_K_RERANKED: Final[int] = int(os.environ.get("FINAL_K_RERANKED", "15"))
 FINAL_K_NON_RERANKED: Final[int] = 7
 
 
-RERANK_THRESHOLD: Final[float] = 0.35
+RERANK_THRESHOLD: Final[float] = 0.20       #เปลี่ยนจาก 0.35 เป็น 0.20 (เพื่อให้กลุ่มก้อนข้อมูลไหลไปหา AI ได้มากขึ้น)
 MIN_RETRY_SCORE: Final[float] = 0.50
 MAX_RETRIEVAL_ATTEMPTS: Final[int] = 3
 
 MIN_RERANK_SCORE_TO_KEEP: Final[float] = 0.10
-MIN_RELEVANCE_THRESHOLD: Final[float] = 0.3
+MIN_RELEVANCE_THRESHOLD: Final[float] = 0.15 #0.3- > 0.15 # ลดลงให้สัมพันธ์กัน
 
 CRITICAL_CA_THRESHOLD: Final[float] = 0.65
 
@@ -183,7 +189,7 @@ ACTION_PLAN_LANGUAGE: Final[str] = os.environ.get("ACTION_PLAN_LANGUAGE", "th")
 LLM_TEMPERATURE: Final[float] = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
 
 # คราวนี้จะใช้ MAX_ACTION_PLAN_TOKENS ได้แล้วเพราะประกาศไว้ข้างบนแล้ว
-LLM_NUM_PREDICT: Final[int] = MAX_ACTION_PLAN_TOKENS 
+LLM_NUM_PREDICT: Final[int] = int(os.environ.get("LLM_NUM_PREDICT", "2048"))
 
 
 # ================================================================

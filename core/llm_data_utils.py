@@ -14,7 +14,6 @@ import time
 import json
 import hashlib
 import uuid
-import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Callable, TypeVar, Set
 import json5
@@ -22,7 +21,11 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_core.documents import Document
 import os
 import unicodedata
-
+# แนะนำ: pip install json-repair (ถ้ายังไม่มี) เพื่อกู้ JSON พังได้ดีมาก
+try:
+    from json_repair import repair_json
+except ImportError:
+    repair_json = None  # ถ้าไม่มี จะใช้ manual repair แทน
 
 # Optional: regex แทน re (ดีกว่า) — ถ้าไม่มีก็ใช้ re ธรรมดา
 try:
@@ -327,8 +330,9 @@ def retrieve_context_for_endpoint(
         "total_candidates": len(candidates)
     }
 
+
 # ------------------------
-# Retrieval: retrieve_context_with_filter (Revised)
+# Retrieval: retrieve_context_with_filter (Revised & Optimized)
 # ------------------------
 def retrieve_context_with_filter(
     query: Union[str, List[str]],
@@ -345,18 +349,22 @@ def retrieve_context_with_filter(
     sub_id: Optional[str] = None,
     level: Optional[int] = None,
     get_previous_level_docs: Optional[Callable[[int, str], List[Any]]] = None,
-    top_k: int = 150, 
+    top_k: int = 100, 
 ) -> Dict[str, Any]:
     """
-    [FIXED VERSION] ยึดโครงสร้างเดิมที่ทำงานได้ (No Error) 
-    แต่เพิ่มการยัดคะแนนลง Metadata เพื่อแก้ปัญหา Rerank 0.0000
+    [ULTIMATE REVISED] 
+    - รองรับการทำ Batch Reranking ตาม DEFAULT_EMBED_BATCH_SIZE (Mac 16 / CUDA 128)
+    - ปรับปรุงการ Sync คะแนนให้แม่นยำ ป้องกันปัญหาคะแนนลดลงเกินจริง
+    - ใช้ Retriever Caching เพื่อลดภาระการโหลด BM25 บน Mac
     """
     start_time = time.time()
     manager = vectorstore_manager
+    if not manager:
+        logger.error("❌ VectorStoreManager is missing!")
+        return {"top_evidences": [], "aggregated_context": "Missing VSM", "retrieval_time": 0}
+
+    # 1. เตรียม Query และ Filter
     queries_to_run = [query] if isinstance(query, str) else list(query or [""])
-    
-    # 1. Resolve Collection & Filter
-    # ใช้ helper จาก utils เพื่อความแม่นยำของชื่อ collection
     collection_name = get_doc_type_collection_key(doc_type, enabler or "KM")
     
     target_ids = set()
@@ -367,110 +375,119 @@ def retrieve_context_with_filter(
     where_filter = _create_where_filter(
         stable_doc_ids=list(target_ids) if target_ids else None,
         subject=subject,
-        year=year
+        year=year,
+        tenant=tenant
     )
 
-    # 2. Collect Chunks
+    # 2. Hybrid Retrieval (Vector + BM25) พร้อมระบบ Cache
     all_source_chunks = []
 
-    # 2.1 Priority Docs
+    # 2.1 แทรก Priority Docs (ถ้ามี)
     if priority_docs_input:
         for doc in priority_docs_input:
             if not doc: continue
             if isinstance(doc, dict):
                 pc = doc.get('page_content') or doc.get('text') or ''
                 meta = doc.get('metadata') or {}
-                if pc.strip():
-                    all_source_chunks.append(LcDocument(page_content=pc, metadata=meta))
+                if pc.strip(): all_source_chunks.append(LcDocument(page_content=pc, metadata=meta))
             elif hasattr(doc, 'page_content'):
                 all_source_chunks.append(doc)
 
-    # 2.2 Vector Retrieval
+    # 2.2 ค้นหาจริง (ใช้ Retriever Cache เพื่อประหยัด RAM บน Mac)
     try:
-        full_retriever = manager.get_retriever(collection_name=collection_name)
+        if not hasattr(manager, '_retriever_cache'):
+            manager._retriever_cache = {}
+        
+        if collection_name not in manager._retriever_cache:
+            logger.info(f"🧬 [CACHE-MISS] Initializing Hybrid Retriever for: {collection_name}")
+            manager._retriever_cache[collection_name] = manager.get_retriever(collection_name=collection_name)
+        
+        full_retriever = manager._retriever_cache[collection_name]
         base_retriever = getattr(full_retriever, "base_retriever", full_retriever)
         
         search_kwargs = {"k": top_k}
-        if where_filter: 
-            search_kwargs["where"] = where_filter
+        if where_filter: search_kwargs["where"] = where_filter
 
         for q in queries_to_run:
-            if not q: continue
+            if not q or len(q.strip()) < 2: continue
             docs = base_retriever.invoke(q, config={"configurable": {"search_kwargs": search_kwargs}})
             if docs: all_source_chunks.extend(docs)
     except Exception as e:
-        logger.error(f"Retrieval error: {e}")
+        logger.error(f"❌ Retrieval failure: {e}")
 
-    # 3. Deduplicate (ใช้ Hash เพื่อความแม่นยำ)
+    # 3. Deduplication (Deterministic MD5)
     unique_map: Dict[str, LcDocument] = {}
     for doc in all_source_chunks:
         if not doc or not doc.page_content.strip(): continue
         md = doc.metadata or {}
-        # ใช้ hashlib เพื่อให้ได้ ID ที่คงที่เหมือนกันทุกรอบ
         c_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
-        uid = str(md.get("chunk_uuid") or f"{md.get('stable_doc_uuid', 'unknown')}-{c_hash}")
-        
+        uid = str(md.get("chunk_uuid") or f"hash-{c_hash}")
         if uid not in unique_map:
             unique_map[uid] = doc
 
     candidates = list(unique_map.values())
 
-    # 4. Batch Reranking
+    # 4. Batch Reranking (ปรับปรุงเพื่อรองรับ Batch Size ตาม Device)
     final_scored_docs = []
-    batch_size = 100 
-    reranker = getattr(manager, "reranker", None)
+    reranker = get_global_reranker()
 
-    if reranker and candidates:
-        main_query = queries_to_run[0]
-        for i in range(0, len(candidates), batch_size):
-            batch = candidates[i : i + batch_size]
-            try:
-                # 📌 กุญแจสำคัญ: Reranker จะคืนค่าพร้อมคะแนนใน metadata
-                scored_batch = reranker.compress_documents(batch, main_query)
-                final_scored_docs.extend(scored_batch)
-            except Exception as e:
-                logger.error(f"Rerank Error: {e}")
-                final_scored_docs.extend(batch)
+    if reranker and candidates and queries_to_run:
+        try:
+            # ใช้ Query แรกเป็นแกนกลางในการ Rerank
+            main_query = queries_to_run[0]
+            
+            # [CRITICAL] เรียกใช้ Batch Size จาก global_vars (16 สำหรับ Mac) 
+            # เพื่อป้องกันความเร็วตกหรือคะแนนเพี้ยนกรณีส่งเข้าไปเยอะเกินไปทีเดียว
+            final_scored_docs = reranker.compress_documents(
+                documents=candidates, 
+                query=main_query,
+                batch_size=DEFAULT_EMBED_BATCH_SIZE
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Rerank Error: {e}")
+            final_scored_docs = candidates
     else:
         final_scored_docs = candidates
 
-    # 5. Sorting & Score Injection (จุดที่แก้ปัญหา 0.0000)
-    def get_score(d) -> float:
+    # 5. Ranking & Score Extraction (แม่นยำขึ้น)
+    def extract_score(d) -> float:
         m = d.metadata or {}
-        # ไล่หาคะแนนจากทุกชื่อที่เป็นไปได้
-        s = m.get("relevance_score") or m.get("score") or m.get("rerank_score") or 0.0
-        try: return float(s)
-        except: return 0.0
+        # ดึงคะแนนจาก attribute ของ Reranker ก่อน ถ้าไม่มีค่อยไปดูใน Metadata
+        if hasattr(d, "relevance_score"): return float(d.relevance_score)
+        return float(m.get("relevance_score") or m.get("score") or m.get("rerank_score") or 0.0)
 
-    final_scored_docs.sort(key=get_score, reverse=True)
+    final_scored_docs.sort(key=extract_score, reverse=True)
 
-    # 6. Final Formatting (คัดเลือก K ตัวแรก)
+    # 6. คัดเลือกผลลัพธ์และจัดรูปแบบ
     top_evidences = []
     aggregated_parts = []
-    final_k = ANALYSIS_FINAL_K # ใช้ค่าจาก config
+    final_limit = ANALYSIS_FINAL_K
 
-    for doc in final_scored_docs[:final_k]:
-        score = get_score(doc)
-        # กรอง Threshold ตามที่ตั้งไว้ใน .env
+    for doc in final_scored_docs:
+        if len(top_evidences) >= final_limit:
+            break
+            
+        score = extract_score(doc)
+        
+        # กรองทิ้งหากคะแนนต่ำกว่า Threshold (0.20)
         if score < RERANK_THRESHOLD and RERANK_THRESHOLD > 0:
             continue
 
         md = doc.metadata or {}
         text = doc.page_content.strip()
         
-        # จัดการเลขหน้าให้ตรงกับ ingest.py
+        # สกัด Metadata (Page / Source / PDCA)
         page = str(md.get("page_label") or md.get("page_number") or md.get("page") or "N/A")
-        source = md.get("source") or md.get("source_filename") or "Unknown"
+        source = md.get("source_filename") or md.get("source") or "Unknown"
         pdca = md.get("pdca_tag", "Other")
 
-        # 🎯 SYNC SCORE เข้า Metadata (เพื่อให้ Loop อื่นๆ เรียกใช้แล้วไม่เจอ 0)
+        # [IMPORTANT] Sync คะแนนกลับเข้า metadata เพื่อให้ Prompt Assessment เห็นคะแนนจริง
         md["score"] = score
         md["relevance_score"] = score
-        md["rerank_score"] = score
 
         top_evidences.append({
             "doc_id": str(md.get("stable_doc_uuid") or md.get("doc_id") or ""),
-            "chunk_uuid": str(md.get("chunk_uuid") or ""),
+            "chunk_uuid": str(md.get("chunk_uuid") or str(uuid.uuid4())),
             "source": source,
             "text": text,
             "page": page,
@@ -480,11 +497,16 @@ def retrieve_context_with_filter(
         })
         aggregated_parts.append(f"[{pdca}] [ไฟล์: {source} หน้า: {page}] {text}")
 
+    total_time = round(time.time() - start_time, 3)
+    max_score = extract_score(final_scored_docs[0]) if final_scored_docs else 0.0
+    
+    logger.info(f"🏁 Retrieval Finished: {len(top_evidences)} chunks | Max Score: {max_score:.4f} | Time: {total_time}s")
+
     return {
         "top_evidences": top_evidences,
         "aggregated_context": "\n\n---\n\n".join(aggregated_parts) if aggregated_parts else "ไม่พบหลักฐาน",
-        "retrieval_time": round(time.time() - start_time, 3),
-        "total_candidates": len(candidates)
+        "retrieval_time": total_time,
+        "max_score": max_score
     }
 
 # =====================================================================
@@ -604,7 +626,7 @@ def retrieve_context_with_rubric(
         
         if reranker and candidates and query:
             try:
-                batch_size = 100 # 🚀 แบ่ง Batch เพื่อความปลอดภัยของ VRAM
+                batch_size = DEFAULT_EMBED_BATCH_SIZE
                 scored_candidates = []
                 
                 logger.info(f"🚀 Batch Reranking {len(candidates)} chunks...")
@@ -755,126 +777,121 @@ def retrieve_context_by_doc_ids(
     }
 
 
-def retrieve_context_for_low_levels(query: str, doc_type: str, enabler: Optional[str]=None,
-                                 vectorstore_manager: Optional['VectorStoreManager']=None,
-                                 top_k: int=LOW_LEVEL_K, initial_k: int=INITIAL_TOP_K,
-                                 # 🟢 NEW: ส่งต่อ arguments
-                                 mapped_uuids: Optional[List[str]]=None,
-                                 priority_docs_input: Optional[List[Any]] = None,
-                                 sequential_chunk_uuids: Optional[List[str]] = None, 
-                                 sub_id: Optional[str]=None, level: Optional[int]=None) -> Dict[str, Any]:
-    """
-    Retrieves a small, focused context for low levels (L1, L2) using a reduced k (LOW_LEVEL_K).
-    """
-    # ใช้ฟังก์ชันหลัก แต่บังคับใช้ k ที่เหมาะสม
-    return retrieve_context_with_filter(
-        query=query,
-        doc_type=doc_type,
-        enabler=enabler,
-        vectorstore_manager=vectorstore_manager,
-        top_k=LOW_LEVEL_K,
-        initial_k=initial_k,
-        mapped_uuids=mapped_uuids,
-        priority_docs_input=priority_docs_input,
-        sequential_chunk_uuids=sequential_chunk_uuids, 
-        sub_id=sub_id,
-        level=level
-    )
-
-# ------------------------
-# LLM fetcher
-# ------------------------
 def _fetch_llm_response(
-    system_prompt: str, 
-    user_prompt: str, 
+    system_prompt: str = "",
+    user_prompt: str = "",
     max_retries: int = 3,
-    llm_executor: Any = None 
+    llm_executor: Any = None
 ) -> str:
     """
-    Ultimate Robust LLM Fetcher v2026.1.19-final
-    - คืน STRING เสมอ ไม่เคยคืน None
-    - ป้องกัน NoneType.strip() ทุกจุด
-    - Log ชัดเจนเพื่อ debug
+    [IRONCLAD LLM FETCHER - FINAL POLISH v2026.1.26]
+    - บังคับ LLM ให้ส่ง VALID JSON เท่านั้น (prompt เข้มงวด + ตัวอย่างหลายรูปแบบ)
+    - Multi-stage clean-up + greedy extraction + json_repair (ถ้ามี)
+    - Retry ฉลาด + exponential backoff + prompt variation เมื่อล้มเหลว
+    - Log raw + cleaned ทุก attempt เพื่อ debug (ภาษาไทยอ่านได้ทันที)
+    - คืน JSON string ที่สะอาดเสมอ (fallback ถ้าพังหมด)
+    - เพิ่ม: Avoid Unicode escape sequences ใน Thai text
     """
-
-    if llm_executor is None and not _MOCK_FLAG:
+    if llm_executor is None:
         raise ConnectionError("LLM instance not initialized.")
 
-    # Enforced prompt (ปรับให้เข้มขึ้นอีกนิด)
-    enforced_system_prompt = (system_prompt or "").strip() + (
-        "\n\n### STRICT OUTPUT RULES - FOLLOW EXACTLY ###\n"
-        "1. Respond with ONLY valid JSON object. No other text.\n"
-        "2. Start with '{' and end with '}'.\n"
-        "3. No markdown, no explanations, no prefixes.\n"
-        "4. If no evidence: {\"score\": 0, \"reason\": \"No evidence\", \"is_passed\": false}"
+    # 1. System Prompt เข้มงวดสุด (รวม Avoid Unicode escape + ตัวอย่างชัดเจน)
+    enforced_system = (
+        (system_prompt or "").strip() + "\n\n"
+        "### ABSOLUTE RULES - MUST FOLLOW OR FAIL ###\n"
+        "1. Respond with **ONLY** valid JSON. NO text before or after.\n"
+        "2. NO markdown (```json, ```), NO explanations, NO 'Here is...', NO apologies.\n"
+        "3. Use double quotes for ALL keys and string values.\n"
+        "4. If string contains double quote, escape it as \\\" or use single quote instead.\n"
+        "5. All braces { } and brackets [ ] MUST be balanced.\n"
+        "6. IMPORTANT: For Thai text, use normal Thai characters ONLY.\n"
+        "   DO NOT use Unicode escape sequences (e.g. \\u0e23 \\u0e35 \\u0e07).\n"
+        "   Output readable Thai directly (เช่น \"จัดทำคำสั่ง\" ไม่ใช่ \"\\u0e08\\u0e31\\u0e14\\u0e17\\u0e33\").\n"
+        "7. Return ONLY array or object. Examples:\n"
+        '   [{"action": "จัดทำคำสั่งแต่งตั้งคณะทำงาน KM", "target_evidence": "ประกาศองค์กร ฉบับที่..."}]\n'
+        '   [{"score": 1.0, "is_passed": true, "reason": "เหตุผลเป็นภาษาไทยชัดเจน"}]\n'
+        "FAILURE TO COMPLY = INVALID RESPONSE"
     )
 
     messages = [
-        {"role": "system", "content": enforced_system_prompt},
+        {"role": "system", "content": enforced_system},
         {"role": "user",   "content": (user_prompt or "").strip()}
     ]
 
     for attempt in range(1, max_retries + 1):
         try:
-            if _MOCK_FLAG:
-                mock = '{"score": 1, "reason": "Mock active", "is_passed": true}'
-                logger.critical(f"LLM RAW (MOCK): {mock}")
-                return mock
-
-            # LLM CALL
+            # 2. LLM Call (temperature 0.0 เพื่อความ deterministic สูงสุด)
             response = llm_executor.invoke(messages, config={"temperature": 0.0})
 
-            # SAFE EXTRACTION - รวม patch ของคุณ
             raw_text = ""
-            if response is None:
-                logger.warning("Response object is None")
-            elif hasattr(response, "content"):
-                raw_text = str(response.content or "")
+            if hasattr(response, "content"):
+                raw_text = str(response.content).strip()
             elif hasattr(response, "text"):
-                raw_text = str(response.text or "")
-            elif isinstance(response, str):
-                raw_text = response
+                raw_text = str(response.text).strip()
             else:
-                raw_text = str(response or "")
+                raw_text = str(response or "").strip()
 
-            # Log raw ก่อน clean
-            preview = (raw_text[:1000] + "...") if len(raw_text) > 1000 else raw_text
-            logger.critical(f"LLM RAW RESPONSE (attempt {attempt}): {preview}")
+            # Log raw response เต็ม (จำกัด 1500 ตัวอักษร)
+            logger.critical(f"[LLM-RAW attempt {attempt}] (len={len(raw_text)}):\n{raw_text[:1500]}{'...' if len(raw_text) > 1500 else ''}")
 
-            # Clean - ปลอดภัยแน่นอน
-            raw_text_stripped = (raw_text or "").strip()
+            # 3. Multi-stage Clean-up
+            # Stage 1: ลบ markdown และ code fences
+            cleaned = re.sub(r'```(?:json)?\s*|\s*```', '', raw_text).strip()
 
-            # หา JSON block
-            json_match = re.search(r'\{[\s\S]*?\}', raw_text_stripped, re.DOTALL)
+            # Stage 2: ลบ whitespace เกิน + trailing comma + unbalanced quotes
+            cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+            # Stage 3: Greedy หา JSON block ใหญ่สุด (รองรับทั้ง object และ array)
+            json_match = re.search(r'(\{[\s\S]*?\}|\[[\s\S]*?\])', cleaned, re.DOTALL)
             if json_match:
-                extracted = json_match.group(0)
+                extracted = json_match.group(1)
+            else:
+                extracted = cleaned  # ถ้าไม่เจอ ให้ลองทั้งหมด
+
+            # Stage 4: ใช้ json_repair ถ้ามี (ดีมากสำหรับ LLM output พัง)
+            if repair_json:
                 try:
-                    json.loads(extracted)  # ทดสอบก่อน
-                    return extracted
-                except json.JSONDecodeError:
-                    logger.warning(f"Extracted not valid JSON: {extracted[:120]}...")
+                    repaired = repair_json(extracted)
+                    json.loads(repaired)  # ทดสอบ parse
+                    logger.debug(f"[JSON-REPAIR-SUCCESS] attempt {attempt}")
+                    return repaired
+                except Exception as repair_err:
+                    logger.debug(f"[JSON-REPAIR-FAIL] {str(repair_err)} → fallback to manual")
 
-            # Fallback: ลอง parse ทั้งหมด
+            # Stage 5: Manual salvage (ลบ control chars + unbalanced)
+            extracted = re.sub(r'[\x00-\x1F\x7F]', '', extracted)  # ลบ control chars
             try:
-                parsed = json.loads(raw_text_stripped)
-                return json.dumps(parsed, ensure_ascii=False)
-            except json.JSONDecodeError:
-                pass
+                json.loads(extracted)
+                logger.debug(f"[MANUAL-PARSE-SUCCESS] attempt {attempt}")
+                return extracted
+            except json.JSONDecodeError as je:
+                logger.warning(f"[JSON-PARSE-FAIL attempt {attempt}]: {str(je)}")
 
-            # Ultimate safe return - บังคับ string เสมอ (ตามที่คุณแนะนำ)
-            final_return = str(raw_text_stripped or "").strip()
-            logger.debug(f"No valid JSON → returning cleaned string (len={len(final_return)})")
-            return final_return
+            # ถ้าพังหมด → retry ด้วย prompt variation
+            if attempt < max_retries:
+                messages[1]["content"] += (
+                    f"\n\nPrevious attempt failed (invalid JSON). "
+                    f"Fix it now and return **ONLY** valid JSON. No extra text."
+                )
+                time.sleep(1.5 ** attempt)  # exponential backoff
+                continue
 
         except Exception as e:
-            logger.error(f"Attempt {attempt} failed: {str(e)}", exc_info=True)
+            logger.error(f"[LLM-EXCEPTION attempt {attempt}]: {str(e)}")
             if attempt < max_retries:
-                time.sleep(2 ** attempt)
+                time.sleep(1.5 ** attempt)
             else:
-                logger.critical("All retries failed")
-                return '{"score": 0, "reason": "LLM failed after retries", "is_passed": false}'
+                break
 
-    return '{"score": 0, "reason": "Unknown error", "is_passed": false}'
+    # Ultimate Fallback (คืน JSON มาตรฐานเสมอ)
+    logger.critical(f"[LLM-FINAL-FALLBACK] All {max_retries} attempts failed")
+    return json.dumps({
+        "score": 0.0,
+        "is_passed": False,
+        "reason": "Failed to generate valid JSON after retries (system fallback)",
+        "fallback": True
+    }, ensure_ascii=False)  # ensure_ascii=False เพื่อให้ภาษาไทยไม่ escape
 
 # ------------------------
 # Evaluation
@@ -951,85 +968,63 @@ def evaluate_with_llm(
     specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
     confidence_reason: str = "N/A",
-    pdca_context: str = "", # <--- [ADD] รับข้อมูลแยกหมวดหมู่ P-D-C-A
+    pdca_context: str = "", 
     **kwargs
 ) -> Dict[str, Any]:
-    """
-    [REVISED v2026.3.5 — PDCA Block Enabled]
-    - รองรับการฉีด pdca_context เพื่อเพิ่มความแม่นยำในการสกัดหลักฐาน
-    - เสริมระบบความปลอดภัยในการ Parse JSON และจัดการ Multi-Enabler
-    """
     logger = logging.getLogger(__name__)
 
-    # 1. Safe casting + defaults
+    # Casting & Null Safety
     ctx_raw = str(context or "ไม่พบข้อมูลหลักฐาน")
-    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่ (โปรดพิจารณาจาก Full Context)")
-    s_name = str(sub_criteria_name or "N/A")
-    sid = str(sub_id or "N/A")
-    s_text = str(statement_text or "N/A")
-    
-    # Enabler info
+    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
     enabler_full_name = str(kwargs.get("enabler_full_name", "Unknown Enabler"))
     enabler_code = str(kwargs.get("enabler_code", "UNK"))
     
-    logger.info(f"[EVAL START] Enabler: {enabler_full_name} ({enabler_code}) | Sub: {sid} | L{level}")
-
-    # ดึง Context ที่เหมาะสมตามระดับ (Slice ตามความยาวที่กำหนด)
+    # ดึง Context ตามระดับ
     context_to_send_eval = _get_context_for_level(ctx_raw, level) or ""
-    
-    # 2. Safe phases
     phases_str = ", ".join(str(p).strip() for p in (required_phases or [])) if required_phases else "P, D, C, A"
-
-    # 3. Baseline clean
-    baseline_raw = kwargs.get("baseline_summary")
-    baseline_summary = str(baseline_raw or "").strip()
+    baseline_summary = str(kwargs.get("baseline_summary") or "").strip()
 
     try:
-        # Build prompt with PDCA Context support
-        # หมายเหตุ: ใน USER_ASSESSMENT_PROMPT ต้องมี placeholder {pdca_context}
+        # Build prompt
         full_prompt = USER_ASSESSMENT_PROMPT.format(
-            sub_criteria_name=s_name,
-            sub_id=sid,
+            sub_criteria_name=str(sub_criteria_name),
+            sub_id=str(sub_id),
             level=int(level),
-            statement_text=s_text,
-            context=context_to_send_eval[:28000], # เผื่อพื้นที่ให้ PDCA Block
-            pdca_context=pdca_ctx[:8000],         # [CRITICAL] ฉีดบล็อกข้อมูลแยกหมวด
+            statement_text=str(statement_text),
+            context=context_to_send_eval[:25000], 
+            pdca_context=pdca_ctx[:8000],         
             required_phases=phases_str,
-            specific_contextual_rule=str(specific_contextual_rule or "พิจารณาตามเกณฑ์"),
-            ai_confidence=str(ai_confidence or "MEDIUM"),
-            confidence_reason=str(confidence_reason or "N/A"),
+            specific_contextual_rule=str(specific_contextual_rule),
+            ai_confidence=str(ai_confidence),
+            confidence_reason=str(confidence_reason),
             enabler_full_name=enabler_full_name,
             enabler_code=enabler_code
         )
-
         if baseline_summary:
-            full_prompt += f"\n\n--- BASELINE DATA (จากระดับก่อนหน้า) ---\n{baseline_summary}"
+            full_prompt += f"\n\n--- BASELINE DATA ---\n{baseline_summary}"
 
-        # 4. LLM call with guard
-        if llm_executor is None:
-            raise ValueError("No LLM executor provided")
-
-        raw_response = _fetch_llm_response(None, full_prompt, llm_executor=llm_executor)
-        raw_response = str(raw_response or "").strip()
-
-        # 5. Parse with fallback
-        parsed = _robust_extract_json(raw_response)
-        if not parsed or not isinstance(parsed, dict):
-            logger.warning(f"[JSON PARSE FAIL] Sub {sid} L{level} - Using heuristic fallback")
-            parsed = _heuristic_fallback_parse(raw_response)
-
-        # 6. Build final result object
-        result = _build_audit_result_object(
-            parsed, raw_response, context_to_send_eval, ai_confidence, 
-            level=level, sub_id=sid, enabler_full_name=enabler_full_name, enabler_code=enabler_code
+        # [UPGRADED CALL] เรียก Fetcher พร้อม System Prompt ชัดเจน
+        system_msg = f"Expert SE-AM Auditor for {enabler_full_name} ({enabler_code})"
+        raw_response = _fetch_llm_response(
+            system_prompt=system_msg,
+            user_prompt=full_prompt,
+            llm_executor=llm_executor
         )
-        return result
+
+        # Parse & Build Object (ใช้ Ironclad Extractor ที่เราทำไว้)
+        parsed = _robust_extract_json(raw_response)
+        if not parsed.get("reason") or parsed.get("reason") == "ไม่สามารถแยกวิเคราะห์ JSON ได้":
+             parsed = _heuristic_fallback_parse(raw_response)
+
+        return _build_audit_result_object(
+            parsed, raw_response, context_to_send_eval, ai_confidence, 
+            level=level, sub_id=sub_id, enabler_full_name=enabler_full_name, enabler_code=enabler_code
+        )
 
     except Exception as e:
-        logger.error(f"🛑 Evaluation Error Enabler:{enabler_code} Sub:{sid} L{level}: {str(e)}", exc_info=True)
-        return _create_fallback_error(sid, level, e, context_to_send_eval, enabler_full_name, enabler_code)
-
-
+        logger.error(f"🛑 Evaluation Error Sub:{sub_id} L{level}: {str(e)}")
+        return _create_fallback_error(sub_id, level, e, context_to_send_eval, enabler_full_name, enabler_code)
+    
 def evaluate_with_llm_low_level(
     context: str,
     sub_criteria_name: str,
@@ -1040,80 +1035,62 @@ def evaluate_with_llm_low_level(
     required_phases: List[str] = None,
     specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
-    pdca_context: str = "", # <--- [ADD]
+    pdca_context: str = "",
     **kwargs
 ) -> Dict[str, Any]:
-    """
-    [REVISED v2026.3.5 — Low Level PDCA Enabled]
-    - รองรับ pdca_context สำหรับระดับ L1-L2
-    - เน้นความแม่นยำในการแยกหมวดหมู่ 'แผน' และ 'กิจกรรม'
-    """
     logger = logging.getLogger(__name__)
 
-    # 1. Safe casting
-    ctx = str(context or "ไม่พบข้อมูลหลักฐาน")
-    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
-    s_name = str(sub_criteria_name or "N/A")
-    s_text = str(statement_text or "N/A")
-    sid = str(sub_id or "N/A")
-    
-    # Enabler info
     enabler_full_name = str(kwargs.get("enabler_full_name", "Unknown Enabler"))
     enabler_code = str(kwargs.get("enabler_code", "UNK"))
+    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
     
-    logger.info(f"[LOW EVAL START] Enabler: {enabler_full_name} ({enabler_code}) | Sub: {sid} | L{level}")
-
     plan_kws = str(kwargs.get("plan_keywords") or "นโยบาย, แผนงาน, ยุทธศาสตร์")
-    baseline_summary = str(kwargs.get("baseline_summary") or "ไม่มีข้อมูลระดับก่อนหน้า").strip()
-    conf_reason = str(kwargs.get("confidence_reason") or "วิเคราะห์ตามเนื้องาน")
-    
+    baseline_summary = str(kwargs.get("baseline_summary") or "ไม่มีข้อมูลระดับก่อนหน้า")
     phases_str = ", ".join(str(p) for p in (required_phases or [])) if required_phases else "P, D"
 
     try:
         full_prompt = USER_LOW_LEVEL_PROMPT.format(
-            sub_id=sid,
-            sub_criteria_name=s_name,
+            sub_id=str(sub_id),
+            sub_criteria_name=str(sub_criteria_name),
             level=int(level),
-            statement_text=s_text,
-            context=ctx[:28000],
-            pdca_context=pdca_ctx[:8000], # [CRITICAL]
+            statement_text=str(statement_text),
+            context=str(context)[:25000],
+            pdca_context=pdca_ctx[:8000],
             required_phases=phases_str,
             plan_keywords=plan_kws,
             baseline_summary=baseline_summary,
-            specific_contextual_rule=str(specific_contextual_rule or "ตรวจตามเกณฑ์"),
-            ai_confidence=str(ai_confidence or "MEDIUM"),
-            confidence_reason=conf_reason,
+            specific_contextual_rule=str(specific_contextual_rule),
+            ai_confidence=str(ai_confidence),
+            confidence_reason=str(kwargs.get("confidence_reason", "วิเคราะห์ตามเนื้องาน")),
             enabler_full_name=enabler_full_name,
             enabler_code=enabler_code
         )
 
-        if llm_executor is None:
-            raise ValueError("No LLM executor provided")
-
-        raw_response = _fetch_llm_response(None, full_prompt, llm_executor=llm_executor)
-        raw_response = str(raw_response or "").strip()
+        # [UPGRADED CALL] เรียก Fetcher
+        system_msg = f"Foundation Auditor for {enabler_full_name} ({enabler_code})"
+        raw_response = _fetch_llm_response(
+            system_prompt=system_msg,
+            user_prompt=full_prompt,
+            llm_executor=llm_executor
+        )
 
         parsed = _robust_extract_json(raw_response)
-        if not parsed or not isinstance(parsed, dict):
-            logger.warning(f"[LOW JSON PARSE FAIL] Sub {sid} L{level} - Using heuristic fallback")
-            parsed = _heuristic_fallback_parse(raw_response)
-
-        result = _build_audit_result_object(
-            parsed, raw_response, ctx, ai_confidence, 
-            level=level, sub_id=sid, enabler_full_name=enabler_full_name, enabler_code=enabler_code
+        return _build_audit_result_object(
+            parsed, raw_response, context, ai_confidence, 
+            level=level, sub_id=sub_id, enabler_full_name=enabler_full_name, enabler_code=enabler_code
         )
-        return result
 
     except Exception as e:
-        logger.error(f"🛑 Low-Level Eval Error Enabler:{enabler_code} Sub:{sid} L{level}: {str(e)}", exc_info=True)
-        return _create_fallback_error(sid, level, e, ctx, enabler_full_name, enabler_code)
+        logger.error(f"🛑 Low-Level Eval Error Sub:{sub_id} L{level}: {str(e)}")
+        return _create_fallback_error(sub_id, level, e, context, enabler_full_name, enabler_code)
     
+
 def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, confidence: str, **kwargs) -> Dict[str, Any]:
     """
-    [ULTIMATE-SYNC v2026.1.22] — Multi-Enabler + Zero-Error
-    - เพิ่ม enabler_full_name & enabler_code ใน result
-    - Robust string handling (str(val or "") ก่อน strip)
-    - รองรับ key หลากหลายรูปแบบจาก LLM
+    [ULTIMATE-SYNC v2026.1.23] — THE COMPLETE AUDITOR OBJECT
+    - Fix: ดึง 'sources' (Evidence) ออกมาแสดงผลราย Level
+    - Fix: จัดกลุ่ม pdca_breakdown ให้เป็นมาตรฐาน UI
+    - Robust handling สำหรับการประเมินระดับองค์กร (PEA SE-AM)
     """
     level = kwargs.get('level', 1)
     sub_id = kwargs.get('sub_id', 'Unknown')
@@ -1130,122 +1107,148 @@ def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, co
     if not isinstance(parsed, dict):
         parsed = {}
 
+    # 1. 📊 Scoring & Passed Status
     score = clean_score(parsed.get("score"))
     is_passed = parsed.get("is_passed")
     if is_passed is None:
+        # Fallback เกณฑ์ผ่าน: L1-L2 (0.7), L3-L5 (1.0)
         is_passed = score >= 0.7 if level <= 2 else score >= 1.0
 
-    # Robust extraction (ป้องกัน NoneType.strip)
-    ext_p = str(parsed.get("Extraction_P") or parsed.get("หลักฐาน P") or parsed.get("p_plan_extraction") or "-").strip()
-    ext_d = str(parsed.get("Extraction_D") or parsed.get("หลักฐาน D") or parsed.get("d_do_extraction") or "-").strip()
-    ext_c = str(parsed.get("Extraction_C") or parsed.get("หลักฐาน C") or parsed.get("c_check_extraction") or "-").strip()
-    ext_a = str(parsed.get("Extraction_A") or parsed.get("หลักฐาน A") or parsed.get("a_act_extraction") or "-").strip()
+    # 2. 📎 Evidence & Sources Extraction (จุดที่เคยหายไป)
+    # พยายามดึงรายชื่อ Doc ID จากทุก Key ที่ AI อาจจะพ่นออกมา
+    sources = (
+        parsed.get("sources") or 
+        parsed.get("evidence") or 
+        parsed.get("doc_ids") or 
+        parsed.get("reference_documents") or []
+    )
+    # มั่นใจว่าเป็น List และล้างช่องว่าง
+    if isinstance(sources, str):
+        sources = [s.strip() for s in sources.split(',') if s.strip()]
+    elif not isinstance(sources, list):
+        sources = []
 
-    # PDCA scores — รองรับ key หลากหลาย
-    p_plan_score = clean_score(parsed.get("P_Plan_Score") or parsed.get("P_Score") or parsed.get("plan_score") or parsed.get("P"))
-    d_do_score = clean_score(parsed.get("D_Do_Score") or parsed.get("D_Score") or parsed.get("do_score") or parsed.get("D"))
-    c_check_score = clean_score(parsed.get("C_Check_Score") or parsed.get("C_Score") or parsed.get("check_score") or parsed.get("C"))
-    a_act_score = clean_score(parsed.get("A_Act_Score") or parsed.get("A_Score") or parsed.get("act_score") or parsed.get("A"))
+    # 3. 🧩 PDCA Breakdown Normalization
+    # ดึงคะแนนราย Phase และจัดโครงสร้างใหม่
+    p_score = clean_score(parsed.get("P_Plan_Score") or parsed.get("P_Score") or parsed.get("plan_score") or parsed.get("P"))
+    d_score = clean_score(parsed.get("D_Do_Score") or parsed.get("D_Score") or parsed.get("do_score") or parsed.get("D"))
+    c_score = clean_score(parsed.get("C_Check_Score") or parsed.get("C_Score") or parsed.get("check_score") or parsed.get("C"))
+    a_score = clean_score(parsed.get("A_Act_Score") or parsed.get("A_Score") or parsed.get("act_score") or parsed.get("A"))
 
-    # Fallback สำหรับ L1-L2
-    if bool(is_passed) and level <= 2 and p_plan_score == 0:
-        p_plan_score = score
+    # Fallback สำหรับ L1-L2 หากผ่านแต่ลืมใส่คะแนน P
+    if bool(is_passed) and level <= 2 and p_score == 0:
+        p_score = score
 
+    # 4. 📝 Text Content Extraction
+    ext_p = str(parsed.get("Extraction_P") or parsed.get("หลักฐาน P") or "-").strip()
+    ext_d = str(parsed.get("Extraction_D") or parsed.get("หลักฐาน D") or "-").strip()
+    ext_c = str(parsed.get("Extraction_C") or parsed.get("หลักฐาน C") or "-").strip()
+    ext_a = str(parsed.get("Extraction_A") or parsed.get("หลักฐาน A") or "-").strip()
+
+    # 5. 🏛️ Final Assembly
     return {
         "sub_id": str(sub_id),
         "level": int(level),
         "score": score,
         "is_passed": bool(is_passed),
-        "reason": str(parsed.get("reason") or parsed.get("เหตุผล") or "ไม่พบเหตุผลจาก LLM").strip(),
+        "reason": str(parsed.get("reason") or parsed.get("เหตุผล") or "ไม่พบเหตุผลสรุปจาก AI").strip(),
         "summary_thai": str(parsed.get("summary_thai") or parsed.get("บทสรุป") or "").strip(),
         "coaching_insight": str(parsed.get("coaching_insight") or parsed.get("ข้อแนะนำ") or "").strip(),
         
-        "P_Plan_Score": p_plan_score,
-        "D_Do_Score": d_do_score,
-        "C_Check_Score": c_check_score,
-        "A_Act_Score": a_act_score,
+        # เก็บในรูปแบบ Flat สำหรับ Report
+        "P_Plan_Score": p_score,
+        "D_Do_Score": d_score,
+        "C_Check_Score": c_score,
+        "A_Act_Score": a_score,
+
+        # เก็บในรูปแบบ Object สำหรับ UI/Dashboard
+        "pdca_breakdown": {
+            "P": p_score,
+            "D": d_score,
+            "C": c_score,
+            "A": a_score
+        },
 
         "Extraction_P": ext_p,
         "Extraction_D": ext_d,
         "Extraction_C": ext_c,
         "Extraction_A": ext_a,
         
-        "final_llm_context": str(context or ""),
-        "raw_llm_response": str(raw_response or ""),
+        "sources": sources, # 🎯 ส่ง doc_id ต่อไปให้ Engine ทำการ Map ชื่อไฟล์
         "ai_confidence_at_eval": str(confidence or "MEDIUM"),
-        "consistency_check": bool(parsed.get("consistency_check", True)),
-        
-        # Multi-Enabler Traceability
-        "enabler_at_eval": f"{enabler_full_name} ({enabler_code})"
+        "enabler_at_eval": f"{enabler_full_name} ({enabler_code})",
+        "generated_at": datetime.now().isoformat()
     }
-
 
 def _create_fallback_error(sub_id: str, level: int, error: Exception, context: str, 
                           enabler_full_name: str = "Unknown", enabler_code: str = "UNK") -> Dict[str, Any]:
-    """[SAFETY NET] จัดการกรณี LLM หรือ Prompt พัง"""
+    """[SAFETY NET] จัดการกรณี LLM หรือ Network พังแบบ 100%"""
     logger = logging.getLogger(__name__)
     logger.error(f"🛑 Critical Audit Failure Enabler:{enabler_code} Sub:{sub_id} L{level}: {str(error)}")
     
     return {
-        "sub_id": sub_id,
-        "level": level,
+        "sub_id": str(sub_id),
+        "level": int(level),
         "score": 0.0,
-        "reason": f"Audit Engine Error: {str(error)}",
         "is_passed": False,
+        "reason": f"System Error: {str(error)}",
+        "summary_thai": "ไม่สามารถประเมินได้เนื่องจากข้อผิดพลาดทางระบบ", # เพิ่มเพื่อให้ Word มีข้อมูล
+        "coaching_insight": "โปรดตรวจสอบการเชื่อมต่อ LLM หรือตรวจสอบหลักฐานอีกครั้ง", # เพิ่มเพื่อให้ Word มีข้อมูล
         "consistency_check": False,
         "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
-        "Extraction_P": "-", "Extraction_D": "-", "Extraction_C": "-", "Extraction_A": "-",
+        "Extraction_P": "ERR", "Extraction_D": "ERR", "Extraction_C": "ERR", "Extraction_A": "ERR",
         "final_llm_context": str(context or ""),
-        "raw_llm_response": "",
+        "raw_llm_response": "SYSTEM_CRASH",
         "ai_confidence_at_eval": "ERROR",
         "enabler_at_eval": f"{enabler_full_name} ({enabler_code})"
     }
 
-
 def _heuristic_fallback_parse(raw_text: str) -> Dict:
     """
-    [ENHANCED v2026.1.22] Fallback parse — หา score/PDCA จาก raw text ด้วย regex + keyword
+    [ENHANCED v2026.1.23] Heuristic Fallback 
+    - กู้คืนคะแนนจากข้อความดิบเมื่อ JSON พัง
+    - รองรับภาษาไทยใน Regex
     """
     parsed = {
         "score": 0.0,
         "is_passed": False,
-        "reason": "JSON parse failed - fallback heuristic",
-        "summary_thai": "ไม่สามารถแยกผลลัพธ์ได้อย่างสมบูรณ์",
-        "P_Plan_Score": 0.0,
-        "D_Do_Score": 0.0,
-        "C_Check_Score": 0.0,
-        "A_Act_Score": 0.0,
+        "reason": "JSON Parse Failed (Heuristic Applied)",
+        "summary_thai": "สกัดผลลัพธ์จากข้อความดิบ",
+        "coaching_insight": "ตรวจสอบเนื้อหาใน Raw Response",
+        "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
         "consistency_check": False
     }
 
     import re
-
-    # หา score หลัก
-    score_match = re.search(r"(?:score|คะแนน|total score)\D*([\d\.]+)", raw_text, re.IGNORECASE)
+    # 🎯 Regex ที่แข็งแกร่งขึ้นสำหรับหา Score รวม
+    # ดักได้ทั้ง: "Score: 1.5", "คะแนนรวม: 2", "Total = 0.5"
+    score_match = re.search(r"(?:score|คะแนน|total|ผลรวม)\D*([\d\.]+)", raw_text, re.I)
     if score_match:
         try:
-            parsed["score"] = float(score_match.group(1))
+            val = float(score_match.group(1))
+            parsed["score"] = min(val, 10.0) # กันคะแนนเกิน
             parsed["is_passed"] = parsed["score"] >= 0.7
-        except:
-            pass
+        except: pass
 
-    # หา PDCA scores
-    pdca_patterns = {
-        "P_Plan_Score": r"(?:P_Plan|P|Plan|แผน)\D*([\d\.]+)",
-        "D_Do_Score": r"(?:D_Do|D|Do|ปฏิบัติ)\D*([\d\.]+)",
-        "C_Check_Score": r"(?:C_Check|C|Check|ตรวจสอบ)\D*([\d\.]+)",
-        "A_Act_Score": r"(?:A_Act|A|Act|ปรับปรุง)\D*([\d\.]+)"
+    # 🎯 Regex สำหรับ PDCA แยกรายตัว
+    patterns = {
+        "P_Plan_Score": r"[Pp](?:lan|score)?\D*([\d\.]+)",
+        "D_Do_Score": r"[Dd](?:o|score)?\D*([\d\.]+)",
+        "C_Check_Score": r"[Cc](?:heck|score)?\D*([\d\.]+)",
+        "A_Act_Score": r"[Aa](?:ct|score)?\D*([\d\.]+)"
     }
 
-    for key, pattern in pdca_patterns.items():
-        match = re.search(pattern, raw_text, re.IGNORECASE)
-        if match:
-            try:
-                parsed[key] = float(match.group(1))
-            except:
-                pass
+    for key, pat in patterns.items():
+        m = re.search(pat, raw_text)
+        if m:
+            try: parsed[key] = float(m.group(1))
+            except: pass
 
-    parsed["reason"] += f" | Raw snippet: {raw_text[:300]}..."
+    # พยายามดึง "เหตุผล" จากบรรทัดแรกๆ
+    lines = [l.strip() for l in raw_text.split('\n') if len(l.strip()) > 10]
+    if lines:
+        parsed["summary_thai"] = lines[0][:200]
+        
     return parsed
 
 # ------------------------
