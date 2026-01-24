@@ -202,85 +202,82 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [UI TRANSFORMER v2026.3.29 - ADAPTED FOR EXPORT v2026.EXPORT.5]
-    แปลงข้อมูลจากโครงสร้าง Export ใหม่ ให้เข้ากับ UI Components (AssessmentResults.tsx)
+    [UI TRANSFORMER v2026.3.29 - ADAPTED FOR HIERARCHICAL STRUCTURE]
+    ปรับปรุงให้รองรับโครงสร้าง json ที่มี sub_criteria_results ซ้อนอยู่ภายใน details
     """
     if not raw_data:
         return {"status": "FAILED", "message": "No data to transform"}
 
-    # 1. 📂 Unpack New Structure (รองรับโครงสร้างใหม่)
+    # 1. 📂 ดึงข้อมูล Metadata และ Summary หลัก
     metadata = raw_data.get("metadata", {})
     res_summary = raw_data.get("result_summary", {})
-    sub_details = raw_data.get("sub_criteria_details", [])
-    evidence_audit = raw_data.get("evidence_audit_trail", {}) # ดึงจาก Master Map
-    strategic_roadmap = raw_data.get("strategic_synthesis", {}) # Tier-3 Strategic Roadmap
-
-    # ข้อมูลพื้นฐาน
-    tenant = str(metadata.get("tenant", "pea")).lower()
-    year = str(metadata.get("year", "2567"))
-    enabler = str(metadata.get("enabler") or "KM").upper()
-    record_id = metadata.get("record_id", "unknown")
+    # โครงสร้างใหม่: details -> sub_criteria_results
+    details_wrapper = raw_data.get("sub_criteria_details", [])
+    
+    # ดึงรายการ sub_criteria จริงๆ ออกมา
+    sub_results = []
+    if details_wrapper and isinstance(details_wrapper, list):
+        sub_results = details_wrapper[0].get("sub_criteria_results", []) # ดึงจาก index แรก
 
     processed_sub_criteria = []
     radar_data = []
     passed_count = 0
 
-    # 2. 🧩 Loop Process Sub-Criteria
-    for sub in sub_details:
+    # 2. 🧩 Loop ประมวลผลแต่ละหัวข้อเกณฑ์ (Sub-Criteria)
+    for sub in sub_results:
         sub_id = sub.get("sub_id", "N/A")
         sub_name = sub.get("sub_criteria_name", "Unknown Criteria")
-        highest_pass = int(sub.get("highest_full_level", 0))
+        # หาระดับสูงสุดที่ผ่าน (is_passed=True)
         level_details = sub.get("level_details", {})
+        passed_levels = [int(lv) for lv, v in level_details.items() if v.get("is_passed")]
+        highest_pass = max(passed_levels) if passed_levels else 0
         
         if highest_pass > 0: passed_count += 1
 
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
         pdca_matrix = []
         pdca_coverage = {}
-        level_breakdown = {}
-        
+        level_breakdown_map = {}
         sub_unique_files = set()
         sub_conf_scores = []
 
-        # 3. 🛡️ Mapping Level Details & Evidence
+        # 3. 🛡️ Mapping รายละเอียดแต่ละ Level (1-5)
         for lv_idx in range(1, 6):
             lv_key = str(lv_idx)
             lv_info = level_details.get(lv_key) or {}
             is_passed = lv_info.get("is_passed", False)
             
-            # --- Tier-2: Action Plan (Atomic) ---
-            level_breakdown[lv_key] = {
+            # --- ข้อมูลพื้นฐานแต่ละระดับ ---
+            level_breakdown_map[lv_key] = {
                 "is_passed": is_passed,
                 "score": round(float(lv_info.get("score", 0.0)), 2),
                 "reason": lv_info.get("reason", "ไม่มีข้อมูลการประเมิน"),
+                "coaching_insight": lv_info.get("coaching_insight", ""),
                 "action_plan": lv_info.get("atomic_action_plan") or [] 
             }
             
-            # --- Evidence Mapping (ดึงจาก Master Audit Trail) ---
-            # ในโครงสร้างใหม่ key คือ "1", "2" (ระดับ Level)
-            audit_item = evidence_audit.get(lv_key) # โครงสร้างใหม่เก็บ Best Evidence ต่อ Level
-            
-            if audit_item and isinstance(audit_item, dict):
-                f_name = audit_item.get("file")
-                if f_name and f_name != "Unknown_Source":
+            # --- การจัดการหลักฐาน (Evidence Sources) ---
+            sources = lv_info.get("evidence_sources", [])
+            for src in sources:
+                f_name = src.get("filename")
+                if f_name:
                     sub_unique_files.add(f_name)
-                    conf_val = float(audit_item.get("confidence", 0.0))
+                    conf_val = float(src.get("score", 0.0))
                     sub_conf_scores.append(conf_val)
                     
-                    # รูปแบบที่ UI คาดหวัง
                     grouped_sources[lv_key].append({
                         "filename": f_name,
-                        "document_uuid": audit_item.get("document_uuid") or f_name,
-                        "page": str(audit_item.get("page", "1")),
+                        "document_uuid": src.get("doc_id"),
+                        "page": str(src.get("page", "1")),
                         "rerank_score": round(conf_val * 100, 1),
-                        "pdca_tag": str(audit_item.get("tag", "OTHER")).upper(),
-                        "text": audit_item.get("content_snippet", "")
+                        "pdca_tag": str(src.get("pdca_tag", "OTHER")).upper(),
+                        "text": src.get("text", "")
                     })
 
-            # --- PDCA Coverage Matrix ---
+            # --- คำนวณ PDCA Matrix ---
             pdca_raw = lv_info.get("pdca_breakdown", {})
-            # Normalized Score: ถ้าเกิน 1.0 (หรือ 0.5 ตามเกณฑ์คุณ) ให้ถือว่าเป็น 1 (มีหลักฐาน)
-            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) >= 1.0 else 0) for k in ["P", "D", "C", "A"]}
+            # เกณฑ์: ถ้าคะแนน PDCA > 0 ถือว่ามีร่องรอยการปฏิบัติ
+            pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             pdca_matrix.append({
                 "level": lv_idx,
                 "is_passed": is_passed,
@@ -288,42 +285,39 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             })
             pdca_coverage[lv_key] = {"percentage": round((sum(pdca_final.values()) / 4) * 100, 1)}
 
-        # 4. 📈 Insight & Analysis
-        current_reason = level_details.get(str(highest_pass or 1), {}).get("reason", "")
-        avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores) * 100) if sub_conf_scores else 0
-
+        # 4. 📈 สรุป Insight ราย Sub-Criteria
+        avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores)) if sub_conf_scores else 0
+        
         processed_sub_criteria.append({
             "code": sub_id,
             "name": sub_name,
             "level": f"L{highest_pass}",
-            "score": round(float(sub.get("weighted_score", 0.0)), 2),
+            "score": round(float(sub.get("score", 0.0)), 2),
             "pdca_matrix": pdca_matrix,
             "pdca_coverage": pdca_coverage,
-            "level_breakdown": level_breakdown,
+            "level_breakdown": level_breakdown_map,
             "audit_confidence": {
                 "source_count": len(sub_unique_files),
-                "traceability_score": round(avg_conf / 100, 2), # UI ใช้ค่า 0-1
-                "consistency_check": not sub.get("needs_human_review", False)
+                "traceability_score": round(avg_conf, 2),
+                "level": level_details.get(str(max(highest_pass, 1)), {}).get("audit_confidence", {}).get("level", "LOW")
             },
-            "roadmap": sub.get("master_roadmap") or [], # Tier-2 Roadmap รายหัวข้อ
             "grouped_sources": grouped_sources,
-            "reason": current_reason
+            "reason": level_details.get(str(max(highest_pass, 1)), {}).get("reason", "")
         })
         radar_data.append({"axis": sub_id, "value": highest_pass})
 
-    # 5. 🏁 Final UI Payload
-    total_criteria = len(sub_details)
+    # 5. 🏁 สรุปภาพรวมส่งให้ UI
+    total_criteria = len(sub_results)
     completion_rate = round((passed_count / total_criteria * 100), 1) if total_criteria > 0 else 0
 
     return {
-        "status": "COMPLETED",
-        "record_id": record_id,
-        "tenant": tenant,
-        "year": year,
-        "enabler": enabler,
+        "status": res_summary.get("status", "COMPLETED"),
+        "record_id": metadata.get("record_id"),
+        "tenant": metadata.get("tenant", "pea"),
+        "year": metadata.get("year", 2567),
+        "enabler": metadata.get("enabler", "KM"),
         "level": str(res_summary.get("maturity_level", "L0")).replace("L", ""),
         "score": round(float(res_summary.get("total_weighted_score", 0.0)), 2),
-        "full_score": 5.0,
         "metrics": {
             "completion_rate": completion_rate,
             "passed_criteria": passed_count,
@@ -331,8 +325,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "evidence_count": res_summary.get("evidence_used_count", 0)
         },
         "radar_data": radar_data,
-        "sub_criteria": processed_sub_criteria,
-        "strategic_roadmap": strategic_roadmap # Tier-3 Synthesis
+        "sub_criteria": processed_sub_criteria
     }
 
 def set_thai_font(run, size=14, bold=False, color=None):

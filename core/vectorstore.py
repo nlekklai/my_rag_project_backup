@@ -72,7 +72,8 @@ from config.global_vars import (
     USE_HYBRID_SEARCH,
     HYBRID_BM25_WEIGHT,
     HYBRID_VECTOR_WEIGHT,
-    DEFAULT_DOC_TYPES
+    DEFAULT_DOC_TYPES,
+    TARGET_DEVICE
 )
 
 # Logging
@@ -130,7 +131,7 @@ def get_hf_embeddings(device_hint: Optional[str] = None):
     global _CACHED_EMBEDDINGS
     
     # บังคับให้ตรวจหา Device ใหม่ทุกครั้งถ้ายังไม่มี Cache ใน Process นี้
-    device = device_hint or _detect_torch_device()
+    device = device_hint or TARGET_DEVICE or _detect_torch_device()
 
     if _CACHED_EMBEDDINGS is None:
         with _EMBED_LOCK:
