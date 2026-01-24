@@ -23,28 +23,30 @@ from config.global_vars import (
     DEFAULT_TENANT, DEFAULT_YEAR
 ) 
 
-try:
-    from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
-    from core.vectorstore import load_all_vectorstores
-    
-    # 🎯 Robust Document Map Loader
-    try:
-        from core.vectorstore import load_document_map
-    except ImportError:
-        try:
-            from core.vectorstore import load_doc_id_mapping as load_document_map
-            print("💡 Note: Using 'load_doc_id_mapping' as 'load_document_map'")
-        except ImportError:
-            def load_document_map(*args, **kwargs): return {}
-            print("⚠️ Warning: No document mapping function found.")
-
-except Exception as e:
-    print(f"❌ FATAL: Missing critical modules: {e}", file=sys.stderr)
-    raise
-
 # -------------------- LOGGING SETUP --------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# -------------------- IMPORT CORE --------------------
+from models.llm import create_llm_instance
+from database import init_db, db_create_task, db_finish_task, db_update_task_status 
+
+# ✅ นำเข้าฟังก์ชันโหลด mapping จาก path_utils โดยตรง
+try:
+    from utils.path_utils import load_doc_id_mapping as load_document_map
+    logger.info("✅ Successfully linked 'load_doc_id_mapping' from path_utils")
+except ImportError:
+    # Fallback กรณีหาไม่เจอจริงๆ (ไม่ควรเกิดขึ้นถ้า path_utils อยู่ถูกที่)
+    def load_document_map(*args, **kwargs): return {}
+    print("⚠️ Warning: No document mapping function found in utils.path_utils")
+
+try:
+    from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig 
+    from core.vectorstore import load_all_vectorstores
+    # ลบส่วน Import load_document_map เก่าๆ ทิ้งไปได้เลย
+except Exception as e:
+    print(f"❌ FATAL: Missing critical modules: {e}", file=sys.stderr)
+    raise
 
 # -------------------- ARGUMENT PARSING --------------------
 def parse_args() -> argparse.Namespace:

@@ -173,6 +173,20 @@ MAX_CHUNKS_LOW = int(os.getenv("MAX_CHUNKS_LOW_LEVEL", 45))
 MAX_CHUNKS_HIGH = int(os.getenv("MAX_CHUNKS_HIGH_LEVEL", 30))
 
 
+# --- Evidence Management ---
+# นโยบายการตรวจ (Global Instruction)
+GLOBAL_EVIDENCE_INSTRUCTION = os.getenv(
+    "GLOBAL_EVIDENCE_INSTRUCTION", 
+    "เน้นการตรวจสอบหลักฐานที่เป็นการปฏิบัติจริง (Do) และการติดตามผล (Check) มากกว่าเพียงแค่แผนงาน (Plan)"
+)
+
+# จำนวนหลักฐานสูงสุด (ป้องกันกรณีค่าใน .env ไม่เป็นตัวเลข)
+raw_cap = os.getenv("EVIDENCE_CUMULATIVE_CAP", "15")
+EVIDENCE_CUMULATIVE_CAP = int(raw_cap) if raw_cap.isdigit() else 15
+
+# กลยุทธ์การเลือกหลักฐาน
+EVIDENCE_SELECTION_STRATEGY = os.getenv("EVIDENCE_SELECTION_STRATEGY", "score")
+
 # ================================================================
 # Action Plan Generation Control (ย้ายขึ้นมาไว้ตรงนี้)
 # ================================================================

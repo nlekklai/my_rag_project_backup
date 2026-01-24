@@ -983,6 +983,8 @@ def evaluate_with_llm(
     context_to_send_eval = _get_context_for_level(ctx_raw, level) or ""
     phases_str = ", ".join(str(p).strip() for p in (required_phases or [])) if required_phases else "P, D, C, A"
     baseline_summary = str(kwargs.get("baseline_summary") or "").strip()
+    focus_points = str(kwargs.get("focus_points", "-"))
+    evidence_guidelines = str(kwargs.get("evidence_guidelines", "-"))
 
     try:
         # Build prompt
@@ -998,7 +1000,10 @@ def evaluate_with_llm(
             ai_confidence=str(ai_confidence),
             confidence_reason=str(confidence_reason),
             enabler_full_name=enabler_full_name,
-            enabler_code=enabler_code
+            enabler_code=enabler_code,
+            # 🎯 ส่งเข้า Prompt Template
+            focus_points=focus_points,
+            evidence_guidelines=evidence_guidelines
         )
         if baseline_summary:
             full_prompt += f"\n\n--- BASELINE DATA ---\n{baseline_summary}"
@@ -1047,6 +1052,8 @@ def evaluate_with_llm_low_level(
     plan_kws = str(kwargs.get("plan_keywords") or "นโยบาย, แผนงาน, ยุทธศาสตร์")
     baseline_summary = str(kwargs.get("baseline_summary") or "ไม่มีข้อมูลระดับก่อนหน้า")
     phases_str = ", ".join(str(p) for p in (required_phases or [])) if required_phases else "P, D"
+    focus_points = str(kwargs.get("focus_points", "-"))
+    evidence_guidelines = str(kwargs.get("evidence_guidelines", "-"))
 
     try:
         full_prompt = USER_LOW_LEVEL_PROMPT.format(
@@ -1063,7 +1070,10 @@ def evaluate_with_llm_low_level(
             ai_confidence=str(ai_confidence),
             confidence_reason=str(kwargs.get("confidence_reason", "วิเคราะห์ตามเนื้องาน")),
             enabler_full_name=enabler_full_name,
-            enabler_code=enabler_code
+            enabler_code=enabler_code,
+            # 🎯 ส่งเข้า Prompt Template
+            focus_points=focus_points,
+            evidence_guidelines=evidence_guidelines
         )
 
         # [UPGRADED CALL] เรียก Fetcher
