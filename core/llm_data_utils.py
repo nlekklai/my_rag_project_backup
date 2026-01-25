@@ -957,6 +957,9 @@ def _get_context_for_level(
     max_chars = max_chars_l1_l2 if level <= 2 else max_chars_l3_up
     return context[:max_chars] + ("... [truncated]" if len(context) > max_chars else "")
 
+# =================================================================
+# 1. CORE LLM EVALUATION FUNCTIONS (Revised for New Prompts)
+# =================================================================
 def evaluate_with_llm(
     context: str, 
     sub_criteria_name: str, 
@@ -971,23 +974,32 @@ def evaluate_with_llm(
     pdca_context: str = "", 
     **kwargs
 ) -> Dict[str, Any]:
+    """
+    [REVISED v2026.01.25] - การประเมินระดับสูง (L3-L5)
+    - FIXED: ป้องกัน TypeError Multiple Values โดยการ pop confidence_reason ออกจาก kwargs
+    """
     logger = logging.getLogger(__name__)
 
-    # Casting & Null Safety
+    # 1. เตรียม Data พื้นฐานและดึงความมั่นใจ
     ctx_raw = str(context or "ไม่พบข้อมูลหลักฐาน")
     pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
-    enabler_full_name = str(kwargs.get("enabler_full_name", "Unknown Enabler"))
-    enabler_code = str(kwargs.get("enabler_code", "UNK"))
     
-    # ดึง Context ตามระดับ
+    # ดึงค่าความมั่นใจที่อาจส่งมาซ้ำใน kwargs
+    final_conf_reason = str(confidence_reason or kwargs.pop("confidence_reason", "N/A"))
+    
+    # 2. Mapping Enabler Name & Code
+    e_code = str(kwargs.get("enabler") or kwargs.get("enabler_code") or "UNK")
+    e_name_th = str(kwargs.get("enabler_name_th") or kwargs.get("enabler_full_name") or "Unknown Enabler")
+    
+    # ฉีดค่าที่ Clean แล้วกลับเข้า kwargs
+    kwargs['enabler'] = e_code
+    kwargs['enabler_name_th'] = e_name_th
+
     context_to_send_eval = _get_context_for_level(ctx_raw, level) or ""
     phases_str = ", ".join(str(p).strip() for p in (required_phases or [])) if required_phases else "P, D, C, A"
-    baseline_summary = str(kwargs.get("baseline_summary") or "").strip()
-    focus_points = str(kwargs.get("focus_points", "-"))
-    evidence_guidelines = str(kwargs.get("evidence_guidelines", "-"))
 
     try:
-        # Build prompt
+        # 3. สร้าง Prompt โดยใช้ตัวแปรที่ Map แล้ว
         full_prompt = USER_ASSESSMENT_PROMPT.format(
             sub_criteria_name=str(sub_criteria_name),
             sub_id=str(sub_id),
@@ -998,38 +1010,32 @@ def evaluate_with_llm(
             required_phases=phases_str,
             specific_contextual_rule=str(specific_contextual_rule),
             ai_confidence=str(ai_confidence),
-            confidence_reason=str(confidence_reason),
-            enabler_full_name=enabler_full_name,
-            enabler_code=enabler_code,
-            # 🎯 ส่งเข้า Prompt Template
-            focus_points=focus_points,
-            evidence_guidelines=evidence_guidelines
+            confidence_reason=final_conf_reason, # ✅ ใช้งานตัวที่ Clean แล้ว
+            **kwargs # ✅ ในนี้จะไม่มี confidence_reason ซ้ำแล้ว
         )
-        if baseline_summary:
-            full_prompt += f"\n\n--- BASELINE DATA ---\n{baseline_summary}"
+        
+        if kwargs.get("baseline_summary"):
+            full_prompt += f"\n\n--- BASELINE DATA ---\n{kwargs['baseline_summary']}"
 
-        # [UPGRADED CALL] เรียก Fetcher พร้อม System Prompt ชัดเจน
-        system_msg = f"Expert SE-AM Auditor for {enabler_full_name} ({enabler_code})"
+        system_msg = f"Expert SE-AM Auditor for {e_name_th} ({e_code})"
+        # raw_response = _fetch_llm_response(system_msg, full_prompt, llm_executor)
         raw_response = _fetch_llm_response(
             system_prompt=system_msg,
             user_prompt=full_prompt,
             llm_executor=llm_executor
         )
 
-        # Parse & Build Object (ใช้ Ironclad Extractor ที่เราทำไว้)
         parsed = _robust_extract_json(raw_response)
-        if not parsed.get("reason") or parsed.get("reason") == "ไม่สามารถแยกวิเคราะห์ JSON ได้":
-             parsed = _heuristic_fallback_parse(raw_response)
-
         return _build_audit_result_object(
             parsed, raw_response, context_to_send_eval, ai_confidence, 
-            level=level, sub_id=sub_id, enabler_full_name=enabler_full_name, enabler_code=enabler_code
+            level=level, sub_id=sub_id, enabler_full_name=e_name_th, enabler_code=e_code
         )
 
     except Exception as e:
         logger.error(f"🛑 Evaluation Error Sub:{sub_id} L{level}: {str(e)}")
-        return _create_fallback_error(sub_id, level, e, context_to_send_eval, enabler_full_name, enabler_code)
+        return _create_fallback_error(sub_id, level, e, context_to_send_eval, e_name_th, e_code)
     
+
 def evaluate_with_llm_low_level(
     context: str,
     sub_criteria_name: str,
@@ -1043,19 +1049,33 @@ def evaluate_with_llm_low_level(
     pdca_context: str = "",
     **kwargs
 ) -> Dict[str, Any]:
+    """
+    [REVISED v2026.01.25] - การประเมินระดับพื้นฐาน (L1-L2)
+    - FIXED: แก้ไข Multiple values error สำหรับ 'confidence_reason'
+    - FIXED: ป้องกัน KeyError 'plan_keywords'
+    """
     logger = logging.getLogger(__name__)
 
-    enabler_full_name = str(kwargs.get("enabler_full_name", "Unknown Enabler"))
-    enabler_code = str(kwargs.get("enabler_code", "UNK"))
-    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
+    # 1. จัดการ Parameter ที่สุ่มเสี่ยงต่อการซ้ำซ้อน
+    # ดึงออกจาก kwargs เพื่อไม่ให้เกิด error ตอนกระจาย **kwargs ใน format()
+    conf_reason = str(kwargs.pop("confidence_reason", "N/A"))
     
-    plan_kws = str(kwargs.get("plan_keywords") or "นโยบาย, แผนงาน, ยุทธศาสตร์")
-    baseline_summary = str(kwargs.get("baseline_summary") or "ไม่มีข้อมูลระดับก่อนหน้า")
+    # 2. Mapping Enabler Info
+    e_code = str(kwargs.get("enabler") or kwargs.get("enabler_code") or "UNK")
+    e_name_th = str(kwargs.get("enabler_name_th") or kwargs.get("enabler_full_name") or "Unknown Enabler")
+    
+    kwargs['enabler'] = e_code
+    kwargs['enabler_name_th'] = e_name_th
+
+    pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
     phases_str = ", ".join(str(p) for p in (required_phases or [])) if required_phases else "P, D"
-    focus_points = str(kwargs.get("focus_points", "-"))
-    evidence_guidelines = str(kwargs.get("evidence_guidelines", "-"))
+    
+    if 'plan_keywords' not in kwargs:
+        kwargs['plan_keywords'] = "แผนงาน, นโยบาย, คำสั่ง, การดำเนินงาน"
 
     try:
+        # 3. การสร้าง Prompt ที่ปลอดภัย (Safe Formatting)
+        # 
         full_prompt = USER_LOW_LEVEL_PROMPT.format(
             sub_id=str(sub_id),
             sub_criteria_name=str(sub_criteria_name),
@@ -1064,36 +1084,31 @@ def evaluate_with_llm_low_level(
             context=str(context)[:25000],
             pdca_context=pdca_ctx[:8000],
             required_phases=phases_str,
-            plan_keywords=plan_kws,
-            baseline_summary=baseline_summary,
             specific_contextual_rule=str(specific_contextual_rule),
             ai_confidence=str(ai_confidence),
-            confidence_reason=str(kwargs.get("confidence_reason", "วิเคราะห์ตามเนื้องาน")),
-            enabler_full_name=enabler_full_name,
-            enabler_code=enabler_code,
-            # 🎯 ส่งเข้า Prompt Template
-            focus_points=focus_points,
-            evidence_guidelines=evidence_guidelines
+            confidence_reason=conf_reason, # ✅ ระบุตัวแปรที่ pop ออกมาแล้ว
+            **kwargs # ✅ กระจายตัวที่เหลือ (จะไม่มี confidence_reason ในนี้แล้ว)
         )
 
-        # [UPGRADED CALL] เรียก Fetcher
-        system_msg = f"Foundation Auditor for {enabler_full_name} ({enabler_code})"
+        system_msg = f"Foundation Auditor for {e_name_th} ({e_code})"
+        # raw_response = _fetch_llm_response(system_msg, full_prompt, llm_executor)
         raw_response = _fetch_llm_response(
             system_prompt=system_msg,
             user_prompt=full_prompt,
             llm_executor=llm_executor
         )
 
+
         parsed = _robust_extract_json(raw_response)
         return _build_audit_result_object(
             parsed, raw_response, context, ai_confidence, 
-            level=level, sub_id=sub_id, enabler_full_name=enabler_full_name, enabler_code=enabler_code
+            level=level, sub_id=sub_id, enabler_full_name=e_name_th, enabler_code=e_code
         )
 
     except Exception as e:
         logger.error(f"🛑 Low-Level Eval Error Sub:{sub_id} L{level}: {str(e)}")
-        return _create_fallback_error(sub_id, level, e, context, enabler_full_name, enabler_code)
-    
+        # ส่งค่า fallback ที่มีข้อมูล Enabler ครบถ้วน
+        return _create_fallback_error(sub_id, level, e, context, e_name_th, e_code)
 
 def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, confidence: str, **kwargs) -> Dict[str, Any]:
     """

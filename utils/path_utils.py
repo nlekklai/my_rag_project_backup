@@ -441,7 +441,12 @@ def get_mapping_key_from_physical_path(physical_path: str) -> str:
          
     return relative_key
 
-# OTHER PATHS เ
+# TENANT PATHS เ
+def get_tenant_info_file_path(tenant: str) -> str:
+    """คืนค่า Path ของไฟล์ข้อมูลองค์กร (e.g., data_store/pea/config/pea_info.json)"""
+    tenant_clean = _n(tenant)
+    return os.path.join(get_config_tenant_root_path(tenant), f"{tenant_clean}_info.json")
+
 def get_tenant_year_export_root(tenant: str, year: Union[int, str]) -> str:
     """คืนค่า Path ระดับปี (Root ของ exports) เพื่อใช้วนหาไฟล์ในทุก Enabler"""
     return os.path.join(DATA_STORE_ROOT, _n(tenant), "exports", str(year))
