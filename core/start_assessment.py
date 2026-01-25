@@ -149,10 +149,9 @@ def main():
         db_update_task_status(record_id, 0, f"Error: {str(e)}", status="FAILED")
         sys.exit(1)
 
-    # 6. Final Summary Extraction (Ironclad Logic)
+    # 6. Final Summary Extraction (Production-Ready Logic)
     duration_s = time.time() - start_ts
     
-    # กำหนดค่าเริ่มต้นเพื่อป้องกัน AttributeError
     summary_display = {
         "level": "L0",
         "score": 0.0,
@@ -160,16 +159,28 @@ def main():
     }
 
     if isinstance(final_results, dict):
-        summary = final_results.get("summary", {})
-        summary_display["level"] = summary.get("overall_level_label", "L0")
-        summary_display["score"] = summary.get("overall_avg_score", 0.0)
+        # 1. ลองดึงจากตัวรวมระดับบนสุดก่อน
+        res_summary = final_results.get("result_summary", {}) 
+        summary_display["level"] = res_summary.get("maturity_level", "L0")
+        summary_display["score"] = res_summary.get("total_weighted_score", 0.0)
         summary_display["path"] = final_results.get("export_path_used", "N/A")
 
-        # [Safe Guard] กรณีรันหัวข้อเดียวแต่ผลรวม (summary) พัง ให้ดึงจาก subcriteria_results
+        # 2. [Safe Guard] หากด้านบนเป็น 0 (อาจเพราะ Bug ใน Aggregator) ให้ Loop หาจากรายละเอียด
         if summary_display["score"] == 0:
-            results = final_results.get("subcriteria_results", [])
-            if results and isinstance(results[0], dict):
-                summary_display["score"] = results[0].get("weighted_score", 0.0)
+            details = final_results.get("sub_criteria_details", [])
+            for d in details:
+                sub_results = d.get("sub_criteria_results", [])
+                if sub_results:
+                    # คำนวณหาคะแนนรวมจาก weight ของทุก level ที่ประเมินผ่าน
+                    total_score = sum(
+                        item.get("weight", 0) 
+                        for item in sub_results 
+                        if item.get("level_details")
+                    )
+                    if total_score > 0:
+                        summary_display["score"] = total_score
+                        # ถ้าเจอตัวที่มีข้อมูลแล้ว ให้หยุดหาทันที
+                        break
 
     # 🏁 Display Summary UI
     print("\n" + "═"*65)

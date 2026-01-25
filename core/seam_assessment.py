@@ -858,8 +858,8 @@ class SEAMPDCAEngine:
         llm_output: Any,
         level: int,
         sub_id: str = None,
-        contextual_config: Dict = {},
-        top_evidences: List[Dict[str, Any]] = []
+        contextual_config: Optional[Dict] = None,
+        top_evidences: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         [ULTIMATE REVISED v2026.01.31] Post-process LLM output for SE-AM Assessment
