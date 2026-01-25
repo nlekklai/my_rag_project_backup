@@ -202,8 +202,8 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [UI TRANSFORMER v2026.3.29 - ADAPTED FOR HIERARCHICAL STRUCTURE]
-    ปรับปรุงให้รองรับโครงสร้าง json ที่มี sub_criteria_results ซ้อนอยู่ภายใน details
+    [REVISED v2026.1.25] 
+    ปรับปรุงการดึงข้อมูลหลักฐานและคะแนนจากโครงสร้าง level_details ให้ตรงกับไฟล์ export จริง
     """
     if not raw_data:
         return {"status": "FAILED", "message": "No data to transform"}
@@ -211,13 +211,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     # 1. 📂 ดึงข้อมูล Metadata และ Summary หลัก
     metadata = raw_data.get("metadata", {})
     res_summary = raw_data.get("result_summary", {})
-    # โครงสร้างใหม่: details -> sub_criteria_results
     details_wrapper = raw_data.get("sub_criteria_details", [])
     
-    # ดึงรายการ sub_criteria จริงๆ ออกมา
+    # ดึงรายการ sub_criteria_results จาก index แรกของรายละเอียด
     sub_results = []
     if details_wrapper and isinstance(details_wrapper, list):
-        sub_results = details_wrapper[0].get("sub_criteria_results", []) # ดึงจาก index แรก
+        sub_results = details_wrapper[0].get("sub_criteria_results", [])
 
     processed_sub_criteria = []
     radar_data = []
@@ -227,11 +226,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     for sub in sub_results:
         sub_id = sub.get("sub_id", "N/A")
         sub_name = sub.get("sub_criteria_name", "Unknown Criteria")
-        # หาระดับสูงสุดที่ผ่าน (is_passed=True)
+        
+        # ดึงรายละเอียดระดับ 1-5
         level_details = sub.get("level_details", {})
+        
+        # หาระดับสูงสุดที่ผ่าน (is_passed=True)
         passed_levels = [int(lv) for lv, v in level_details.items() if v.get("is_passed")]
         highest_pass = max(passed_levels) if passed_levels else 0
-        
         if highest_pass > 0: passed_count += 1
 
         grouped_sources = {str(lv): [] for lv in range(1, 6)}
@@ -242,6 +243,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         sub_conf_scores = []
 
         # 3. 🛡️ Mapping รายละเอียดแต่ละ Level (1-5)
+        # เรียงตาม Key '1', '2', '3', '4', '5'
         for lv_idx in range(1, 6):
             lv_key = str(lv_idx)
             lv_info = level_details.get(lv_key) or {}
@@ -259,24 +261,29 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             # --- การจัดการหลักฐาน (Evidence Sources) ---
             sources = lv_info.get("evidence_sources", [])
             for src in sources:
-                f_name = src.get("filename")
-                if f_name:
-                    sub_unique_files.add(f_name)
-                    conf_val = float(src.get("score", 0.0))
-                    sub_conf_scores.append(conf_val)
-                    
-                    grouped_sources[lv_key].append({
-                        "filename": f_name,
-                        "document_uuid": src.get("doc_id"),
-                        "page": str(src.get("page", "1")),
-                        "rerank_score": round(conf_val * 100, 1),
-                        "pdca_tag": str(src.get("pdca_tag", "OTHER")).upper(),
-                        "text": src.get("text", "")
-                    })
+                # ดึงชื่อไฟล์และ UUID (รองรับทั้ง source_filename และ filename)
+                f_name = src.get("filename") or src.get("source_filename") or "Unknown File"
+                
+                # เก็บข้อมูลเข้า Set เพื่อสรุปจำนวนไฟล์ไม่ซ้ำ
+                sub_unique_files.add(f_name.split('|')[0]) # แยกชื่อไฟล์ออกจากคะแนนถ้ามี |
+                
+                # เก็บค่าความมั่นใจ (Relevance Score)
+                conf_val = float(src.get("score") or src.get("relevance_score") or 0.0)
+                sub_conf_scores.append(conf_val)
+                
+                # จัดกลุ่มตาม Level เพื่อส่งให้ UI/Report
+                grouped_sources[lv_key].append({
+                    "filename": f_name.split('|')[0],
+                    "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
+                    "page": str(src.get("page", "1")),
+                    "rerank_score": round(conf_val * 100, 1),
+                    "pdca_tag": str(src.get("pdca_tag", "OTHER")).upper(),
+                    "text": src.get("text", "")
+                })
 
-            # --- คำนวณ PDCA Matrix ---
+            # --- คำนวณ PDCA Matrix จาก pdca_breakdown ใน JSON ---
             pdca_raw = lv_info.get("pdca_breakdown", {})
-            # เกณฑ์: ถ้าคะแนน PDCA > 0 ถือว่ามีร่องรอยการปฏิบัติ
+            # เกณฑ์: ถ้ามีคะแนนในส่วนนั้น > 0 ถือว่ามีร่องรอยกิจกรรม
             pdca_final = {k: (1 if float(pdca_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
             pdca_matrix.append({
                 "level": lv_idx,
@@ -288,6 +295,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         # 4. 📈 สรุป Insight ราย Sub-Criteria
         avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores)) if sub_conf_scores else 0
         
+        # ดึงสรุปจาก Level สูงสุดที่ผ่าน หรือ Level 1 เป็นฐาน
+        target_lv_key = str(max(highest_pass, 1))
+        display_info = level_details.get(target_lv_key, {})
+
         processed_sub_criteria.append({
             "code": sub_id,
             "name": sub_name,
@@ -299,10 +310,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "audit_confidence": {
                 "source_count": len(sub_unique_files),
                 "traceability_score": round(avg_conf, 2),
-                "level": level_details.get(str(max(highest_pass, 1)), {}).get("audit_confidence", {}).get("level", "LOW")
+                "level": "HIGH" if avg_conf > 0.7 else "MEDIUM" if avg_conf > 0.4 else "LOW"
             },
             "grouped_sources": grouped_sources,
-            "reason": level_details.get(str(max(highest_pass, 1)), {}).get("reason", "")
+            "reason": display_info.get("reason", ""),
+            "next_step": display_info.get("coaching_insight", "")
         })
         radar_data.append({"axis": sub_id, "value": highest_pass})
 
@@ -318,6 +330,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "enabler": metadata.get("enabler", "KM"),
         "level": str(res_summary.get("maturity_level", "L0")).replace("L", ""),
         "score": round(float(res_summary.get("total_weighted_score", 0.0)), 2),
+        "full_score": 5.0, # SE-AM ปกติเต็ม 5
         "metrics": {
             "completion_rate": completion_rate,
             "passed_criteria": passed_count,
@@ -345,22 +358,21 @@ def set_cell_background(cell, fill_color):
     shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_color}"/>')
     cell._tc.get_or_add_tcPr().append(shading_elm)
 
+
 def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     """
-    [v2026.FINAL - Production Grade]
-    สร้างรายงาน Word โดยอิงข้อมูลจาก UI-Ready JSON
-    รองรับ: TH Sarabun New, PDCA Matrix, Evidence Mapping และ Strategic Roadmap
+    [v2026.FINAL - Revised for level_details structure]
+    สร้างรายงาน Word โดยอิงข้อมูลจาก UI-Ready JSON ที่ผ่านการ transform มาแล้ว
     """
     doc = Document()
     
     # 1. หัวข้อรายงาน (Header)
     header = doc.add_paragraph()
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_h = header.add_run(f"รายงานผลการประเมิน Maturity Audit ({ui_data.get('enabler', 'SE-AM')})\n")
-    set_thai_font(run_h, size=20, bold=True, color=RGBColor(30, 58, 138)) # สีน้ำเงินเข้ม
+    run_h = header.add_run(f"รายงานผลการประเมิน Maturity Audit ({ui_data.get('enabler', 'KM')})\n")
+    set_thai_font(run_h, size=20, bold=True, color=RGBColor(30, 58, 138))
 
-    # 2. ส่วนสรุปภาพรวม (Overall Summary Box)
-    # ดึงค่าจาก root ของ ui_data ตามที่ _transform_result_for_ui ปรับมาให้
+    # 2. ส่วนสรุปภาพรวม (Overall Summary)
     maturity_lv = str(ui_data.get('level', '0'))
     total_score = ui_data.get('score', 0)
     full_score = ui_data.get('full_score', 5)
@@ -369,34 +381,32 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
     sum_p = doc.add_paragraph()
     sum_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_sum = sum_p.add_run(
-        f"ระดับวุฒิภาวะที่ได้: L{maturity_lv} | คะแนนรวม: {total_score}/{full_score} "
-        f"({metrics.get('completion_rate', 0)}% Completion)"
+        f"ระดับวุฒิภาวะ: L{maturity_lv} | คะแนนรวม: {total_score}/{full_score} "
+        f"({metrics.get('completion_rate', 0)}% ผ่านเกณฑ์ย่อย)"
     )
-    set_thai_font(run_sum, size=16, bold=True, color=RGBColor(22, 101, 52)) # สีเขียว
+    set_thai_font(run_sum, size=16, bold=True, color=RGBColor(22, 101, 52))
 
     # 3. วนลูปรายหัวข้อเกณฑ์ย่อย (Sub-Criteria)
     for item in ui_data.get('sub_criteria', []):
-        # --- กั้นหน้าใหม่สำหรับแต่ละหัวข้อใหญ่ (ถ้าต้องการ) ---
-        # doc.add_page_break() 
-
-        # --- หัวข้อเกณฑ์ ---
+        # หัวข้อเกณฑ์
         doc.add_paragraph() 
         title_p = doc.add_paragraph()
-        run_title = title_p.add_run(f"เกณฑ์ย่อย {item.get('code', '')}: {item.get('name', '')}")
+        run_title = title_p.add_run(f"เกณฑ์ {item.get('code', '')}: {item.get('name', '')}")
         set_thai_font(run_title, size=16, bold=True, color=RGBColor(30, 58, 138))
 
-        # --- 3.1 ตาราง Audit Confidence (Tier-2 Metrics) ---
+        # --- 3.1 ตาราง Audit Confidence ---
         conf_table = doc.add_table(rows=1, cols=3)
         conf_table.style = 'Table Grid'
         conf = item.get('audit_confidence', {})
         
-        # คำนวณ Traceability ให้เป็น %
-        trace_val = int(float(conf.get('traceability_score', 0)) * 100)
+        # จัดการค่าความมั่นใจ (Traceability)
+        trace_val = conf.get('traceability_score', 0)
+        if trace_val <= 1.0: trace_val = int(trace_val * 100) # แปลง 0.8 -> 80
         
         metrics_cells = [
             ("Independence", f"{conf.get('source_count', 0)} Files"),
             ("Traceability", f"{trace_val}% Confidence"),
-            ("Consistency", "VERIFIED" if conf.get('consistency_check') else "CONFLICT")
+            ("Audit Status", f"{conf.get('level', 'VERIFIED')}")
         ]
         
         for i, (label, val) in enumerate(metrics_cells):
@@ -404,100 +414,74 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             set_thai_font(p.add_run(label), size=10, bold=True)
-            set_thai_font(p.add_run(f"\n{val}"), size=13, bold=True)
-            set_cell_background(cell, "F3F4F6") # สีเทาอ่อน
+            set_thai_font(p.add_run(f"\n{val}"), size=12, bold=True)
+            set_cell_background(cell, "F3F4F6")
 
         # --- 3.2 PDCA Capability Matrix ---
         doc.add_paragraph()
-        set_thai_font(doc.add_paragraph().add_run("📊 PDCA Capability Matrix:"), size=14, bold=True)
+        set_thai_font(doc.add_paragraph().add_run("📊 PDCA Capability Matrix:"), size=13, bold=True)
         pdca_table = doc.add_table(rows=2, cols=5)
         pdca_table.style = 'Table Grid'
         
+        # ดึงข้อมูลจาก pdca_matrix ที่เรา transform มาแล้ว
         for i, lv_data in enumerate(item.get('pdca_matrix', [])):
-            # แถวบน: แสดง Level 1-5
+            if i >= 5: break
             cell_top = pdca_table.cell(0, i)
             p_top = cell_top.paragraphs[0]
             p_top.alignment = WD_ALIGN_PARAGRAPH.CENTER
             set_thai_font(p_top.add_run(f"Level {lv_data['level']}"), bold=True)
             
-            # ถ้าผ่านเลเวลนี้ ให้ระบายพื้นหลังเป็นสีเขียวอ่อน
             if lv_data.get('is_passed'):
-                set_cell_background(cell_top, "D9EAD3")
+                set_cell_background(cell_top, "D9EAD3") # สีเขียวถ้าผ่าน
 
-            # แถวล่าง: แสดงสถานะ P D C A
             cell_bot = pdca_table.cell(1, i)
             p_bot = cell_bot.paragraphs[0]
             p_bot.alignment = WD_ALIGN_PARAGRAPH.CENTER
             
+            # แสดง P D C A แยกตามสถานะ (1=เขียว, 0=แดง)
             for char, val in lv_data.get('pdca', {}).items():
                 run_char = p_bot.add_run(f" {char} ")
-                # สีเขียวถ้ามีหลักฐาน (val=1), สีแดงถ้าไม่มี (val=0)
                 color = RGBColor(22, 101, 52) if val == 1 else RGBColor(185, 28, 28)
                 set_thai_font(run_char, size=11, bold=True, color=color)
 
-        # --- 3.3 รายการหลักฐานจาก grouped_sources (สำคัญมาก) ---
+        # --- 3.3 รายการหลักฐาน (Evidence Mapping) ---
         doc.add_paragraph()
-        set_thai_font(doc.add_paragraph().add_run("📎 รายการหลักฐานที่ตรวจพบ (Evidence Mapping):"), size=13, bold=True)
+        set_thai_font(doc.add_paragraph().add_run("📎 รายการหลักฐานที่ตรวจพบ (Evidence Mapping):"), size=12, bold=True)
         
         grouped_sources = item.get('grouped_sources', {})
         has_evidence = False
         
-        # วนลูปตาม Level 1-5
-        for lv_key in sorted(grouped_sources.keys(), key=lambda x: int(x)):
-            sources = grouped_sources[lv_key]
+        # วนลูป Level 1-5 เพื่อเรียงลำดับหลักฐาน
+        for lv_key in ["1", "2", "3", "4", "5"]:
+            sources = grouped_sources.get(lv_key, [])
             for src in sources:
                 has_evidence = True
-                # รูปแบบ: Level X: ชื่อไฟล์.pdf (หน้า Y) - ความมั่นใจ Z%
+                # ทำความสะอาดชื่อไฟล์ (เอา SCORE ออกถ้ามี)
+                clean_filename = src.get('filename', '').split('|')[0]
                 evi_text = (
-                    f"Level {lv_key}: {src.get('filename')} "
+                    f"Level {lv_key}: {clean_filename} "
                     f"(หน้า {src.get('page', '1')}) - "
-                    f"Confidence: {src.get('rerank_score', 0)}%"
+                    f"Relevance: {src.get('rerank_score', 0)}%"
                 )
                 p_evi = doc.add_paragraph(style='List Bullet')
-                set_thai_font(p_evi.add_run(evi_text), size=11)
+                set_thai_font(p_evi.add_run(evi_text), size=10)
         
         if not has_evidence:
-            set_thai_font(doc.add_paragraph().add_run("- ไม่พบหลักฐานแนบในหัวข้อนี้ -"), size=11)
+            set_thai_font(doc.add_paragraph().add_run("- ไม่พบหลักฐานแนบในหัวข้อนี้ -"), size=10)
 
-        # --- 3.4 สรุปจุดแข็งและข้อแนะนำ (AI Insights) ---
-        doc.add_paragraph()
+        # --- 3.4 Insights & Recommendations ---
         # Strength
-        s_title = doc.add_paragraph()
-        set_thai_font(s_title.add_run("💡 AI Strength Summary:"), size=14, bold=True, color=RGBColor(22, 101, 52))
-        reason_txt = item.get('reason') or item.get('summary_thai') or "ไม่มีข้อมูล"
-        set_thai_font(doc.add_paragraph(reason_txt).runs[0], size=13)
+        doc.add_paragraph()
+        set_thai_font(doc.add_paragraph().add_run("💡 AI Strength Summary:"), size=13, bold=True, color=RGBColor(22, 101, 52))
+        reason_txt = item.get('reason', 'ผ่านเกณฑ์ตามมาตรฐานที่กำหนด')
+        set_thai_font(doc.add_paragraph(reason_txt).runs[0], size=12)
 
         # Next Step
-        n_title = doc.add_paragraph()
-        set_thai_font(n_title.add_run("🚀 Next Step Recommendation:"), size=14, bold=True, color=RGBColor(30, 58, 138))
-        set_thai_font(doc.add_paragraph(item.get('next_step', '-')).runs[0], size=13)
+        set_thai_font(doc.add_paragraph().add_run("🚀 Next Step Recommendation:"), size=13, bold=True, color=RGBColor(30, 58, 138))
+        next_step_txt = item.get('next_step', 'รักษามาตรฐานการดำเนินงานและเตรียมความพร้อมสู่ระดับถัดไป')
+        set_thai_font(doc.add_paragraph(next_step_txt).runs[0], size=12)
 
-        # --- 3.5 Strategic Roadmap (ถ้ามี) ---
-        roadmap = item.get('roadmap', [])
-        if roadmap:
-            doc.add_paragraph()
-            set_thai_font(doc.add_paragraph().add_run("🛠 Strategic Improvement Roadmap:"), size=14, bold=True, color=RGBColor(30, 58, 138))
-            
-            for phase in roadmap:
-                # หัวข้อเฟส
-                phase_p = doc.add_paragraph()
-                p_run = phase_p.add_run(f"Phase: {phase.get('phase', 'N/A')} - {phase.get('goal', '')}")
-                set_thai_font(p_run, size=13, bold=True)
-                
-                # รายการแอคชั่น
-                for act in phase.get('actions', []):
-                    a_run = doc.add_paragraph(style='List Bullet').add_run(
-                        f"Target L{act.get('failed_level', '?')}: {act.get('recommendation', '')}"
-                    )
-                    set_thai_font(a_run, size=12, bold=True)
-                    
-                    # ขั้นตอนย่อย (Steps)
-                    for step in act.get('steps', []):
-                        step_txt = f"{step.get('description')} (รับผิดชอบ: {step.get('responsible', 'N/A')})"
-                        p_step = doc.add_paragraph(style='List Bullet 2')
-                        set_thai_font(p_step.add_run(step_txt), size=11)
-
-        doc.add_page_break() # จบหัวข้อขึ้นหน้าใหม่
+        doc.add_page_break() 
         
     return doc
 
@@ -654,16 +638,26 @@ async def get_assessment_history(
                     if file_enabler not in user_allowed_enablers: continue
                     if target_enabler and file_enabler != target_enabler: continue
 
-                    # 4. SCOPE (แก้ปัญหาแสดงเป็น ALL)
-                    # ลำดับ: metadata.sub_id -> ดึงจากลิสต์เกณฑ์ -> fallback ALL
+                    # 4. SCOPE (แก้ไขเพื่อให้ดึง sub_id จากโครงสร้างใหม่ได้แม่นยำ)
                     scope = metadata.get("sub_id") or old_sum.get("sub_criteria_id")
                     
-                    if not scope or str(scope).upper() == "ALL":
-                        # ถ้ายังเป็น ALL ให้ลองเช็คใน sub_criteria_details
-                        subs = data.get("sub_criteria_details", [])
-                        if len(subs) == 1:
-                            scope = subs[0].get("sub_id")
-                        elif len(subs) > 1:
+                    if not scope or str(scope).upper() in ["ALL", "NONE"]:
+                        # เจาะเข้าที่ sub_criteria_details -> sub_criteria_results
+                        details = data.get("sub_criteria_details", [])
+                        found_subs = []
+                        
+                        for detail in details:
+                            # ดึงจากรายการผลลัพธ์ย่อย
+                            sub_results = detail.get("sub_criteria_results", [])
+                            for res in sub_results:
+                                if res.get("sub_id"):
+                                    found_subs.append(str(res.get("sub_id")))
+                        
+                        # ตัดตัวซ้ำและสรุปผล
+                        unique_subs = list(set(found_subs))
+                        if len(unique_subs) == 1:
+                            scope = unique_subs[0]
+                        elif len(unique_subs) > 1:
                             scope = "MULTI"
                         else:
                             scope = "ALL"
