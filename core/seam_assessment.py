@@ -2097,7 +2097,7 @@ class SEAMPDCAEngine:
         [ULTIMATE REVISED v2026.1.25 - SMART AGGREGATOR]
         - 🛡️ Data Resilience: รองรับโครงสร้างข้อมูลที่ซับซ้อน ป้องกันคะแนน 0
         - ⚖️ Step-Ladder Logic: ตรวจสอบความต่อเนื่องของระดับ Maturity (1->5)
-        - 🧬 Analytics: สร้างข้อมูลราย Sub-item สำหรับ Dashboard
+        - 🧬 Analytics: คำนวณคะแนนตาม Rubric Weight (Normalized Scoring)
         """
         from datetime import datetime
         
@@ -2112,45 +2112,45 @@ class SEAMPDCAEngine:
         passed_levels_pool = []
         sub_details = []
         total_weighted_sum = 0.0
-        total_weight = 0.0
+        total_weight_sum = 0.0
         
         for r in results:
             if not isinstance(r, dict): continue
             
             sub_id = r.get('sub_id', 'Unknown')
+            # ดึงค่า Weight จาก Rubric (เช่น 4.0)
             weight = float(r.get('weight', 4.0))
             
-            # 1. SMART DETECTION: ดึง level_details (หัวใจสำคัญของคะแนน)
-            # พยายามหาในคีย์มาตรฐานก่อน
+            # 1. SMART DETECTION: ดึง level_details
             details_map = r.get('level_details', {})
-            
             if not details_map:
-                # กรณีข้อมูลถูก Wrap มาใน Sub-item key
                 possible_wrapper = r.get(sub_id) or r.get('results')
                 if isinstance(possible_wrapper, dict):
                     details_map = possible_wrapper.get('level_details', {})
 
             # 2. STEP-LADDER MATURITY CALCULATION (1 -> 5)
-            # เราจะนับ Maturity ก็ต่อเมื่อผ่านเลเวลก่อนหน้า (Chain must not be broken)
+            # ต้องผ่านเลเวลก่อนหน้าต่อเนื่องกันเท่านั้น
             current_maturity_lvl = 0
             for l_idx in range(1, 6):
                 lv_data = details_map.get(str(l_idx))
                 if not lv_data: break
                 
-                # เช็คคะแนน (Score >= 0.7) หรือ Flag ผ่าน
+                # เช็คเกณฑ์การผ่าน (Score >= 0.7 หรือ is_passed เป็น True)
                 is_passed = lv_data.get('is_passed') is True or float(lv_data.get('score', 0)) >= 0.7
                 
                 if is_passed:
                     current_maturity_lvl = l_idx
                 else:
-                    # หากเลเวลปัจจุบันไม่ผ่าน ให้หยุดนับ Maturity ทันทีตามเกณฑ์ SEAM
-                    break
+                    break # ตกเลเวลไหน หยุดนับทันที
 
-            # 3. SCORE AGGREGATION
-            total_weight += weight
-            # คะแนนถ่วงน้ำหนัก = ระดับที่ผ่านสูงสุด * น้ำหนักหัวข้อ
-            sub_weighted_score = float(current_maturity_lvl * weight)
+            # 3. NORMALIZED SCORE CALCULATION (แก้จากคะแนน 20 เป็นคะแนนตาม Rubric)
+            # 🎯 สูตร: (Maturity Level / 5) * Weight
+            # เช่น (L5 / 5) * 4.0 = 4.00 คะแนน (เต็ม Rubric)
+            # เช่น (L4 / 5) * 4.0 = 3.20 คะแนน
+            sub_weighted_score = (float(current_maturity_lvl) / 5.0) * weight
+            
             total_weighted_sum += sub_weighted_score
+            total_weight_sum += weight
 
             # 4. PREPARE ANALYTICS DATA
             passed_levels_pool.append(current_maturity_lvl)
@@ -2158,38 +2158,38 @@ class SEAMPDCAEngine:
                 "sub_id": sub_id,
                 "sub_name": r.get('sub_criteria_name', 'N/A'),
                 "maturity": current_maturity_lvl,
-                "score": round(sub_weighted_score, 2),
+                "score": round(sub_weighted_score, 2), # คะแนนตามสัดส่วน weight
                 "weight": weight,
                 "evidence_count": len(details_map)
             })
 
         # 5. FINAL CALCULATION (OVERALL)
-        num_subs = len(results)
-        avg_score = (total_weighted_sum / total_weight) if total_weight > 0 else 0.0
-        
-        # สรุประดับภาพรวม (ใช้ค่าฐาน - Minimum Passed Level ตามเกณฑ์มาตรฐาน)
+        # คำนวณค่าเฉลี่ยระดับภาพรวม (Overall Level) มักใช้ค่าฐาน (Min) ของทุกหัวข้อ
         overall_min = min(passed_levels_pool) if passed_levels_pool else 0
         overall_max = max(passed_levels_pool) if passed_levels_pool else 0
+        
+        # คำนวณ Average Score (0.0 - 5.0) สำหรับการทำ Radar Chart
+        # สูตร: (คะแนนรวมที่ได้ / น้ำหนักรวม) * 5
+        avg_maturity_score = (total_weighted_sum / total_weight_sum * 5.0) if total_weight_sum > 0 else 0.0
 
-        # บันทึกลงใน total_stats (ตัวแปรนี้จะถูก _export_results นำไปใช้)
         self.total_stats = {
             "overall_max_level": int(overall_max),
             "overall_min_level": int(overall_min),
-            "overall_level_label": f"L{int(overall_min)}", # ปกติจะโชว์ตามเลเวลต่ำสุดที่ทุกหัวข้อผ่าน
-            "overall_avg_score": round(avg_score, 2),
-            "total_weighted_score": round(total_weighted_sum, 2),
-            "total_weight": round(total_weight, 2),
+            "overall_level_label": f"L{int(overall_min)}", 
+            "overall_avg_score": round(avg_maturity_score, 2), # สเกล 0-5
+            "total_weighted_score": round(total_weighted_sum, 2), # สเกลตามผลรวม weight
+            "total_weight": round(total_weight_sum, 2),
             "evaluated_at": datetime.now().isoformat(),
             "status": "SUCCESS",
             "analytics": {
                 "sub_details": sub_details,
-                "total_sub_items": num_subs
+                "total_sub_items": len(results)
             }
         }
 
         self.logger.info(
-            f"✅ [STATS SUCCESS] Result: {self.total_stats['overall_level_label']} | "
-            f"Total Score: {self.total_stats['total_weighted_score']}/{total_weight}"
+            f"✅ [AGGREGATION SUCCESS] Maturity: {self.total_stats['overall_level_label']} | "
+            f"Final Score: {self.total_stats['total_weighted_score']}/{total_weight_sum}"
         )
 
     def _get_empty_stats_template(self):
@@ -2417,35 +2417,6 @@ class SEAMPDCAEngine:
             clean_page = "N/A"
 
         return clean_source, clean_page
-    
-
-    def _get_heuristic_pdca_tag(self, text: str, level: int) -> Optional[str]:
-        t = text.lower()
-        
-        # Do-specific สำหรับ L1 (เน้นผู้บริหารทำจริง)
-        do_keywords = [
-            "ดำเนินการ", "ปฏิบัติ", "ประชุม", "กิจกรรม", "อบรม", "จัดทำ", "ลงพื้นที่", 
-            "ติดตามผล", "ภาพถ่าย", "ผู้บริหาร", "มุ่งมั่น", "ตัวอย่าง", "สนับสนุน", 
-            "ขับเคลื่อน", "นำร่อง", "ลงมือทำ", "นำไปใช้"
-        ]
-        if level <= 2 and any(k in t for k in do_keywords):
-            return "D"
-
-        # Check keywords (เพิ่มจาก log)
-        check_keywords = [
-            "รายงานผล", "ประเมิน", "ติดตาม", "ตัวชี้วัด", "kpi", "ผลลัพธ์", "สรุปผล", 
-            "สถิติ", "สำรวจ", "ตรวจสอบ", "วัดผล"
-        ]
-        if any(k in t for k in check_keywords):
-            return "C"
-
-        # Plan & Act (คงเดิม แต่ลด priority)
-        if any(k in t for k in ["นโยบาย", "แผน", "ยุทธศาสตร์", "มติ", "คำสั่ง", "เป้าหมาย", "เจตนารมณ์"]):
-            return "P"
-        if any(k in t for k in ["ปรับปรุง", "พัฒนา", "แก้ไข", "บทเรียน", "lesson learned", "ต่อยอด", "นวัตกรรม"]):
-            return "A"
-
-        return None
     
     def audit_agent_router(
         self,
@@ -2830,6 +2801,34 @@ class SEAMPDCAEngine:
         self.logger.debug(f"[ULTIMATE-FALLBACK] {fallback} for L{level}")
         return fallback
 
+    def _get_heuristic_pdca_tag(self, text: str, level: int) -> Optional[str]:
+        t = text.lower()
+        
+        # Do-specific สำหรับ L1 (เน้นผู้บริหารทำจริง)
+        do_keywords = [
+            "ดำเนินการ", "ปฏิบัติ", "ประชุม", "กิจกรรม", "อบรม", "จัดทำ", "ลงพื้นที่", 
+            "ติดตามผล", "ภาพถ่าย", "ผู้บริหาร", "มุ่งมั่น", "ตัวอย่าง", "สนับสนุน", 
+            "ขับเคลื่อน", "นำร่อง", "ลงมือทำ", "นำไปใช้"
+        ]
+        if level <= 2 and any(k in t for k in do_keywords):
+            return "D"
+
+        # Check keywords (เพิ่มจาก log)
+        check_keywords = [
+            "รายงานผล", "ประเมิน", "ติดตาม", "ตัวชี้วัด", "kpi", "ผลลัพธ์", "สรุปผล", 
+            "สถิติ", "สำรวจ", "ตรวจสอบ", "วัดผล"
+        ]
+        if any(k in t for k in check_keywords):
+            return "C"
+
+        # Plan & Act (คงเดิม แต่ลด priority)
+        if any(k in t for k in ["นโยบาย", "แผน", "ยุทธศาสตร์", "มติ", "คำสั่ง", "เป้าหมาย", "เจตนารมณ์"]):
+            return "P"
+        if any(k in t for k in ["ปรับปรุง", "พัฒนา", "แก้ไข", "บทเรียน", "lesson learned", "ต่อยอด", "นวัตกรรม"]):
+            return "A"
+
+        return None
+    
     # ------------------------------------------------------------------------------------------
     # [ULTIMATE REVISE v2026.01.28] 📊 LAYER 2: Contextual Blocker (The Focus)
     # ------------------------------------------------------------------------------------------
@@ -2843,60 +2842,87 @@ class SEAMPDCAEngine:
         record_id: str = None
     ) -> Dict[str, Any]:
         """
-        จัดกลุ่มหลักฐานโดยใช้ Forced Logic ที่หมุนเวียนตาม require_phase จริง
-        Ranking: evidence จริง > relevance สูง > baseline ตามหลัง
+        จัดกลุ่มหลักฐานแบบ Multi-Layer Tagging:
+        1. Semantic (AI/Engine) -> 2. Heuristic (Keyword-based) -> 3. Forced (Fallback)
         """
 
         pdca_groups = defaultdict(list)
         seen_texts = set()
         all_candidate = (evidences or []) + (baseline_evidences or [])
 
+        # ดึงรายชื่อ Phase ที่เกณฑ์เลเวลนี้ต้องการ (เช่น L1 ต้องการ P และ D)
         require_phases = self.get_rule_content(sub_id, level, "require_phase") or ["P", "D"]
 
         for idx, chunk in enumerate(all_candidate, start=1):
+            # --- 1. Data Cleaning & Deduplication ---
             txt = (chunk.get("text") or chunk.get("page_content") or "").strip()
-            if not txt or len(txt) < 10: continue
+            if not txt or len(txt) < 10:
+                continue
 
             txt_hash = hashlib.sha256(txt.encode()).hexdigest()
-            if txt_hash in seen_texts: continue
+            if txt_hash in seen_texts:
+                continue
             seen_texts.add(txt_hash)
 
+            # --- 2. Metadata Preparation ---
             meta = chunk.get("metadata", {}) or {}
             fname = chunk.get("source_filename") or meta.get("source_filename") or "Unknown"
             page = meta.get("page_label") or meta.get("page") or "N/A"
-
             is_baseline = chunk.get("source") == "BASELINE" or chunk.get("is_baseline", False)
+            
             prefix = "[BASELINE] " if is_baseline else ""
             source_display = f"{prefix}{fname} (P.{page})"
 
-            final_tag = self._get_semantic_tag(txt, sub_id, level, fname)
-
+            # --- 3. MULTI-LAYER TAGGING LOGIC (หัวใจสำคัญ) ---
             is_forced = False
+            
+            # Layer 1: Semantic Tag (ลองดึงจาก AI/Engine เดิม)
+            final_tag = self._get_semantic_tag(txt, sub_id, level, fname)
             tag_source = "Semantic-Engine"
 
-            if final_tag == "Other":
+            # Layer 2: Heuristic Fallback (ถ้า Layer 1 หาไม่เจอ หรือได้ค่ากลางๆ)
+            if final_tag in [None, "Other", "OTHER", "N/A"]:
+                heuristic_tag = self._get_heuristic_pdca_tag(text=txt, level=level)
+                if heuristic_tag:
+                    final_tag = heuristic_tag
+                    tag_source = "Heuristic-Rule-Base"
+
+            # Layer 3: Forced Contextual Fallback (ทางเลือกสุดท้าย)
+            if final_tag in [None, "Other", "OTHER", "N/A"]:
                 if level >= 4:
+                    # เลเวลสูงเราเน้นคุณภาพ ไม่แม่นจริงเราไม่เอามาคิด (Strict Mode)
                     self.logger.debug(f"🚫 Excluded Other (L{level} strict): {source_display}")
                     continue
 
                 is_forced = True
+                # แจก Tag ตามลำดับ Require Phase (Round-robin)
                 final_tag = require_phases[(idx - 1) % len(require_phases)]
                 tag_source = f"Forced-Contextual-L{level} ({final_tag})"
-                self.logger.debug(f"Forced {final_tag} → {source_display}")
+                self.logger.debug(f"⚠️ Forced {final_tag} → {source_display}")
 
+            # --- 4. Append to Group ---
             pdca_groups[final_tag].append({
                 "text": txt,
                 "source_display": source_display,
+                "filename": fname,
+                "page": page,
                 "is_forced": is_forced,
                 "is_baseline": is_baseline,
-                "relevance": float(chunk.get("rerank_score") or chunk.get("score") or chunk.get("final_relevance_score") or 0.5),
-                "tag_source": tag_source
+                "relevance": float(chunk.get("rerank_score") or chunk.get("score") or 0.5),
+                "tag_source": tag_source,
+                "pdca_tag": final_tag  # 👈 ส่งค่านี้กลับไปเพื่อให้ Router/UI ใช้งานได้จริง
             })
 
+        # --- 5. Block Construction for LLM ---
         max_ch = getattr(self.config, 'MAX_CHUNKS_PER_BLOCK', 5)
-        blocks = {"sources": {}, "actual_counts": {}}
+        blocks = {
+            "sources": {}, 
+            "actual_counts": {},
+            "all_evidences_with_tags": [] # สำหรับส่งกลับไปทำ Report metadata
+        }
 
         for tag in ["P", "D", "C", "A"]:
+            # เรียงลำดับความน่าเชื่อถือ: ของจริง(ไม่ forced) > คะแนนสูง > ไม่ใช่ baseline
             ranked = sorted(
                 pdca_groups.get(tag, []),
                 key=lambda x: (x["is_forced"], -x["relevance"], x["is_baseline"])
@@ -2908,6 +2934,8 @@ class SEAMPDCAEngine:
                     f"{c['text'][:1000]}"
                     for c in ranked
                 ])
+                # เก็บก้อนหลักฐานแบบละเอียดไว้ทำ UI JSON
+                blocks["all_evidences_with_tags"].extend(ranked)
             else:
                 blocks[tag] = f"[ไม่พบหลักฐานชัดเจนในหมวด {tag}]"
 
@@ -2915,7 +2943,6 @@ class SEAMPDCAEngine:
             blocks["actual_counts"][tag] = len([c for c in ranked if not c["is_forced"]])
 
         return blocks
-
 
     # ------------------------------------------------------------------------------------------
     # [ULTIMATE REVISE v2026.01.28] 💾 LAYER 3: Persistence & Retroactive Sync

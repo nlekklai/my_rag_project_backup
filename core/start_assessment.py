@@ -149,9 +149,10 @@ def main():
         db_update_task_status(record_id, 0, f"Error: {str(e)}", status="FAILED")
         sys.exit(1)
 
-    # 6. Final Summary Extraction (Production-Ready Logic)
+    # 6. Final Summary Extraction (CLI Display Logic)
     duration_s = time.time() - start_ts
     
+    # ค่าเริ่มต้นป้องกัน Error
     summary_display = {
         "level": "L0",
         "score": 0.0,
@@ -159,28 +160,30 @@ def main():
     }
 
     if isinstance(final_results, dict):
-        # 1. ลองดึงจากตัวรวมระดับบนสุดก่อน
+        # 1. พยายามดึงจาก result_summary ก่อน (ก้อนรวม)
         res_summary = final_results.get("result_summary", {}) 
         summary_display["level"] = res_summary.get("maturity_level", "L0")
-        summary_display["score"] = res_summary.get("total_weighted_score", 0.0)
+        
+        # ดึงคะแนนสะสม (เช่น 20.0 หรือ 4.0)
+        raw_score = res_summary.get("total_weighted_score", 0.0)
+        
+        # 2. ปรับ Score ให้เป็นสเกล 0-5 สำหรับหน้าจอ CLI (ถ้าต้องการให้หาร 5 ตามสัดส่วน)
+        # หรือถ้าต้องการโชว์คะแนนรวมตาม weight ก็ใช้ raw_score ได้เลย
+        summary_display["score"] = raw_score 
+        
         summary_display["path"] = final_results.get("export_path_used", "N/A")
 
-        # 2. [Safe Guard] หากด้านบนเป็น 0 (อาจเพราะ Bug ใน Aggregator) ให้ Loop หาจากรายละเอียด
+        # 3. [Safe Guard] หาก score ยังเป็น 0 ให้เจาะดูใน sub_criteria_details
         if summary_display["score"] == 0:
             details = final_results.get("sub_criteria_details", [])
-            for d in details:
-                sub_results = d.get("sub_criteria_results", [])
-                if sub_results:
-                    # คำนวณหาคะแนนรวมจาก weight ของทุก level ที่ประเมินผ่าน
-                    total_score = sum(
-                        item.get("weight", 0) 
-                        for item in sub_results 
-                        if item.get("level_details")
-                    )
-                    if total_score > 0:
-                        summary_display["score"] = total_score
-                        # ถ้าเจอตัวที่มีข้อมูลแล้ว ให้หยุดหาทันที
-                        break
+            if details:
+                # กรณีรัน Sub เดียว ดึงจาก analytics หรือสรุปรายตัว
+                analytics = final_results.get("result_summary", {}).get("analytics", {})
+                if analytics.get("sub_details"):
+                    summary_display["score"] = analytics["sub_details"][0].get("score", 0.0)
+                else:
+                    # Fallback สุดท้าย: นับคะแนนจาก summary ภายใน details
+                    summary_display["score"] = details[0].get("summary", {}).get("score", 0.0)
 
     # 🏁 Display Summary UI
     print("\n" + "═"*65)
@@ -188,7 +191,8 @@ def main():
     print("═"*65)
     print(f" [MODE]        : {run_mode}")
     print(f" [RESULT]      : Level {summary_display['level']}")
-    print(f" [SCORE]       : {summary_display['score']:.2f} / 5.00")
+    # แสดงผลคะแนน (ถ้าปรับหาร 5 แล้วจะได้ 4.00 / 5.00)
+    print(f" [SCORE]       : {summary_display['score']:.2f}") 
     print(f" [DURATION]    : {duration_s:.2f} seconds")
     print("-" * 65)
     if args.export:

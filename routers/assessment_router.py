@@ -285,12 +285,29 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 sub_unique_files.add(f_name)
                 conf = float(src.get("relevance_score") or src.get("score") or 0.0)
                 sub_conf_scores.append(conf)
+                
+                # 1. 🔍 ดึง Tag ที่ Engine อุตส่าห์วิเคราะห์มาให้ (สำคัญที่สุด!)
+                # Engine ตัวใหม่จะส่ง 'pdca_tag' หรือ 'pdca' ที่ผ่าน Heuristic มาแล้ว
+                raw_tag = src.get("pdca_tag") or src.get("pdca") or "OTHER"
+                
+                # 2. 🛡️ เช็คว่าถ้ายังเป็น OTHER หรือ N/A (กรณี Engine วิเคราะห์ไม่ได้จริงๆ)
+                if str(raw_tag).upper() in ["N/A", "NONE", "OTHER", ""]:
+                    # --- ใช้ Logic "เดาจากชื่อไฟล์" เป็นแผนสำรองสุดท้าย (Fallback) ---
+                    f_name_lower = f_name.lower()
+                    if any(k in f_name_lower for k in ['plan', 'นโยบาย', 'ยุทธศาสตร์', 'แผน']):
+                        raw_tag = "P"
+                    elif any(k in f_name_lower for k in ['report', 'รายงาน', 'ผลการ', 'assessment', 'สรุป']):
+                        raw_tag = "D" # หรือจะให้เป็น C ตามความเหมาะสมของหน้างาน
+                    else:
+                        raw_tag = "OTHER"
+
+                # 3. ✅ ส่งค่าไป UI (ตอนนี้ pdca_tag จะมีค่าเป็น P, D, C, A ที่แม่นยำขึ้น)
                 grouped_sources[lv_k].append({
                     "filename": f_name,
                     "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
                     "page": str(src.get("page", "1")),
                     "rerank_score": round(conf * 100, 1),
-                    "pdca_tag": str(src.get("pdca_tag", "OTHER")).upper(),
+                    "pdca_tag": str(raw_tag).upper(), # ค่านี้จะไปเปลี่ยนสี Tag ใน UI
                     "text": src.get("text", "")
                 })
 
