@@ -2900,7 +2900,17 @@ class SEAMPDCAEngine:
                 tag_source = f"Forced-Contextual-L{level} ({final_tag})"
                 self.logger.debug(f"⚠️ Forced {final_tag} → {source_display}")
 
-            # --- 4. Append to Group ---
+            # --- 4. Append to Group (with Confidence Scoring) ---
+            
+            # กำหนดค่าความมั่นใจตามแหล่งที่มาของ Tag
+            # Semantic (AI) = 0.9, Heuristic (Keyword) = 0.7, Forced (เดา) = 0.4
+            confidence_map = {
+                "Semantic-Engine": 0.9,
+                "Heuristic-Rule-Base": 0.7
+            }
+            # ตรวจสอบ tag_source เพื่อระบุคะแนนความมั่นใจ
+            p_conf = confidence_map.get(tag_source, 0.4 if is_forced else 0.5)
+
             pdca_groups[final_tag].append({
                 "text": txt,
                 "source_display": source_display,
@@ -2910,7 +2920,8 @@ class SEAMPDCAEngine:
                 "is_baseline": is_baseline,
                 "relevance": float(chunk.get("rerank_score") or chunk.get("score") or 0.5),
                 "tag_source": tag_source,
-                "pdca_tag": final_tag  # 👈 ส่งค่านี้กลับไปเพื่อให้ Router/UI ใช้งานได้จริง
+                "pdca_tag": final_tag,
+                "pdca_confidence": p_conf  # 👈 เพิ่มฟิลด์นี้เข้าไป
             })
 
         # --- 5. Block Construction for LLM ---

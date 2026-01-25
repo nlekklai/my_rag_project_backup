@@ -281,33 +281,44 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             })
             
             for src in info.get("evidence_sources", []):
+                # --- ดึงชื่อไฟล์ ---
                 f_name = (src.get("filename") or src.get("source_filename") or "Unknown").split('|')[0]
                 sub_unique_files.add(f_name)
+                
+                # --- ดึงคะแนนความมั่นใจราย Chunk (Relevance) ---
                 conf = float(src.get("relevance_score") or src.get("score") or 0.0)
                 sub_conf_scores.append(conf)
                 
-                # 1. 🔍 ดึง Tag ที่ Engine อุตส่าห์วิเคราะห์มาให้ (สำคัญที่สุด!)
-                # Engine ตัวใหม่จะส่ง 'pdca_tag' หรือ 'pdca' ที่ผ่าน Heuristic มาแล้ว
+                # 1. 🔍 ดึง Tag และ Confidence จาก Engine (ที่เราเพิ่งฉีดเข้าไปใน JSON)
+                # ใช้ .get() เพื่อป้องกัน Key Error ถ้าไฟล์ JSON เก่ายังไม่มีค่านี้
                 raw_tag = src.get("pdca_tag") or src.get("pdca") or "OTHER"
-                
-                # 2. 🛡️ เช็คว่าถ้ายังเป็น OTHER หรือ N/A (กรณี Engine วิเคราะห์ไม่ได้จริงๆ)
+                pdca_conf = src.get("pdca_confidence") 
+
+                # 2. 🛡️ Fallback Logic (ถ้าข้อมูลเดิมเป็น N/A หรือ OTHER)
                 if str(raw_tag).upper() in ["N/A", "NONE", "OTHER", ""]:
-                    # --- ใช้ Logic "เดาจากชื่อไฟล์" เป็นแผนสำรองสุดท้าย (Fallback) ---
                     f_name_lower = f_name.lower()
                     if any(k in f_name_lower for k in ['plan', 'นโยบาย', 'ยุทธศาสตร์', 'แผน']):
                         raw_tag = "P"
+                        pdca_conf = 0.6  # เดาจากชื่อไฟล์ให้ความมั่นใจกลางๆ
                     elif any(k in f_name_lower for k in ['report', 'รายงาน', 'ผลการ', 'assessment', 'สรุป']):
-                        raw_tag = "D" # หรือจะให้เป็น C ตามความเหมาะสมของหน้างาน
+                        raw_tag = "D"
+                        pdca_conf = 0.6
                     else:
                         raw_tag = "OTHER"
+                        pdca_conf = pdca_conf or 0.1
 
-                # 3. ✅ ส่งค่าไป UI (ตอนนี้ pdca_tag จะมีค่าเป็น P, D, C, A ที่แม่นยำขึ้น)
+                # ป้องกันค่า pdca_conf เป็น None
+                if pdca_conf is None:
+                    pdca_conf = 0.5
+
+                # 3. ✅ ส่งค่าไปเก็บในกลุ่ม (ตรวจสอบชื่อตัวแปร grouped_sources และ lv_k ให้ตรงกับต้นฟังก์ชัน)
                 grouped_sources[lv_k].append({
                     "filename": f_name,
                     "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
                     "page": str(src.get("page", "1")),
                     "rerank_score": round(conf * 100, 1),
-                    "pdca_tag": str(raw_tag).upper(), # ค่านี้จะไปเปลี่ยนสี Tag ใน UI
+                    "pdca_tag": str(raw_tag).upper(),
+                    "pdca_confidence": pdca_conf, 
                     "text": src.get("text", "")
                 })
 
