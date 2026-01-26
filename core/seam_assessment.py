@@ -2323,7 +2323,7 @@ class SEAMPDCAEngine:
 
             # 🎯 [ADD THIS LINE] สร้าง Folder ทันทีจาก export_path ที่ได้มา
             os.makedirs(os.path.dirname(export_path), exist_ok=True)
-            
+
             with open(export_path, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
 
@@ -4308,39 +4308,37 @@ MANDATORY AUDIT RULES:
                 target['level_details'][str(level_received)] = sub_result
 
         # 5. ⚖️ Step-Ladder Maturity Calculation (Robust Logic)
+        if 'level_details' not in target:
+            target['level_details'] = {}
+            
         current_highest = 0
         stop_reason = "Assessment complete"
         pdca_sums = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
         passed_lv_count = 0
         
-        # ตรวจสอบทีละขั้น L1 -> L5 (ต้องผ่านขั้นล่างก่อนถึงจะนับขั้นบน)
         for l in range(1, 6):
             l_str = str(l)
             l_data = target['level_details'].get(l_str)
             
             if l_data and isinstance(l_data, dict):
                 score_val = float(l_data.get('score', 0.0))
-                # เกณฑ์การผ่าน: AI Flag ว่าผ่าน หรือ คะแนน >= 0.7
                 is_lv_passed = (l_data.get('is_passed') is True or score_val >= 0.7)
                 
                 if is_lv_passed:
                     current_highest = l
-                    l_data['is_passed'] = True # Force sync flag
+                    l_data['is_passed'] = True 
                     
-                    # สะสมคะแนน PDCA สำหรับคำนวณภาพรวม
+                    # 🎯 ต้องมีส่วนนี้เพื่อให้ PDCA Overall ไม่เป็น 0
                     bd = l_data.get('pdca_breakdown', {})
                     for phase in pdca_sums:
                         pdca_sums[phase] += float(bd.get(phase, 0.0))
                     passed_lv_count += 1
                 else:
-                    # บันทึกเหตุผลที่หยุดประเมินต่อ (Gap ที่เจอครั้งแรก)
+                    # 🎯 ถ้าไม่ผ่านขั้นนี้ ให้หยุดตรวจขั้นต่อไปทันที (สำคัญมาก!)
                     stop_reason = f"Stopped at L{l}: {l_data.get('reason', 'Insufficient evidence')[:60]}..."
                     break
             else:
-                # ถ้าไม่มีข้อมูลเลเวลนี้ ให้หยุดนับ (Chain broken)
-                if l <= level_received: # กรณีเลเวลที่ควรจะมีแต่ไม่มี
-                    stop_reason = f"Data missing at L{l}"
-                    break
+                # ถ้าไม่มีข้อมูลเลเวลนี้ในระบบ ก็ต้องหยุดเช่นกันครับ
                 break
 
         # 6. 💰 Score & Status Finalization
@@ -4415,7 +4413,7 @@ MANDATORY AUDIT RULES:
                 for idx, res_tuple in enumerate(pool.imap_unordered(_static_worker_process, worker_args)):
                     if not hasattr(self, 'final_subcriteria_results'): 
                         self.final_subcriteria_results = []
-                    self.final_subcriteria_results.append(res_tuple[0])
+                    # self.final_subcriteria_results.append(res_tuple[0])
 
                     results_list.append(res_tuple)
                     
@@ -4443,12 +4441,16 @@ MANDATORY AUDIT RULES:
                 res, worker_mem = self._run_sub_criteria_assessment_worker(sub_criteria, vsm, initial_baseline)
                 results_list.append((res, worker_mem))
                 
-                # ✅ เพิ่มบรรทัดนี้ เพื่อให้ Roadmap รายข้อถูกเก็บลง State หลัก
-                if not hasattr(self, 'final_subcriteria_results'): self.final_subcriteria_results = []
-                self.final_subcriteria_results.append(res)
-
-                # 🎯 CRITICAL FIX: อัปเดต State หลักทันที
+                # 🎯 ลบบรรทัด append ออกเหมือน Mode A
+                # เพราะ _merge_worker_results ด้านล่างจะจัดการให้เองครับ
+                
+                # 🛡️ อัปเดต State หลักทันที (ทั้งคะแนนและหลักฐาน)
                 self._merge_worker_results(res, worker_mem)
+
+                self.db_update_task_status(
+                    progress=15 + int(((idx+1)/total_subs) * 65), 
+                    message=f"🧠 ประเมิน {sub_id} สำเร็จ (Sequential)"
+                )
 
 
         # -------------------------------------------------------
