@@ -2321,6 +2321,9 @@ class SEAMPDCAEngine:
                 os.makedirs(out_dir, exist_ok=True)
                 export_path = f"{out_dir}/REPORT_{sub_criteria_id}_{timestamp}.json"
 
+            # 🎯 [ADD THIS LINE] สร้าง Folder ทันทีจาก export_path ที่ได้มา
+            os.makedirs(os.path.dirname(export_path), exist_ok=True)
+            
             with open(export_path, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
 
