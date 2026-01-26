@@ -53,6 +53,7 @@ pytz>=2025.2
 psutil>=5.9.0
 email-validator>=2.0.0
 json5>=0.9.25
+json-repair==0.54.1
 python-multipart>=0.0.9
 # เพิ่ม psutil สำหรับการใช้ _detect_system() ในโค้ด vectorstore
 
