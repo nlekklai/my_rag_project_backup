@@ -252,38 +252,65 @@ MASTER_ROADMAP_TEMPLATE: Final[str] = """
 }}
 """
 
+# # -----------------------------------------------------------------
+# # [FULL REVISED v2026.1.23] ATOMIC ACTION PLAN 
+# # -----------------------------------------------------------------
+# SYSTEM_ATOMIC_ACTION_PROMPT: Final[str] = """
+# คุณคือผู้เชี่ยวชาญการสรุปแผนปฏิบัติการ (Action Plan) สำหรับ Enabler: {enabler_name_th} ({enabler})
+
+# กฎเหล็ก (ห้ามละเมิดเด็ดขาด):
+# - ห้ามแนะนำหรือกล่าวถึง "ระบบสารสนเทศอัตโนมัติ", "KMS", "Software", "แพลตฟอร์มดิจิทัล", "IT System", "พัฒนาระบบ" ในระดับ L1-L3 เด็ดขาด
+# - แผนงานต้องเน้นเอกสาร/กระบวนการ/กิจกรรมหน้างาน/การประชุม/การอบรม/การแต่งตั้ง/การลงนาม/การถ่ายทอดเท่านั้น
+# - ใช้ภาษาไทยที่เป็นทางการและนำไปปฏิบัติได้จริงทันที
+
+# หน้าที่: สรุป Coaching Insight ให้เป็น Action Plan สั้นๆ 1-2 ข้อ ที่นำไปปฏิบัติได้จริง
+
+# [JSON OUTPUT RULE]:
+# 1. ต้องตอบเป็น JSON ARRAY เท่านั้น เริ่มต้นด้วย [ และจบด้วย ]
+# 2. ห้ามมีข้อความเกริ่นนำ ห้ามมี Markdown
+# 3. ในเนื้อหาห้ามใช้ " (Double Quote) ให้ใช้ ' (Single Quote) แทน
+# 4. ตัวอย่าง: [{{ "action": 'จัดทำคำสั่งแต่งตั้งคณะทำงานด้าน {enabler}', "target_evidence": 'ประกาศองค์กร ฉบับที่...' }}]
+# """
+
+# USER_ATOMIC_ACTION_TEMPLATE: Final[str] = """
+# Enabler: {enabler_name_th} ({enabler})
+# ระดับที่ประเมิน: Level {level}
+# เกณฑ์มาตรฐาน (Criteria): "{level_criteria}"
+# Coaching Insight: "{coaching_insight}"
+
+# จงสร้างแผนปฏิบัติการแบบสั้น (Atomic Action) เป็นภาษาไทย โดยอิงตามบริบทของ Enabler และ Insight ที่ให้มา
+# """
+
 # -----------------------------------------------------------------
-# [FULL REVISED v2026.1.23] ATOMIC ACTION PLAN 
+# [REVISED 2026.01.26] ATOMIC ACTION PLAN - HIGH PRECISION VERSION
 # -----------------------------------------------------------------
 SYSTEM_ATOMIC_ACTION_PROMPT: Final[str] = """
-คุณคือผู้เชี่ยวชาญการสรุปแผนปฏิบัติการ (Action Plan) สำหรับ Enabler: {enabler_name_th} ({enabler})
+คุณคือผู้เชี่ยวชาญการสรุปแผนปฏิบัติการ (Action Plan) ประจำ Enabler: {enabler_name_th} ({enabler})
 
-กฎเหล็ก (ห้ามละเมิดเด็ดขาด):
-- ห้ามแนะนำหรือกล่าวถึง "ระบบสารสนเทศอัตโนมัติ", "KMS", "Software", "แพลตฟอร์มดิจิทัล", "IT System", "พัฒนาระบบ" ในระดับ L1-L3 เด็ดขาด
-- แผนงานต้องเน้นเอกสาร/กระบวนการ/กิจกรรมหน้างาน/การประชุม/การอบรม/การแต่งตั้ง/การลงนาม/การถ่ายทอดเท่านั้น
-- ใช้ภาษาไทยที่เป็นทางการและนำไปปฏิบัติได้จริงทันที
+กฎเหล็ก (Strict Rules):
+- **[Gap-Based Only]**: ห้ามสร้าง Action ทั่วไป (General) ให้สร้าง Action จาก "จุดแข็ง" และ "ช่องว่าง" ที่ระบุใน Coaching Insight เท่านั้น
+- **[Specific Evidence]**: ระบุชื่อเอกสารหรือกิจกรรมที่เฉพาะเจาะจงตาม Focus Points (ห้ามใช้คำว่า 'หลักฐานที่เกี่ยวข้อง')
+- **[No IT in L1-L3]**: ห้ามแนะนำระบบ IT/KMS/Software ในระดับ L1-L3 ให้เน้น Manual/Document/Meeting เท่านั้น
+- **[Strict JSON]**: ตอบเป็น JSON ARRAY เท่านั้น ห้ามมี Markdown
 
-หน้าที่: สรุป Coaching Insight ให้เป็น Action Plan สั้นๆ 1-2 ข้อ ที่นำไปปฏิบัติได้จริง
-
-[JSON OUTPUT RULE]:
-1. ต้องตอบเป็น JSON ARRAY เท่านั้น เริ่มต้นด้วย [ และจบด้วย ]
-2. ห้ามมีข้อความเกริ่นนำ ห้ามมี Markdown
-3. ในเนื้อหาห้ามใช้ " (Double Quote) ให้ใช้ ' (Single Quote) แทน
-4. ตัวอย่าง: [{{ "action": 'จัดทำคำสั่งแต่งตั้งคณะทำงานด้าน {enabler}', "target_evidence": 'ประกาศองค์กร ฉบับที่...' }}]
+[โครงสร้าง Action]:
+- action: ต้องขึ้นต้นด้วยคำกริยาที่ชัดเจน เช่น 'ปรับปรุงแผน...', 'จัดทำบันทึก...', 'ประชุมทบทวน...'
+- target_evidence: ชื่อเอกสารที่ต้องปรากฏเป็นผลลัพธ์ เช่น 'รายงานผลการประเมินรอบ 6 เดือน', 'บันทึกอนุมัติโครงการ'
 """
 
 USER_ATOMIC_ACTION_TEMPLATE: Final[str] = """
-Enabler: {enabler_name_th} ({enabler})
-ระดับที่ประเมิน: Level {level}
-เกณฑ์มาตรฐาน (Criteria): "{level_criteria}"
-Coaching Insight: "{coaching_insight}"
+--- ข้อมูลวิเคราะห์ ---
+Enabler: {enabler_name_th} ({enabler}) | Level: {level}
+เกณฑ์ระดับนี้: "{level_criteria}"
+Focus Points (จุดเน้น): {focus_points}
+ผลวิเคราะห์จาก Auditor (Coaching Insight): "{coaching_insight}"
 
-จงสร้างแผนปฏิบัติการแบบสั้น (Atomic Action) เป็นภาษาไทย โดยอิงตามบริบทของ Enabler และ Insight ที่ให้มา
+จงสร้าง 1-2 Atomic Actions ที่เจาะจงที่สุดเพื่อปิด Gap นี้:
 """
 
 # ใช้ template_format="f-string" เพื่อความชัดเจนและรองรับ {{ }}
 ATOMIC_ACTION_PROMPT = PromptTemplate(
-    input_variables=["coaching_insight", "level", "enabler_name_th", "enabler", "level_criteria"],
+    input_variables=["coaching_insight", "level", "enabler_name_th", "enabler", "level_criteria", "focus_points"],
     template=SYSTEM_ATOMIC_ACTION_PROMPT + USER_ATOMIC_ACTION_TEMPLATE,
     template_format="f-string"
 )

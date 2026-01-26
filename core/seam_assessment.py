@@ -4343,8 +4343,10 @@ MANDATORY AUDIT RULES:
         # 6. 💰 Score & Status Finalization
         target['highest_full_level'] = current_highest
         target['is_passed'] = (current_highest >= 1)
-        target['weighted_score'] = round(current_highest * target['weight'], 2)
-        
+        # ✅ แบบใหม่ (ปลอดภัยกว่า)
+        current_weight = float(target.get('weight', 4.0)) # ใช้ 4.0 เป็นค่าเริ่มต้นถ้าหาไม่เจอ
+        target['weighted_score'] = round(current_highest * current_weight, 2)
+
         # คำนวณค่าเฉลี่ย PDCA เฉพาะเลเวลที่ผ่าน
         if passed_lv_count > 0:
             target['pdca_overall'] = {k: round(v / passed_lv_count, 2) for k, v in pdca_sums.items()}
@@ -4408,6 +4410,10 @@ MANDATORY AUDIT RULES:
             ctx = multiprocessing.get_context("spawn")
             with ctx.Pool(processes=max_workers) as pool:
                 for idx, res_tuple in enumerate(pool.imap_unordered(_static_worker_process, worker_args)):
+                    if not hasattr(self, 'final_subcriteria_results'): 
+                        self.final_subcriteria_results = []
+                    self.final_subcriteria_results.append(res_tuple[0])
+
                     results_list.append(res_tuple)
                     
                     # 🎯 CRITICAL FIX: บังคับ Merge Evidence ทันทีที่ Worker ส่งกลับมา
@@ -4434,6 +4440,10 @@ MANDATORY AUDIT RULES:
                 res, worker_mem = self._run_sub_criteria_assessment_worker(sub_criteria, vsm, initial_baseline)
                 results_list.append((res, worker_mem))
                 
+                # ✅ เพิ่มบรรทัดนี้ เพื่อให้ Roadmap รายข้อถูกเก็บลง State หลัก
+                if not hasattr(self, 'final_subcriteria_results'): self.final_subcriteria_results = []
+                self.final_subcriteria_results.append(res)
+
                 # 🎯 CRITICAL FIX: อัปเดต State หลักทันที
                 self._merge_worker_results(res, worker_mem)
 
@@ -4471,7 +4481,8 @@ MANDATORY AUDIT RULES:
         # 🏁 4. สรุปผล (Final Response & Export)
         # -------------------------------------------------------
         master_roadmap_data = None
-        if is_all and len(self.final_subcriteria_results) > 0:
+        # if is_all and len(self.final_subcriteria_results) > 0:
+        if len(self.final_subcriteria_results) > 0:
             master_roadmap_data = self.synthesize_strategic_roadmap(
                 sub_criteria_results=self.final_subcriteria_results,
                 enabler_name=self.enabler,
@@ -4650,7 +4661,8 @@ MANDATORY AUDIT RULES:
                 "level": level,
                 "enabler": enabler_code,
                 "enabler_name_th": enabler_name_th,
-                "level_criteria": safe_criteria
+                "level_criteria": safe_criteria,
+                "focus_points": kwargs.get('focus_points', 'พิจารณาตามเกณฑ์มาตรฐาน') # 👈 เพิ่มบรรทัดนี้
             }
 
             try:
@@ -4713,9 +4725,11 @@ MANDATORY AUDIT RULES:
 
             # 8. Emergency Fallback
             if not final_actions:
+                # ดึงส่วนหนึ่งของ insight มาสร้าง action แบบฉุกเฉิน
+                short_insight = clean_insight[:50] + "..."
                 final_actions = [{
-                    "action": f"จัดทำหลักฐานและแผนงานเบื้องต้นให้สอดคล้องกับเกณฑ์ระดับ {level}",
-                    "target_evidence": "รายงานผลการดำเนินงาน",
+                    "action": f"ดำเนินการปิดช่องว่างตามข้อเสนอแนะ: {short_insight}",
+                    "target_evidence": "เอกสาร/รายงานการดำเนินงานที่เกี่ยวข้อง",
                     "level": level
                 }]
 
@@ -4944,7 +4958,8 @@ MANDATORY AUDIT RULES:
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
                     level=level,
-                    level_criteria=stmt.get("statement", "")
+                    level_criteria=stmt.get("statement", ""),
+                    focus_points=sub_criteria.get("focus_points", "-")
                 )
             except Exception as e:
                 # ถ้าพัง ให้ Log Error แต่ประเมินต่อได้
@@ -4979,11 +4994,12 @@ MANDATORY AUDIT RULES:
         return {
             "sub_id": sub_id, 
             "sub_criteria_name": sub_name, 
+            "weight": sub_weight,  # 🎯 เพิ่มบรรทัดนี้เข้าไปครับ!
             "highest_full_level": highest_continuous_level, 
             "weighted_score": round(highest_continuous_level * sub_weight, 2),
             "is_passed": highest_continuous_level >= 1,
             "level_details": level_details, 
-            "strategic_roadmap": master_roadmap
+            "master_roadmap": master_roadmap,
         }, self.evidence_map
 
     def _get_level_constraint_prompt(self, sub_id: str, level: int, req_phases: list = None, spec_rule: str = None) -> str:
