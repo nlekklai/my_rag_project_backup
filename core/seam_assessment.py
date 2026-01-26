@@ -193,13 +193,14 @@ def get_pdca_goal_for_level(level: int) -> str:
     
 def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     """
-    [ULTIMATE WORKER v2026.1.23] Isolated Execution with Evidence Streaming
+    [ULTIMATE WORKER v2026.1.26 - SELF-HEALING VERSION]
     ---------------------------------------------------------------------
-    - สร้างสภาพแวดล้อมใหม่แยกขาดจากกัน (Zero Memory Leak)
-    - รองรับการส่งคืน Evidence Map กลับไปยัง Main Process เพื่อป้องกันข้อมูลหาย
-    - เพิ่มระบบ Error Handling แบบก้อนข้อมูล (Object) เพื่อไม่ให้ระบบรวมผลพัง
+    - 🛡️ Isolated Execution: รองรับทั้งระบบ Fork (Mac) และ Spawn (Server/Docker)
+    - 🧠 Auto-LLM Rehydration: สร้าง LLM Instance ใหม่ทันทีหากร่างแยกมองไม่เห็นตัวแม่
+    - 🧬 Evidence Streaming: ส่งคืน Evidence Map กลับสู่ Main Process ได้ครบถ้วน
     """
     # 1. 📂 PATH & ENVIRONMENT SETUP
+    # ตรวจสอบและตั้งค่า Path เพื่อให้ Worker หา Module เจอ
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -219,9 +220,13 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     except Exception as e:
         return {"error": f"Worker unpacking failed: {str(e)}", "status": "failure"}, {}
 
-    # 3. 🏗️ RECONSTRUCT ISOLATED ENGINE
+    # 3. 🏗️ RECONSTRUCT ISOLATED ENGINE (With Self-Healing LLM)
     try:
-        # สร้าง Config เฉพาะกิจ
+        # 🎯 CRITICAL: ต้องนำเข้าและสร้าง LLM ใหม่ภายในนี้เท่านั้น เพื่อรองรับโหมด Spawn
+        from models.llm import create_llm_instance
+        from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
+
+        # สร้าง Config สำหรับ Worker นี้โดยเฉพาะ
         worker_config = AssessmentConfig(
             enabler=enabler,
             tenant=tenant,
@@ -234,42 +239,54 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
             max_retrieval_attempts=max_retrieval_attempts 
         )
 
-        # คืนชีพ Engine (ตรวจสอบให้แน่ใจว่า Class SEAMPDCAEngine มีการรับ document_map)
+        # 🚀 สร้าง LLM Instance ใหม่สำหรับ Process นี้ (กันปัญหา AttributeError: llm)
+        worker_llm = None
+        if mock_mode == "none":
+            worker_llm = create_llm_instance(
+                model_name=model_name, 
+                temperature=temperature
+            )
+
+        # คืนชีพ Engine พร้อมอาวุธครบมือ (LLM + Document Map)
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=None,              
-            vectorstore_manager=None,       
+            llm_instance=worker_llm,        # ✅ ไม่เป็น None แล้ว!
+            vectorstore_manager=None,       # จะถูก Init เองข้างในตามความจำเป็น
             logger_instance=worker_logger,
             document_map=document_map,      
             ActionPlanActions=action_plan_model
         )
     except Exception as e:
-        worker_logger.error(f"❌ Worker initialization failed: {e}")
-        return {"sub_id": sub_id, "error": f"Init Error: {str(e)}"}, {}
+        worker_logger.error(f"❌ Worker initialization failed for {sub_id}: {e}")
+        return {
+            "sub_id": sub_id, 
+            "error": f"Init Error: {str(e)}",
+            "status": "failed"
+        }, {}
 
     # 4. ⚡ EXECUTE & STREAM BACK RESULTS
     try:
-        # 🎯 จุดสำคัญ: _run_sub_criteria_assessment_worker ต้องคืนค่า (result, evidence_mem)
-        # evidence_mem คือ dict ที่เก็บ chunks/docs ที่ AI เลือกใช้จริง
+        # รันการประเมินรายหัวข้อ
         result, worker_evidence_mem = worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
         
-        # ตรวจสอบว่า result มี sub_id ติดไปด้วยเพื่อให้ Merge ถูกตัว
-        if isinstance(result, dict) and 'sub_id' not in result:
-            result['sub_id'] = sub_id
+        # ตรวจสอบความสมบูรณ์ของข้อมูลก่อนส่งกลับ
+        if isinstance(result, dict):
+            if 'sub_id' not in result: result['sub_id'] = sub_id
+            result['status'] = "success"
 
         return result, worker_evidence_mem
         
     except Exception as e:
         worker_logger.error(f"❌ Execution error for {sub_id}: {str(e)}")
-        # คืนค่าแบบ Fallback เพื่อให้ Main Process ไม่ค้าง
+        # คืนค่าแบบ Fallback เพื่อให้ Main Process สามารถรันต่อได้ (ไม่พังทั้งระบบ)
         return {
             "sub_id": sub_id,
             "error": str(e),
             "status": "failed",
             "is_passed": False,
             "score": 0.0,
-            "reason": f"Worker Exception: {str(e)}"
+            "reason": f"Worker Runtime Exception: {str(e)}"
         }, {}
         
 # =================================================================
