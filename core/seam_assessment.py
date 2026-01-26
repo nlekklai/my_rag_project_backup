@@ -193,14 +193,13 @@ def get_pdca_goal_for_level(level: int) -> str:
     
 def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     """
-    [ULTIMATE WORKER v2026.1.26 - SELF-HEALING VERSION]
+    [ULTIMATE WORKER v2026.1.26 - SELF-HEALING & VSM-READY]
     ---------------------------------------------------------------------
-    - 🛡️ Isolated Execution: รองรับทั้งระบบ Fork (Mac) และ Spawn (Server/Docker)
-    - 🧠 Auto-LLM Rehydration: สร้าง LLM Instance ใหม่ทันทีหากร่างแยกมองไม่เห็นตัวแม่
-    - 🧬 Evidence Streaming: ส่งคืน Evidence Map กลับสู่ Main Process ได้ครบถ้วน
+    - 🛡️ Isolated Execution: รองรับระบบ Spawn สำหรับ Server 8-GPU เต็มสูบ
+    - 🔫 Pre-loaded VSM: โหลด VectorStore ทันทีภายในร่างแยก ป้องกัน AttributeError
+    - 🧬 Evidence Streaming: ส่งคืน Memory กลับสู่ Main Process แบบ Real-time
     """
     # 1. 📂 PATH & ENVIRONMENT SETUP
-    # ตรวจสอบและตั้งค่า Path เพื่อให้ Worker หา Module เจอ
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if project_root not in sys.path:
         sys.path.append(project_root)
@@ -220,13 +219,15 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
     except Exception as e:
         return {"error": f"Worker unpacking failed: {str(e)}", "status": "failure"}, {}
 
-    # 3. 🏗️ RECONSTRUCT ISOLATED ENGINE (With Self-Healing LLM)
+    # 3. 🏗️ RECONSTRUCT ISOLATED ENGINE (With Self-Healing LLM & VSM)
     try:
-        # 🎯 CRITICAL: ต้องนำเข้าและสร้าง LLM ใหม่ภายในนี้เท่านั้น เพื่อรองรับโหมด Spawn
+        # 🎯 CRITICAL: ต้องนำเข้าใหม่ภายใน Worker เพื่อให้มองเห็น Module ในโหมด Spawn
         from models.llm import create_llm_instance
         from core.seam_assessment import SEAMPDCAEngine, AssessmentConfig
+        from core.vectorstore import load_all_vectorstores
+        from config.global_vars import EVIDENCE_DOC_TYPES
 
-        # สร้าง Config สำหรับ Worker นี้โดยเฉพาะ
+        # สร้าง Config เฉพาะกิจสำหรับ Worker นี้
         worker_config = AssessmentConfig(
             enabler=enabler,
             tenant=tenant,
@@ -239,7 +240,7 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
             max_retrieval_attempts=max_retrieval_attempts 
         )
 
-        # 🚀 สร้าง LLM Instance ใหม่สำหรับ Process นี้ (กันปัญหา AttributeError: llm)
+        # 🚀 3.1 สร้าง LLM Instance (ร่างแยก)
         worker_llm = None
         if mock_mode == "none":
             worker_llm = create_llm_instance(
@@ -247,12 +248,25 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
                 temperature=temperature
             )
 
-        # คืนชีพ Engine พร้อมอาวุธครบมือ (LLM + Document Map)
+        # 🔫 3.2 โหลด VectorStoreManager (VSM) ล่วงหน้า
+        # แก้ปัญหา: 'SEAMPDCAEngine' object has no attribute 'vectorstore_manager'
+        worker_vsm = None
+        try:
+            worker_vsm = load_all_vectorstores(
+                doc_types=[EVIDENCE_DOC_TYPES], 
+                enabler_filter=enabler, 
+                tenant=tenant, 
+                year=str(year)
+            )
+        except Exception as v_err:
+            worker_logger.warning(f"⚠️ VSM Load Warning for {sub_id}: {v_err}")
+
+        # 🛠️ 3.3 คืนชีพ Engine พร้อม "อาวุธ" ครบมือ
         worker_instance = SEAMPDCAEngine(
             config=worker_config, 
             evidence_map_path=evidence_map_path, 
-            llm_instance=worker_llm,        # ✅ ไม่เป็น None แล้ว!
-            vectorstore_manager=None,       # จะถูก Init เองข้างในตามความจำเป็น
+            llm_instance=worker_llm,
+            vectorstore_manager=worker_vsm,  # ✅ ส่งเข้าหูขวาไปเลย!
             logger_instance=worker_logger,
             document_map=document_map,      
             ActionPlanActions=action_plan_model
@@ -267,10 +281,9 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
 
     # 4. ⚡ EXECUTE & STREAM BACK RESULTS
     try:
-        # รันการประเมินรายหัวข้อ
+        # เรียกใช้ฟังก์ชันประเมินตัวเก่งที่คุณพี่แก้ไว้ v2026.01.25
         result, worker_evidence_mem = worker_instance._run_sub_criteria_assessment_worker(sub_criteria_data)
         
-        # ตรวจสอบความสมบูรณ์ของข้อมูลก่อนส่งกลับ
         if isinstance(result, dict):
             if 'sub_id' not in result: result['sub_id'] = sub_id
             result['status'] = "success"
@@ -279,7 +292,6 @@ def _static_worker_process(worker_input_tuple: Tuple) -> Any:
         
     except Exception as e:
         worker_logger.error(f"❌ Execution error for {sub_id}: {str(e)}")
-        # คืนค่าแบบ Fallback เพื่อให้ Main Process สามารถรันต่อได้ (ไม่พังทั้งระบบ)
         return {
             "sub_id": sub_id,
             "error": str(e),
