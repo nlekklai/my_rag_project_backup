@@ -27,6 +27,7 @@ output/
 assessment_results
 ref_data
 ingest.log
+seam_pro.db
 
 # Ignore large files
 *.pdf

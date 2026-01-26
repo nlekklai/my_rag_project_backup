@@ -1,8 +1,0 @@
-{
-    // Tells the Python analysis engine to look for modules in these paths.
-    // This resolves the 'from core.BaseAssessment import BaseAssessment' error 
-    // because it tells the analyzer that 'core' is a valid package folder.
-    "python.analysis.extraPaths": [
-        "./core" 
-    ]
-}
