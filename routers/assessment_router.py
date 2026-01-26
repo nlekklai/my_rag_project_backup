@@ -218,6 +218,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     # --- [ส่วนที่ 2: ดึง Master Strategic Roadmap (หัวใจสำคัญ)] ---
     # ข้อมูลนี้มาจาก synthesize_strategic_roadmap ในระดับ Master
     raw_master_roadmap = raw_data.get("master_roadmap") or {}
+
+    if not raw_master_roadmap and raw_data.get("summary_reports"):
+        # ดึงจากรายการแรกของ summary_reports
+        raw_master_roadmap = raw_data.get("summary_reports")[0].get("master_roadmap")
+
+    raw_master_roadmap = raw_master_roadmap or {}
     
     ui_strategic_roadmap = {
         "status": raw_master_roadmap.get("status", "PENDING"),
@@ -340,13 +346,16 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "name": sub_name,
             "level": f"L{highest_pass}",
             "score": round(float(sub.get("score", 0.0)), 2),
+            "potential_level": sub.get("potential_level"), # ✨ เพิ่มเพื่อให้ UI แสดงลูกศร Zap ได้
+            "is_gap_analysis": sub.get("is_gap_analysis", False), # ✨ เพิ่มสำหรับ Tooltip แจ้งเตือน Gap
+            "reason": sub.get("reason", ""), # ✨ เพิ่มเพื่อให้ Tooltip แสดงเหตุผลรวมได้
             "pdca_matrix": pdca_matrix,
             "level_details": ui_level_details,
-            # Roadmap รายย่อย (ถ้ามีในระดับ Sub)
             "roadmap": sub.get("master_roadmap", {}).get("roadmap", []) if isinstance(sub.get("master_roadmap"), dict) else [],
             "audit_confidence": {
                 "source_count": len(sub_unique_files), 
-                "traceability_score": round(avg_conf, 2)
+                "traceability_score": round(avg_conf * 100, 1), # ✨ ปรับเป็น % (0-100) ให้ตรงกับ UI
+                "consistency_check": sub.get("consistency_check", True) # ✨ เพิ่มเพื่อแสดง Badge Verified
             },
             "grouped_sources": grouped_sources
         })
