@@ -41,9 +41,12 @@ services:
       - RAG_RUN_MODE=PRODUCTION
       - LLM_BACKEND=OLLAMA
       - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
-      # - DEVICE=cuda
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
+      # --- เพิ่ม 3 บรรทัดนี้เพื่อแก้ Permission Error ---
+      - PYTHAINLP_DATA_DIR=/app/data_store/.pythainlp
+      - HF_HOME=/app/data_store/.huggingface
+      - TRANSFORMERS_CACHE=/app/data_store/.cache/huggingface
     depends_on:
       - ollama_service
     command: uvicorn app:app --host 0.0.0.0 --port 8000
