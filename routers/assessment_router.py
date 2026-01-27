@@ -200,141 +200,408 @@ async def view_document(
     # ส่งไฟล์ PDF กลับไป
     return FileResponse(file_path, media_type="application/pdf")
 
-def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
+
+# def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
+#     """
+#     FINAL FULL REVISE – 2026.01.29
+#     ✔ Roadmap always resolved
+#     ✔ Traceability = correct % (0–100)
+#     ✔ Confidence stable (no 0 / no 4000%)
+#     ✔ Consistency aligned with engine
+#     ✔ UI-compatible (AssessmentResults.tsx)
+#     """
+
+#     if not raw_data:
+#         return {"status": "FAILED", "message": "No data"}
+
+#     # ------------------------------------------------------------------
+#     # [0] Resolve Master Roadmap (nested-safe)
+#     # ------------------------------------------------------------------
+#     def resolve_master_roadmap(data: Dict[str, Any]) -> Dict[str, Any]:
+#         pools = []
+#         if isinstance(data.get("master_roadmap"), dict):
+#             pools.append(data["master_roadmap"])
+#         for r in data.get("summary_reports", []):
+#             if isinstance(r, dict) and isinstance(r.get("master_roadmap"), dict):
+#                 pools.append(r["master_roadmap"])
+
+#         for obj in pools:
+#             while isinstance(obj, dict) and "master_roadmap" in obj:
+#                 obj = obj["master_roadmap"]
+#             if isinstance(obj, dict) and obj.get("roadmap"):
+#                 return obj
+#         return {}
+
+#     metadata = raw_data.get("metadata", {})
+#     summary = raw_data.get("result_summary", {})
+
+#     # ------------------------------------------------------------------
+#     # [1] Strategic Roadmap
+#     # ------------------------------------------------------------------
+#     raw_roadmap = resolve_master_roadmap(raw_data)
+
+#     strategic_roadmap = {
+#         "status": raw_roadmap.get("status", "COMPLETED"),
+#         "overall_strategy": (
+#             raw_roadmap.get("overall_strategy")
+#             or raw_roadmap.get("summary")
+#             or ""
+#         ),
+#         "phases": []
+#     }
+
+#     for r in raw_roadmap.get("roadmap", []):
+#         strategic_roadmap["phases"].append({
+#             "phase": r.get("phase"),
+#             "target_levels": r.get("target_levels", []),
+#             "main_objective": r.get("main_objective") or r.get("goal", ""),
+#             "key_actions": r.get("key_actions") or r.get("actions", []),
+#             "expected_outcome": r.get("expected_outcome", "")
+#         })
+
+#     # ------------------------------------------------------------------
+#     # [2] Collect Sub Criteria
+#     # ------------------------------------------------------------------
+#     subs = []
+#     for d in raw_data.get("sub_criteria_details", []):
+#         subs.extend(d.get("sub_criteria_results", []))
+#     if not subs:
+#         subs = raw_data.get("sub_criteria_results", [])
+
+#     processed = []
+#     radar = []
+#     passed_count = 0
+
+#     # ------------------------------------------------------------------
+#     # [3] Sub Criteria Processing
+#     # ------------------------------------------------------------------
+#     for sub in subs:
+#         code = str(sub.get("sub_id"))
+#         name = sub.get("sub_criteria_name", "")
+#         levels = sub.get("level_details", {})
+
+#         level_ui = {}
+#         passed_levels = []
+
+#         # ---------- Levels ----------
+#         for i in range(1, 6):
+#             k = str(i)
+#             info = levels.get(k, {})
+#             if info.get("is_passed"):
+#                 passed_levels.append(i)
+
+#             level_ui[k] = {
+#                 "level": i,
+#                 "is_passed": info.get("is_passed", False),
+#                 "score": round(float(info.get("score", 0)), 2),
+#                 "reason": info.get("reason", ""),
+#                 "coaching_insight": info.get("coaching_insight", ""),
+#                 "action_plan": [
+#                     {
+#                         "action": a.get("action", ""),
+#                         "target_evidence": a.get("target_evidence", "")
+#                     } for a in info.get("atomic_action_plan", [])
+#                 ]
+#             }
+
+#         highest = max(passed_levels) if passed_levels else 0
+#         if highest:
+#             passed_count += 1
+
+#         # ---------- Evidence & PDCA ----------
+#         grouped_sources = {str(i): [] for i in range(1, 6)}
+#         pdca_matrix = []
+#         file_conf_map = {}  # filename -> max confidence
+
+#         for i in range(1, 6):
+#             k = str(i)
+#             info = levels.get(k, {})
+#             pdca_raw = info.get("pdca_breakdown", {})
+
+#             pdca_matrix.append({
+#                 "level": i,
+#                 "is_passed": info.get("is_passed", False),
+#                 "pdca": {p: 1 if float(pdca_raw.get(p, 0)) > 0 else 0 for p in ["P", "D", "C", "A"]}
+#             })
+
+#             for src in info.get("evidence_sources", []):
+#                 fname = (src.get("filename") or src.get("source_filename") or "Unknown").split("|")[0]
+
+#                 raw_conf = (
+#                     src.get("pdca_confidence")
+#                     or src.get("confidence")
+#                     or src.get("relevance_score")
+#                     or src.get("score")
+#                 )
+
+#                 try:
+#                     raw_conf = float(raw_conf)
+#                 except (TypeError, ValueError):
+#                     raw_conf = 0.5
+
+#                 conf = raw_conf / 100 if raw_conf > 1 else raw_conf
+#                 conf = max(0.0, min(conf, 1.0))
+
+#                 file_conf_map[fname] = max(conf, file_conf_map.get(fname, 0))
+
+#                 tag = (src.get("pdca_tag") or src.get("pdca") or "").upper()
+#                 if tag not in ["P", "D", "C", "A"]:
+#                     fl = fname.lower()
+#                     if any(x in fl for x in ["plan", "แผน"]): tag = "P"
+#                     elif any(x in fl for x in ["audit", "assess", "ประเมิน", "ผล"]): tag = "C"
+#                     elif any(x in fl for x in ["improve", "ปรับปรุง"]): tag = "A"
+#                     else: tag = "D"
+
+#                 grouped_sources[k].append({
+#                     "filename": fname,
+#                     "page": str(src.get("page", "1")),
+#                     "pdca_tag": tag,
+#                     "confidence": round(conf * 100, 1),
+#                     "text": src.get("text", "")
+#                 })
+
+#         traceability = (
+#             sum(file_conf_map.values()) / len(file_conf_map)
+#             if file_conf_map else 0
+#         )
+
+#         processed.append({
+#             "code": code,
+#             "name": name,
+#             "level": f"L{highest}",
+#             "score": round(float(sub.get("score", 0)), 2),
+#             "pdca_matrix": pdca_matrix,
+#             "level_details": level_ui,
+#             "audit_confidence": {
+#                 "source_count": len(file_conf_map),
+#                 "traceability_score": round(traceability * 100, 1),
+#                 "consistency_check": traceability > 0
+#             },
+#             "grouped_sources": grouped_sources
+#         })
+
+#         radar.append({"axis": code, "value": highest})
+
+#     # ------------------------------------------------------------------
+#     # [4] Sort
+#     # ------------------------------------------------------------------
+#     def sort_key(x):
+#         return [int(p) for p in x.split(".") if p.isdigit()]
+
+#     processed.sort(key=lambda x: sort_key(x["code"]))
+#     radar.sort(key=lambda x: sort_key(x["axis"]))
+
+#     # ------------------------------------------------------------------
+#     # [5] Final Payload
+#     # ------------------------------------------------------------------
+#     return {
+#         "status": summary.get("status", "COMPLETED"),
+#         "record_id": metadata.get("record_id"),
+#         "tenant": metadata.get("tenant"),
+#         "year": metadata.get("year"),
+#         "enabler": metadata.get("enabler"),
+#         "level": str(summary.get("maturity_level", "L0")).replace("L", ""),
+#         "score": round(float(summary.get("total_weighted_score", 0)), 2),
+#         "full_score": 5,
+#         "strategic_roadmap": strategic_roadmap,
+#         "metrics": {
+#             "completion_rate": round((passed_count / len(processed) * 100), 1) if processed else 0,
+#             "passed_criteria": passed_count,
+#             "total_criteria": len(processed)
+#         },
+#         "radar_data": radar,
+#         "sub_criteria": processed
+#     }
+
+
+def _transform_result_for_ui(
+    raw_data: Dict[str, Any],
+    current_user: Any = None
+) -> Dict[str, Any]:
     """
-    [FULL REVISED v2026.01.26 - PRODUCTION READY]
-    - ADDED: ระบบ Sorting เรียงลำดับ 1.1, 1.2, 2.1, 2.2 (Natural Sort)
-    - FIXED: Roadmap เจาะข้อมูลซ้อน 2 ชั้น (master_roadmap > master_roadmap)
-    - FIXED: คืนสี Badge PDCA (P,D,C,A) ด้วย AI Heuristic จากชื่อไฟล์
-    - FIXED: ปรับปรุงการแสดงผล Traceability Score ให้เป็นทศนิยมหลักเดียว (0-100)
+    [FULL CANONICAL VERSION - 2026.01]
+    ✔ รองรับ Engine ใหม่ (Enabler-level Strategic Roadmap)
+    ✔ รองรับ Single-sub / Run-all sub criteria
+    ✔ PDCA tag จาก engine เป็นหลัก + AI heuristic fallback
+    ✔ Evidence แยกตาม level (1–5)
+    ✔ Natural sort 1.1, 1.2, 2.1 …
+    ✔ UI schema stable (ไม่ทำ UI พัง)
     """
+
     if not raw_data:
         return {"status": "FAILED", "message": "No data to transform"}
 
-    # --- [1. Metadata & Summary] ---
+    # ------------------------------------------------------------------
+    # [1] Metadata & Summary
+    # ------------------------------------------------------------------
     metadata = raw_data.get("metadata", {})
-    res_summary = raw_data.get("result_summary", {})
-    
-    # --- [2. Master Strategic Roadmap (Double-Nested Fix)] ---
-    raw_master_roadmap = {}
-    summary_reports = raw_data.get("summary_reports", [])
-    
-    if summary_reports and len(summary_reports) > 0:
-        outer_roadmap = summary_reports[0].get("master_roadmap", {})
-        if isinstance(outer_roadmap, dict) and "master_roadmap" in outer_roadmap:
-            raw_master_roadmap = outer_roadmap.get("master_roadmap", {})
-        else:
-            raw_master_roadmap = outer_roadmap
-    else:
-        raw_master_roadmap = raw_data.get("master_roadmap", {})
+    summary = raw_data.get("result_summary", {})
+
+    # ------------------------------------------------------------------
+    # [2] Strategic Roadmap (ENABLER LEVEL - SOURCE OF TRUTH)
+    # ------------------------------------------------------------------
+    raw_strategic_roadmap = raw_data.get("strategic_roadmap", {})
 
     ui_strategic_roadmap = {
-        "status": raw_master_roadmap.get("status", "COMPLETED"),
+        "status": raw_strategic_roadmap.get("status", "COMPLETED"),
         "overall_strategy": (
-            raw_master_roadmap.get("overall_strategy") or 
-            raw_master_roadmap.get("summary") or 
-            "ยกระดับการจัดการความรู้เพื่อองค์กรแห่งการเรียนรู้"
+            raw_strategic_roadmap.get("overall_strategy")
+            or raw_strategic_roadmap.get("summary")
+            or "ยกระดับการจัดการความรู้เพื่อองค์กรแห่งการเรียนรู้"
         ),
         "phases": []
     }
 
-    for item in (raw_master_roadmap.get("roadmap") or []):
+    for phase in raw_strategic_roadmap.get("roadmap", []):
         ui_strategic_roadmap["phases"].append({
-            "phase": item.get("phase", "N/A"),
-            "target_levels": item.get("target_levels", []),
-            "main_objective": item.get("main_objective") or item.get("goal") or "กลยุทธ์สำคัญ",
-            "key_actions": item.get("key_actions") or item.get("actions") or [],
-            "expected_outcome": item.get("expected_outcome") or "ผ่านเกณฑ์มาตรฐาน"
+            "phase": phase.get("phase") or phase.get("step") or "N/A",
+            "target_levels": phase.get("target_levels", []),
+            "main_objective": (
+                phase.get("main_objective")
+                or phase.get("goal")
+                or "กลยุทธ์สำคัญ"
+            ),
+            "key_actions": (
+                phase.get("key_actions")
+                or phase.get("actions")
+                or []
+            ),
+            "expected_outcome": phase.get(
+                "expected_outcome",
+                "ผ่านเกณฑ์มาตรฐาน"
+            )
         })
 
-    # --- [3. รวบรวมผลลัพธ์ Sub-Criteria] ---
+    # ------------------------------------------------------------------
+    # [3] Collect Sub-Criteria Results (รองรับ single / multi)
+    # ------------------------------------------------------------------
     all_sub_results = []
+
     for detail in raw_data.get("sub_criteria_details", []):
-        results = detail.get("sub_criteria_results", [])
-        if results: all_sub_results.extend(results)
-    
+        all_sub_results.extend(detail.get("sub_criteria_results", []))
+
     if not all_sub_results:
         all_sub_results = raw_data.get("sub_criteria_results", [])
 
     processed_sub_criteria = []
     radar_data = []
-    passed_count_global = 0
+    passed_count = 0
 
+    # ------------------------------------------------------------------
+    # [4] Process Each Sub-Criteria
+    # ------------------------------------------------------------------
     for sub in all_sub_results:
         sub_id = str(sub.get("sub_id", "N/A"))
         sub_name = sub.get("sub_criteria_name", "Unknown")
-        raw_level_details = sub.get("level_details", {})
-        
+        level_details_raw = sub.get("level_details", {})
+
         ui_level_details = {}
         passed_levels = []
-        
-        for lv_idx in range(1, 6):
-            lv_key = str(lv_idx)
-            lv_info = raw_level_details.get(lv_key) or {}
-            is_passed = lv_info.get("is_passed", False)
-            if is_passed: passed_levels.append(lv_idx)
 
-            raw_actions = lv_info.get("atomic_action_plan") or []
-            ui_actions = [{"action": a.get("action", "N/A"), "target_evidence": a.get("target_evidence", "N/A")} for a in raw_actions]
+        # -------------------------
+        # Level 1–5 details
+        # -------------------------
+        for lv in range(1, 6):
+            lv_key = str(lv)
+            lv_info = level_details_raw.get(lv_key, {})
+
+            is_passed = lv_info.get("is_passed", False)
+            if is_passed:
+                passed_levels.append(lv)
+
+            actions = []
+            for act in lv_info.get("atomic_action_plan", []):
+                actions.append({
+                    "action": act.get("action", "N/A"),
+                    "target_evidence": act.get("target_evidence", "N/A")
+                })
 
             ui_level_details[lv_key] = {
-                "level": lv_idx, "is_passed": is_passed,
+                "level": lv,
+                "is_passed": is_passed,
                 "score": round(float(lv_info.get("score", 0.0)), 2),
                 "reason": lv_info.get("reason", ""),
                 "coaching_insight": lv_info.get("coaching_insight", ""),
-                "action_plan": ui_actions
+                "action_plan": actions
             }
 
         highest_pass = max(passed_levels) if passed_levels else 0
-        if highest_pass > 0: passed_count_global += 1
+        if highest_pass > 0:
+            passed_count += 1
 
-        # --- PDCA & Evidence Logic ---
+        # ------------------------------------------------------------------
+        # PDCA Matrix + Evidence Grouping
+        # ------------------------------------------------------------------
         pdca_matrix = []
         grouped_sources = {str(i): [] for i in range(1, 6)}
-        sub_unique_files = set()
-        sub_conf_scores = []
+        unique_files = set()
+        confidence_scores = []
 
-        for lv_idx in range(1, 6):
-            lv_k = str(lv_idx)
-            info = raw_level_details.get(lv_k) or {}
-            p_raw = info.get("pdca_breakdown", {})
-            
+        for lv in range(1, 6):
+            lv_key = str(lv)
+            lv_info = level_details_raw.get(lv_key, {})
+
+            pdca_raw = lv_info.get("pdca_breakdown", {})
             pdca_matrix.append({
-                "level": lv_idx, 
-                "is_passed": info.get("is_passed", False), 
-                "pdca": {k: (1 if float(p_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
+                "level": lv,
+                "is_passed": lv_info.get("is_passed", False),
+                "pdca": {
+                    k: 1 if float(pdca_raw.get(k, 0)) > 0 else 0
+                    for k in ["P", "D", "C", "A"]
+                }
             })
-            
-            for src in info.get("evidence_sources", []):
-                f_name = (src.get("filename") or src.get("source_filename") or "Unknown").split('|')[0]
-                sub_unique_files.add(f_name)
-                
-                conf = float(src.get("relevance_score") or src.get("score") or 0.0)
-                sub_conf_scores.append(conf)
-                
-                # Smart Tagging
-                tag = str(src.get("pdca_tag") or src.get("pdca") or "").upper()
-                tag_source = "Engine Verified"
-                if tag in ["", "N/A", "NONE", "OTHER"]:
-                    f_name_l = f_name.lower()
-                    tag_source = "AI Heuristic"
-                    if any(k in f_name_l for k in ['plan', 'แผน', 'นโยบาย']): tag = "P"
-                    elif any(k in f_name_l for k in ['survey', 'ประเมิน', 'assess', 'audit', 'ผล']): tag = "C"
-                    elif any(k in f_name_l for k in ['improve', 'ปรับปรุง', 'แก้ไข', 'action']): tag = "A"
-                    else: tag = "D"
 
-                grouped_sources[lv_k].append({
-                    "filename": f_name,
+            for src in lv_info.get("evidence_sources", []):
+                filename = (
+                    src.get("filename")
+                    or src.get("source_filename")
+                    or "Unknown"
+                ).split("|")[0]
+
+                unique_files.add(filename)
+
+                score = float(
+                    src.get("relevance_score")
+                    or src.get("score")
+                    or 0.0
+                )
+                confidence_scores.append(score)
+
+                # --- PDCA Tag Resolution ---
+                tag = str(
+                    src.get("pdca_tag")
+                    or src.get("pdca")
+                    or ""
+                ).upper()
+
+                tag_source = "Engine"
+                if tag not in ["P", "D", "C", "A"]:
+                    fname = filename.lower()
+                    tag_source = "AI Heuristic"
+                    if re.search(r"plan|แผน|policy|นโยบาย", fname):
+                        tag = "P"
+                    elif re.search(r"audit|assess|survey|ประเมิน|ผล", fname):
+                        tag = "C"
+                    elif re.search(r"improve|action|ปรับปรุง|แก้ไข", fname):
+                        tag = "A"
+                    else:
+                        tag = "D"
+
+                grouped_sources[lv_key].append({
+                    "filename": filename,
                     "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
                     "page": str(src.get("page", "1")),
-                    "rerank_score": round(conf, 1),
+                    "rerank_score": round(score, 1),
                     "pdca_tag": tag,
                     "tag_source": tag_source,
-                    "pdca_confidence": src.get("pdca_confidence") or 0.5,
+                    "pdca_confidence": src.get("pdca_confidence", 0.5),
                     "text": src.get("text", "")
                 })
 
-        avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores)) if sub_conf_scores else 0
+        avg_conf = (
+            sum(confidence_scores) / len(confidence_scores)
+            if confidence_scores else 0.0
+        )
 
         processed_sub_criteria.append({
             "code": sub_id,
@@ -346,197 +613,56 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "pdca_matrix": pdca_matrix,
             "level_details": ui_level_details,
             "audit_confidence": {
-                "source_count": len(sub_unique_files), 
+                "source_count": len(unique_files),
                 "traceability_score": round(avg_conf, 1),
                 "consistency_check": sub.get("consistency_check", True)
             },
-            "grouped_sources": grouped_sources
+            "grouped_sources": grouped_sources,
+            # optional future use
+            "sub_roadmap": sub.get("master_roadmap")
         })
-        radar_data.append({"axis": sub_id, "value": highest_pass})
 
-    # --- [4. 🎯 Sorting Logic (แก้ไขให้เรียง 1.1, 1.2, 2.1...)] ---
-    def sub_sort_key(item_code):
+        radar_data.append({
+            "axis": sub_id,
+            "value": highest_pass
+        })
+
+    # ------------------------------------------------------------------
+    # [5] Natural Sorting (1.1, 1.2, 2.1 …)
+    # ------------------------------------------------------------------
+    def natural_key(code: str):
         try:
-            # แยกด้วย '.' แล้วแปลงเป็น list ของตัวเลข เช่น "1.2" -> [1, 2]
-            return [int(part) for part in str(item_code).split('.') if part.isdigit()]
-        except:
-            return [999] # กรณีไม่มีตัวเลขให้ไปอยู่ท้ายสุด
+            return [int(x) for x in re.findall(r"\d+", code)]
+        except Exception:
+            return [999]
 
-    processed_sub_criteria.sort(key=lambda x: sub_sort_key(x['code']))
-    radar_data.sort(key=lambda x: sub_sort_key(x['axis']))
+    processed_sub_criteria.sort(key=lambda x: natural_key(x["code"]))
+    radar_data.sort(key=lambda x: natural_key(x["axis"]))
 
-    # --- [5. Final Output Structure] ---
+    # ------------------------------------------------------------------
+    # [6] Final UI Payload
+    # ------------------------------------------------------------------
+    total = len(processed_sub_criteria)
+
     return {
-        "status": res_summary.get("status", "COMPLETED"),
+        "status": summary.get("status", "COMPLETED"),
         "record_id": metadata.get("record_id"),
-        "tenant": metadata.get("tenant", "pea"),
-        "year": metadata.get("year", 2567),
-        "enabler": metadata.get("enabler", "KM"),
-        "level": str(res_summary.get("maturity_level", "L0")).replace("L", ""),
-        "score": round(float(res_summary.get("total_weighted_score", 0.0)), 2),
+        "tenant": metadata.get("tenant"),
+        "year": metadata.get("year"),
+        "enabler": metadata.get("enabler"),
+        "level": str(summary.get("maturity_level", "L0")).replace("L", ""),
+        "score": round(float(summary.get("total_weighted_score", 0.0)), 2),
         "full_score": 5.0,
         "strategic_roadmap": ui_strategic_roadmap,
         "metrics": {
-            "completion_rate": round((passed_count_global / len(processed_sub_criteria) * 100), 1) if processed_sub_criteria else 0,
-            "passed_criteria": passed_count_global,
-            "total_criteria": len(processed_sub_criteria)
+            "completion_rate": round((passed_count / total * 100), 1) if total else 0,
+            "passed_criteria": passed_count,
+            "total_criteria": total
         },
         "radar_data": radar_data,
         "sub_criteria": processed_sub_criteria
     }
 
-# def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
-#     """
-#     [FULL REVISED v2026.01.25]
-#     1. แก้ Analysis Blank (atomic_action_plan -> action_plan)
-#     2. ดึง Strategic Roadmap (Tier-3 Logic) ให้ UI
-#     """
-#     if not raw_data:
-#         return {"status": "FAILED", "message": "No data to transform"}
-
-#     metadata = raw_data.get("metadata", {})
-#     res_summary = raw_data.get("result_summary", {})
-    
-#     # ดึงข้อมูลจาก sub_criteria_details
-#     all_sub_results = []
-#     for detail in raw_data.get("sub_criteria_details", []):
-#         results = detail.get("sub_criteria_results", [])
-#         if results:
-#             all_sub_results.extend(results)
-
-#     processed_sub_criteria = []
-#     radar_data = []
-#     passed_count_global = 0
-
-#     for sub in all_sub_results:
-#         sub_id = sub.get("sub_id", "N/A")
-#         sub_name = sub.get("sub_criteria_name", "Unknown")
-#         raw_level_details = sub.get("level_details", {})
-        
-#         # --- [🎯 1. จัดการ Level Details & Action Plan] ---
-#         ui_level_details = {}
-#         passed_levels = []
-#         for lv_idx in range(1, 6):
-#             lv_key = str(lv_idx)
-#             lv_info = raw_level_details.get(lv_key) or {}
-#             is_passed = lv_info.get("is_passed", False)
-#             if is_passed: passed_levels.append(lv_idx)
-
-#             # Map คีย์ให้ตรงกับ React (lvl.action_plan)
-#             raw_actions = lv_info.get("atomic_action_plan") or []
-#             ui_actions = [{"action": a.get("action", "N/A"), "target_evidence": a.get("target_evidence", "N/A")} for a in raw_actions]
-
-#             ui_level_details[lv_key] = {
-#                 "level": lv_idx,
-#                 "is_passed": is_passed,
-#                 "score": round(float(lv_info.get("score", 0.0)), 2),
-#                 "reason": lv_info.get("reason", f"ไม่มีข้อมูลวิเคราะห์ระดับ {lv_idx}"),
-#                 "coaching_insight": lv_info.get("coaching_insight", ""),
-#                 "action_plan": ui_actions
-#             }
-
-#         # --- [🚀 2. จัดการ Strategic Roadmap (ส่วนที่คุณถาม)] ---
-#         # ใน JSON ต้นฉบับอาจเป็น null หรือ object หรือ list
-#         raw_roadmap = sub.get("strategic_roadmap")
-#         ui_roadmap = []
-#         if raw_roadmap:
-#             if isinstance(raw_roadmap, list):
-#                 ui_roadmap = raw_roadmap
-#             else:
-#                 ui_roadmap = [raw_roadmap] # Wrap ให้เป็น list เพื่อให้ React .map() ได้
-
-#         # --- [🧩 3. จัดการ PDCA & Evidence] ---
-#         highest_pass = max(passed_levels) if passed_levels else 0
-#         if highest_pass > 0: passed_count_global += 1
-
-#         pdca_matrix = []
-#         grouped_sources = {str(i): [] for i in range(1, 6)}
-#         sub_unique_files = set()
-#         sub_conf_scores = []
-
-#         for lv_idx in range(1, 6):
-#             lv_k = str(lv_idx)
-#             info = raw_level_details.get(lv_k) or {}
-#             p_raw = info.get("pdca_breakdown", {})
-#             pdca_matrix.append({
-#                 "level": lv_idx, 
-#                 "is_passed": info.get("is_passed", False), 
-#                 "pdca": {k: (1 if float(p_raw.get(k, 0)) > 0 else 0) for k in ["P", "D", "C", "A"]}
-#             })
-            
-#             for src in info.get("evidence_sources", []):
-#                 # --- ดึงชื่อไฟล์ ---
-#                 f_name = (src.get("filename") or src.get("source_filename") or "Unknown").split('|')[0]
-#                 sub_unique_files.add(f_name)
-                
-#                 # --- ดึงคะแนนความมั่นใจราย Chunk (Relevance) ---
-#                 conf = float(src.get("relevance_score") or src.get("score") or 0.0)
-#                 sub_conf_scores.append(conf)
-                
-#                 # 1. 🔍 ดึง Tag และ Confidence จาก Engine (ที่เราเพิ่งฉีดเข้าไปใน JSON)
-#                 # ใช้ .get() เพื่อป้องกัน Key Error ถ้าไฟล์ JSON เก่ายังไม่มีค่านี้
-#                 raw_tag = src.get("pdca_tag") or src.get("pdca") or "OTHER"
-#                 pdca_conf = src.get("pdca_confidence") 
-
-#                 # 2. 🛡️ Fallback Logic (ถ้าข้อมูลเดิมเป็น N/A หรือ OTHER)
-#                 if str(raw_tag).upper() in ["N/A", "NONE", "OTHER", ""]:
-#                     f_name_lower = f_name.lower()
-#                     if any(k in f_name_lower for k in ['plan', 'นโยบาย', 'ยุทธศาสตร์', 'แผน']):
-#                         raw_tag = "P"
-#                         pdca_conf = 0.6  # เดาจากชื่อไฟล์ให้ความมั่นใจกลางๆ
-#                     elif any(k in f_name_lower for k in ['report', 'รายงาน', 'ผลการ', 'assessment', 'สรุป']):
-#                         raw_tag = "D"
-#                         pdca_conf = 0.6
-#                     else:
-#                         raw_tag = "OTHER"
-#                         pdca_conf = pdca_conf or 0.1
-
-#                 # ป้องกันค่า pdca_conf เป็น None
-#                 if pdca_conf is None:
-#                     pdca_conf = 0.5
-
-#                 # 3. ✅ ส่งค่าไปเก็บในกลุ่ม (ตรวจสอบชื่อตัวแปร grouped_sources และ lv_k ให้ตรงกับต้นฟังก์ชัน)
-#                 grouped_sources[lv_k].append({
-#                     "filename": f_name,
-#                     "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
-#                     "page": str(src.get("page", "1")),
-#                     "rerank_score": round(conf * 100, 1),
-#                     "pdca_tag": str(raw_tag).upper(),
-#                     "pdca_confidence": pdca_conf, 
-#                     "text": src.get("text", "")
-#                 })
-
-#         avg_conf = (sum(sub_conf_scores) / len(sub_conf_scores)) if sub_conf_scores else 0
-
-#         processed_sub_criteria.append({
-#             "code": sub_id,
-#             "name": sub_name,
-#             "level": f"L{highest_pass}",
-#             "score": round(float(sub.get("score", 0.0)), 2),
-#             "pdca_matrix": pdca_matrix,
-#             "level_details": ui_level_details,
-#             "roadmap": ui_roadmap, # ส่ง Roadmap ไปยัง UI
-#             "audit_confidence": {"source_count": len(sub_unique_files), "traceability_score": round(avg_conf, 2)},
-#             "grouped_sources": grouped_sources
-#         })
-#         radar_data.append({"axis": sub_id, "value": highest_pass})
-
-#     return {
-#         "status": res_summary.get("status", "COMPLETED"),
-#         "record_id": metadata.get("record_id"),
-#         "tenant": metadata.get("tenant", "pea"),
-#         "year": metadata.get("year", 2567),
-#         "enabler": metadata.get("enabler", "KM"),
-#         "level": str(res_summary.get("maturity_level", "L0")).replace("L", ""),
-#         "score": round(float(res_summary.get("total_weighted_score", 0.0)), 2),
-#         "metrics": {
-#             "completion_rate": round((passed_count_global / len(processed_sub_criteria) * 100), 1) if processed_sub_criteria else 0,
-#             "passed_criteria": passed_count_global,
-#             "total_criteria": len(processed_sub_criteria)
-#         },
-#         "radar_data": radar_data,
-#         "sub_criteria": processed_sub_criteria
-#     }
 
 def set_thai_font(run, size=14, bold=False, color=None):
     """ตั้งค่าฟอนต์ TH Sarabun New ให้รองรับทั้งภาษาไทยและอังกฤษ"""

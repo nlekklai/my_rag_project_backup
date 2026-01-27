@@ -4253,144 +4253,140 @@ MANDATORY AUDIT RULES:
     
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
-        [ULTIMATE REVISE v2026.1.25 - NESTED & PARALLEL SAFE]
-        - 🛡️ Data Persistence: บังคับซิงค์ข้อมูลกลับเข้าสู่ Global State เสมอ
-        - 🧬 Evidence Integrity: ป้องกันการสูญหายของ Audit Trail แม้ผลประเมินจะเป็น 0
-        - ⚖️ Resilience: รองรับการประเมินที่ระดับสูงพัง แต่ระดับล่างผ่าน (Partial Pass)
+        [CLEAN ARCHITECTURAL REVISE v2026.01.27]
+        - ✅ Evidence ผูกกับ level จริงเท่านั้น
+        - ✅ level_details ไม่มี schema ปน
+        - ✅ PDCA overall สะท้อน maturity ต่อเนื่องจริง
         """
+
         if not sub_result:
-            self.logger.warning("⚠️ Received empty sub_result in merge process.")
+            self.logger.warning("⚠️ Empty sub_result received.")
             return None
 
-        # 1. 🔍 Identity & Type Setup
-        sub_id = str(sub_result.get('sub_id', 'Unknown'))
-        # ดึง Level ล่าสุดที่ประเมิน (อาจจะเป็นเลเวลที่กำลังตรวจอยู่)
-        raw_lvl = sub_result.get('level') or sub_result.get('highest_full_level', 0)
-        try:
-            level_received = int(raw_lvl)
-        except (ValueError, TypeError):
-            level_received = 0
-            
-        # 2. 🛡️ Evidence Mapping Sync (The Audit Trail Guard)
+        sub_id = str(sub_result.get("sub_id", "Unknown"))
+
+        # --------------------------------------------------
+        # 1. Evidence Merge (LEVEL-TRUE)
+        # --------------------------------------------------
         if temp_map and isinstance(temp_map, dict):
-            if not hasattr(self, 'evidence_map'): self.evidence_map = {}
-            
-            for level_key, evidence_list in temp_map.items():
-                if not evidence_list: continue
-                
-                # มาตรฐาน Key: sub_id_L{level}
-                formatted_key = level_key if "_L" in level_key else f"{sub_id}_L{level_received}"
-                
-                # หากเป็น L0 ให้พยายามเดาจาก level_received หรือข้ามไปถ้าไม่มีข้อมูลจริง
-                if "_L0" in formatted_key and level_received > 0:
-                    formatted_key = f"{sub_id}_L{level_received}"
+            self.evidence_map = getattr(self, "evidence_map", {})
 
-                target_node = self.evidence_map.setdefault(formatted_key, {"status": "completed", "evidences": []})
-                existing_evs = target_node["evidences"]
-                
-                # สร้างชุด Unique ID เพื่อกันหลักฐานซ้ำ (doc_id + page)
-                existing_uids = {f"{e.get('doc_id')}_{e.get('page')}" for e in existing_evs}
-                
-                for ev in evidence_list:
-                    if not isinstance(ev, dict) or not ev: continue
-                    
-                    doc_id = ev.get('doc_id') or ev.get('stable_doc_uuid')
-                    page = str(ev.get('page') or ev.get('page_label', '0'))
+            for level_key, ev_list in temp_map.items():
+                if not ev_list or not isinstance(ev_list, list):
+                    continue
+
+                # level_key ต้องเป็นรูปแบบ sub_id_Lx เท่านั้น
+                if "_L" not in level_key:
+                    continue
+
+                node = self.evidence_map.setdefault(
+                    level_key,
+                    {"status": "completed", "evidences": []}
+                )
+
+                existing = node["evidences"]
+                seen = {f"{e.get('doc_id')}_{e.get('page')}" for e in existing}
+
+                for ev in ev_list:
+                    if not isinstance(ev, dict):
+                        continue
+
+                    doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid")
+                    page = str(ev.get("page") or ev.get("page_label", "0"))
                     uid = f"{doc_id}_{page}"
-                    
-                    if uid not in existing_uids and doc_id not in [None, "na", "n/a", "none"]:
-                        # Mapping filename จาก document_map กลาง
-                        if hasattr(self, 'document_map') and doc_id in self.document_map:
-                            ev['filename'] = self.document_map.get(doc_id)
-                        
-                        existing_evs.append(ev)
-                        existing_uids.add(uid)
 
-        # 3. 🏗️ Final Sub-criteria Results Aggregation
-        if not hasattr(self, 'final_subcriteria_results'):
-            self.final_subcriteria_results = []
+                    if not doc_id or uid in seen:
+                        continue
 
-        # ค้นหา Object เดิมใน List หรือสร้างใหม่ถ้ายังไม่มี
-        target = next((r for r in self.final_subcriteria_results if str(r.get('sub_id')) == sub_id), None)
+                    if hasattr(self, "document_map") and doc_id in self.document_map:
+                        ev["filename"] = self.document_map[doc_id]
+
+                    existing.append(ev)
+                    seen.add(uid)
+
+        # --------------------------------------------------
+        # 2. Init / Locate Sub Result
+        # --------------------------------------------------
+        self.final_subcriteria_results = getattr(self, "final_subcriteria_results", [])
+
+        target = next(
+            (r for r in self.final_subcriteria_results if str(r.get("sub_id")) == sub_id),
+            None
+        )
+
         if not target:
             target = {
                 "sub_id": sub_id,
-                "sub_criteria_name": sub_result.get('sub_criteria_name') or f"Criteria {sub_id}",
-                "weight": float(sub_result.get('weight', 4.0)),
+                "sub_criteria_name": sub_result.get("sub_criteria_name", f"Criteria {sub_id}"),
+                "weight": float(sub_result.get("weight", 4.0)),
                 "level_details": {},
                 "highest_full_level": 0,
                 "weighted_score": 0.0,
                 "is_passed": False,
-                "audit_stop_reason": "Initialized",
+                "audit_stop_reason": "",
                 "pdca_overall": {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
             }
             self.final_subcriteria_results.append(target)
 
-        # 4. 🧩 Atomic Update (Merge level details)
-        new_details = sub_result.get('level_details', {})
-        if isinstance(new_details, dict) and new_details:
-            # ซิงค์รายละเอียดรายเลเวล (L1, L2, L3...)
-            target['level_details'].update(new_details)
-        else:
-            # Fallback หากข้อมูลหลุดมาเป็นก้อนเดียว
-            if level_received > 0:
-                target['level_details'][str(level_received)] = sub_result
+        # --------------------------------------------------
+        # 3. Merge Level Details (ATOMIC)
+        # --------------------------------------------------
+        incoming_levels = sub_result.get("level_details", {})
+        if isinstance(incoming_levels, dict):
+            for lv, lv_data in incoming_levels.items():
+                if isinstance(lv_data, dict):
+                    target["level_details"][lv] = lv_data
 
-        # 5. ⚖️ Step-Ladder Maturity Calculation (Robust Logic)
-        if 'level_details' not in target:
-            target['level_details'] = {}
-            
-        current_highest = 0
+        # --------------------------------------------------
+        # 4. Step-Ladder Maturity (CONTINUOUS ONLY)
+        # --------------------------------------------------
+        highest = 0
         stop_reason = "Assessment complete"
-        pdca_sums = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
-        passed_lv_count = 0
-        
+        pdca_sum = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
+        passed_count = 0
+
         for l in range(1, 6):
-            l_str = str(l)
-            l_data = target['level_details'].get(l_str)
-            
-            if l_data and isinstance(l_data, dict):
-                score_val = float(l_data.get('score', 0.0))
-                is_lv_passed = (l_data.get('is_passed') is True or score_val >= 0.7)
-                
-                if is_lv_passed:
-                    current_highest = l
-                    l_data['is_passed'] = True 
-                    
-                    # 🎯 ต้องมีส่วนนี้เพื่อให้ PDCA Overall ไม่เป็น 0
-                    bd = l_data.get('pdca_breakdown', {})
-                    for phase in pdca_sums:
-                        pdca_sums[phase] += float(bd.get(phase, 0.0))
-                    passed_lv_count += 1
-                else:
-                    # 🎯 ถ้าไม่ผ่านขั้นนี้ ให้หยุดตรวจขั้นต่อไปทันที (สำคัญมาก!)
-                    stop_reason = f"Stopped at L{l}: {l_data.get('reason', 'Insufficient evidence')[:60]}..."
-                    break
-            else:
-                # ถ้าไม่มีข้อมูลเลเวลนี้ในระบบ ก็ต้องหยุดเช่นกันครับ
+            lv = str(l)
+            data = target["level_details"].get(lv)
+            if not data:
                 break
 
-        # 6. 💰 Score & Status Finalization
-        target['highest_full_level'] = current_highest
-        target['is_passed'] = (current_highest >= 1)
-        # ✅ แบบใหม่ (ปลอดภัยกว่า)
-        current_weight = float(target.get('weight', 4.0)) # ใช้ 4.0 เป็นค่าเริ่มต้นถ้าหาไม่เจอ
-        target['weighted_score'] = round(current_highest * current_weight, 2)
+            is_passed = data.get("is_passed") is True
+            is_capped = data.get("is_capped") is True
 
-        # คำนวณค่าเฉลี่ย PDCA เฉพาะเลเวลที่ผ่าน
-        if passed_lv_count > 0:
-            target['pdca_overall'] = {k: round(v / passed_lv_count, 2) for k, v in pdca_sums.items()}
-            
-        target['audit_stop_reason'] = stop_reason if current_highest < 5 else "Maximum maturity level reached"
-        
-        # 🛡️ บรรทัดสำคัญ: Force update กลับไปที่ class attribute เพื่อป้องกัน Score: 0 ในรายงานสรุป
-        self.final_subcriteria_results = [
-            target if str(r.get('sub_id')) == sub_id else r 
-            for r in getattr(self, 'final_subcriteria_results', [])
-        ]
+            if is_passed and not is_capped:
+                highest = l
+                bd = data.get("pdca_breakdown", {})
+                for k in pdca_sum:
+                    pdca_sum[k] += float(bd.get(k, 0.0))
+                passed_count += 1
+            else:
+                stop_reason = f"Stopped at L{l}: {data.get('reason', '')[:80]}"
+                break
 
-        self.logger.info(f"🏁 [MERGE-DONE] {sub_id} | Maturity: L{current_highest} | Weighted Score: {target['weighted_score']}")
+        # --------------------------------------------------
+        # 5. Finalize
+        # --------------------------------------------------
+        target["highest_full_level"] = highest
+        target["is_passed"] = highest >= 1
+        target["weighted_score"] = round(highest * float(target["weight"]), 2)
+
+        if passed_count > 0:
+            target["pdca_overall"] = {
+                k: round(v / passed_count, 2)
+                for k, v in pdca_sum.items()
+            }
+
+        target["audit_stop_reason"] = (
+            stop_reason if highest < 5 else "Maximum maturity level reached"
+        )
+
+        self.logger.info(
+            f"🏁 [MERGE OK] {sub_id} | L{highest} | Score {target['weighted_score']}"
+        )
+
         return target
+
     
     def run_assessment(
         self,
@@ -4402,132 +4398,147 @@ MANDATORY AUDIT RULES:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [FINAL REVISED v2026.01.25 - THE PERSISTENCE MASTER]
-        - 🛡️ มั่นใจ 100% ว่า Evidence จะไม่หายด้วยการ Sync State ทันทีที่จบแต่ละหัวข้อ
-        - 🧩 แก้ไขจุดอ่อนเรื่องการนับจำนวนหลักฐานใน Summary
-        - 💾 บังคับ Save Mapping ก่อนส่งผลลัพธ์สุดท้าย
+        [FINAL CLEAN REVISED v2026.01.27 - SINGLE SOURCE OF TRUTH]
+        - ✅ final_subcriteria_results ถูกเติมจริง
+        - ✅ Roadmap generate ครั้งเดียว ใช้ state เดียว
+        - ✅ Export ใช้ source ถูกต้อง
         """
+
         start_ts = time.time()
         self.is_sequential = sequential
         self.current_record_id = record_id or self.record_id
-        
-        # 1. Setup Document Map และ Internal State
+
+        # -------------------------------
+        # 0. Init State (CRITICAL)
+        # -------------------------------
+        self.final_subcriteria_results = []
+        self.master_roadmap_data = None
+
         if document_map:
             self.document_map.update(document_map)
-        
-        if not hasattr(self, 'evidence_map') or self.evidence_map is None:
+
+        if not getattr(self, "evidence_map", None):
             self.evidence_map = {}
 
-        # 📂 โหลดเกณฑ์ประเมิน
+        # -------------------------------
+        # 1. Load Rubric
+        # -------------------------------
         self.flattened_rubric = self._flatten_rubric_to_statements()
         grouped_sub_criteria = self._group_statements_by_sub_criteria(self.flattened_rubric)
 
         is_all = str(target_sub_id).lower() == "all"
-        sub_criteria_list = list(grouped_sub_criteria.values()) if is_all else [grouped_sub_criteria.get(target_sub_id)]
-        
+        sub_criteria_list = (
+            list(grouped_sub_criteria.values())
+            if is_all
+            else [grouped_sub_criteria.get(target_sub_id)]
+        )
+
         if not all(sub_criteria_list):
-            return self._create_failed_result(self.current_record_id, f"Criteria '{target_sub_id}' not found", start_ts)
+            return self._create_failed_result(
+                self.current_record_id,
+                f"Criteria '{target_sub_id}' not found",
+                start_ts
+            )
 
         total_subs = len(sub_criteria_list)
         results_list = []
 
-        # 🧠 2. เริ่มการประเมิน (Core Engine)
+        # -------------------------------
+        # 2. Core Assessment
+        # -------------------------------
         if is_all and not sequential:
-            # [MODE A] PARALLEL
+            # MODE A: PARALLEL
             max_workers = int(os.environ.get("MAX_PARALLEL_WORKERS", 4))
-            worker_args = [self._prepare_worker_tuple(sub, self.document_map) for sub in sub_criteria_list]
-            
+            worker_args = [
+                self._prepare_worker_tuple(sub, self.document_map)
+                for sub in sub_criteria_list
+            ]
+
             ctx = multiprocessing.get_context("spawn")
             with ctx.Pool(processes=max_workers) as pool:
-                for idx, res_tuple in enumerate(pool.imap_unordered(_static_worker_process, worker_args)):
-                    if not hasattr(self, 'final_subcriteria_results'): 
-                        self.final_subcriteria_results = []
-                    # self.final_subcriteria_results.append(res_tuple[0])
+                for idx, (res, worker_mem) in enumerate(
+                    pool.imap_unordered(_static_worker_process, worker_args)
+                ):
+                    results_list.append((res, worker_mem))
 
-                    results_list.append(res_tuple)
-                    
-                    # 🎯 CRITICAL FIX: บังคับ Merge Evidence ทันทีที่ Worker ส่งกลับมา
-                    # ข้อมูลหลักฐานจะถูกยัดเข้า self.evidence_map โดยตรงในฟังก์ชันนี้
-                    self._merge_worker_results(res_tuple[0], res_tuple[1])
-                    
+                    # 🔑 SINGLE SOURCE OF TRUTH
+                    self.final_subcriteria_results.append(res)
+                    self._merge_worker_results(res, worker_mem)
+
                     self.db_update_task_status(
-                        progress=15 + int(((idx+1)/total_subs) * 65), 
-                        message=f"🧠 ประเมิน {res_tuple[0].get('sub_id', '?')} สำเร็จ"
+                        progress=15 + int(((idx + 1) / total_subs) * 65),
+                        message=f"🧠 ประเมิน {res.get('sub_id', '?')} สำเร็จ"
                     )
+
         else:
-            # [MODE B] SEQUENTIAL
-            if not vectorstore_manager: self._initialize_vsm_if_none()
+            # MODE B: SEQUENTIAL
+            if not vectorstore_manager:
+                self._initialize_vsm_if_none()
             vsm = vectorstore_manager or self.vectorstore_manager
 
             for idx, sub_criteria in enumerate(sub_criteria_list):
                 sub_id = str(sub_criteria.get("sub_id", "Unknown"))
-                
-                # Baseline Hydration
-                prev_map = self._collect_previous_level_evidences(sub_id=sub_id, current_level=1)
-                initial_baseline = [ev for evs in prev_map.values() for ev in evs]
-                
-                # Run Worker
-                res, worker_mem = self._run_sub_criteria_assessment_worker(sub_criteria, vsm, initial_baseline)
+
+                prev_map = self._collect_previous_level_evidences(
+                    sub_id=sub_id, current_level=1
+                )
+                baseline = [ev for evs in prev_map.values() for ev in evs]
+
+                res, worker_mem = self._run_sub_criteria_assessment_worker(
+                    sub_criteria, vsm, baseline
+                )
+
                 results_list.append((res, worker_mem))
-                
-                # 🎯 ลบบรรทัด append ออกเหมือน Mode A
-                # เพราะ _merge_worker_results ด้านล่างจะจัดการให้เองครับ
-                
-                # 🛡️ อัปเดต State หลักทันที (ทั้งคะแนนและหลักฐาน)
+
+                # 🔑 SINGLE SOURCE OF TRUTH
+                self.final_subcriteria_results.append(res)
                 self._merge_worker_results(res, worker_mem)
 
                 self.db_update_task_status(
-                    progress=15 + int(((idx+1)/total_subs) * 65), 
+                    progress=15 + int(((idx + 1) / total_subs) * 65),
                     message=f"🧠 ประเมิน {sub_id} สำเร็จ (Sequential)"
                 )
 
-
-        # -------------------------------------------------------
-        # 🧩 3. ขั้นตอนการจัดระเบียบหลักฐาน (The Evidence Guard)
-        # -------------------------------------------------------
+        # -------------------------------
+        # 3. Evidence Guard
+        # -------------------------------
         self.db_update_task_status(progress=85, message="🧩 กำลังจัดระเบียบหลักฐาน")
-        
-        # รวบรวมข้อมูลทั้งหมดเข้าสู่ self.evidence_map
+
         full_raw_mapping = self.merge_evidence_mappings(results_list)
         self._update_internal_evidence_map(full_raw_mapping)
-        
-        # [CRITICAL FIX] บังคับล้างค่าว่างและจัดรูปแบบให้เป๊ะก่อนนับ
+
         total_evidence_found = 0
         for key in list(self.evidence_map.keys()):
             bucket = self.evidence_map[key]
             if isinstance(bucket, dict) and "evidences" in bucket:
-                # Deduplicate ทิ้งท้ายหนึ่งรอบ
                 bucket["evidences"] = self._deduplicate_list(bucket["evidences"])
-                count = len(bucket["evidences"])
-                total_evidence_found += count
-                if count > 0:
+                total_evidence_found += len(bucket["evidences"])
+                if bucket["evidences"]:
                     bucket["status"] = "ai_generated"
             else:
-                # ถ้าหลุดมาเป็น list ให้แปลงเป็นโครงสร้างที่ถูกต้อง
                 ev_list = self._deduplicate_list(bucket if isinstance(bucket, list) else [])
-                self.evidence_map[key] = {"status": "ai_generated", "evidences": ev_list}
+                self.evidence_map[key] = {
+                    "status": "ai_generated",
+                    "evidences": ev_list
+                }
                 total_evidence_found += len(ev_list)
 
-        self.logger.info(f"📊 Sanitized Evidence Total: {total_evidence_found} items")
-        self._save_evidence_map(map_to_save=self.evidence_map)
+        self._save_evidence_map(self.evidence_map)
 
-        # -------------------------------------------------------
-        # 🏁 4. สรุปผล (Final Response & Export)
-        # -------------------------------------------------------
-        master_roadmap_data = None
-        # if is_all and len(self.final_subcriteria_results) > 0:
-        if len(self.final_subcriteria_results) > 0:
-            master_roadmap_data = self.synthesize_strategic_roadmap(
+        # -------------------------------
+        # 4. Strategic Roadmap (ONCE)
+        # -------------------------------
+        if self.final_subcriteria_results:
+            self.master_roadmap_data = self.synthesize_strategic_roadmap(
                 sub_criteria_results=self.final_subcriteria_results,
                 enabler_name=self.enabler,
                 llm_executor=self.llm
             )
 
-        overall_stats = self._calculate_overall_stats(target_sub_id)
-        if not overall_stats:
-            overall_stats = {"efficiency": 0.0, "score": 0.0, "passed_count": 0, "total_count": 0}
-            
-        # [FIX 4] ยัดค่าจำนวนหลักฐานที่นับได้จริงลงใน Summary
+        # -------------------------------
+        # 5. Final Response
+        # -------------------------------
+        overall_stats = self._calculate_overall_stats(target_sub_id) or {}
         overall_stats["evidence_used_count"] = total_evidence_found
 
         final_response = {
@@ -4536,21 +4547,27 @@ MANDATORY AUDIT RULES:
             "enabler": self.enabler,
             "summary": overall_stats,
             "sub_criteria_results": self.final_subcriteria_results,
-            "evidence_audit_trail": self.evidence_map, # ข้อมูลตรงนี้ต้องสมบูรณ์แล้ว
-            "strategic_roadmap": master_roadmap_data,
+            "evidence_audit_trail": self.evidence_map,
+            "strategic_roadmap": self.master_roadmap_data,
             "run_time_seconds": round(time.time() - start_ts, 2)
         }
 
         if export:
-            # ส่งออกเป็นไฟล์ JSON
-            final_response["export_path"] = self._export_results(final_response, target_sub_id)
+            final_response["export_path"] = self._export_results(
+                results_data=self.final_subcriteria_results,
+                sub_criteria_id=target_sub_id,
+                record_id=self.current_record_id
+            )
 
-        self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
+        self.db_update_task_status(
+            progress=100,
+            message="✅ ประเมินเสร็จสมบูรณ์",
+            status="COMPLETED"
+        )
+
         return final_response
+
     
-    # ------------------------------------------------------------------
-    # 🏛️ [TIER-3 METHOD] synthesize_strategic_roadmap - FINAL PRODUCTION
-    # ------------------------------------------------------------------
     def synthesize_strategic_roadmap(
         self,
         sub_criteria_results: List[Dict[str, Any]],
@@ -4558,104 +4575,143 @@ MANDATORY AUDIT RULES:
         llm_executor: Any
     ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC ORCHESTRATOR - v2026.3.26]
-        รวบรวมผลประเมินรายหัวข้อมาสังเคราะห์เป็นแผนยุทธศาสตร์ภาพรวม (Master Roadmap)
-        - ป้องกันปัญหา JSON Malformed จากการ Quote ข้อมูลซ้อน
-        - จัดกลุ่ม Action Plans ให้เป็นยุทธศาสตร์ที่จับต้องได้
+        [TIER-3 STRATEGIC ORCHESTRATOR - FINAL v2026.01.27]
+        - 🎯 Maturity-aware (Step-Ladder)
+        - 🧠 Gap-driven (Blocking first)
+        - 🛡️ UI-schema aligned (phases)
         """
-        self.logger.info(f"🌐 [TIER-3] Starting Master Strategic Roadmap Synthesis for {enabler_name}")
-        
+
+        self.logger.info(f"🌐 [TIER-3] Synthesizing Master Roadmap for {enabler_name}")
+
         if not sub_criteria_results:
-            self.logger.warning("⚠️ No sub-criteria results available for synthesis")
-            return {"status": "INCOMPLETE", "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผน"}
+            return {
+                "status": "INCOMPLETE",
+                "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผน",
+                "phases": []
+            }
 
-        # 1. 📂 Data Collection (Gap Aggregation)
-        aggregated_insights = []
+        # --------------------------------------------------
+        # 1. Determine Global Maturity Baseline
+        # --------------------------------------------------
+        global_maturity = min(
+            [int(r.get("highest_full_level", 0)) for r in sub_criteria_results if r],
+            default=0
+        )
+
+        # --------------------------------------------------
+        # 2. Gap Aggregation (BLOCKING FIRST)
+        # --------------------------------------------------
+        blocking_gaps = []
+        improvement_gaps = []
+
         for res in sub_criteria_results:
-            sub_id = res.get("sub_id", "Unknown")
+            sub_id = res.get("sub_id", "N/A")
             sub_name = res.get("sub_criteria_name", "N/A")
-            highest_lv = res.get("highest_full_level", 0)
             level_details = res.get("level_details", {})
-            
-            gap_recs = []
-            # เก็บ Insight เฉพาะตัวที่ "ไม่ผ่าน" หรือ "ผ่านแบบคาบเส้น (Score < 0.7)"
-            for lvl_idx in range(1, 6):
-                lv_str = str(lvl_idx)
-                detail = level_details.get(lv_str, {})
-                score = float(detail.get("score", 0))
-                is_passed = detail.get("is_passed", False)
-                
-                if not is_passed or score < 0.7:
-                    # ทำความสะอาด Quote ทันทีเพื่อไม่ให้ JSON พังในอนาคต
-                    insight = str(detail.get("coaching_insight") or "").replace('"', "'").strip()
-                    if insight and insight not in gap_recs and len(insight) > 5:
-                        gap_recs.append(f"[L{lv_str}] {insight}")
 
-            summary_text = " | ".join(gap_recs[:3]) if gap_recs else "ผ่านเกณฑ์มาตรฐานในระดับสูง (รักษามาตรฐานต่อเนื่อง)"
-            aggregated_insights.append(f"📌 [{sub_id}] {sub_name} (Highest: L{highest_lv}): {summary_text}")
+            # ตรวจเฉพาะ level ที่ “ควรผ่านแล้ว”
+            for lv in range(1, global_maturity + 2):
+                lv_str = str(lv)
+                detail = level_details.get(lv_str)
+                if not detail:
+                    continue
 
-        # 2. 🧠 LLM Orchestration
-        formatted_insights_text = "\n".join(aggregated_insights)
-        
-        # 💡 มั่นใจว่า Prompt มีการระบุฟอร์แมต JSON ที่ชัดเจน
+                is_passed = detail.get("is_passed") is True
+                is_capped = detail.get("is_capped") is True
+                insight = (detail.get("coaching_insight") or "").replace('"', "'").strip()
+
+                if not insight or len(insight) < 5:
+                    continue
+
+                tagged = f"[{sub_id} L{lv}] {insight}"
+
+                if not is_passed or is_capped:
+                    blocking_gaps.append(tagged)
+                else:
+                    improvement_gaps.append(tagged)
+
+        # จำกัด context ไม่ให้ LLM ล้น
+        blocking_gaps = blocking_gaps[:8]
+        improvement_gaps = improvement_gaps[:5]
+
+        aggregated_context = (
+            "🔴 BLOCKING GAPS (ต้องแก้ก่อน):\n" +
+            "\n".join(blocking_gaps) +
+            "\n\n🟡 IMPROVEMENT AREAS (เสริมความแข็งแรง):\n" +
+            "\n".join(improvement_gaps)
+        )
+
+        # --------------------------------------------------
+        # 3. Prompt Orchestration
+        # --------------------------------------------------
         final_prompt = MASTER_ROADMAP_PROMPT.format(
             sub_id="OVERALL",
-            sub_criteria_name=enabler_name, 
-            enabler=enabler_name, 
-            aggregated_insights=formatted_insights_text
+            sub_criteria_name=enabler_name,
+            enabler=enabler_name,
+            aggregated_insights=aggregated_context
         )
 
         try:
-            # ใช้ Temperature 0.2 เพื่อให้แผนงานมีความเป็นเหตุเป็นผล
             response = llm_executor.generate(
-                system=SYSTEM_MASTER_ROADMAP_PROMPT, 
-                prompts=[final_prompt], 
+                system=SYSTEM_MASTER_ROADMAP_PROMPT,
+                prompts=[final_prompt],
                 temperature=0.2
             )
-            
-            raw_text = getattr(response, 'content', str(response)).strip()
-            
-            # 3. 🧹 Robust JSON Extraction
-            # ใช้เครื่องมือที่เราอัปเกรดกันไปก่อนหน้านี้
-            strategic_plan = _robust_extract_json(raw_text)
-            
-            # 4. 🛡️ Result Normalization (Ensure standard keys for Exporter)
-            # ตรวจสอบหา Roadmap ในหลายๆ Key ที่ AI มักจะตั้งชื่อมา
-            final_roadmap = (
-                strategic_plan.get("roadmap") or 
-                strategic_plan.get("strategic_roadmap") or 
-                strategic_plan.get("action_plan") or []
+
+            raw_text = getattr(response, "content", str(response)).strip()
+            plan_json = _robust_extract_json(raw_text) or {}
+
+            raw_phases = (
+                plan_json.get("phases") or
+                plan_json.get("roadmap") or
+                plan_json.get("action_plan") or []
             )
 
-            # 🚨 Fallback: ถ้าสกัด Roadmap ไม่ได้เลย ให้สร้าง 1 Step ใหญ่จาก Raw Text
-            if not final_roadmap and len(raw_text) > 20:
-                final_roadmap = [{
-                    "phase": "Strategic Improvement",
-                    "target_levels": "Overall",
-                    "main_objective": "ดำเนินการยกระดับตามข้อเสนอแนะภาพรวม",
-                    "key_actions": [raw_text[:200] + "..."],
-                    "expected_outcome": "ผ่านเกณฑ์มาตรฐานในรอบถัดไป"
+            # --------------------------------------------------
+            # 4. Normalize to UI Schema
+            # --------------------------------------------------
+            phases = []
+            for i, p in enumerate(raw_phases, 1):
+                if isinstance(p, dict):
+                    phases.append({
+                        "phase": p.get("phase", f"Phase {i}"),
+                        "target_levels": p.get("target_levels", f"L{global_maturity + 1}"),
+                        "main_objective": p.get("main_objective") or p.get("goal"),
+                        "key_actions": p.get("key_actions") or p.get("actions") or [],
+                        "expected_outcome": p.get("expected_outcome") or "ยกระดับ maturity สำเร็จ"
+                    })
+
+            if not phases:
+                phases = [{
+                    "phase": "Strategic Stabilization",
+                    "target_levels": f"L{global_maturity + 1}",
+                    "main_objective": "ปิด Gap ที่ขวางการยกระดับ maturity",
+                    "key_actions": blocking_gaps[:3],
+                    "expected_outcome": "พร้อมเข้าสู่ระดับ maturity ถัดไป"
                 }]
 
             return {
                 "status": "SUCCESS",
-                "overall_strategy": (strategic_plan.get("overall_strategy") or 
-                                    strategic_plan.get("summary") or 
-                                    f"แผนขับเคลื่อนยุทธศาสตร์ {enabler_name}"),
-                "roadmap": final_roadmap,
+                "overall_strategy": (
+                    plan_json.get("overall_strategy") or
+                    plan_json.get("summary") or
+                    f"ยกระดับ {enabler_name} จาก L{global_maturity} สู่ L{global_maturity + 1}"
+                ),
+                "phases": phases,
                 "metadata": {
                     "generated_at": datetime.now().isoformat(),
+                    "global_maturity": global_maturity,
                     "input_sub_count": len(sub_criteria_results),
                     "enabler": enabler_name
                 }
             }
 
         except Exception as e:
-            self.logger.error(f"💥 Master Roadmap Critical Error: {str(e)}", exc_info=True)
+            self.logger.error("💥 Master Roadmap Error", exc_info=True)
             return {
-                "status": "ERROR", 
-                "overall_strategy": "ไม่สามารถสังเคราะห์แผนได้เนื่องจากข้อผิดพลาดในระบบประมวลผล",
-                "roadmap": [],
+                "status": "ERROR",
+                "overall_strategy": "ไม่สามารถสังเคราะห์แผนได้",
+                "phases": [],
                 "reason": str(e)
             }
 
@@ -4777,110 +4833,86 @@ MANDATORY AUDIT RULES:
     # ------------------------------------------------------------------
     # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026.1.23
     # ------------------------------------------------------------------
-    def generate_master_roadmap(self, sub_id, sub_criteria_name, enabler, aggregated_insights):
+    def generate_master_roadmap(
+        self,
+        sub_id: str,
+        sub_criteria_name: str,
+        enabler: str,
+        aggregated_insights: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC SYNTHESIS - v2026.01.24]
-        สังเคราะห์ Roadmap โดยคำนึงถึง Maturity Capping และ Step-Ladder Logic
-        - 🧩 Maturity Aware: แยกแยะเลเวลที่ผ่านจริง (Continuous) กับเลเวลที่ผ่านแต่โดน Cap
-        - 🛠️ Strategic Alignment: สั่ง LLM ให้เน้นการซ่อมแซม "รอยต่อที่ขาด" ก่อนพัฒนาส่วนปลาย
+        [FINAL CANONICAL v2026.01]
+        Scope: SUB_CRITERIA ONLY
+        ใช้สำหรับ roadmap รายหัวข้อ ไม่ใช่ Enabler Master
         """
-        
-        self.logger.info(f"🔮 [MASTER-ROADMAP] Starting synthesis for {sub_id} ({sub_criteria_name})")
 
         if not aggregated_insights:
-            self.logger.warning(f"⚠️ No insights for {sub_id} - Using emergency fallback")
-            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
-
-        # 1. 📂 Data Condensing & Maturity Tagging
-        condensed_insights = []
-        highest_continuous = 0
-        has_gap_before = False
-        
-        # ค้นหาจุดที่ขาดช่วง (Maturity Gap)
-        for item in aggregated_insights:
-            lv = int(item.get('level', 0))
-            is_passed = item.get('status') == "PASSED"
-            is_capped = item.get('is_capped', False)
-            
-            # สรุปสถานะเพื่อส่งให้ LLM
-            if is_passed and not has_gap_before:
-                status_text = "✅ PASSED (Maturity นับ)"
-                highest_continuous = lv
-            elif is_passed and has_gap_before:
-                status_text = "⚠️ PASSED (CAPPED - พื้นฐานยังไม่แน่น)"
-            else:
-                status_text = "❌ FAILED (GAP)"
-                has_gap_before = True # เริ่มเกิดรอยต่อที่ขาด
-
-            insight = item.get('insight_summary') or item.get('reason') or 'ไม่มีรายละเอียด'
-            condensed_insights.append(f"Level {lv} [{status_text}]: {insight[:250]}")
-
-        summary_context = "\n".join(condensed_insights)
-        
-        # เพิ่ม Metadata สำหรับคุมทิศทาง LLM
-        strategic_focus = f"ระดับ Maturity ปัจจุบันหยุดอยู่ที่เลเวล {highest_continuous} "
-        if has_gap_before:
-            strategic_focus += "เนื่องจากตรวจพบรอยต่อ (Gap) ในเลเวลพื้นฐาน กลยุทธ์ต้องเน้นการซ่อมแซมรอยต่อนี้"
-        else:
-            strategic_focus += "กลยุทธ์ต้องเน้นการรักษาระดับและต่อยอดสู่เลเวลถัดไป"
-
-        # 2. 📝 Prompt Construction
-        # ส่งค่า strategic_focus เข้าไปใน Prompt เพื่อไกด์ AI
-        try:
-            formatted_prompt = MASTER_ROADMAP_PROMPT.format(
-                sub_id=sub_id,
-                sub_criteria_name=sub_criteria_name,
-                enabler=enabler,
-                aggregated_insights=summary_context,
-                strategic_focus=strategic_focus # 👈 เพิ่มไกด์ไลน์เรื่อง Maturity
-            )
-        except Exception as fe:
-            self.logger.error(f"❌ Prompt formatting error: {fe}")
-            formatted_prompt = f"Summarize roadmap for {sub_criteria_name} (Focus: {strategic_focus}): {summary_context}"
-
-        # 3. 🧠 LLM Execution & 4. 🧹 Extraction (Logic เดิมที่เสถียรอยู่แล้ว)
-        try:
-            raw_json_str = _fetch_llm_response(
-                system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
-                user_prompt=formatted_prompt,
-                max_retries=3,
-                llm_executor=self.llm 
-            )
-
-            master_data = _robust_extract_json(raw_json_str)
-            
-            if not master_data:
-                return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Hollow JSON")
-
-            # 5. 🏗️ UI-Ready Normalization
-            final_strategy = master_data.get("overall_strategy") or master_data.get("summary") or "ไม่สามารถสรุปกลยุทธ์ได้"
-            raw_phases = master_data.get("phases") or master_data.get("roadmap") or []
-
-            normalized_phases = []
-            for i, p in enumerate(raw_phases, 1):
-                if isinstance(p, dict):
-                    # เติมลำดับขั้นให้ชัดเจน
-                    p["step_label"] = f"Phase {i}"
-                    normalized_phases.append(p)
-                else:
-                    normalized_phases.append({"step": f"Phase {i}", "action": str(p)})
-
-            self.logger.info(f"✅ [MASTER-ROADMAP] Synthesis Success for {sub_id} (Maturity: {highest_continuous})")
-            
             return {
+                "scope": "SUB_CRITERIA",
                 "sub_id": sub_id,
-                "sub_criteria_name": sub_criteria_name,
-                "highest_maturity_level": highest_continuous, # 🛡️ ยืนยันคะแนนจริง
-                "overall_strategy": final_strategy,
-                "phases": normalized_phases,
-                "status": "SUCCESS",
-                "is_gap_detected": has_gap_before,
-                "generated_at": datetime.now().isoformat()
+                "status": "INCOMPLETE",
+                "overall_strategy": "ยังไม่พบข้อมูลเพียงพอในการจัดทำ Roadmap",
+                "phases": []
             }
 
-        except Exception as e:
-            self.logger.error(f"💥 Critical error in Master Roadmap {sub_id}: {str(e)}")
-            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
+        condensed = []
+        highest_continuous = 0
+        has_gap = False
+
+        for item in aggregated_insights:
+            lv = int(item.get("level", 0))
+            passed = item.get("status") == "PASSED"
+            capped = item.get("is_capped", False)
+
+            if passed and not has_gap:
+                highest_continuous = lv
+                label = "PASSED (COUNTED)"
+            elif passed and has_gap:
+                label = "PASSED (CAPPED)"
+            else:
+                label = "FAILED (GAP)"
+                has_gap = True
+
+            condensed.append(
+                f"L{lv} [{label}]: {item.get('insight_summary','')[:200]}"
+            )
+
+        strategic_focus = (
+            f"ระดับปัจจุบันอยู่ที่ L{highest_continuous} "
+            + ("ควรอุดช่องว่างก่อนต่อยอด"
+            if has_gap else "สามารถต่อยอดสู่ระดับถัดไป")
+        )
+
+        prompt = MASTER_ROADMAP_PROMPT.format(
+            sub_id=sub_id,
+            sub_criteria_name=sub_criteria_name,
+            enabler=enabler,
+            aggregated_insights="\n".join(condensed),
+            strategic_focus=strategic_focus
+        )
+
+        raw = _fetch_llm_response(
+            system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
+            user_prompt=prompt,
+            llm_executor=self.llm
+        )
+
+        data = _robust_extract_json(raw) or {}
+
+        phases = data.get("phases") or data.get("roadmap") or []
+
+        return {
+            "scope": "SUB_CRITERIA",
+            "sub_id": sub_id,
+            "sub_criteria_name": sub_criteria_name,
+            "highest_maturity_level": highest_continuous,
+            "overall_strategy": data.get("overall_strategy", strategic_focus),
+            "phases": phases,
+            "is_gap_detected": has_gap,
+            "status": "SUCCESS",
+            "generated_at": datetime.now().isoformat()
+        }
+
             
     def _get_emergency_fallback_plan(self, sub_id, name, error_msg=""):
         """สร้างแผนสำรองกรณี LLM พัง เพื่อไม่ให้ระบบหยุดทำงาน"""
@@ -4923,10 +4955,6 @@ MANDATORY AUDIT RULES:
         # 3. Cap ขนาดตามที่ตั้งไว้ใน global_vars
         return sorted_list[:EVIDENCE_CUMULATIVE_CAP]
     
-
-    # ------------------------------------------------------------------------------------------
-    # 🧠 [TIER-1 & TIER-2 WORKER] Sequential Assessment (HYDRATED) - FULL REVISED v2026.1.25
-    # ------------------------------------------------------------------------------------------
     def _run_sub_criteria_assessment_worker(
         self,
         sub_criteria: Dict[str, Any],
@@ -4934,107 +4962,122 @@ MANDATORY AUDIT RULES:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [PATCHED v2026.01.25] ประเมินราย Sub-Criteria แบบเจาะลึก 1-5 เลเวล 
-        - Fix Parameter Mismatch (level_criteria)
-        - Add Atomic-Plan Isolation (try-except)
+        [FINAL PRODUCTION WORKER v2026.01.27]
+        - 🧠 Step-Ladder Maturity Safe
+        - 🛡️ Evidence Delta Only (Parallel Safe)
+        - 🎯 Roadmap-Ready Context
         """
+
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
         sub_weight = float(sub_criteria.get("weight", 0.0))
         target_limit = getattr(self.config, "target_level", 5)
 
-        vsm = vectorstore_manager or getattr(self, "vectorstore_manager", None)
-        level_details = {}
+        vsm = vectorstore_manager or self.vectorstore_manager
+        level_details: Dict[str, Any] = {}
         roadmap_input_bundle = []
-        
+
         highest_continuous_level = 0
-        is_still_continuous = True 
+        is_still_continuous = True
         cumulative_baseline = list(initial_baseline or [])
+        evidence_delta: Dict[str, List[Dict[str, Any]]] = {}
+
         levels = sorted(sub_criteria.get("levels", []), key=lambda x: x.get("level", 0))
 
         for stmt in levels:
             level = int(stmt.get("level", 0))
-            if level == 0 or level > target_limit: continue
+            if level == 0 or level > target_limit:
+                continue
 
-            # --- 🎯 1. PER-LEVEL MAP HYDRATION ---
             level_key = f"{sub_id}_L{level}"
-            map_data = self.evidence_map.get(level_key, {})
-            saved_evidences = map_data.get("evidences", []) if isinstance(map_data, dict) else map_data
-            priority_items = [e for e in saved_evidences if e.get("is_selected", True)] if saved_evidences else []
 
-            # --- 🧠 2. CORE ASSESSMENT ---
+            # --- Evidence Hydration ---
+            saved = self.evidence_map.get(level_key, {})
+            saved_evs = saved.get("evidences", []) if isinstance(saved, dict) else []
+            priority_items = [e for e in saved_evs if e.get("is_selected", True)]
+
             current_baseline = self._deduplicate_list(cumulative_baseline + priority_items)
+
+            # --- Core Assessment ---
             res = self._run_single_assessment(
-                sub_id=sub_id, level=level,
-                criteria={"name": sub_name, "statement": stmt.get("statement", ""), "sub_criteria_name": sub_name},
+                sub_id=sub_id,
+                level=level,
+                criteria={
+                    "name": sub_name,
+                    "statement": stmt.get("statement", ""),
+                    "sub_criteria_name": sub_name
+                },
                 keyword_guide=stmt.get("keywords", []),
                 baseline_evidences=current_baseline,
                 vectorstore_manager=vsm,
             )
 
-            # [SYNC STATE] บันทึกหลักฐานเข้า Memory
-            self._update_internal_evidence_map({f"{sub_id}_L{level}": res.get("top_chunks_data", [])})
-            
-            is_passed_by_llm = bool(res.get("is_passed", False))
-            
-            # --- ⚖️ 3. STEP-LADDER MATURITY LOGIC ---
-            if is_passed_by_llm:
-                new_found = res.get("top_chunks_data", [])
-                cumulative_baseline.extend(new_found)
+            top_chunks = res.get("top_chunks_data", [])
+            evidence_delta[level_key] = top_chunks
+
+            passed_by_llm = bool(res.get("is_passed", False))
+
+            if passed_by_llm:
+                cumulative_baseline.extend(top_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
-                if is_still_continuous: highest_continuous_level = level
+                if is_still_continuous:
+                    highest_continuous_level = level
             else:
                 is_still_continuous = False
 
-            # --- 🛠️ 4. ATOMIC ACTION PLAN (Isolated Call) ---
+            is_capped = passed_by_llm and not is_still_continuous
+            effective_score = float(res.get("score", 0.0)) if passed_by_llm and not is_capped else 0.0
+
+            # --- Atomic Plan ---
             try:
-                # [FIXED] เปลี่ยน level_statement เป็น level_criteria ให้ตรงกับ def ฟังก์ชัน
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
                     level=level,
                     level_criteria=stmt.get("statement", ""),
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
-            except Exception as e:
-                # ถ้าพัง ให้ Log Error แต่ประเมินต่อได้
-                self.logger.error(f"[ATOMIC-PLAN-ERROR] L{level} for {sub_id}: {str(e)}", exc_info=True)
+            except Exception:
                 atomic_actions = []
 
             level_details[str(level)] = {
-                "level": level, 
-                "is_passed": is_passed_by_llm, 
-                "is_maturity_capped": (is_passed_by_llm and not is_still_continuous),
-                "score": float(res.get("score", 0.0)) if is_still_continuous else 0.25,
+                "level": level,
+                "is_passed": passed_by_llm,
+                "is_maturity_capped": is_capped,
+                "score": round(effective_score, 2),
                 "reason": res.get("reason", ""),
                 "coaching_insight": res.get("coaching_insight", ""),
-                "atomic_action_plan": atomic_actions, 
+                "atomic_action_plan": atomic_actions,
                 "pdca_breakdown": res.get("pdca_breakdown", {}),
-                "evidence_sources": res.get("top_chunks_data", []),
-                "judicial_review_applied": res.get("is_safety_pass", False)
+                "evidence_sources": top_chunks,
+                "judicial_review_applied": res.get("is_safety_pass", False),
             }
 
             roadmap_input_bundle.append({
-                "level": level, "status": "PASSED" if is_passed_by_llm else "FAILED",
-                "is_capped": (is_passed_by_llm and not is_still_continuous),
-                "insight_summary": res.get("coaching_insight", "")[:200]
+                "level": level,
+                "status": "PASSED" if passed_by_llm else "FAILED",
+                "is_capped": is_capped,
+                "blocking": (not passed_by_llm or is_capped),
+                "insight_summary": (res.get("coaching_insight") or "")[:200],
             })
 
-        # --- 🔮 5. MASTER ROADMAP SYNTHESIS ---
         master_roadmap = self.generate_master_roadmap(
-            sub_id=sub_id, sub_criteria_name=sub_name,
-            enabler=getattr(self, "enabler", "KM"), aggregated_insights=roadmap_input_bundle
+            sub_id=sub_id,
+            sub_criteria_name=sub_name,
+            enabler=getattr(self, "enabler", "KM"),
+            aggregated_insights=roadmap_input_bundle
         )
 
         return {
-            "sub_id": sub_id, 
-            "sub_criteria_name": sub_name, 
-            "weight": sub_weight,  # 🎯 เพิ่มบรรทัดนี้เข้าไปครับ!
-            "highest_full_level": highest_continuous_level, 
+            "sub_id": sub_id,
+            "sub_criteria_name": sub_name,
+            "weight": sub_weight,
+            "highest_full_level": highest_continuous_level,
             "weighted_score": round(highest_continuous_level * sub_weight, 2),
             "is_passed": highest_continuous_level >= 1,
-            "level_details": level_details, 
+            "level_details": level_details,
             "master_roadmap": master_roadmap,
-        }, self.evidence_map
+        }, evidence_delta
+
 
     def _get_level_constraint_prompt(self, sub_id: str, level: int, req_phases: list = None, spec_rule: str = None) -> str:
         """
