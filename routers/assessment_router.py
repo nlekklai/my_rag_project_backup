@@ -816,7 +816,7 @@ async def get_assessment_status(
         ui_result = _transform_result_for_ui(raw_data, current_user)
         
         # เพิ่ม status + metadata สำคัญ
-        ui_result["status"] = "COMPLETED"
+        # ui_result["status"] = "COMPLETED"
         ui_result["record_id"] = record_id
         ui_result["export_path"] = file_path
         ui_result["exported_at"] = summary.get("export_at") or datetime.now().isoformat()
