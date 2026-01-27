@@ -4274,12 +4274,13 @@ MANDATORY AUDIT RULES:
         clear_existing: bool = False
     ):
         """
-        [ULTIMATE STABLE REVISE v2026.01.27]
-        - 🎯 Enforced Nested Level Key: "1.1_L1", "1.1_L2"
-        - 🛡️ Atomic Write (tempfile + shutil.move)
-        - 🧹 Post-Merge Sorting & Status Update
-        - 🚫 Zero-tolerance for float(None)
-        - 🧯 Evidence Map failure MUST NOT break assessment core
+        [FINAL HARDENED BUILD v2026.01.27]
+        - ✅ Normalize evidence node ทุกจุด (NO None leaks)
+        - ✅ Deduplicate per (doc_id + page)
+        - ✅ relevance_score GUARANTEED float
+        - ✅ page GUARANTEED string
+        - 🛡️ Atomic write (tempfile + move)
+        - 🧯 Failure MUST NOT break assessment
         """
 
         def _safe_float(val, default=0.0) -> float:
@@ -4290,9 +4291,23 @@ MANDATORY AUDIT RULES:
             except (TypeError, ValueError):
                 return float(default)
 
+        def _normalize_evidence_node(e: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "doc_id": e.get("doc_id"),
+                "filename": e.get("filename") or "Unknown File",
+                "page": str(e.get("page") or e.get("page_label") or "0"),
+                "source_type": e.get("source_type", "system_gen"),
+                "is_selected": bool(e.get("is_selected", True)),
+                "relevance_score": _safe_float(
+                    e.get("relevance_score"),
+                    e.get("rerank_score", 0.0)
+                ),
+                "note": e.get("note", "")
+            }
+
         try:
             # -------------------------------------------------
-            # 1. Prepare Path
+            # 1. Prepare path
             # -------------------------------------------------
             map_file_path = get_evidence_mapping_file_path(
                 tenant=self.config.tenant,
@@ -4302,22 +4317,17 @@ MANDATORY AUDIT RULES:
             os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
 
             # -------------------------------------------------
-            # 2. Load Existing Map
+            # 2. Load existing map
             # -------------------------------------------------
             final_map = {} if clear_existing else self._load_evidence_map(is_for_merge=True)
 
-            incoming = (
-                map_to_save
-                if map_to_save is not None
-                else getattr(self, "evidence_map", {})
-            )
-
+            incoming = map_to_save if map_to_save is not None else getattr(self, "evidence_map", {})
             if not isinstance(incoming, dict):
-                self.logger.warning("⚠️ [EVIDENCE-MAP] Incoming map is not dict, skipped")
+                self.logger.warning("⚠️ [EVIDENCE-MAP] Incoming map is not dict, skip save")
                 return
 
             # -------------------------------------------------
-            # 3. Merge Evidence
+            # 3. Merge & Normalize
             # -------------------------------------------------
             for key, evidence_data in incoming.items():
                 if "_L" not in key:
@@ -4335,20 +4345,23 @@ MANDATORY AUDIT RULES:
                     if isinstance(evidence_data, dict)
                     else evidence_data
                 )
-
                 if not isinstance(new_evs, list):
                     continue
 
-                for new_e in new_evs:
-                    if not isinstance(new_e, dict):
+                for raw_e in new_evs:
+                    if not isinstance(raw_e, dict):
                         continue
 
-                    doc_id = new_e.get("doc_id") or new_e.get("chunk_uuid")
+                    doc_id = raw_e.get("doc_id") or raw_e.get("chunk_uuid")
                     if not doc_id:
                         continue
 
-                    page = str(new_e.get("page") or new_e.get("page_label") or "0")
-                    idx_key = f"{doc_id}_{page}"
+                    normalized = _normalize_evidence_node({
+                        **raw_e,
+                        "doc_id": doc_id
+                    })
+
+                    idx_key = f"{normalized['doc_id']}_{normalized['page']}"
 
                     match = next(
                         (
@@ -4358,66 +4371,42 @@ MANDATORY AUDIT RULES:
                         None
                     )
 
-                    # -------------------------------
-                    # UPDATE EXISTING
-                    # -------------------------------
+                    # UPDATE
                     if match:
-                        match["relevance_score"] = _safe_float(
-                            new_e.get("relevance_score"),
-                            match.get("relevance_score", 0.0)
-                        )
-                        match["is_selected"] = new_e.get(
-                            "is_selected", match.get("is_selected", True)
-                        )
-
-                        if new_e.get("source_type") == "human_map":
+                        match.update(normalized)
+                        if normalized.get("source_type") == "human_map":
                             match["source_type"] = "human_map"
 
-                        if new_e.get("note"):
-                            match["note"] = new_e["note"]
-
-                    # -------------------------------
-                    # INSERT NEW
-                    # -------------------------------
+                    # INSERT
                     else:
-                        if not new_e.get("filename"):
-                            new_e["filename"] = (
-                                getattr(self, "document_map", {}).get(doc_id)
-                                or "Unknown File"
-                            )
-
-                        new_node = {
-                            "doc_id": doc_id,
-                            "filename": new_e.get("filename"),
-                            "page": page,
-                            "source_type": new_e.get("source_type", "system_gen"),
-                            "is_selected": new_e.get("is_selected", True),
-                            "relevance_score": _safe_float(
-                                new_e.get("relevance_score"),
-                                new_e.get("rerank_score", 0.0)
-                            ),
-                            "note": new_e.get("note", "")
-                        }
-                        existing_evs.append(new_node)
+                        existing_evs.append(normalized)
 
             # -------------------------------------------------
-            # 4. Post-Processing
+            # 4. Post-process (sort + status)
             # -------------------------------------------------
-            for k, bucket in final_map.items():
+            for bucket in final_map.values():
                 evs = bucket.get("evidences", [])
+
+                # Final sanitation sweep (ABSOLUTE SAFETY)
+                for e in evs:
+                    if e.get("page") is None:
+                        e["page"] = "0"
+                    if e.get("relevance_score") is None:
+                        e["relevance_score"] = 0.0
 
                 evs.sort(
                     key=lambda x: _safe_float(x.get("relevance_score")),
                     reverse=True
                 )
 
-                has_human = any(
-                    e.get("source_type") == "human_map" for e in evs
+                bucket["status"] = (
+                    "reviewed"
+                    if any(e.get("source_type") == "human_map" for e in evs)
+                    else "ai_generated"
                 )
-                bucket["status"] = "reviewed" if has_human else "ai_generated"
 
             # -------------------------------------------------
-            # 5. Atomic Save
+            # 5. Atomic save
             # -------------------------------------------------
             temp_dir = os.path.dirname(map_file_path)
             with tempfile.NamedTemporaryFile(
@@ -4432,19 +4421,14 @@ MANDATORY AUDIT RULES:
 
             shutil.move(tmp_path, map_file_path)
 
-            # Update memory cache
             self.evidence_map = final_map
-
-            self.logger.info(
-                f"✅ [EVIDENCE-MAP] Save Successful: {map_file_path}"
-            )
+            self.logger.info(f"✅ [EVIDENCE-MAP] Save Successful: {map_file_path}")
 
         except Exception as e:
-            # 🔥 HARD RULE: Evidence map must NEVER break assessment
+            # 🔥 HARD RULE: NEVER break assessment
             self.logger.error(
                 f"❌ [EVIDENCE-MAP] Fatal Save Error (ignored): {str(e)}"
             )
-
             if "tmp_path" in locals() and os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
@@ -4454,7 +4438,6 @@ MANDATORY AUDIT RULES:
             self.logger.warning(
                 "🧯 [EVIDENCE-MAP] Skipped saving, assessment continues"
             )
-            return
 
 
     def merge_evidence_mappings(self, results_list: List[Any]) -> Dict[str, Any]:
@@ -4699,10 +4682,10 @@ MANDATORY AUDIT RULES:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [FINAL CLEAN REVISED v2026.01.27 - SINGLE SOURCE OF TRUTH]
-        - ✅ final_subcriteria_results ถูกเติมจริง
-        - ✅ Roadmap generate ครั้งเดียว ใช้ state เดียว
-        - ✅ Export ใช้ source ถูกต้อง
+        [FINAL SHIELDED BUILD v2026.01.27]
+        - 🛡️ Shield Pattern: Score คำนวณก่อน IO
+        - ✅ 4.0 จะไม่ถูก override เป็น 0.0
+        - ✅ Evidence save ล้มเหลวไม่กระทบ business result
         """
 
         start_ts = time.time()
@@ -4801,7 +4784,7 @@ MANDATORY AUDIT RULES:
                 )
 
         # -------------------------------
-        # 3. Evidence Guard
+        # 3. Evidence Guard (PREP ONLY)
         # -------------------------------
         self.db_update_task_status(progress=85, message="🧩 กำลังจัดระเบียบหลักฐาน")
 
@@ -4811,6 +4794,7 @@ MANDATORY AUDIT RULES:
         total_evidence_found = 0
         for key in list(self.evidence_map.keys()):
             bucket = self.evidence_map[key]
+
             if isinstance(bucket, dict) and "evidences" in bucket:
                 bucket["evidences"] = self._deduplicate_list(bucket["evidences"])
                 total_evidence_found += len(bucket["evidences"])
@@ -4824,10 +4808,22 @@ MANDATORY AUDIT RULES:
                 }
                 total_evidence_found += len(ev_list)
 
-        self._save_evidence_map(self.evidence_map)
+        # -------------------------------
+        # 4. 🛡️ SCORE FREEZE (CRITICAL)
+        # -------------------------------
+        overall_stats = self._calculate_overall_stats(target_sub_id) or {}
+        overall_stats["evidence_used_count"] = total_evidence_found
 
         # -------------------------------
-        # 4. Strategic Roadmap (ONCE)
+        # 5. IO RISK ZONE (SAFE NOW)
+        # -------------------------------
+        try:
+            self._save_evidence_map(self.evidence_map)
+        except Exception as e:
+            logger.warning(f"🧯 [EVIDENCE-MAP] Save failed but score preserved: {e}")
+
+        # -------------------------------
+        # 6. Strategic Roadmap (ONCE)
         # -------------------------------
         if self.final_subcriteria_results:
             self.master_roadmap_data = self.synthesize_strategic_roadmap(
@@ -4837,16 +4833,13 @@ MANDATORY AUDIT RULES:
             )
 
         # -------------------------------
-        # 5. Final Response
+        # 7. Final Response
         # -------------------------------
-        overall_stats = self._calculate_overall_stats(target_sub_id) or {}
-        overall_stats["evidence_used_count"] = total_evidence_found
-
         final_response = {
             "record_id": self.current_record_id,
             "status": "COMPLETED",
             "enabler": self.enabler,
-            "summary": overall_stats,
+            "summary": overall_stats,   # ✅ ใช้ค่าที่ freeze แล้ว
             "sub_criteria_results": self.final_subcriteria_results,
             "evidence_audit_trail": self.evidence_map,
             "strategic_roadmap": self.master_roadmap_data,
