@@ -970,61 +970,62 @@ def evaluate_with_llm(
     required_phases: List[str] = None,
     specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
-    confidence_reason: str = "N/A",
+    confidence_reason: str = "N/A", # ✅ ประกาศที่หัวฟังก์ชันชัดเจนตามต้องการ
     pdca_context: str = "", 
     **kwargs
 ) -> Dict[str, Any]:
     """
-    [REVISED v2026.01.25] - การประเมินระดับสูง (L3-L5)
-    - FIXED: ป้องกัน TypeError Multiple Values โดยการ pop confidence_reason ออกจาก kwargs
+    [EXPLICIT REVISED v2026.01.27] - การประเมินระดับสูง (L3-L5)
+    - STRATEGY: ประกาศ Argument ชัดเจน และล้างความซ้ำซ้อนใน kwargs
     """
     logger = logging.getLogger(__name__)
 
-    # 1. เตรียม Data พื้นฐานและดึงความมั่นใจ
+    # 1. 🛡️ [SHIELDING] ล้างค่าที่อาจซ้ำซ้อนใน kwargs เพื่อป้องกัน TypeError 
+    # เราใช้ค่าจาก Argument ที่ประกาศข้างบนเป็นหลัก ส่วนใน kwargs ให้ลบทิ้งไป
+    kwargs.pop("confidence_reason", None)
+    
+    # ดึงค่า Enabler (ถ้าไม่มีให้ใช้ค่า Default)
+    e_code = str(kwargs.pop("enabler", "UNK")).upper()
+    e_name_th = str(kwargs.pop("enabler_name_th", f"ด้าน {e_code}"))
+
+    # 2. [PREPARING] เตรียมข้อมูลพื้นฐาน
     ctx_raw = str(context or "ไม่พบข้อมูลหลักฐาน")
     pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
-    
-    # ดึงค่าความมั่นใจที่อาจส่งมาซ้ำใน kwargs
-    final_conf_reason = str(confidence_reason or kwargs.pop("confidence_reason", "N/A"))
-    
-    # 2. Mapping Enabler Name & Code
-    e_code = str(kwargs.get("enabler") or kwargs.get("enabler_code") or "UNK")
-    e_name_th = str(kwargs.get("enabler_name_th") or kwargs.get("enabler_full_name") or "Unknown Enabler")
-    
-    # ฉีดค่าที่ Clean แล้วกลับเข้า kwargs
-    kwargs['enabler'] = e_code
-    kwargs['enabler_name_th'] = e_name_th
-
     context_to_send_eval = _get_context_for_level(ctx_raw, level) or ""
     phases_str = ", ".join(str(p).strip() for p in (required_phases or [])) if required_phases else "P, D, C, A"
 
     try:
-        # 3. สร้าง Prompt โดยใช้ตัวแปรที่ Map แล้ว
+        # 3. 🎯 [FORMATTING] ฉีดข้อมูลเข้า Prompt
         full_prompt = USER_ASSESSMENT_PROMPT.format(
-            sub_criteria_name=str(sub_criteria_name),
-            sub_id=str(sub_id),
-            level=int(level),
-            statement_text=str(statement_text),
+            sub_criteria_name=sub_criteria_name,
+            sub_id=sub_id,
+            level=level,
+            statement_text=statement_text,
             context=context_to_send_eval[:25000], 
             pdca_context=pdca_ctx[:8000],         
             required_phases=phases_str,
-            specific_contextual_rule=str(specific_contextual_rule),
-            ai_confidence=str(ai_confidence),
-            confidence_reason=final_conf_reason, # ✅ ใช้งานตัวที่ Clean แล้ว
-            **kwargs # ✅ ในนี้จะไม่มี confidence_reason ซ้ำแล้ว
+            specific_contextual_rule=specific_contextual_rule,
+            ai_confidence=ai_confidence,
+            confidence_reason=confidence_reason, # ✅ ใช้จาก Argument โดยตรง
+            enabler=e_code,
+            enabler_name_th=e_name_th,
+            **kwargs # ✅ ข้อมูลที่เหลือ (focus_points, evidence_guidelines) จะถูกฉีดเข้าที่นี่
         )
         
+        # เพิ่ม Baseline Summary (ถ้ามีส่งมาใน kwargs)
         if kwargs.get("baseline_summary"):
             full_prompt += f"\n\n--- BASELINE DATA ---\n{kwargs['baseline_summary']}"
 
         system_msg = f"Expert SE-AM Auditor for {e_name_th} ({e_code})"
-        # raw_response = _fetch_llm_response(system_msg, full_prompt, llm_executor)
+        
+        # 4. [EXECUTION] เรียก LLM
         raw_response = _fetch_llm_response(
             system_prompt=system_msg,
             user_prompt=full_prompt,
             llm_executor=llm_executor
         )
 
+        # 5. [PARSING] แปลงเป็น Audit Object
         parsed = _robust_extract_json(raw_response)
         return _build_audit_result_object(
             parsed, raw_response, context_to_send_eval, ai_confidence, 
@@ -1034,7 +1035,7 @@ def evaluate_with_llm(
     except Exception as e:
         logger.error(f"🛑 Evaluation Error Sub:{sub_id} L{level}: {str(e)}")
         return _create_fallback_error(sub_id, level, e, context_to_send_eval, e_name_th, e_code)
-    
+
 
 def evaluate_with_llm_low_level(
     context: str,
@@ -1046,58 +1047,53 @@ def evaluate_with_llm_low_level(
     required_phases: List[str] = None,
     specific_contextual_rule: str = "พิจารณาตามเกณฑ์มาตรฐาน",
     ai_confidence: str = "MEDIUM",
+    confidence_reason: str = "N/A", # ✅ ประกาศที่หัวฟังก์ชันชัดเจน
     pdca_context: str = "",
     **kwargs
 ) -> Dict[str, Any]:
     """
-    [REVISED v2026.01.25] - การประเมินระดับพื้นฐาน (L1-L2)
-    - FIXED: แก้ไข Multiple values error สำหรับ 'confidence_reason'
-    - FIXED: ป้องกัน KeyError 'plan_keywords'
+    [EXPLICIT REVISED v2026.01.27] - การประเมินระดับพื้นฐาน (L1-L2)
     """
     logger = logging.getLogger(__name__)
 
-    # 1. จัดการ Parameter ที่สุ่มเสี่ยงต่อการซ้ำซ้อน
-    # ดึงออกจาก kwargs เพื่อไม่ให้เกิด error ตอนกระจาย **kwargs ใน format()
-    conf_reason = str(kwargs.pop("confidence_reason", "N/A"))
+    # 1. 🛡️ [SHIELDING] ล้างค่าซ้ำใน kwargs
+    kwargs.pop("confidence_reason", None)
+    e_code = str(kwargs.pop("enabler", "UNK")).upper()
+    e_name_th = str(kwargs.pop("enabler_name_th", f"ด้าน {e_code}"))
     
-    # 2. Mapping Enabler Info
-    e_code = str(kwargs.get("enabler") or kwargs.get("enabler_code") or "UNK")
-    e_name_th = str(kwargs.get("enabler_name_th") or kwargs.get("enabler_full_name") or "Unknown Enabler")
+    # ดึง Keywords เฉพาะของ L1-L2
+    plan_keywords = kwargs.pop("plan_keywords", "แผนงาน, นโยบาย, คำสั่ง, การดำเนินงาน")
     
-    kwargs['enabler'] = e_code
-    kwargs['enabler_name_th'] = e_name_th
-
     pdca_ctx = str(pdca_context or "ไม่มีข้อมูลแยกหมวดหมู่")
     phases_str = ", ".join(str(p) for p in (required_phases or [])) if required_phases else "P, D"
-    
-    if 'plan_keywords' not in kwargs:
-        kwargs['plan_keywords'] = "แผนงาน, นโยบาย, คำสั่ง, การดำเนินงาน"
 
     try:
-        # 3. การสร้าง Prompt ที่ปลอดภัย (Safe Formatting)
-        # 
+        # 2. 🎯 [FORMATTING]
         full_prompt = USER_LOW_LEVEL_PROMPT.format(
-            sub_id=str(sub_id),
-            sub_criteria_name=str(sub_criteria_name),
-            level=int(level),
-            statement_text=str(statement_text),
+            sub_id=sub_id,
+            sub_criteria_name=sub_criteria_name,
+            level=level,
+            statement_text=statement_text,
             context=str(context)[:25000],
             pdca_context=pdca_ctx[:8000],
             required_phases=phases_str,
-            specific_contextual_rule=str(specific_contextual_rule),
-            ai_confidence=str(ai_confidence),
-            confidence_reason=conf_reason, # ✅ ระบุตัวแปรที่ pop ออกมาแล้ว
-            **kwargs # ✅ กระจายตัวที่เหลือ (จะไม่มี confidence_reason ในนี้แล้ว)
+            specific_contextual_rule=specific_contextual_rule,
+            ai_confidence=ai_confidence,
+            confidence_reason=confidence_reason, # ✅ ใช้จาก Argument โดยตรง
+            plan_keywords=plan_keywords,
+            enabler=e_code,
+            enabler_name_th=e_name_th,
+            **kwargs 
         )
 
         system_msg = f"Foundation Auditor for {e_name_th} ({e_code})"
-        # raw_response = _fetch_llm_response(system_msg, full_prompt, llm_executor)
+        
+        # 3. [EXECUTION]
         raw_response = _fetch_llm_response(
             system_prompt=system_msg,
             user_prompt=full_prompt,
             llm_executor=llm_executor
         )
-
 
         parsed = _robust_extract_json(raw_response)
         return _build_audit_result_object(
@@ -1107,86 +1103,122 @@ def evaluate_with_llm_low_level(
 
     except Exception as e:
         logger.error(f"🛑 Low-Level Eval Error Sub:{sub_id} L{level}: {str(e)}")
-        # ส่งค่า fallback ที่มีข้อมูล Enabler ครบถ้วน
         return _create_fallback_error(sub_id, level, e, context, e_name_th, e_code)
-
-def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, confidence: str, **kwargs) -> Dict[str, Any]:
+    
+def _build_audit_result_object(
+    parsed: Dict, 
+    raw_response: str, 
+    context: str, 
+    confidence: str, 
+    **kwargs
+) -> Dict[str, Any]:
     """
-    [ULTIMATE-SYNC v2026.1.23] — THE COMPLETE AUDITOR OBJECT
-    - Fix: ดึง 'sources' (Evidence) ออกมาแสดงผลราย Level
-    - Fix: จัดกลุ่ม pdca_breakdown ให้เป็นมาตรฐาน UI
-    - Robust handling สำหรับการประเมินระดับองค์กร (PEA SE-AM)
+    [ULTIMATE-SYNC v2026.01.27] — THE COMPLETE AUDITOR OBJECT
+    - 👔 Integrated 'executive_summary' as primary narrative output.
+    - 📎 Enhanced 'evidence_sources' mapping for UI linking.
+    - 🛡️ PDCA Coercion & Safety Fallback for scoring.
     """
-    level = kwargs.get('level', 1)
-    sub_id = kwargs.get('sub_id', 'Unknown')
+    from datetime import datetime
+    
+    # 1. [EXTRACT METADATA]
+    level = int(kwargs.get('level', 1))
+    sub_id = str(kwargs.get('sub_id', 'Unknown'))
     enabler_full_name = kwargs.get('enabler_full_name', 'Unknown Enabler')
     enabler_code = kwargs.get('enabler_code', 'UNK')
 
     def clean_score(val, default=0.0):
         if val is None: return default
         try:
-            return float(val)
+            return round(float(val), 2)
         except (ValueError, TypeError):
             return default
 
+    # ประกันความเสี่ยงกรณี parsed ไม่ใช่ dict
     if not isinstance(parsed, dict):
         parsed = {}
 
-    # 1. 📊 Scoring & Passed Status
+    # 2. [SCORING & STATUS] 📊
+    # ดึงคะแนนหลัก และคำนวณ is_passed หาก AI ไม่ได้ส่งมา
     score = clean_score(parsed.get("score"))
     is_passed = parsed.get("is_passed")
     if is_passed is None:
-        # Fallback เกณฑ์ผ่าน: L1-L2 (0.7), L3-L5 (1.0)
+        # Fallback เกณฑ์ผ่านมาตรฐาน: L1-L2 (0.7), L3-L5 (1.0)
         is_passed = score >= 0.7 if level <= 2 else score >= 1.0
+    else:
+        is_passed = bool(is_passed)
 
-    # 2. 📎 Evidence & Sources Extraction (จุดที่เคยหายไป)
-    # พยายามดึงรายชื่อ Doc ID จากทุก Key ที่ AI อาจจะพ่นออกมา
+    # 3. [EVIDENCE SOURCES & SOURCES] 📎
+    # ระบบใหม่ใช้ 'evidence_sources' สำหรับ Object เต็ม และ 'sources' สำหรับรายชื่อ Doc ID
+    # พยายามดึงจากทุก Key ที่เป็นไปได้เพื่อให้ครอบคลุมทุก Prompt Version
+    evidence_sources = (
+        parsed.get("evidence_sources") or 
+        parsed.get("top_chunks_data") or 
+        []
+    )
+    
     sources = (
         parsed.get("sources") or 
         parsed.get("evidence") or 
         parsed.get("doc_ids") or 
         parsed.get("reference_documents") or []
     )
-    # มั่นใจว่าเป็น List และล้างช่องว่าง
+    # Normalize 'sources' ให้เป็น List ของ String เสมอ
     if isinstance(sources, str):
         sources = [s.strip() for s in sources.split(',') if s.strip()]
     elif not isinstance(sources, list):
         sources = []
 
-    # 3. 🧩 PDCA Breakdown Normalization
-    # ดึงคะแนนราย Phase และจัดโครงสร้างใหม่
-    p_score = clean_score(parsed.get("P_Plan_Score") or parsed.get("P_Score") or parsed.get("plan_score") or parsed.get("P"))
-    d_score = clean_score(parsed.get("D_Do_Score") or parsed.get("D_Score") or parsed.get("do_score") or parsed.get("D"))
-    c_score = clean_score(parsed.get("C_Check_Score") or parsed.get("C_Score") or parsed.get("check_score") or parsed.get("C"))
-    a_score = clean_score(parsed.get("A_Act_Score") or parsed.get("A_Score") or parsed.get("act_score") or parsed.get("A"))
+    # 4. [PDCA BREAKDOWN NORMALIZATION] 🧩
+    # ดึงคะแนนราย Phase (รองรับทั้งชื่อภาษาไทยและอังกฤษ)
+    p_val = parsed.get("P_Plan_Score") or parsed.get("P_Score") or parsed.get("plan_score") or parsed.get("P", 0)
+    d_val = parsed.get("D_Do_Score") or parsed.get("D_Score") or parsed.get("do_score") or parsed.get("D", 0)
+    c_val = parsed.get("C_Check_Score") or parsed.get("C_Score") or parsed.get("check_score") or parsed.get("C", 0)
+    a_val = parsed.get("A_Act_Score") or parsed.get("A_Score") or parsed.get("act_score") or parsed.get("A", 0)
 
-    # Fallback สำหรับ L1-L2 หากผ่านแต่ลืมใส่คะแนน P
-    if bool(is_passed) and level <= 2 and p_score == 0:
+    p_score = clean_score(p_val)
+    d_score = clean_score(d_val)
+    c_score = clean_score(c_val)
+    a_score = clean_score(a_val)
+
+    # กฎเหล็ก: ถ้าผ่าน L1-L2 แต่ AI ลืมใส่คะแนน P ให้ดึงจากคะแนนหลักมาใส่
+    if is_passed and level <= 2 and p_score == 0:
         p_score = score
 
-    # 4. 📝 Text Content Extraction
+    # 5. [TEXTUAL CONTENT] 📝
+    # ดึงการวิเคราะห์เนื้อหาแยกตาม Phase
     ext_p = str(parsed.get("Extraction_P") or parsed.get("หลักฐาน P") or "-").strip()
     ext_d = str(parsed.get("Extraction_D") or parsed.get("หลักฐาน D") or "-").strip()
     ext_c = str(parsed.get("Extraction_C") or parsed.get("หลักฐาน C") or "-").strip()
     ext_a = str(parsed.get("Extraction_A") or parsed.get("หลักฐาน A") or "-").strip()
 
-    # 5. 🏛️ Final Assembly
+    # 6. [EXECUTIVE & COACHING NARRATIVE] 👔
+    # นี่คือส่วนที่สำคัญที่สุดสำหรับรายงานระดับผู้บริหาร
+    executive_summary = str(
+        parsed.get("executive_summary") or 
+        parsed.get("summary_thai") or 
+        parsed.get("บทสรุป") or ""
+    ).strip()
+    
+    reason = str(parsed.get("reason") or parsed.get("เหตุผล") or "ไม่พบเหตุผลสรุปจาก AI").strip()
+    coaching_insight = str(parsed.get("coaching_insight") or parsed.get("ข้อแนะนำ") or "").strip()
+
+    # 7. [FINAL ASSEMBLY] 🏛️
     return {
-        "sub_id": str(sub_id),
-        "level": int(level),
+        "sub_id": sub_id,
+        "level": level,
         "score": score,
-        "is_passed": bool(is_passed),
-        "reason": str(parsed.get("reason") or parsed.get("เหตุผล") or "ไม่พบเหตุผลสรุปจาก AI").strip(),
-        "summary_thai": str(parsed.get("summary_thai") or parsed.get("บทสรุป") or "").strip(),
-        "coaching_insight": str(parsed.get("coaching_insight") or parsed.get("ข้อแนะนำ") or "").strip(),
+        "is_passed": is_passed,
+        "reason": reason,
+        "executive_summary": executive_summary,
+        "coaching_insight": coaching_insight,
         
-        # เก็บในรูปแบบ Flat สำหรับ Report
+        # สำหรับ Flat Report
         "P_Plan_Score": p_score,
         "D_Do_Score": d_score,
         "C_Check_Score": c_score,
         "A_Act_Score": a_score,
 
-        # เก็บในรูปแบบ Object สำหรับ UI/Dashboard
+        # สำหรับ UI/Dashboard Radar Chart
         "pdca_breakdown": {
             "P": p_score,
             "D": d_score,
@@ -1194,15 +1226,21 @@ def _build_audit_result_object(parsed: Dict, raw_response: str, context: str, co
             "A": a_score
         },
 
+        # รายละเอียดการสกัดข้อมูล
         "Extraction_P": ext_p,
         "Extraction_D": ext_d,
         "Extraction_C": ext_c,
         "Extraction_A": ext_a,
         
-        "sources": sources, # 🎯 ส่ง doc_id ต่อไปให้ Engine ทำการ Map ชื่อไฟล์
+        # ข้อมูลหลักฐาน (สำคัญมากสำหรับการทำ Merge Mapping)
+        "evidence_sources": evidence_sources, 
+        "sources": sources, 
+        
+        # Metadata สำหรับ Audit Trail
         "ai_confidence_at_eval": str(confidence or "MEDIUM"),
         "enabler_at_eval": f"{enabler_full_name} ({enabler_code})",
-        "generated_at": datetime.now().isoformat()
+        "generated_at": datetime.now().isoformat(),
+        "is_safety_pass": parsed.get("is_safety_pass", True) # สำหรับ Judicial Review
     }
 
 def _create_fallback_error(sub_id: str, level: int, error: Exception, context: str, 
@@ -1217,7 +1255,7 @@ def _create_fallback_error(sub_id: str, level: int, error: Exception, context: s
         "score": 0.0,
         "is_passed": False,
         "reason": f"System Error: {str(error)}",
-        "summary_thai": "ไม่สามารถประเมินได้เนื่องจากข้อผิดพลาดทางระบบ", # เพิ่มเพื่อให้ Word มีข้อมูล
+        "executive_summary": "ไม่สามารถประเมินได้เนื่องจากข้อผิดพลาดทางระบบ", # เพิ่มเพื่อให้ Word มีข้อมูล
         "coaching_insight": "โปรดตรวจสอบการเชื่อมต่อ LLM หรือตรวจสอบหลักฐานอีกครั้ง", # เพิ่มเพื่อให้ Word มีข้อมูล
         "consistency_check": False,
         "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
@@ -1238,7 +1276,7 @@ def _heuristic_fallback_parse(raw_text: str) -> Dict:
         "score": 0.0,
         "is_passed": False,
         "reason": "JSON Parse Failed (Heuristic Applied)",
-        "summary_thai": "สกัดผลลัพธ์จากข้อความดิบ",
+        "executive_summary": "สกัดผลลัพธ์จากข้อความดิบ",
         "coaching_insight": "ตรวจสอบเนื้อหาใน Raw Response",
         "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
         "consistency_check": False
@@ -1272,7 +1310,7 @@ def _heuristic_fallback_parse(raw_text: str) -> Dict:
     # พยายามดึง "เหตุผล" จากบรรทัดแรกๆ
     lines = [l.strip() for l in raw_text.split('\n') if len(l.strip()) > 10]
     if lines:
-        parsed["summary_thai"] = lines[0][:200]
+        parsed["executive_summary"] = lines[0][:200]
         
     return parsed
 
