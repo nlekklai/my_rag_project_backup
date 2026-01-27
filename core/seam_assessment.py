@@ -88,7 +88,7 @@ try:
     try:
         from core.seam_prompts import (
             ATOMIC_ACTION_PROMPT, MASTER_ROADMAP_PROMPT,
-            SYSTEM_ATOMIC_ACTION_PROMPT, SYSTEM_MASTER_ROADMAP_PROMPT
+            SYSTEM_ATOMIC_ACTION_PROMPT, SYSTEM_MASTER_ROADMAP_PROMPT, MASTER_ROADMAP_TEMPLATE
         )
     except ImportError:
         ATOMIC_ACTION_PROMPT = "Recommendation: {coaching_insight} Level: {level}"
@@ -1712,7 +1712,6 @@ class SEAMPDCAEngine:
         - Fix: รองรับการเรียกแบบยืดหยุ่น ป้องกัน Error 'missing 1 required positional argument'
         - Logic: ดึง Baseline จาก Memory/Map มาใช้เพื่อรักษาความต่อเนื่อง (Inheritance)
         """
-        from copy import deepcopy
         priority_chunks = []
         mapped_stable_ids = []
 
@@ -4493,18 +4492,17 @@ MANDATORY AUDIT RULES:
     
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
-        [ULTIMATE REVISED MERGE v2026.01.27.FINAL]
-        - 🪜 Sequential Integrity: บังคับลำดับการคำนวณ Maturity จาก L1 เสมอ
-        - 🛡️ Human-Map Protection: ป้องกันข้อมูลที่คน Review ไว้ไม่ให้ถูก AI ทับ
-        - 📊 Precision Score: ปรับจูนระบบถ่วงน้ำหนักคะแนนตามกฎ Step-Ladder
+        [ULTIMATE REVISED MERGE v2026.01.28.PATCHED]
+        - 🪜 Sequential Integrity: บังคับลำดับการคำนวณ Maturity จาก L1
+        - 🛡️ Human-Map Protection: ป้องกันข้อมูลคน Review
+        - 🔄 Audit-Trail Sync: แก้ปัญหา pdca/snippet เป็น null ใน JSON
         """
         if not sub_result:
-            self.logger.warning("⚠️ Empty sub_result received.")
             return None
 
         sub_id = str(sub_result.get("sub_id", "Unknown"))
         incoming_levels = sub_result.get("level_details", {}) or {}
-
+        
         # --------------------------------------------------
         # 1. Evidence Merge & Semantic Enrichment
         # --------------------------------------------------
@@ -4515,46 +4513,56 @@ MANDATORY AUDIT RULES:
                 if not isinstance(ev_list, list) or not ev_list: continue
                 if "_L" not in level_key: continue
 
-                # 🎯 ปรับปรุง: Smart Default Tag ตาม Level
-                try:
-                    lv_num = level_key.split("_L")[-1]
-                    lv_data = incoming_levels.get(lv_num, {})
-                    pdca_bd = lv_data.get("pdca_breakdown", {})
-                    # ถ้าไม่มีคะแนนเลย L1 ให้ Default P, อื่นๆ ให้ D
-                    default_tag = next((k for k, v in pdca_bd.items() if float(v) > 0), ("P" if lv_num == "1" else "D"))
-                except:
-                    default_tag = "D"
-
-                node = self.evidence_map.setdefault(level_key, {"status": "completed", "evidences": []})
+                # ค้นหา Metadata จาก Worker เพื่อใช้เป็น Default
+                lv_num = level_key.split("_L")[-1]
+                lv_data = incoming_levels.get(lv_num, {})
+                
+                node = self.evidence_map.setdefault(level_key, {
+                    "status": "completed", 
+                    "evidences": [],
+                    "pdca": None, 
+                    "confidence": None, 
+                    "snippet": ""
+                })
+                
                 existing = node["evidences"]
                 seen_uids = {f"{e.get('doc_id')}_{e.get('page')}": i for i, e in enumerate(existing)}
 
                 for ev in ev_list:
-                    if not isinstance(ev, dict): continue
+                    # Sync ข้อมูลพื้นฐาน
                     doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid")
                     page = str(ev.get("page") or ev.get("page_label") or "0")
                     uid = f"{doc_id}_{page}"
 
-                    # 🎯 ปรับปรุง: ถ้าเป็นข้อมูลเดิมที่คน Review ไว้ (Human Map) ห้าม AI แก้ไข
-                    if uid in seen_uids:
-                        idx = seen_uids[uid]
-                        if existing[idx].get("source_type") == "human_map":
-                            continue # Skip AI update for human-verified data
+                    if uid in seen_uids and existing[seen_uids[uid]].get("source_type") == "human_map":
+                        continue
                     
-                    # PDCA Tagging & Confidence Sync
-                    tag = ev.get("pdca_tag") or ev.get("pdca_phase") or default_tag
-                    ev["pdca_tag"] = str(tag).upper() if tag in ["P", "D", "C", "A"] else default_tag
-                    
-                    score_val = ev.get("rerank_score") or ev.get("relevance_score") or 0.0
-                    ev["rerank_score"] = float(score_val)
-                    ev["confidence"] = float(score_val) # UI Sync
-
+                    # บันทึกข้อมูลเข้า list หลัก
                     if uid not in seen_uids:
                         existing.append(ev)
                         seen_uids[uid] = len(existing) - 1
 
+                # 🎯 [FIX POINT]: Sync ข้อมูลจาก Top Evidence กลับเข้า Audit Trail Node
+                if existing:
+                    # เรียงลำดับตามคะแนนความเกี่ยวข้องอีกครั้งเพื่อให้ได้ตัวแทนที่ดีที่สุด
+                    existing.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+                    top_ev = existing[0]
+                    
+                    # ดึง Snippet: ตัดเอาเฉพาะเนื้อหาสำคัญไปโชว์ใน JSON
+                    raw_text = top_ev.get("text") or top_ev.get("content") or ""
+                    clean_snippet = raw_text[:300].replace("\n", " ").strip() + "..." if raw_text else ""
+                    
+                    # อัปเดตค่าที่เคยเป็น null ใน Audit Trail
+                    node.update({
+                        "pdca": top_ev.get("pdca_tag") or (lv_data.get("pdca_breakdown", {}).get("top_phase", "P")),
+                        "confidence": round(top_ev.get("rerank_score") or top_ev.get("relevance_score") or 0.0, 2),
+                        "snippet": clean_snippet,
+                        "file": top_ev.get("filename") or top_ev.get("source") or "Unknown File",
+                        "page": str(top_ev.get("page") or "N/A")
+                    })
+
         # --------------------------------------------------
-        # 2. Results Integration & Maturity Calculation
+        # 2. Results Integration (Maturity logic เหมือนเดิม)
         # --------------------------------------------------
         self.final_subcriteria_results = getattr(self, "final_subcriteria_results", [])
         target = next((r for r in self.final_subcriteria_results if str(r.get("sub_id")) == sub_id), None)
@@ -4567,57 +4575,35 @@ MANDATORY AUDIT RULES:
                 "level_details": {},
                 "highest_full_level": 0,
                 "weighted_score": 0.0,
-                "is_passed": False,
-                "audit_stop_reason": "",
                 "pdca_overall": {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
             }
             self.final_subcriteria_results.append(target)
 
+        # Merge level_details เข้า target
         if isinstance(incoming_levels, dict):
             for lv, lv_data in incoming_levels.items():
                 target["level_details"][str(lv)] = lv_data
 
         # --------------------------------------------------
-        # 3. Step-Ladder Logic (Maturity Continuity)
+        # 3. Final Score & Step-Ladder Step
         # --------------------------------------------------
         highest = 0
-        stop_reason = "Maximum maturity level reached"
         pdca_sum = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
         passed_count = 0
 
-        # 🎯 ปรับปรุง: ประกันว่า Loop เรียง 1 -> 5 เสมอ
         for l in range(1, 6):
-            lv_key = str(l)
-            data = target["level_details"].get(lv_key)
-            if not data:
-                stop_reason = f"Data missing at Level {l}"
+            data = target["level_details"].get(str(l))
+            if not data or not data.get("is_passed") or data.get("is_capped"):
                 break
+            
+            highest = l
+            bd = data.get("pdca_breakdown", {}) or {}
+            for k in pdca_sum:
+                pdca_sum[k] += float(bd.get(k, 0.0))
+            passed_count += 1
 
-            is_passed = data.get("is_passed") is True
-            is_capped = data.get("is_capped", False) is True
-
-            if is_passed and not is_capped:
-                highest = l
-                bd = data.get("pdca_breakdown", {}) or {}
-                for k in pdca_sum:
-                    pdca_sum[k] += float(bd.get(k, 0.0))
-                passed_count += 1
-            else:
-                # วิเคราะห์สาเหตุที่หยุด
-                if not is_passed:
-                    stop_reason = f"Stopped at L{l}: Criteria not met"
-                elif is_capped:
-                    stop_reason = f"Stopped at L{l}: Failed pre-requisite (Lower Level)"
-                break
-
-        # --------------------------------------------------
-        # 4. Finalize Scoring
-        # --------------------------------------------------
         target["highest_full_level"] = highest
-        target["is_passed"] = highest >= 1
         target["weighted_score"] = round(highest * float(target["weight"]), 2)
-        target["audit_stop_reason"] = stop_reason
-
         if passed_count > 0:
             target["pdca_overall"] = {k: round(v / passed_count, 2) for k, v in pdca_sum.items()}
 
@@ -4633,10 +4619,10 @@ MANDATORY AUDIT RULES:
         record_id: str = None,
     ) -> Dict[str, Any]:
         """
-        [FINAL SHIELDED BUILD v2026.01.27]
+        [FINAL SHIELDED BUILD v2026.01.28 - PDCA SYNC ENABLED]
         - 🛡️ Shield Pattern: Score คำนวณก่อน IO
-        - ✅ 4.0 จะไม่ถูก override เป็น 0.0
-        - ✅ Evidence save ล้มเหลวไม่กระทบ business result
+        - 🔄 Evidence Sync: ดึงข้อมูลจาก Worker เข้าสู่ Audit Trail โดยตรง
+        - ✅ แก้ไขปัญหาค่า null ในไฟล์ JSON
         """
 
         start_ts = time.time()
@@ -4695,16 +4681,12 @@ MANDATORY AUDIT RULES:
                     pool.imap_unordered(_static_worker_process, worker_args)
                 ):
                     results_list.append((res, worker_mem))
-
-                    # 🔑 SINGLE SOURCE OF TRUTH
-                    self.final_subcriteria_results.append(res)
                     self._merge_worker_results(res, worker_mem)
 
                     self.db_update_task_status(
                         progress=15 + int(((idx + 1) / total_subs) * 65),
                         message=f"🧠 ประเมิน {res.get('sub_id', '?')} สำเร็จ"
                     )
-
         else:
             # MODE B: SEQUENTIAL
             if not vectorstore_manager:
@@ -4713,20 +4695,11 @@ MANDATORY AUDIT RULES:
 
             for idx, sub_criteria in enumerate(sub_criteria_list):
                 sub_id = str(sub_criteria.get("sub_id", "Unknown"))
-
-                prev_map = self._collect_previous_level_evidences(
-                    sub_id=sub_id, current_level=1
-                )
-                baseline = [ev for evs in prev_map.values() for ev in evs]
-
                 res, worker_mem = self._run_sub_criteria_assessment_worker(
-                    sub_criteria, vsm, baseline
+                    sub_criteria, vsm, []
                 )
 
                 results_list.append((res, worker_mem))
-
-                # 🔑 SINGLE SOURCE OF TRUTH
-                self.final_subcriteria_results.append(res)
                 self._merge_worker_results(res, worker_mem)
 
                 self.db_update_task_status(
@@ -4735,9 +4708,9 @@ MANDATORY AUDIT RULES:
                 )
 
         # -------------------------------
-        # 3. Evidence Guard (PREP ONLY)
+        # 3. Evidence Guard (REVISED & PATCHED)
         # -------------------------------
-        self.db_update_task_status(progress=85, message="🧩 กำลังจัดระเบียบหลักฐาน")
+        self.db_update_task_status(progress=85, message="🧩 กำลังจัดระเบียบหลักฐานและวิเคราะห์ PDCA")
 
         full_raw_mapping = self.merge_evidence_mappings(results_list)
         self._update_internal_evidence_map(full_raw_mapping)
@@ -4745,19 +4718,36 @@ MANDATORY AUDIT RULES:
         total_evidence_found = 0
         for key in list(self.evidence_map.keys()):
             bucket = self.evidence_map[key]
+            
+            # ตรวจสอบโครงสร้าง bucket ให้พร้อมใช้งาน
+            if not isinstance(bucket, dict):
+                bucket = {"status": "ai_generated", "evidences": bucket}
+                self.evidence_map[key] = bucket
 
-            if isinstance(bucket, dict) and "evidences" in bucket:
-                bucket["evidences"] = self._deduplicate_list(bucket["evidences"])
-                total_evidence_found += len(bucket["evidences"])
-                if bucket["evidences"]:
-                    bucket["status"] = "ai_generated"
-            else:
-                ev_list = self._deduplicate_list(bucket if isinstance(bucket, list) else [])
-                self.evidence_map[key] = {
-                    "status": "ai_generated",
-                    "evidences": ev_list
-                }
+            # 🎯 [FIX START]: เติมข้อมูลที่ขาดหาย (PDCA, Confidence, Snippet) จากหลักฐานที่ดีที่สุด
+            ev_list = self._deduplicate_list(bucket.get("evidences", []))
+            if ev_list:
+                # 1. เรียงลำดับเอาหลักฐานที่ AI มั่นใจสูงสุดมาเป็นตัวแทนระดับ Level
+                ev_list.sort(key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or 0.0), reverse=True)
+                top_ev = ev_list[0]
+                
+                # 2. สร้าง Snippet ข้อความสั้นเพื่อแสดงบน Dashboard
+                raw_content = top_ev.get("text") or top_ev.get("content") or top_ev.get("page_content") or ""
+                clean_snippet = raw_content[:350].replace("\n", " ").strip() + "..." if raw_content else ""
+                
+                # 3. Sync ข้อมูลจาก Top Evidence ขึ้นสู่ระดับ Node (Audit Trail)
+                bucket.update({
+                    "pdca": top_ev.get("pdca_tag") or "P",
+                    "confidence": round(float(top_ev.get("rerank_score") or top_ev.get("relevance_score") or 0.0), 2),
+                    "snippet": clean_snippet,
+                    "file": top_ev.get("filename") or top_ev.get("source_filename") or top_ev.get("source"),
+                    "page": str(top_ev.get("page") or top_ev.get("page_label") or "N/A")
+                })
+                
+                bucket["evidences"] = ev_list
                 total_evidence_found += len(ev_list)
+                bucket["status"] = "completed"
+            # 🎯 [FIX END]
 
         # -------------------------------
         # 4. 🛡️ SCORE FREEZE (CRITICAL)
@@ -4771,10 +4761,10 @@ MANDATORY AUDIT RULES:
         try:
             self._save_evidence_map(self.evidence_map)
         except Exception as e:
-            logger.warning(f"🧯 [EVIDENCE-MAP] Save failed but score preserved: {e}")
+            self.logger.warning(f"🧯 [EVIDENCE-MAP] Save failed: {e}")
 
         # -------------------------------
-        # 6. Strategic Roadmap (ONCE)
+        # 6. Strategic Roadmap
         # -------------------------------
         if self.final_subcriteria_results:
             self.master_roadmap_data = self.synthesize_strategic_roadmap(
@@ -4790,7 +4780,7 @@ MANDATORY AUDIT RULES:
             "record_id": self.current_record_id,
             "status": "COMPLETED",
             "enabler": self.enabler,
-            "summary": overall_stats,   # ✅ ใช้ค่าที่ freeze แล้ว
+            "summary": overall_stats,
             "sub_criteria_results": self.final_subcriteria_results,
             "evidence_audit_trail": self.evidence_map,
             "strategic_roadmap": self.master_roadmap_data,
@@ -4798,20 +4788,10 @@ MANDATORY AUDIT RULES:
         }
 
         if export:
-            final_response["export_path"] = self._export_results(
-                results_data=self.final_subcriteria_results,
-                sub_criteria_id=target_sub_id,
-                record_id=self.current_record_id
-            )
+            self._export_results(self.final_subcriteria_results, target_sub_id, self.current_record_id)
 
-        self.db_update_task_status(
-            progress=100,
-            message="✅ ประเมินเสร็จสมบูรณ์",
-            status="COMPLETED"
-        )
-
+        self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
-
     
     def synthesize_strategic_roadmap(
         self,
@@ -5075,8 +5055,9 @@ MANDATORY AUDIT RULES:
             self.logger.error(f"🛑 [ATOMIC-PLAN-CRITICAL] {str(e)}", exc_info=True)
             return [{"action": "ดำเนินการพัฒนางานตามข้อเสนอแนะของเกณฑ์", "target_evidence": "หลักฐานเชิงประจักษ์", "level": level}]
         
+
     # ------------------------------------------------------------------
-    # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026.1.23
+    # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026.1.28
     # ------------------------------------------------------------------
     def generate_master_roadmap(
         self,
@@ -5086,78 +5067,123 @@ MANDATORY AUDIT RULES:
         aggregated_insights: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        [FINAL CANONICAL v2026.01]
-        Scope: SUB_CRITERIA ONLY
-        ใช้สำหรับ roadmap รายหัวข้อ ไม่ใช่ Enabler Master
+        [BIG-5 STRATEGIC REVISION v2026.01.28]
+        - 🧩 Evidence-Linked: เชื่อมโยงไฟล์ต้นแบบ (Best Practice) เข้ากับ Gap Analysis
+        - 🪜 Sequential Logic: บังคับการเดินตามลำดับ Maturity (Step-Ladder) อย่างเคร่งครัด
+        - 💎 Actionable Bespoke: สร้าง Roadmap ที่อิงจากข้อมูลจริง ไม่ใช่แค่ Generic Template
         """
 
         if not aggregated_insights:
-            return {
-                "scope": "SUB_CRITERIA",
-                "sub_id": sub_id,
-                "status": "INCOMPLETE",
-                "overall_strategy": "ยังไม่พบข้อมูลเพียงพอในการจัดทำ Roadmap",
-                "phases": []
-            }
+            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        condensed = []
+        self.logger.info(f"🚀 [ROADMAP] Generating strategic plan for {sub_id}: {sub_criteria_name}")
+
+        # 1. 🔍 ขุดค้นบริบทเชิงลึก (Strategic Context Enrichment)
+        condensed_insights = []
+        best_practice_assets = []
         highest_continuous = 0
         has_gap = False
+        
+        # ค้นหา Metadata ของหลักฐานผ่าน evidence_map ที่ Sync ไว้แล้วในขั้นตอน Guard
+        evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
             lv = int(item.get("level", 0))
-            passed = item.get("status") == "PASSED"
-            capped = item.get("is_capped", False)
-
+            status_raw = item.get("status", "FAILED")
+            passed = (status_raw == "PASSED")
+            
+            # ดึงชื่อไฟล์จาก Evidence Map มาเป็น Assets เพื่อให้ AI แนะนำการขยายผลได้
+            ev_key = f"{sub_id}_L{lv}"
+            ev_node = evidence_map.get(ev_key, {})
+            filename = ev_node.get("file")
+            
             if passed and not has_gap:
                 highest_continuous = lv
-                label = "PASSED (COUNTED)"
+                state_label = "✅ PASSED (ASSET)"
+                if filename and filename != "N/A":
+                    best_practice_assets.append(f"Level {lv}: {filename}")
             elif passed and has_gap:
-                label = "PASSED (CAPPED)"
+                state_label = "⚠️ PASSED BUT CAPPED (NON-CONTINUOUS)"
             else:
-                label = "FAILED (GAP)"
+                state_label = "❌ GAP DETECTED"
                 has_gap = True
 
-            condensed.append(
-                f"L{lv} [{label}]: {item.get('insight_summary','')[:200]}"
-            )
+            insight_text = item.get('insight_summary', '').strip()
+            condensed_insights.append(f"- L{lv} [{state_label}]: {insight_text}")
 
-        strategic_focus = (
-            f"ระดับปัจจุบันอยู่ที่ L{highest_continuous} "
-            + ("ควรอุดช่องว่างก่อนต่อยอด"
-            if has_gap else "สามารถต่อยอดสู่ระดับถัดไป")
+        
+
+        # 2. 💎 ปรุง Parameter 'aggregated_insights' ให้มีความเป็นที่ปรึกษา
+        # เราส่งทั้งสิ่งที่ "ขาด" และสิ่งที่มี "ดี" เพื่อให้ LLM แนะนำการต่อยอดจากทุนเดิม
+        enriched_context = (
+            "💎 EXISTING STRATEGIC ASSETS (ต้นทุนความสำเร็จที่มีอยู่):\n" +
+            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานที่เป็นต้นแบบชัดเจน") +
+            "\n\n🚨 CRITICAL GAPS & COACHING INSIGHTS (ช่องว่างที่ต้องปิด):\n" +
+            "\n".join(condensed_insights)
         )
 
+        strategic_focus = (
+            f"ระดับ Maturity ปัจจุบันอยู่ที่ L{highest_continuous} "
+            + ("(ตรวจพบช่องว่างสำคัญที่ต้องปิดกั้นก่อนยกระดับ)" if has_gap else "(รากฐานแข็งแกร่ง พร้อมขยายผลสู่ระดับถัดไป)")
+        )
+
+        # 3. 🎼 Prompt Orchestration (ส่งข้อมูลเข้าสู่ตัวประมวลผลยุทธศาสตร์)
+        # ใช้โครงสร้าง MASTER_ROADMAP_PROMPT ที่คุณกำหนดไว้ใน Header
         prompt = MASTER_ROADMAP_PROMPT.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
             enabler=enabler,
-            aggregated_insights="\n".join(condensed),
+            aggregated_insights=enriched_context, 
             strategic_focus=strategic_focus
         )
 
-        raw = _fetch_llm_response(
-            system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
-            user_prompt=prompt,
-            llm_executor=self.llm
-        )
+        try:
+            # ใช้ System Prompt ที่ปรับจูนให้เป็น Big 5 Consultant (McKinsey/Deloitte Style)
+            raw = _fetch_llm_response(
+                system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
+                user_prompt=prompt,
+                llm_executor=self.llm
+            )
 
-        data = _robust_extract_json(raw) or {}
+            data = _robust_extract_json(raw) or {}
+            raw_phases = data.get("phases") or data.get("roadmap") or data.get("action_plan") or []
 
-        phases = data.get("phases") or data.get("roadmap") or []
+            # 4. 🪜 Normalize Phases เข้าสู่ UI Schema
+            final_phases = []
+            for i, p in enumerate(raw_phases, 1):
+                if isinstance(p, dict):
+                    # AI จะต้องพยายามระบุ 'best_practice_ref' ตามที่เราใส่ไว้ใน Context
+                    ref_doc = p.get("best_practice_ref") or p.get("reference")
+                    
+                    final_phases.append({
+                        "phase": p.get("phase", f"Phase {i}: ยกระดับศักยภาพ {sub_id}"),
+                        "target_levels": p.get("target_levels") or f"L{highest_continuous + 1}",
+                        "main_objective": p.get("main_objective") or p.get("goal") or "ปิด Gap และสร้างความยั่งยืน",
+                        "key_actions": p.get("key_actions") or p.get("actions") or [],
+                        "expected_outcome": p.get("expected_outcome") or "บรรลุเกณฑ์การประเมินในระดับถัดไป",
+                        "best_practice_ref": ref_doc or "พิจารณาต้นแบบจากหลักฐานที่ผ่านการประเมินแล้ว"
+                    })
 
-        return {
-            "scope": "SUB_CRITERIA",
-            "sub_id": sub_id,
-            "sub_criteria_name": sub_criteria_name,
-            "highest_maturity_level": highest_continuous,
-            "overall_strategy": data.get("overall_strategy", strategic_focus),
-            "phases": phases,
-            "is_gap_detected": has_gap,
-            "status": "SUCCESS",
-            "generated_at": datetime.now().isoformat()
-        }
+            # กรณี LLM ไม่พ่น Phases กลับมา ให้ใช้ Fallback ที่มีความหมาย
+            if not final_phases:
+                final_phases = self._get_emergency_fallback_plan(sub_id, sub_criteria_name)["phases"]
 
+            return {
+                "scope": "SUB_CRITERIA",
+                "sub_id": sub_id,
+                "sub_criteria_name": sub_criteria_name,
+                "highest_maturity_level": highest_continuous,
+                "overall_strategy": data.get("overall_strategy", strategic_focus),
+                "phases": final_phases,
+                "is_gap_detected": has_gap,
+                "status": "SUCCESS",
+                "generated_at": datetime.now().isoformat(),
+                "assets_found": len(best_practice_assets)
+            }
+
+        except Exception as e:
+            self.logger.error(f"🛑 [MASTER-ROADMAP-CRITICAL] Error for {sub_id}: {e}", exc_info=True)
+            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
             
     def _get_emergency_fallback_plan(self, sub_id, name, error_msg=""):
         """สร้างแผนสำรองกรณี LLM พัง เพื่อไม่ให้ระบบหยุดทำงาน"""
@@ -5177,27 +5203,29 @@ MANDATORY AUDIT RULES:
 
     def _apply_evidence_cap(self, evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        [NEW v2026.1.24] จัดการ Cap ขนาดหลักฐานสะสมตาม Strategy ที่ตั้งไว้
+        [REFINED] เพิ่มการเช็คความถูกต้องของข้อมูลก่อน Sort
         """
         if not evidence_list:
             return []
 
-        # 1. Deduplicate ก่อน
-        unique_evidences = self._deduplicate_list(evidence_list)
+        # กรองเฉพาะที่เป็น dict และมีข้อมูลสำคัญ
+        valid_evidences = [ev for ev in evidence_list if isinstance(ev, dict) and (ev.get('text') or ev.get('content'))]
+        
+        # 1. Deduplicate โดยใช้ Hash ของเนื้อหา (ถ้าทำได้) หรือ Source+Page
+        unique_evidences = self._deduplicate_list(valid_evidences)
 
-        # 2. เลือกกลยุทธ์การตัดข้อมูล
+        # 2. Strategy-based Selection
         if EVIDENCE_SELECTION_STRATEGY == "score":
-            # เรียงตามคะแนน Rerank จากสูงไปต่ำ แล้วเลือกตัวท็อป
+            # ให้ความสำคัญกับ rerank_score ก่อน ถ้าไม่มีให้ใช้ relevance_score
             sorted_list = sorted(
                 unique_evidences, 
-                key=lambda x: x.get('rerank_score', 0) if isinstance(x, dict) else 0, 
+                key=lambda x: x.get('rerank_score') or x.get('relevance_score') or 0, 
                 reverse=True
             )
         else:
-            # แบบเดิม: เอาที่เจอใหม่ล่าสุด (ตัดท้าย)
             sorted_list = unique_evidences
 
-        # 3. Cap ขนาดตามที่ตั้งไว้ใน global_vars
+        # 3. Apply Cap
         return sorted_list[:EVIDENCE_CUMULATIVE_CAP]
     
     
@@ -5208,12 +5236,11 @@ MANDATORY AUDIT RULES:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [ULTIMATE REVISED WORKER v2026.01.27]
-        - 🪜 Step-Ladder Maturity: เคลื่อนฐานหลักฐานแบบสะสม (Cumulative Evidence)
-        - 🏷️ Semantic Enrichment: ฝัง PDCA Tag & Confidence Score ลงใน Evidence รายชิ้น
-        - 📊 UI-Ready: เตรียมข้อมูลให้ Transform เข้าสู่หน้าจอได้ทันทีโดยไม่มีค่า null
+        [STRATEGIC WORKER v2026.01.28]
+        - 🪜 Step-Ladder: บังคับลำดับความต่อเนื่องของ Maturity
+        - 🎯 Focus-Driven: สร้าง Strategic Focus อัตโนมัติเพื่อคุมทิศทาง Roadmap
+        - 🧩 Evidence-Rich: สะสมหลักฐาน (Cumulative) เพื่อใช้เป็น Assets ในเลเวลถัดไป
         """
-
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
         sub_weight = float(sub_criteria.get("weight", 0.0))
@@ -5228,7 +5255,7 @@ MANDATORY AUDIT RULES:
         cumulative_baseline = list(initial_baseline or [])
         evidence_delta: Dict[str, List[Dict[str, Any]]] = {}
 
-        # เรียงลำดับ Level 1 -> 5 เสมอ
+        # 1. เรียงลำดับ Level 1 -> 5 เพื่อรักษา Logic ความต่อเนื่อง
         levels = sorted(sub_criteria.get("levels", []), key=lambda x: x.get("level", 0))
 
         for stmt in levels:
@@ -5239,65 +5266,54 @@ MANDATORY AUDIT RULES:
             level_key = f"{sub_id}_L{level}"
 
             # --- [STEP 1: EVIDENCE HYDRATION] ---
-            # ดึงหลักฐานที่เคยถูกเลือกไว้ (ถ้ามี) มาสมทบกับ Baseline
+            # ดึงหลักฐานที่เคยคัดเลือกไว้มาสมทบกับ Baseline เดิม
             saved = self.evidence_map.get(level_key, {})
             saved_evs = saved.get("evidences", []) if isinstance(saved, dict) else []
             priority_items = [e for e in saved_evs if e.get("is_selected", True)]
             
+            # สร้าง Context ที่แข็งแกร่ง (อดีต + ปัจจุบัน)
             current_baseline = self._deduplicate_list(cumulative_baseline + priority_items)
 
             # --- [STEP 2: CORE ASSESSMENT] ---
             res = self._run_single_assessment(
                 sub_id=sub_id,
                 level=level,
-                criteria={
-                    "name": sub_name,
-                    "statement": stmt.get("statement", ""),
-                },
+                criteria={"name": sub_name, "statement": stmt.get("statement", "")},
                 keyword_guide=stmt.get("keywords", []),
                 baseline_evidences=current_baseline,
                 vectorstore_manager=vsm,
             )
 
-            # --- [STEP 3: SEMANTIC ENRICHMENT FOR UI] ---
-            # ดึงผลวิเคราะห์ PDCA ภาพรวมของ Level นี้
+            # --- [STEP 3: SEMANTIC ENRICHMENT] ---
             pdca_results = res.get("pdca_breakdown", {})
-            # หาตัวที่ LLM ให้คะแนนสูงสุดในชุด PDCA เพื่อใช้เป็น Tag เริ่มต้นให้ Chunk
             dominant_tag = next((k for k, v in pdca_results.items() if float(v) > 0), "D")
             
             top_chunks = res.get("top_chunks_data", [])
             enriched_chunks = []
-            
             for chunk in top_chunks:
-                # 🛡️ แก้ไขปัญหาค่า null ใน JSON: ฝัง Tag และ Confidence
                 chunk["pdca_tag"] = chunk.get("pdca_tag") or dominant_tag
-                
-                # Normalize Score ให้ UI (ใช้ Rerank Score ถ้ามี)
-                rel_score = chunk.get("relevance_score") or 0.0
-                chunk["confidence"] = chunk.get("confidence") or rel_score
-                
+                chunk["confidence"] = chunk.get("confidence") or chunk.get("relevance_score", 0.0)
                 enriched_chunks.append(chunk)
 
             evidence_delta[level_key] = enriched_chunks
             passed_by_llm = bool(res.get("is_passed", False))
 
             # --- [STEP 4: MATURITY LOGIC (STEP-LADDER)] ---
+            # [Logic] ถ้าผ่านเลเวลนี้ ให้สะสมหลักฐานไว้ใช้เลเวลหน้า
             if passed_by_llm:
-                # ถ้าผ่าน ให้นำหลักฐานใหม่สะสมเข้า Baseline เพื่อตรวจ Level ถัดไป
                 cumulative_baseline.extend(enriched_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
-                
                 if is_still_continuous:
                     highest_continuous_level = level
             else:
-                # ถ้าไม่ผ่านใน Level ใดๆ ความต่อเนื่องของระดับ Maturity จะหยุดลงทันที
+                # [Logic] ถ้าตกเลเวลใดเลเวลหนึ่ง ความต่อเนื่องจะขาดทันที (Capped)
                 is_still_continuous = False
 
-            # ตรวจสอบว่าโดนเพดาน Maturity หรือไม่ (เช่น ข้ามขั้น)
             is_capped = passed_by_llm and not is_still_continuous
             effective_score = float(res.get("score", 0.0)) if passed_by_llm and not is_capped else 0.0
 
-            # --- [STEP 5: ACTION PLAN & DATA PACKING] ---
+            # --- [STEP 5: ATOMIC ACTION PLAN] ---
+            # สร้าง Action Plan รายเลเวล (มี Anti-IT Ghost ในตัว)
             try:
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
@@ -5305,7 +5321,8 @@ MANDATORY AUDIT RULES:
                     level_criteria=stmt.get("statement", ""),
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
-            except:
+            except Exception as e:
+                self.logger.warning(f"⚠️ Action Plan Error at {level_key}: {e}")
                 atomic_actions = []
 
             level_details[str(level)] = {
@@ -5314,28 +5331,37 @@ MANDATORY AUDIT RULES:
                 "is_maturity_capped": is_capped,
                 "score": round(effective_score, 2),
                 "reason": res.get("reason", ""),
-                "executive_summary": res.get("executive_summary", ""),
                 "coaching_insight": res.get("coaching_insight", ""),
                 "atomic_action_plan": atomic_actions,
-                "pdca_breakdown": pdca_results,
-                "evidence_sources": enriched_chunks, # ✅ ข้อมูลสมบูรณ์ส่งต่อให้ UI
-                "judicial_review_applied": res.get("is_safety_pass", False),
+                "evidence_sources": enriched_chunks,
+                "pdca_breakdown": pdca_results
             }
 
-            # เตรียมข้อมูลสำหรับสร้าง Roadmap สรุปท้าย
+            # เก็บข้อมูลไว้สังเคราะห์ Roadmap ใหญ่
             roadmap_input_bundle.append({
                 "level": level,
                 "status": "PASSED" if passed_by_llm else "FAILED",
                 "is_capped": is_capped,
-                "insight_summary": (res.get("coaching_insight") or "")[:200],
+                "insight_summary": res.get("coaching_insight", "")[:300],
             })
 
-        # --- [STEP 6: STRATEGIC SYNTHESIS] ---
+        # --- [STEP 6: STRATEGIC SYNTHESIS (THE FINISHER)] ---
+        
+        # 1. คำนวณ Strategic Focus ตาม Maturity Level จริง
+        if highest_continuous_level < 3:
+            strategic_focus = "Focus: Stabilization (เน้นการสถาปนามาตรฐานและปิด Gap เชิงโครงสร้าง)"
+        elif 3 <= highest_continuous_level < 5:
+            strategic_focus = "Focus: Scaling & Integration (เน้นการเชื่อมโยง KM เข้ากับกระบวนการทำงานจริง)"
+        else:
+            strategic_focus = "Focus: Strategic Excellence (เน้นการสร้างนวัตกรรมและเป็นต้นแบบ)"
+
+        # 2. เรียกใช้ Master Roadmap พร้อมส่ง Parameter ครบ 5 ตัวตาม PromptTemplate
         master_roadmap = self.generate_master_roadmap(
             sub_id=sub_id,
             sub_criteria_name=sub_name,
             enabler=getattr(self, "enabler", "KM"),
-            aggregated_insights=roadmap_input_bundle
+            aggregated_insights=roadmap_input_bundle,
+            strategic_focus=strategic_focus # ✅ เพิ่มตัวแปรที่ขาดไป
         )
 
         return {
@@ -5347,6 +5373,7 @@ MANDATORY AUDIT RULES:
             "is_passed": highest_continuous_level >= 1,
             "level_details": level_details,
             "master_roadmap": master_roadmap,
+            "strategic_focus": strategic_focus
         }, evidence_delta
 
     def _get_level_constraint_prompt(

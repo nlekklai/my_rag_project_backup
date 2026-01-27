@@ -42,7 +42,7 @@ GLOBAL_RULES: Final[str] = """
 24. **[Professional Coaching Structure]**: 'coaching_insight' ต้องมีโครงสร้าง: [จุดแข็ง] + [ช่องว่าง] + [ข้อเสนอแนะ]
 25. **[Mandatory Score for Existence]**: ใน L1-L3 หากพบหลักฐานในเฟส P หรือ D แม้เพียง 1 ชิ้นที่ตรงกับ Focus Points ให้คะแนนเฟสนั้นไม่ต่ำกว่า 1.5 และ score รวมไม่ต่ำกว่า 1.0
 26. **[Anti-IT Bias]**: ห้ามเสนอแนะหรือหักคะแนนเรื่อง "ระบบสารสนเทศ/KMS/Automation/IT System" ในหัวข้อที่ไม่เกี่ยวกับเทคโนโลยีสารสนเทศโดยตรง โดยเฉพาะในหัวข้อด้าน "ภาวะผู้นำ" และ "วัฒนธรรม"
-27. **[Strict Output Neutrality]**: ห้ามตอบค่าใน JSON โดยใช้ข้อความเดียวกับที่ปรากฏในตัวอย่าง (เช่น ห้ามใช้คำว่า 'สิ่งที่ควรทำเพิ่ม', 'สรุปภาพรวมสถานะปัจจุบัน', '[เนื้อหาแผน]') หากตรวจพบจะถือว่าการวิเคราะห์ล้มเหลว
+27. **[Strict Output Neutrality]**: ห้ามตอบค่าใน JSON โดยใช้ข้อความเดียวกับที่ปรากฏในตัวอย่าง (เช่น ห้ามใช้คำว่า 'สิ่งที่ควรทำเพิ่ม', 'สรุปสถานะภาพรวม', '[เนื้อหาแผน]') หากตรวจพบจะถือว่าการวิเคราะห์ล้มเหลว
 28. **[Actionable Insight Only]**: 'coaching_insight' ต้องมีข้อมูลที่นำไปปฏิบัติได้จริง (Actionable) โดยต้องระบุชื่อไฟล์ หรือชื่อกระบวนการที่ตรวจพบจริงใน Context เท่านั้น
 """
 
@@ -213,42 +213,50 @@ QUALITY_REFINEMENT_TEMPLATE: Final[str] = """
 # 8. MASTER STRATEGIC ROADMAP (Tier-2 Consolidation)
 # =================================================================
 SYSTEM_MASTER_ROADMAP_PROMPT: Final[str] = """
-คุณคือหัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ (Chief Strategic Officer) 
-ภารกิจ: นำ Coaching Insights จากการประเมินราย Level มาสังเคราะห์เป็นแผนงานเดียว
-[Rules]:
-1. **[Synthesis Only]**: ไม่ต้องวิเคราะห์หลักฐานซ้ำ ให้เชื่อข้อมูลสรุปที่ส่งมา
-2. **[Priority First]**: แผนงานต้องแก้ Level ต่ำสุดที่ไม่ผ่านก่อนเสมอ
-3. **[Actionable Language]**: ใช้ภาษากลยุทธ์ที่ชัดเจน เช่น "จัดตั้งคณะทำงาน..." หรือ "จัดทำรายงานวิเคราะห์ผล..."
-4. **[Strict JSON]**: ตอบกลับเป็น JSON Object ตาม Schema ที่กำหนดเท่านั้น
-5 ให้ระบุชื่อไฟล์หลักฐาน (Source) ที่พบในระดับที่ผ่านแล้ว เพื่อนำมาเป็นต้นแบบ (Best Practice) ในการขยายผลไปยังระดับที่ไม่ผ่าน
+คุณคือหัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ (Chief Strategic Officer) ระดับ Big 5 
+ภารกิจ: สังเคราะห์ Coaching Insights และ Assets จากการประเมินให้เป็น "แผนยุทธศาสตร์สู่ความเป็นเลิศ"
+
+[RULES สำหรับการสังเคราะห์]:
+1. [Evidence-Driven]: ต้องอ้างอิงชื่อไฟล์หลักฐาน (Source) ที่ปรากฏใน Assets เพื่อใช้เป็นต้นแบบ (Best Practice) ในการขยายผล
+2. [Step-Ladder Priority]: แผนงานต้องให้ความสำคัญกับการปิด Gap ในระดับ Maturity ต่ำสุดที่ยังไม่ผ่านก่อนเสมอ (Sequential Remediation)
+3. [Strategic Action]: ใช้ภาษาระดับบริหารที่ชัดเจนและวัดผลได้ (เช่น "ออกแบบกลไก...", "สถาปนามาตรฐาน...", "บูรณาการระบบ...")
+4. [No IT-Ghosting]: สำหรับ Maturity L1-L3 ให้เน้นที่ Process, Policy และ People ห้ามเสนอให้ซื้อซอฟต์แวร์หรือระบบ IT หากพื้นฐานการจัดการยังไม่แน่นพอ
+5. [Strict JSON]: ตอบกลับในรูปแบบ JSON ตาม Schema ที่กำหนดไว้เท่านั้น
 """
 
 MASTER_ROADMAP_TEMPLATE: Final[str] = """
-### [Target Evaluation]
-- หัวข้อ: {sub_criteria_name} ({sub_id})
-- Enabler: {enabler}
+### [Strategic Context]
+- หัวข้อการประเมิน: {sub_criteria_name} ({sub_id})
+- หน่วยงาน/Enabler: {enabler}
+- สถานะปัจจุบัน: {strategic_focus}
 
-### [Aggregated Gaps from L1-L5]
+### [Input Data: Assets & Gaps]
 {aggregated_insights}
 
-จงสร้าง Master Roadmap ในรูปแบบ JSON:
+---
+จงสังเคราะห์ข้อมูลข้างต้นและสร้าง Master Roadmap ในรูปแบบ JSON โดยมีโครงสร้างดังนี้:
 {{
-  "status": "GAP_REMEDIATION",
-  "overall_strategy": "สรุปทิศทางหลักในการแก้ไข",
+  "status": "SUCCESS",
+  "overall_strategy": "บทวิเคราะห์เชิงยุทธศาสตร์ (สรุปว่าองค์กรควรใช้จุดแข็งจากหลักฐานใด ไปแก้จุดอ่อนที่เลเวลไหน)",
   "roadmap": [
     {{
-      "phase": "Phase 1: [ชื่อเฟส เช่น การสร้างรากฐานและระบบการรายงาน]",
+      "phase": "Phase 1: [ชื่อเฟสที่สะท้อนถึงการแก้ปัญหา Blocking Gaps]",
       "target_levels": [1, 2],
-      "main_objective": "เป้าหมายหลักของเฟสนี้",
-      "key_actions": ["Action 1...", "Action 2..."],
-      "expected_outcome": "ผลลัพธ์เชิงประจักษ์"
+      "main_objective": "เป้าหมายหลักในการวางรากฐาน",
+      "key_actions": [
+        "Action 1 (ระบุวิธีการประยุกต์ใช้ชื่อไฟล์จาก Assets ถ้ามี)",
+        "Action 2..."
+      ],
+      "expected_outcome": "ผลลัพธ์เชิงประจักษ์และการเปลี่ยนแปลงที่คาดหวัง",
+      "best_practice_ref": "ระบุชื่อไฟล์หลักฐานที่ใช้เป็นต้นแบบในเฟสนี้"
     }},
     {{
-      "phase": "Phase 2: [ชื่อเฟส เช่น การยกระดับสู่การวิเคราะห์และปรับปรุง]",
+      "phase": "Phase 2: [ชื่อเฟสที่สะท้อนถึงการยกระดับสู่ Excellence]",
       "target_levels": [3, 4, 5],
-      "main_objective": "เป้าหมายการยกระดับ",
+      "main_objective": "เป้าหมายการยกระดับมาตรฐาน",
       "key_actions": ["Action 1...", "Action 2..."],
-      "expected_outcome": "ผลลัพธ์เชิงประจักษ์"
+      "expected_outcome": "ตัวบ่งชี้ความสำเร็จในระดับ Maturity ที่สูงขึ้น",
+      "best_practice_ref": "ระบุไฟล์อ้างอิงหรือแนวทางต่อยอด"
     }}
   ]
 }}
@@ -318,6 +326,6 @@ QUALITY_REFINEMENT_PROMPT = PromptTemplate(
 )
 
 MASTER_ROADMAP_PROMPT = PromptTemplate(
-    input_variables=["sub_id", "sub_criteria_name", "enabler", "aggregated_insights"],
+    input_variables=["sub_id", "sub_criteria_name", "enabler", "aggregated_insights","strategic_focus"],
     template=SYSTEM_MASTER_ROADMAP_PROMPT + MASTER_ROADMAP_TEMPLATE
 )
