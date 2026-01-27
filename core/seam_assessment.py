@@ -891,115 +891,168 @@ class SEAMPDCAEngine:
         top_evidences: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE REVISED v2026.01.31] Post-process LLM output for SE-AM Assessment
-        เป้าหมาย: รับประกันคะแนนไม่ตกต่ำเกินจริง, กำจัด IT Ghost, Dashboard แสดงผลสวยงาม
+        [FINAL FIXED v2026.02] – PDCA-TRUTHFUL VERSION
+        - Respect contextual required_phases (NO silent override)
+        - Separate PDCA detected vs PDCA scored
+        - Dashboard-friendly but logic-honest
         """
-        log_prefix = f"Sub:{sub_id or '??'} L{level}"
 
+        log_prefix = f"Sub:{sub_id or '??'} L{level}"
+        contextual_config = contextual_config or {}
+        top_evidences = top_evidences or []
+
+        # --------------------------------------------------
         # 1. Robust JSON Repair
+        # --------------------------------------------------
         if isinstance(llm_output, str):
             cleaned = re.sub(r'```json\s*|\s*```|\n+', ' ', llm_output.strip())
-            cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)  # ลบ trailing comma
+            cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
             try:
                 llm_output = json.loads(cleaned)
                 self.logger.debug(f"[JSON-REPAIR-SUCCESS] {log_prefix}")
             except json.JSONDecodeError as e:
-                self.logger.warning(f"[JSON-REPAIR-FAIL] {log_prefix}: {e}")
-                llm_output = {}
+                self.logger.error(f"[JSON-REPAIR-FAIL] {log_prefix}: {e}")
+                return self._get_fallback_result(log_prefix)
+
         if not isinstance(llm_output, dict) or not llm_output:
             return self._get_fallback_result(log_prefix)
 
-        # 2. Required Phases
-        required_phases = contextual_config.get("required_phases", []) or (
-            ["P", "D"] if level <= 3 else ["P", "D", "C", "A"]
-        )
-        self.logger.debug(f"[REQUIRED-PHASES] {log_prefix}: {required_phases}")
+        # --------------------------------------------------
+        # 2. REQUIRED PHASES (STRICT: NO OVERRIDE)
+        # --------------------------------------------------
+        if contextual_config.get("required_phases"):
+            required_phases = list(dict.fromkeys(contextual_config["required_phases"]))
+            source = "contextual"
+        else:
+            # fallback ONLY if contextual missing
+            if level <= 3:
+                required_phases = ["P", "D"]
+            elif level == 4:
+                required_phases = ["P", "D", "C"]
+            else:
+                required_phases = ["P", "D", "C", "A"]
+            source = "fallback"
 
-        # 3. PDCA Extraction + Keyword Rescue
-        pdca_results = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
-        reason_text = str(llm_output.get('reason', '')).lower()
-        ext_texts = {p: str(llm_output.get(f"Extraction_{p}", "")).lower() for p in "PDCA"}
+        self.logger.info(
+            f"[REQUIRED-PHASES] {log_prefix}: {required_phases} (source={source})"
+        )
+
+        # --------------------------------------------------
+        # 3. PDCA EXTRACTION (RAW / DETECTED)
+        # --------------------------------------------------
+        pdca_raw = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
+
+        reason_text = str(llm_output.get("reason", "")).lower()
+        ext_texts = {
+            p: str(llm_output.get(f"Extraction_{p}", "")).lower()
+            for p in "PDCA"
+        }
 
         for phase in "PDCA":
             score = 0.0
-            for k in [f"{phase}_Score", f"score_{phase.lower()}", f"Extraction_{phase}_Score"]:
+            for k in (f"{phase}_Score", f"score_{phase.lower()}", f"Extraction_{phase}_Score"):
                 if k in llm_output:
                     try:
                         score = float(llm_output[k])
                         break
-                    except:
-                        continue
+                    except Exception:
+                        pass
 
-            # Keyword Rescue
+            # Keyword-based detection (NOT scoring)
             phase_kws = contextual_config.get(f"{phase.lower()}_keywords", [])
             combined_text = reason_text + " " + ext_texts.get(phase, "")
-            if score < 1.0 and any(kw.lower() in combined_text for kw in phase_kws):
-                score = max(score, 1.5)
-                self.logger.info(f"[PHASE-RESCUE] {log_prefix} {phase} boosted to 1.5 by keyword")
 
-            pdca_results[phase] = min(max(score, 0.0), 2.0)
+            if score <= 0.0 and any(kw.lower() in combined_text for kw in phase_kws):
+                score = 1.0
+                self.logger.info(f"[PHASE-DETECTED] {log_prefix} {phase} detected by keyword")
 
-        # 4. Mandatory Floor (L1-L3 leniency)
-        floor_value = 1.0 if level == 1 else 0.8 if level <= 3 else 0.5
-        for phase in required_phases:
-            if pdca_results[phase] < floor_value:
-                pdca_results[phase] = floor_value
-                self.logger.info(f"[PHASE-FLOOR] {log_prefix} {phase} forced to {floor_value} (L{level})")
+            pdca_raw[phase] = min(max(score, 0.0), 2.0)
 
-        # 5. Normalized Score
-        sum_req = sum(pdca_results[p] for p in required_phases)
+        detected_phases = [p for p in required_phases if pdca_raw[p] > 0.0]
+
+        # --------------------------------------------------
+        # 4. PDCA SCORING (FLOOR APPLIED HERE ONLY)
+        # --------------------------------------------------
+        pdca_scored = pdca_raw.copy()
+
+        if level == 1:
+            floor = 1.0
+        elif level <= 3:
+            floor = 0.8
+        else:
+            floor = 0.5
+
+        for p in required_phases:
+            if pdca_scored[p] < floor:
+                pdca_scored[p] = floor
+                self.logger.debug(
+                    f"[PHASE-FLOOR] {log_prefix} {p} floored to {floor}"
+                )
+
+        # --------------------------------------------------
+        # 5. NORMALIZED SCORE
+        # --------------------------------------------------
+        sum_req = sum(pdca_scored[p] for p in required_phases)
         max_req = len(required_phases) * 2.0
-        normalized_score = round((sum_req / max_req) * 2.0 if max_req > 0 else 0.0, 2)
+        normalized_score = round((sum_req / max_req) * 2.0, 2) if max_req else 0.0
 
-        # 6. Safety Net (Rerank-based override)
-        max_rr = max([ev.get('rerank_score', ev.get('score', 0.0)) for ev in top_evidences] or [0.0])
+        # --------------------------------------------------
+        # 6. SAFETY NET (RERANK)
+        # --------------------------------------------------
+        max_rr = max(
+            [ev.get("rerank_score", ev.get("score", 0.0)) for ev in top_evidences] or [0.0]
+        )
+
         explicit_pass = llm_output.get("is_passed") is True
-        is_force_pass = (normalized_score < 1.2 and max_rr >= 0.75)
-
-        is_passed = explicit_pass or is_force_pass or (normalized_score >= 1.0)
+        is_force_pass = normalized_score < 1.2 and max_rr >= 0.75
+        is_passed = explicit_pass or is_force_pass or normalized_score >= 1.0
 
         if is_passed and normalized_score < 1.2:
-            normalized_score = max(normalized_score, 1.2)
-            self.logger.info(f"[PASS-BOOST] {log_prefix} Score forced to {normalized_score} (safety net)")
+            normalized_score = 1.2
+            self.logger.info(f"[PASS-BOOST] {log_prefix} boosted to 1.2")
 
-        # 7. Anti-IT Ghost Cleanup
+        # --------------------------------------------------
+        # 7. ANTI-IT GHOST
+        # --------------------------------------------------
         coaching = str(llm_output.get("coaching_insight", "")).strip()
-        self.logger.debug(f"[IT-CHECK-BEFORE] {log_prefix} Original: {coaching[:150]}...")
-        it_patterns = r"(ระบบสารสนเทศอัตโนมัติ|พัฒนาระบบ|KMS|Software|IT System|แพลตฟอร์มดิจิทัล|Automation|พัฒนาระบบสารสนเทศ|ระบบอัตโนมัติ)"
-        cleaned_coaching = re.sub(it_patterns, "กระบวนการและกิจกรรมสร้างการมีส่วนร่วม", coaching, flags=re.IGNORECASE)
-        cleaned_coaching = re.sub(r"ควรพัฒนา", "ควรจัดทำ/ดำเนินการ", cleaned_coaching)
-        if cleaned_coaching != coaching:
-            self.logger.info(f"[ANTI-IT-CLEAN] {log_prefix} Cleaned: {cleaned_coaching[:150]}...")
+        it_patterns = r"(ระบบสารสนเทศอัตโนมัติ|พัฒนาระบบ|KMS|Software|IT System|Automation|แพลตฟอร์มดิจิทัล)"
+        cleaned_coaching = re.sub(
+            it_patterns,
+            "กระบวนการและกิจกรรมขององค์กร",
+            coaching,
+            flags=re.IGNORECASE
+        )
 
-        # 8. Dashboard Phase Sync (ให้ ✅ สวยงาม)
+        # --------------------------------------------------
+        # 8. DASHBOARD DISPLAY (NON-DESTRUCTIVE)
+        # --------------------------------------------------
+        pdca_display = pdca_scored.copy()
         if is_passed:
             for p in required_phases:
-                if pdca_results[p] < 1.0:
-                    pdca_results[p] = 1.0
-                    self.logger.info(f"[DASHBOARD-SYNC] {log_prefix} {p} synced to 1.0")
+                pdca_display[p] = max(pdca_display[p], 1.0)
 
-        # 9. Final Summary Log
+        # --------------------------------------------------
+        # 9. SUMMARY LOG
+        # --------------------------------------------------
         self.logger.info(
             f"[POST-PROCESS-SUMMARY] {log_prefix} | "
-            f"Raw score: {llm_output.get('score', 'N/A')} | "
-            f"Normalized: {normalized_score:.2f} | "
-            f"Passed: {is_passed} | "
-            f"Force pass: {is_force_pass} (max_rr={max_rr:.3f}) | "
-            f"PDCA: {pdca_results} | "
-            f"Insight (cleaned): {cleaned_coaching[:120]}..."
+            f"Score={normalized_score:.2f} | Passed={is_passed} | "
+            f"Detected={detected_phases} | Required={required_phases} | "
+            f"PDCA_RAW={pdca_raw}"
         )
 
         return {
             "score": normalized_score,
             "is_passed": is_passed,
-            "pdca_breakdown": pdca_results,
+            "pdca_breakdown": pdca_display,          # สำหรับ UI
+            "pdca_detected": pdca_raw,               # สำหรับ audit / confidence
+            "detected_phases": detected_phases,
+            "required_phases": required_phases,
             "reason": llm_output.get("reason", "N/A"),
             "coaching_insight": cleaned_coaching,
-            "required_phases": required_phases,
             "is_force_pass": is_force_pass,
             "max_rerank": max_rr
         }
-
 
     def _get_fallback_result(self, prefix: str) -> Dict[str, Any]:
         """Fallback เมื่อ LLM output พังหรือว่าง"""
@@ -2753,125 +2806,138 @@ class SEAMPDCAEngine:
     # ------------------------------------------------------------------------------------------
     # [ULTIMATE REVISE v2026.01.30] 🧠 LAYER 1: Decision Engine (The Brain – Final Hardened)
     # ------------------------------------------------------------------------------------------
-    def _get_semantic_tag(self, text: str, sub_id: str, level: int, filename: str = "") -> str:
+    def _get_semantic_tag(
+        self,
+        text: str,
+        sub_id: str,
+        level: int,
+        filename: str = ""
+    ) -> str:
         """
-        [ULTIMATE REVISED v2026.01.31]
-        ศูนย์กลางการตัดสินใจ Tag: Heuristic → AI Semantic → Contextual Fallback
-        รองรับ Multi-Tenant ผ่านการโหลด Config อัตโนมัติ และจัดการ Error อย่างเป็นระบบ
-        - เพิ่ม fallback สำหรับ enabler_name_th และ keywords
-        - เพิ่ม log ทุกขั้นตอนเพื่อ debug ง่าย
-        - LLM call ปลอดภัย + retry JSON parse
-        - ลด "Other" โดยบังคับ fallback phase ถ้า LLM ให้ Other
+        [FINAL STABLE v2026.02]
+        Decision Engine สำหรับ PDCA Tag
+        Priority:
+        1) Keyword Heuristic (Enabler-based)
+        2) Behavioral Heuristic (_get_heuristic_pdca_tag)
+        3) LLM Semantic Classification
+        4) Contextual Fallback (LIMITED)
+        5) Ultimate Maturity Fallback
         """
-        # --- [PREPARATION] ดึง Metadata พื้นฐาน ---
-        enabler_key = getattr(self.config, 'enabler', 'DEFAULT').upper()
-        # fallback ชื่อเต็มถ้า dict ไม่มี key หรือ error
-        try:
-            enabler_name_th = SEAM_ENABLER_FULL_NAME_TH.get(enabler_key, f"ด้าน {enabler_key}")
-        except NameError:
-            enabler_name_th = f"ด้าน {enabler_key}"
-            self.logger.error("[CRITICAL] SEAM_ENABLER_FULL_NAME_TH not defined → fallback")
 
-        if enabler_name_th == f"ด้าน {enabler_key}":
-            self.logger.warning(f"[FALLBACK-NAME] No full name for {enabler_key} → using '{enabler_name_th}'")
-
-        # fallback keywords ถ้า dict ไม่มี key หรือ error
-        try:
-            enabler_keywords = PDCA_CONFIG_MAP.get(enabler_key, PDCA_CONFIG_MAP["DEFAULT"])
-        except NameError:
-            enabler_keywords = PDCA_CONFIG_MAP["DEFAULT"]
-            self.logger.error("[CRITICAL] PDCA_CONFIG_MAP not defined → using DEFAULT")
-
-        # ดึง require_phase (reuse)
-        require_phases = self.get_rule_content(sub_id, level, "require_phase") or []
-
-        # Tenant info + fallback
-        tenant_id = getattr(self.config, 'tenant', 'default').lower()
-        tenant_name_th = "องค์กรที่รับการประเมิน"
-        tenant_code = tenant_id.upper()
-        tenant_info_path = get_tenant_info_file_path(tenant_id)
-        if os.path.exists(tenant_info_path):
-            try:
-                with open(tenant_info_path, 'r', encoding='utf-8') as f:
-                    t_data = json.load(f)
-                    tenant_name_th = t_data.get("tenant_name_th", tenant_name_th)
-                    tenant_code = t_data.get("tenant_abbreviation", tenant_code)
-            except Exception as e:
-                self.logger.warning(f"⚠️ Load tenant_info failed: {e}")
-
-        # Log preparation summary (ช่วย debug)
-        self.logger.debug(f"[TAG-PREPARE] Enabler: {enabler_key} ({enabler_name_th}) | Tenant: {tenant_code} ({tenant_name_th}) | Req Phases: {require_phases}")
-
+        # ------------------ Preparation ------------------
         text_clean = (text or "").strip()
-        if len(text_clean) < 20:
-            fallback = require_phases[0] if require_phases else ("P" if level == 1 else "D")
-            self.logger.debug(f"[TAG-SHORT] Text too short → fallback {fallback} | {filename[:30]}")
-            return fallback
-
         text_lower = text_clean.lower()
 
-        # --- [LAYER 1] Heuristic: ตรวจสอบด้วย Keyword ---
-        for tag, keywords in enabler_keywords.items():
-            if any(k.lower() in text_lower for k in keywords):
-                self.logger.debug(f"⚡ [HEURISTIC-HIT] {enabler_key}:{tag} | {filename[:30]}")
-                return tag
+        # Enabler name + keywords (safe fallback)
+        enabler_key = getattr(self.config, "enabler", "DEFAULT").upper()
+        enabler_keywords = PDCA_CONFIG_MAP.get(enabler_key, PDCA_CONFIG_MAP.get("DEFAULT", {}))
 
-        # --- [LAYER 2] AI Semantic: วิเคราะห์ด้วย LLM ---
-        require_str = ", ".join(require_phases) if require_phases else "P, D, C, A"
-        desc_bullets = "\n".join(f"- {v}" for v in PDCA_PHASE_DESCRIPTIONS.values())
+        # Required phases from contextual rules
+        require_phases = self.get_rule_content(sub_id, level, "require_phase") or []
 
-        system_prompt = (
-            f"คุณคือผู้เชี่ยวชาญการตรวจประเมินองค์กร **{tenant_name_th}** ({tenant_code}) "
-            f"ในด้าน '{enabler_name_th}' ({enabler_key}) ตามมาตรฐาน SE-AM\n"
-            f"ภารกิจ: จำแนกข้อความหลักฐานเข้าหมวด PDCA ตามนิยาม:\n{desc_bullets}\n\n"
-            f"บริบทระดับ Level {level}: **เน้นพิจารณา {require_str} เป็นลำดับแรก**\n"
-            f"ถ้าเนื้อหาใกล้เคียง phase ใน {require_str} ให้เลือก tag นั้นก่อน 'Other'\n"
-            f"ห้ามเดา ถ้าไม่ชัดเจนจริง ๆ ให้ใช้ 'Other'\n\n"
-            f"ตอบเฉพาะ JSON Object เท่านั้น ห้ามมี Markdown หรือข้อความอธิบาย:\n"
-            f"{{'tag': 'P' | 'D' | 'C' | 'A' | 'Other', 'reason': 'เหตุผลสั้นเป็นภาษาไทย'}}\n\n"
-            f"ตัวอย่าง (บริบท {tenant_name_th}):\n"
-            f"{{'tag': 'P', 'reason': 'ปรากฏแผนยุทธศาสตร์ {enabler_key} ของ {tenant_code}'}}\n"
-            f"{{'tag': 'Other', 'reason': 'เนื้อหาไม่เกี่ยวข้องกับ PDCA หรือ {enabler_name_th}'}}\n\n"
-            f"ห้ามใช้ ```json หรือภาษาไทยแบบ Unicode escape"
+        self.logger.debug(
+            f"[TAG-PREP] {sub_id} L{level} | "
+            f"ReqPhases={require_phases} | File={filename[:40]}"
         )
 
-        user_prompt = f"ชื่อไฟล์: {filename}\nเนื้อหา: {text_clean[:600]}\nระบุ Tag และเหตุผล"
+        # ------------------ Short Text Guard ------------------
+        if len(text_clean) < 20:
+            fallback = (
+                require_phases[0]
+                if require_phases and level <= 2
+                else ("P" if level == 1 else "D")
+            )
+            self.logger.debug(f"[TAG-SHORT] → {fallback}")
+            return fallback
+
+        # ------------------ LAYER 1: Enabler Keyword Heuristic ------------------
+        for tag, keywords in enabler_keywords.items():
+            if any(k.lower() in text_lower for k in keywords):
+                self.logger.debug(
+                    f"⚡ [KEYWORD-HIT] {tag} | {filename[:30]}"
+                )
+                return tag
+
+        # ------------------ LAYER 1.5: Behavioral Heuristic (CRITICAL FIX) ------------------
+        heuristic_pdca = self._get_heuristic_pdca_tag(text_clean, level)
+        if heuristic_pdca:
+            self.logger.debug(
+                f"🧠 [BEHAVIOR-HIT] {heuristic_pdca} | {filename[:30]}"
+            )
+            return heuristic_pdca
+
+        # ------------------ LAYER 2: LLM Semantic Classification ------------------
+        require_str = ", ".join(require_phases) if require_phases else "P, D, C, A"
+        desc_bullets = "\n".join(
+            f"- {v}" for v in PDCA_PHASE_DESCRIPTIONS.values()
+        )
+
+        system_prompt = (
+            "คุณคือผู้เชี่ยวชาญการตรวจประเมินตามมาตรฐาน SE-AM\n"
+            f"หน้าที่: จำแนกหลักฐานเข้าหมวด PDCA\n\n"
+            f"{desc_bullets}\n\n"
+            f"บริบท Level {level}: ให้พิจารณา {require_str} ก่อน\n"
+            "ถ้าใกล้เคียง phase ที่จำเป็น ให้เลือก phase นั้น\n"
+            "ถ้าไม่เกี่ยวข้องจริง ๆ ให้ใช้ Other\n\n"
+            "ตอบเป็น JSON เท่านั้น:\n"
+            "{'tag':'P|D|C|A|Other','reason':'เหตุผลสั้น'}"
+        )
+
+        user_prompt = (
+            f"ชื่อไฟล์: {filename}\n"
+            f"เนื้อหา:\n{text_clean[:700]}\n\n"
+            "ระบุ tag"
+        )
 
         try:
-            json_str = _fetch_llm_response(
+            raw = _fetch_llm_response(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 llm_executor=self.llm,
                 max_retries=3
             )
-            
-            self.logger.debug(f"[LLM-RAW-TAG] {filename[:30]} | {json_str[:300]}...")
-            
-            # ซ่อม JSON ถ้าพัง (ลบ code block)
-            json_str = re.sub(r'```json\s*|\s*```', '', json_str).strip()
-            
-            data = json.loads(json_str)
-            if isinstance(data, list) and data: data = data[0]
-            
+
+            self.logger.debug(f"[LLM-TAG-RAW] {raw[:200]}")
+
+            raw = re.sub(r"```json|```", "", raw).strip()
+            data = json.loads(raw)
+            if isinstance(data, list) and data:
+                data = data[0]
+
             tag = str(data.get("tag", "Other")).upper().strip()
-            reason = data.get("reason", "ไม่ระบุเหตุผล")
-            
             if tag in {"P", "D", "C", "A"}:
-                self.logger.info(f"🎯 [AI-TAG SUCCESS] {tenant_code} | {enabler_key}:{tag} | reason: {reason[:60]}")
+                self.logger.info(
+                    f"🎯 [AI-TAG] {tag} | {filename[:30]}"
+                )
                 return tag
+
         except Exception as e:
-            self.logger.warning(f"⚠️ [AI-TAG ERR] {tenant_code}:{enabler_key}: {str(e)}")
+            self.logger.warning(f"[AI-TAG-ERROR] {filename[:30]} | {e}")
 
-        # --- [LAYER 3] Contextual Fallback (ไม่ยอม Other ถ้าเป็น level สำคัญ) ---
-        if require_phases:
-            primary_phase = require_phases[0]
-            self.logger.debug(f"[FALLBACK-REQ] {primary_phase} (from {require_str})")
-            return primary_phase
+        # ------------------ LAYER 3: Contextual Fallback (LIMITED) ------------------
+        # ใช้เฉพาะ L1–L2 เพื่อกัน PDCA ปลอมในระดับสูง
+        if require_phases and level <= 2:
+            fallback = require_phases[0]
+            self.logger.debug(
+                f"[CTX-FALLBACK-LIMITED] {fallback}"
+            )
+            return fallback
 
-        # Ultimate fallback ตาม Maturity Level
-        fallback = "P" if level == 1 else "D" if level <= 3 else "C" if level == 4 else "A"
-        self.logger.debug(f"[ULTIMATE-FALLBACK] {fallback} for L{level}")
+        # ------------------ Ultimate Fallback by Maturity ------------------
+        if level == 1:
+            fallback = "P"
+        elif level <= 3:
+            fallback = "D"
+        elif level == 4:
+            fallback = "C"
+        else:
+            fallback = "A"
+
+        self.logger.debug(
+            f"[ULTIMATE-FALLBACK] {fallback} for L{level}"
+        )
         return fallback
+
 
     def _get_heuristic_pdca_tag(self, text: str, level: int) -> Optional[str]:
         t = text.lower()
@@ -3078,7 +3144,6 @@ class SEAMPDCAEngine:
 
         return strength
 
-
     def _robust_hydrate_documents_for_priority_chunks(
         self,
         chunks_to_hydrate: List[Dict],
@@ -3087,117 +3152,184 @@ class SEAMPDCAEngine:
         level: Optional[int] = None
     ) -> List[Dict]:
         """
-        [ULTIMATE HYDRATION v2026.01.28]
-        - ดึง Full Text + Pre-tag ด้วย Decision Engine เดียว
-        - Dedup ด้วย full text hash เพื่อความแม่นยำสูง
-        - Boost score + Log สรุปเพื่อ audit/debug
+        [ULTIMATE HYDRATION – FINAL LOCKED VERSION]
+        - Hydrate full text from stable_doc_uuid
+        - Preserve ingest metadata (page / page_label / chunk_uuid)
+        - Correct PDCA tagging (no OTHER leakage)
+        - Full-text hash dedup
         """
 
-        active_sub_id = current_sub_id or getattr(self, 'sub_id', 'unknown')
+        import os
+        import hashlib
+        from collections import defaultdict
+
+        active_sub_id = current_sub_id or getattr(self, "sub_id", "unknown")
+        level = level or 1
+
         if not chunks_to_hydrate:
             self.logger.debug(f"ℹ️ [HYDRATION] No chunks for {active_sub_id} L{level}")
             return []
 
+        # --------------------------------------------------
+        # 1. Safe PDCA classification
+        # --------------------------------------------------
         def _safe_classify(text: str, filename: str = "") -> str:
             try:
-                tag = self._get_semantic_tag(text, active_sub_id, level or 1, filename)
-                self.logger.debug(f"[SAFE-CLASSIFY] Raw from engine: {tag} | file: {filename[:30]}")
-                
-                # ถ้า engine return PDCA → ใช้เลย (ไม่ทับเป็น Other)
+                tag = self._get_semantic_tag(text, active_sub_id, level, filename)
+
                 if tag in {"P", "D", "C", "A"}:
                     return tag
-                
-                # ถ้าเป็น Other จริง → fallback ตาม require_phase (ไม่ใช่ "Other" ทับ)
-                reqs = self.get_rule_content(active_sub_id, level or 1, "require_phase") or []
-                fallback_tag = reqs[0] if reqs else ("P" if (level or 1) == 1 else "D")
-                self.logger.debug(f"[SAFE-CLASSIFY-FALLBACK] {tag} → {fallback_tag} | file: {filename[:30]}")
-                return fallback_tag
-                
+
+                # fallback using rule-based required phase
+                reqs = self.get_rule_content(active_sub_id, level, "require_phase") or []
+                return reqs[0] if reqs else ("P" if level <= 1 else "D")
+
             except Exception as e:
-                self.logger.warning(f"⚠️ [CLASSIFY-ERR] Hybrid Fallback: {e} | file: {filename[:30]}")
-                reqs = self.get_rule_content(active_sub_id, level or 1, "require_phase") or []
-                return reqs[0] if reqs else ("P" if (level or 1) <= 1 else "D")
+                self.logger.warning(f"⚠️ [PDCA-CLASSIFY-ERR] {e} | file={filename}")
+                reqs = self.get_rule_content(active_sub_id, level, "require_phase") or []
+                return reqs[0] if reqs else ("P" if level <= 1 else "D")
 
-        def _standardize_chunk(chunk: Dict, boost_score: float) -> Dict:
-            chunk = chunk.copy()
-            # is_baseline ควรมาจากข้อมูลจริง ไม่ใช่ set True เสมอ
-            chunk.setdefault("is_baseline", chunk.get("is_baseline", False))
-            text = chunk.get("text", "").strip()
-            if not text:
-                return chunk
-            meta = chunk.get("metadata", {})
-            fname = os.path.basename(str(meta.get("source") or meta.get("file_name") or "unknown"))
+        # --------------------------------------------------
+        # 2. Standardize chunk without destroying ingest metadata
+        # --------------------------------------------------
+        def _standardize_chunk(chunk: Dict, boost: float) -> Dict:
+            c = chunk.copy()
 
-            if not chunk.get("pdca_tag"):
-                chunk["pdca_tag"] = _safe_classify(text, fname)
+            text = (c.get("text") or "").strip()
+            meta = c.get("metadata") or {}
 
-            chunk["rerank_score"] = max(float(chunk.get("rerank_score", 0.0)), boost_score)
-            chunk["score"] = max(float(chunk.get("score", 0.0)), boost_score)
-            return chunk
+            filename = meta.get("source") or meta.get("source_filename") or "unknown"
 
-        # 3. เตรียม stable IDs (เพิ่ม chunk_uuid เพื่อความแม่นยำ)
-        stable_ids = set()
-        for c in chunks_to_hydrate:
-            sid = c.get("stable_doc_uuid") or c.get("doc_id")
-            if sid:
-                stable_ids.add(sid)
+            # PDCA fix: re-classify ONLY if invalid
+            if c.get("pdca_tag") in [None, "", "OTHER", "Other"]:
+                if text:
+                    c["pdca_tag"] = _safe_classify(text, filename)
+
+            # Preserve is_baseline
+            c["is_baseline"] = bool(c.get("is_baseline", False))
+
+            # Score boost (non-destructive)
+            c["score"] = max(float(c.get("score", 0.0)), boost)
+            c["rerank_score"] = max(float(c.get("rerank_score", 0.0)), boost)
+
+            return c
+
+        # --------------------------------------------------
+        # 3. Collect stable_doc_uuid
+        # --------------------------------------------------
+        stable_ids = {
+            c.get("stable_doc_uuid") or c.get("doc_id")
+            for c in chunks_to_hydrate
+            if c.get("stable_doc_uuid") or c.get("doc_id")
+        }
 
         if not stable_ids or not vsm:
-            self.logger.warning(f"[HYDRATION] No stable IDs or VSM → fallback boost")
-            return [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            self.logger.warning("⚠️ [HYDRATION] Missing stable IDs or VSM → fallback mode")
+            return [
+                _standardize_chunk(c, 0.85)
+                for c in chunks_to_hydrate
+            ]
 
-        # 4. Fetch full documents
-        stable_id_map = defaultdict(list)
+        # --------------------------------------------------
+        # 4. Fetch full documents from VSM
+        # --------------------------------------------------
+        stable_doc_map = defaultdict(list)
+
         try:
-            retrieved_docs = vsm.get_documents_by_id(
-                list(stable_ids), doc_type=self.doc_type, enabler=self.config.enabler
+            docs = vsm.get_documents_by_id(
+                list(stable_ids),
+                doc_type=self.doc_type,
+                enabler=self.config.enabler
             )
-            for doc in retrieved_docs:
-                sid = doc.metadata.get("stable_doc_uuid") or doc.metadata.get("doc_id")
+            for d in docs:
+                sid = d.metadata.get("stable_doc_uuid") or d.metadata.get("doc_id")
                 if sid:
-                    stable_id_map[sid].append({"text": doc.page_content, "metadata": doc.metadata})
+                    stable_doc_map[sid].append({
+                        "text": d.page_content,
+                        "metadata": d.metadata
+                    })
         except Exception as e:
-            self.logger.error(f"❌ [HYDRATION] VSM Fetch failed: {e}")
-            return [_standardize_chunk(c.copy(), 0.9) for c in chunks_to_hydrate]
+            self.logger.error(f"❌ [HYDRATION] VSM fetch failed: {e}")
+            return [
+                _standardize_chunk(c, 0.85)
+                for c in chunks_to_hydrate
+            ]
 
-        # 5. Hydrate + Dedup + Tag
+        # --------------------------------------------------
+        # 5. Hydrate + Dedup
+        # --------------------------------------------------
         hydrated_docs = []
-        seen_hashes = set()  # ใช้ hash เต็มเพื่อ dedup จริง
+        seen_hashes = set()
         hydrated_count = 0
-        total = len(chunks_to_hydrate)
 
-        SAFE_META_KEYS = {"source", "file_name", "page", "page_label", "page_number"}
+        SAFE_META_KEYS = {
+            "source",
+            "source_filename",
+            "page",
+            "page_label",
+            "page_number",
+            "chunk_uuid",
+            "chunk_index",
+            "doc_id",
+            "stable_doc_uuid",
+            "version",
+            "year",
+            "enabler",
+            "subject",
+            "sub_topic",
+        }
 
         for chunk in chunks_to_hydrate:
             new_chunk = chunk.copy()
-            sid = new_chunk.get("stable_doc_uuid") or new_chunk.get("doc_id")
+            meta = new_chunk.get("metadata") or {}
 
+            sid = meta.get("stable_doc_uuid") or meta.get("doc_id")
             hydrated = False
-            if sid and sid in stable_id_map:
-                full_doc = stable_id_map[sid][0]
+
+            if sid and sid in stable_doc_map:
+                # choose the most complete text
+                full_doc = max(
+                    stable_doc_map[sid],
+                    key=lambda d: len(d.get("text", ""))
+                )
+
                 new_chunk["text"] = full_doc["text"]
-                new_chunk.update({k: v for k, v in full_doc["metadata"].items() if k in SAFE_META_KEYS})
+
+                # merge metadata carefully (ingest is source of truth)
+                merged_meta = meta.copy()
+                for k in SAFE_META_KEYS:
+                    if k in full_doc["metadata"] and k not in merged_meta:
+                        merged_meta[k] = full_doc["metadata"][k]
+
+                new_chunk["metadata"] = merged_meta
                 hydrated = True
                 hydrated_count += 1
 
-            # Standardize + Tag + Boost
             boost = 1.0 if hydrated else 0.85
             new_chunk = _standardize_chunk(new_chunk, boost)
 
-            # Dedup ด้วย full text hash (แม่นยำกว่า [:100])
-            text_hash = hashlib.sha256(new_chunk.get("text", "").encode()).hexdigest()
+            raw_text = (new_chunk.get("text") or "").strip()
+            if not raw_text:
+                hydrated_docs.append(new_chunk)
+                continue
+
+            text_hash = hashlib.sha256(raw_text.encode()).hexdigest()
             if text_hash not in seen_hashes:
                 seen_hashes.add(text_hash)
                 hydrated_docs.append(new_chunk)
 
         self.logger.info(
-            f"✅ [HYDRATION] Complete: {len(hydrated_docs)} chunks ready "
-            f"(hydrated: {hydrated_count}/{total}, dedup removed: {total - len(hydrated_docs)})"
+            f"✅ [HYDRATION] Done: {len(hydrated_docs)} chunks | "
+            f"hydrated={hydrated_count}/{len(chunks_to_hydrate)} | "
+            f"dedup={len(chunks_to_hydrate) - len(hydrated_docs)}"
         )
 
-        # ถ้ามีฟังก์ชันนี้อยู่จริง ให้เรียกท้ายสุด
-        return self._guarantee_text_key(hydrated_docs) if hasattr(self, '_guarantee_text_key') else hydrated_docs
-
+        return (
+            self._guarantee_text_key(hydrated_docs)
+            if hasattr(self, "_guarantee_text_key")
+            else hydrated_docs
+        )
+    
 
     def _is_previous_level_passed(self, sub_id: str, level: int) -> bool:
         """
@@ -3387,94 +3519,148 @@ class SEAMPDCAEngine:
 
     def relevance_score_fn(self, evidence: Dict[str, Any], sub_id: str, level: int) -> float:
         """
-        [ULTIMATE REVISED v2026.01.25]
-        - 45% Rerank + 35% Keyword + 20% Contextual Bonuses
-        - Optimized Code: ใช้โครงสร้างที่อ่านง่ายและลดการคำนวณซ้ำซ้อน
-        - ปรับปรุงการดึง Metadata ให้ Robust มากขึ้นตาม Header core/seam_assessment.py
+        [FINAL STABLE VERSION v2026.01.27 – CLEAN PDCA]
+        - 45% Rerank
+        - 35% Keyword (Level-aware)
+        - Contextual Bonuses: Source / Neighbor / Specific Rule
+        - ❌ No PDCA logic here (PDCA handled ONLY in semantic phase)
+        - Robust กับ metadata หลากหลายรูปแบบ
         """
+
         if not evidence or not isinstance(evidence, dict):
             return 0.0
 
-        # 1. Rerank Score Processing (45%)
-        # ดึงคะแนนดิบจาก VectorStore หรือ Reranker
-        raw_val = evidence.get('rerank_score') or evidence.get('score') or 0.0
-        normalized_rerank = min(max(float(raw_val), 0.0), 1.0)
+        # -------------------------------------------------
+        # 1. Rerank Score (45%)
+        # -------------------------------------------------
+        raw_val = (
+            evidence.get("rerank_score")
+            or evidence.get("score")
+            or 0.0
+        )
+        try:
+            normalized_rerank = min(max(float(raw_val), 0.0), 1.0)
+        except Exception:
+            normalized_rerank = 0.0
 
-        # 2. ข้อมูลพื้นฐาน (ใช้โครงสร้างจาก Header)
-        # ดึงเนื้อหาและทำความสะอาดเบื้องต้น
-        text = str(evidence.get('text') or evidence.get('page_content') or '').lower().strip()
-        meta = evidence.get('metadata') or {}
-        if not isinstance(meta, dict): meta = {}
-        
-        # ดึงชื่อไฟล์เพื่อใช้ทำ Source Grading
-        filename = str(meta.get('source') or meta.get('source_filename') or evidence.get('source') or '').lower()
+        # -------------------------------------------------
+        # 2. Text + Metadata (Robust)
+        # -------------------------------------------------
+        text = str(
+            evidence.get("text")
+            or evidence.get("page_content")
+            or ""
+        ).lower().strip()
+
+        meta = evidence.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        filename = str(
+            meta.get("source")
+            or meta.get("source_filename")
+            or evidence.get("source")
+            or ""
+        ).lower()
+
         cum_rules = self.get_cumulative_rules_cached(sub_id, level)
 
-        # 3. Source Grading Bonus (ถ่วงน้ำหนักความน่าเชื่อถือของประเภทไฟล์)
+        # -------------------------------------------------
+        # 3. Source Grading Bonus
+        # -------------------------------------------------
         source_bonus = 0.0
-        primary_docs = ["มติ", "บันทึก", "คำสั่ง", "ประกาศ", "นโยบาย", "แผนแม่บท", "มติบอร์ด"]
-        secondary_docs = ["assessment report", "รายงานการประเมิน", "สรุปผล", "รายงานผล", "kpi"]
-        
+        primary_docs = [
+            "มติ", "บันทึก", "คำสั่ง", "ประกาศ",
+            "นโยบาย", "แผนแม่บท", "มติบอร์ด"
+        ]
+        secondary_docs = [
+            "assessment report", "รายงานการประเมิน",
+            "สรุปผล", "รายงานผล", "kpi"
+        ]
+
         if any(p in filename for p in primary_docs):
             source_bonus = 0.20
         elif any(s in filename for s in secondary_docs):
             source_bonus = 0.10
 
-        # 4. Keyword Score (35%) - ให้น้ำหนักตามระดับ Maturity
+        # -------------------------------------------------
+        # 4. Keyword Score (35%) – Level Aware
+        # -------------------------------------------------
         target_kws = set()
+
         if level <= 2:
-            target_kws.update(cum_rules.get('plan_keywords', []) + cum_rules.get('do_keywords', []))
+            target_kws.update(cum_rules.get("plan_keywords", []))
+            target_kws.update(cum_rules.get("do_keywords", []))
         else:
-            target_kws.update(cum_rules.get('check_keywords', []) + cum_rules.get('act_keywords', []))
+            target_kws.update(cum_rules.get("check_keywords", []))
+            target_kws.update(cum_rules.get("act_keywords", []))
 
         keyword_score = 0.0
-        if target_kws:
-            match_count = sum(1 for kw in target_kws if str(kw).lower() in text)
+        if target_kws and text:
+            match_count = sum(
+                1 for kw in target_kws
+                if str(kw).lower() in text
+            )
+
             if match_count > 0:
-                expected = max(1, len(target_kws) * 0.3)
-                # ใช้ Power function เพื่อให้การเจอ Keyword เพียงไม่กี่คำก็ได้คะแนนโดดขึ้นมา
+                expected = max(1, int(len(target_kws) * 0.3))
                 keyword_score = min((match_count / expected) ** 0.6, 1.0)
-                keyword_score = max(keyword_score, 0.20) # Floor สำหรับการเจออย่างน้อย 1 คำ
+                keyword_score = max(keyword_score, 0.20)  # floor เมื่อเจออย่างน้อย 1 คำ
 
-        # 5. PDCA Tag Bonus (High Priority สำหรับเฟสที่เกณฑ์ต้องการ)
-        pdca_bonus = 0.0
-        pdca_tag = str(evidence.get('pdca_tag') or meta.get('pdca_tag') or "").upper()
-        required_phases = cum_rules.get('required_phases', [])
-        
-        if pdca_tag in required_phases:
-            pdca_bonus = 0.30
-        elif pdca_tag in {'P', 'D', 'C', 'A'}:
-            pdca_bonus = 0.15
+        # -------------------------------------------------
+        # 5. Contextual Bonuses (NO PDCA)
+        # -------------------------------------------------
+        neighbor_bonus = 0.15 if (
+            evidence.get("is_neighbor") or meta.get("is_neighbor")
+        ) else 0.0
 
-        # 6. Contextual Bonuses (Neighbors & Specific Rules)
-        neighbor_bonus = 0.15 if evidence.get('is_neighbor') or meta.get('is_neighbor') else 0.0
-        
         rule_bonus = 0.0
-        specific_rule = str(cum_rules.get('specific_contextual_rule', '')).lower()
-        if specific_rule and any(word in text for word in specific_rule.split()[:10]):
-            rule_bonus = 0.15
+        specific_rule = str(
+            cum_rules.get("specific_contextual_rule", "")
+        ).lower()
 
-        # 7. ผลรวมคะแนนสุทธิ (Final Weighted Score)
+        if specific_rule and text:
+            rule_words = specific_rule.split()[:10]
+            if any(w in text for w in rule_words):
+                rule_bonus = 0.15
+
+        # -------------------------------------------------
+        # 6. Final Score Aggregation
+        # -------------------------------------------------
         final_score = (
-            (0.45 * normalized_rerank) + 
-            (0.35 * keyword_score) + 
-            source_bonus + pdca_bonus + neighbor_bonus + rule_bonus
+            (0.45 * normalized_rerank) +
+            (0.35 * keyword_score) +
+            source_bonus +
+            neighbor_bonus +
+            rule_bonus
         )
 
-        # 8. High-Confidence Min Floor
-        # ถ้า Rerank มั่นใจมาก (0.8+) ให้คะแนนผ่านเกณฑ์ขั้นต่ำแน่นอน
-        if normalized_rerank > 0.80:
+        # -------------------------------------------------
+        # 7. High-confidence Floor
+        # -------------------------------------------------
+        if normalized_rerank >= 0.80:
             final_score = max(final_score, 0.45)
 
         final_score = min(max(final_score, 0.0), 1.0)
 
-        # 🎯 Logging สำหรับการ Debug (INFO Level ตามที่คุณต้องการ)
-        self.logger.info(
-            f"🔎 [REL-CHECK] {sub_id} L{level} | Final: {final_score:.3f} | "
-            f"Rerank: {normalized_rerank:.2f} | KW: {keyword_score:.2f} | Tag: {pdca_tag} | File: {os.path.basename(filename)[:30]}"
-        )
+        # -------------------------------------------------
+        # 8. Debug Log (Explainable, PDCA-free)
+        # -------------------------------------------------
+        try:
+            self.logger.info(
+                f"🔎 [REL] {sub_id} L{level} | "
+                f"Final:{final_score:.3f} | "
+                f"R:{normalized_rerank:.2f} "
+                f"KW:{keyword_score:.2f} "
+                f"PDCA:N/A "
+                f"Src:{os.path.basename(filename)[:30]}"
+            )
+        except Exception:
+            pass
 
         return float(final_score)
+
+
 
     def _perform_adaptive_retrieval(
         self,
@@ -3575,7 +3761,10 @@ class SEAMPDCAEngine:
             if candidates:
                 for c in candidates:
                     if c.get("is_recovery"):
-                        c["score"] = max(c.get("score", 0.0), safe_relevance_score(c))
+                        c["score"] = max(
+                            c.get("score", 0.0),
+                            0.6 * safe_relevance_score(c) + 0.4 * float(c.get("rerank_score", 0.0))
+                        )
                 final_max_score = max([float(c.get("score", 0.0)) for c in candidates])
 
         # --- STEP 5: FINAL SORT & TRIM ---
@@ -5101,40 +5290,73 @@ MANDATORY AUDIT RULES:
         }, evidence_delta
 
 
-    def _get_level_constraint_prompt(self, sub_id: str, level: int, req_phases: list = None, spec_rule: str = None) -> str:
+    def _get_level_constraint_prompt(
+        self,
+        sub_id: str,
+        level: int,
+        req_phases: list | None = None,
+        spec_rule: str | None = None
+    ) -> str:
         """
-        [ULTIMATE REVISED v2026.1.25 - SCOPE GUARD ENABLED]
+        [FINAL LOCKED VERSION v2026.01.27]
+        - PDCA Scope Guard (ไม่ over-require maturity)
+        - Align กับ relevance_score_fn / cumulative rules
+        - ป้องกัน LLM hallucinate SUPPORT / OTHER
         """
-        enabler = getattr(self, 'enabler', 'KM').upper()
-        enabler_name = "การจัดการความรู้ (KM)"
-        
-        level_goal = get_pdca_goal_for_level(level)
-        level_focus = PDCA_PHASE_MAP.get(level, "ตรวจสอบความครบถ้วน")
 
-        # กำหนด Mandatory Phases ตามความจริงของ Maturity
-        required_phases = req_phases or []
-        if not required_phases:
-            if level >= 4: required_phases = ['P', 'D', 'C']
-            elif level >= 2: required_phases = ['P', 'D']
-            else: required_phases = ['P']
+        enabler = getattr(self, "enabler", "KM").upper()
+        enabler_name = "การจัดการความรู้ (KM)"
+
+        # -------------------------------
+        # 1. Level Goal & Focus
+        # -------------------------------
+        level_goal = get_pdca_goal_for_level(level)
+        level_focus = PDCA_PHASE_MAP.get(level, "ตรวจสอบความครบถ้วนของระบบ")
+
+        # -------------------------------
+        # 2. Mandatory PDCA (Truth-based)
+        # -------------------------------
+        if req_phases:
+            required_phases = list(dict.fromkeys(req_phases))
+        else:
+            if level >= 4:
+                required_phases = ["P", "D", "C"]
+            elif level >= 2:
+                required_phases = ["P", "D"]
+            else:
+                required_phases = ["P"]
 
         req_str = " + ".join(required_phases)
 
-        lines = [
-            f"\n### 🛡️ [AUDIT GUIDELINE: {enabler} - LEVEL {level}] ###",
-            f"🎯 หัวข้อประเมิน: {enabler_name} | {sub_id}",
-            f"🚩 เป้าหมายระดับนี้: {level_goal}",
-            f"🔍 สิ่งที่ต้องตรวจพบ (Mandatory PDCA): {req_str}",
-            f"📌 จุดเน้นสำคัญ: {level_focus}",
-            f"💡 [เกณฑ์เฉพาะในรูบริก]: {spec_rule}" if spec_rule else "",
-            "\n⚠️ [กฎเหล็กการตัดสิน - Strict Rules]:",
-            f"1. [Maturity Scope Guard] ห้ามนำข้อกำหนดของระดับสูง (เช่น AI, Automation, Benchmarking) มาเป็นเหตุผลให้ 'ไม่ผ่าน' ในระดับ {level} หากรูบริกไม่ได้ระบุไว้",
-            "2. [L1-L2 Policy Check] สำหรับระดับนโยบายและการวางรากฐาน หากพบเอกสาร 'แผนแม่บท' หรือ 'ประกาศ' ที่มีลายเซ็นอนุมัติ ให้ถือว่าผ่านเกณฑ์ 'P' และ 'D' ในเชิงโครงสร้างทันที",
-            f"3. {GLOBAL_EVIDENCE_INSTRUCTION}",
-            "4. [Substance over Form] เน้นดูเนื้อหาว่าตอบโจทย์วิสัยทัศน์องค์กรหรือไม่ มากกว่าดูแค่ชื่อไฟล์",
-            "5. [Coaching Insight] หากประเมินว่า 'ไม่ผ่าน' ต้องบอกจุดที่ขาดหายไปให้ชัดเจน เพื่อให้หน่วยงานไปปรับปรุงได้ถูกจุด"
+        # -------------------------------
+        # 3. Guardrails (Hard Rules)
+        # -------------------------------
+        strict_rules = [
+            f"1. [PDCA Scope Lock] ให้พิจารณาเฉพาะ PDCA = {req_str} เท่านั้น ห้ามสร้างหมวดอื่น เช่น SUPPORT, OTHER, CONTEXT",
+            f"2. [Maturity Guard] ห้ามใช้ข้อกำหนดของระดับสูงกว่า Level {level} (เช่น Automation, AI, Benchmarking) เป็นเหตุให้ 'ไม่ผ่าน' หากรูบริกไม่ได้ระบุ",
+            "3. [Evidence Integrity] ห้ามสรุป PDCA Phase หากไม่สามารถอ้างอิงเอกสาร หลักฐาน หรือหน้า (page) ได้ชัดเจน",
+            "4. [Policy Shortcut] หากพบเอกสารเชิงนโยบาย/แผนแม่บทที่ได้รับอนุมัติ ให้ถือว่าผ่าน Phase 'P' (และ 'D' หากมีแผนปฏิบัติ)",
+            f"5. {GLOBAL_EVIDENCE_INSTRUCTION}",
+            "6. [Substance First] ให้ดูเนื้อหาว่าตอบโจทย์เป้าหมายระดับนี้หรือไม่ มากกว่าชื่อไฟล์",
+            "7. [Coaching Output] หากประเมินว่า 'ไม่ผ่าน' ต้องระบุสิ่งที่ขาดอย่างเป็นรูปธรรม เพื่อให้หน่วยงานปรับปรุงได้"
         ]
+
+        # -------------------------------
+        # 4. Prompt Assembly
+        # -------------------------------
+        lines = [
+            f"\n### 🛡️ AUDIT GUIDELINE : {enabler} | LEVEL {level} ###",
+            f"🎯 หัวข้อประเมิน: {enabler_name} ({sub_id})",
+            f"📈 เป้าหมายระดับ: {level_goal}",
+            f"🔍 PDCA ที่ต้องพบ (Mandatory): {req_str}",
+            f"📌 จุดเน้นระดับนี้: {level_focus}",
+            f"💡 เกณฑ์เฉพาะในรูบริก: {spec_rule}" if spec_rule else "",
+            "\n⚠️ STRICT DECISION RULES:",
+            *strict_rules
+        ]
+
         return "\n".join(filter(None, lines))
+
 
 
     # ------------------------------------------------------------------------------------------
