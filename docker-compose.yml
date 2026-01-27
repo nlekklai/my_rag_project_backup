@@ -27,6 +27,7 @@ services:
   backend:
     build: .
     container_name: rag_backend
+    user: "${UID}:${GID}"
     volumes:
       - .:/app
       - ./data_store:/app/data_store

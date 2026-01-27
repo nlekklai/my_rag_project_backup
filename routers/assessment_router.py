@@ -536,6 +536,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "is_passed": is_passed,
                 "score": round(score, 2),
                 "reason": lv_info.get("reason", ""),
+                "summary_thai": lv_info.get("summary_thai", ""), # <--- เพิ่มไว้เป็น "ข้อมูลสำรอง"
                 "coaching_insight": lv_info.get("coaching_insight", ""),
                 "action_plan": lv_info.get("atomic_action_plan", [])
             }

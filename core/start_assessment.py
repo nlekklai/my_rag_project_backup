@@ -159,31 +159,30 @@ def main():
         "path": "N/A"
     }
 
+    # --- 🏁 ปรับปรุง Section 6: Robust Display Logic ---
     if isinstance(final_results, dict):
-        # 1. พยายามดึงจาก result_summary ก่อน (ก้อนรวม)
-        res_summary = final_results.get("result_summary", {}) 
-        summary_display["level"] = res_summary.get("maturity_level", "L0")
+        # 🛡️ Step 1: Unwrap ชั้นข้อมูล (ถ้ามี)
+        data = final_results.get("result") or final_results.get("assessment_result") or final_results
         
-        # ดึงคะแนนสะสม (เช่น 20.0 หรือ 4.0)
-        raw_score = res_summary.get("total_weighted_score", 0.0)
+        # 🛡️ Step 2: ดึง Summary ก้อนหลัก
+        res_summary = data.get("result_summary") or data.get("summary") or {}
         
-        # 2. ปรับ Score ให้เป็นสเกล 0-5 สำหรับหน้าจอ CLI (ถ้าต้องการให้หาร 5 ตามสัดส่วน)
-        # หรือถ้าต้องการโชว์คะแนนรวมตาม weight ก็ใช้ raw_score ได้เลย
-        summary_display["score"] = raw_score 
-        
-        summary_display["path"] = final_results.get("export_path_used", "N/A")
+        # ดึง Level (รองรับทั้ง "L5" หรือ 5)
+        lvl = res_summary.get("maturity_level") or data.get("highest_full_level") or "L0"
+        summary_display["level"] = f"L{lvl}" if isinstance(lvl, int) else str(lvl)
 
-        # 3. [Safe Guard] หาก score ยังเป็น 0 ให้เจาะดูใน sub_criteria_details
-        if summary_display["score"] == 0:
-            details = final_results.get("sub_criteria_details", [])
-            if details:
-                # กรณีรัน Sub เดียว ดึงจาก analytics หรือสรุปรายตัว
-                analytics = final_results.get("result_summary", {}).get("analytics", {})
-                if analytics.get("sub_details"):
-                    summary_display["score"] = analytics["sub_details"][0].get("score", 0.0)
-                else:
-                    # Fallback สุดท้าย: นับคะแนนจาก summary ภายใน details
-                    summary_display["score"] = details[0].get("summary", {}).get("score", 0.0)
+        # 🛡️ Step 3: ดึง Score (เจาะจงมากขึ้น)
+        # ลองดึงจากคะแนนถ่วงน้ำหนักรวมก่อน
+        score = res_summary.get("total_weighted_score") or data.get("weighted_score")
+        
+        # ถ้ายังเป็น 0 ให้ลองเจาะไปที่ราย Sub-criteria ตัวแรก (กรณีรัน --sub 1.1)
+        if not score or float(score) == 0:
+            sub_details = data.get("sub_criteria_details") or data.get("sub_criteria_results") or []
+            if sub_details:
+                score = sub_details[0].get("weighted_score") or sub_details[0].get("score")
+
+        summary_display["score"] = float(score or 0.0)
+        summary_display["path"] = data.get("export_path") or data.get("export_path_used") or "N/A"
 
     # 🏁 Display Summary UI
     print("\n" + "═"*65)

@@ -5339,6 +5339,7 @@ MANDATORY AUDIT RULES:
                 "is_maturity_capped": is_capped,
                 "score": round(effective_score, 2),
                 "reason": res.get("reason", ""),
+                "summary_thai": res.get("summary_thai", ""), # ✅ ดึงมาแสดงผล (มีประโยชน์)
                 "coaching_insight": res.get("coaching_insight", ""),
                 "atomic_action_plan": atomic_actions,
                 "pdca_breakdown": res.get("pdca_breakdown", {}),
