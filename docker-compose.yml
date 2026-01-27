@@ -44,6 +44,7 @@ services:
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
       # --- เพิ่ม 3 บรรทัดนี้เพื่อแก้ Permission Error ---
+      - HOME=/app/data_store  # <--- บรรทัดสำคัญที่สุด: เพื่อหลอก Library ว่า User Home อยู่ที่นี่
       - PYTHAINLP_DATA_DIR=/app/data_store/.pythainlp
       - HF_HOME=/app/data_store/.huggingface
       - TRANSFORMERS_CACHE=/app/data_store/.cache/huggingface
