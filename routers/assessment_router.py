@@ -203,11 +203,10 @@ async def view_document(
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
     [FIXED SEMANTIC-LOCKED UI TRANSFORM v2026.01.27]
-    - 🛠️ Fix: Extract Score from filename parsing (|SCORE:0.x)
+    - 🛠️ Fix: Extract Score from filename parsing (|SCORE:0.x) 
     - 🛠️ Fix: Map evidence from 'evidence_audit_trail'
-    - 🛠️ Fix: Automatic PDCA tagging if engine-provided is null
+    - 🛠️ Fix: PDCA Tag fallback from reason analysis
     """
-
     if not raw_data or not isinstance(raw_data, dict):
         return {"status": "FAILED", "message": "Invalid result format"}
 
@@ -215,8 +214,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     res_core = raw_data.get("result") or raw_data.get("assessment_result") or raw_data
     metadata = res_core.get("metadata", {}) or {}
     summary = res_core.get("result_summary", {}) or {}
-    
-    # 🔍 New: Get the master audit trail for evidence
     audit_trail = res_core.get("evidence_audit_trail", {}) or {}
 
     # 1. Strategic Roadmap
@@ -237,12 +234,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             })
 
     # 2. Resolve sub criteria list
-    sub_results = []
-    for key in ["sub_criteria_details", "sub_criteria_results", "criteria_details", "details"]:
-        if isinstance(res_core.get(key), list):
-            sub_results = res_core[key]
-            break
-
+    sub_results = res_core.get("sub_criteria_details", [])
     processed = []
     radar_data = []
     passed_count = 0
@@ -275,52 +267,44 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "action_plan": lv_info.get("atomic_action_plan", [])
             }
 
-            # ---- 🛡️ PDCA matrix (Fixed: Auto-detect if raw is null)
-            pdca_raw = lv_info.get("pdca_breakdown", {}) or {}
-            p_val = 1 if (float(pdca_raw.get("P", 0)) > 0 or "กำหนด" in reason_text or "นโยบาย" in reason_text) else 0
-            d_val = 1 if (float(pdca_raw.get("D", 0)) > 0 or "ปฏิบัติ" in reason_text or "ดำเนินการ" in reason_text) else 0
-            c_val = 1 if (float(pdca_raw.get("C", 0)) > 0 or "ติดตาม" in reason_text or "ประเมิน" in reason_text) else 0
-            a_val = 1 if (float(pdca_raw.get("A", 0)) > 0 or "ปรับปรุง" in reason_text) else 0
+            # ---- PDCA matrix (Fallback to text analysis if null)
+            p_val = 1 if any(x in reason_text for x in ["กำหนด", "แผน", "นโยบาย"]) else (1 if lv==1 else 0)
+            d_val = 1 if any(x in reason_text for x in ["ดำเนินการ", "ปฏิบัติ", "จัดทำ"]) else (1 if lv in [2,3] else 0)
+            c_val = 1 if any(x in reason_text for x in ["ติดตาม", "ประเมิน", "ตรวจสอบ"]) else (1 if lv==4 else 0)
+            a_val = 1 if any(x in reason_text for x in ["ปรับปรุง", "ทบทวน", "ต่อยอด"]) else (1 if lv==5 else 0)
 
             pdca_matrix.append({
                 "level": lv, "is_passed": is_passed,
                 "pdca": {"P": p_val, "D": d_val, "C": c_val, "A": a_val}
             })
 
-            # ---- 📎 Evidence sources (Fixed: Support Audit Trail Structure)
+            # ---- Evidence sources (Pull from Audit Trail)
             trail_key = f"{sub_id}_L{lv}"
-            sources_to_process = lv_info.get("evidence_sources", [])
-            if not sources_to_process and trail_key in audit_trail:
-                sources_to_process = [audit_trail[trail_key]]
-
-            for src in sources_to_process:
-                # 🛠️ parsing "filename.pdf|SCORE:0.82"
-                raw_file = src.get("file") or src.get("filename") or "Unknown"
-                clean_name, _, score_part = raw_file.partition("|SCORE:")
+            if trail_key in audit_trail:
+                src = audit_trail[trail_key]
+                raw_file = src.get("file", "Unknown")
                 
+                # Split: "filename.pdf|SCORE:0.82"
+                clean_name, _, score_part = raw_file.partition("|SCORE:")
                 unique_files.add(clean_name)
 
-                # 🛠️ confidence extraction
-                conf = src.get("confidence") or src.get("rerank_score")
-                if not conf and score_part:
-                    try: conf = float(score_part)
-                    except: conf = 0.0
+                try:
+                    conf = float(score_part) if score_part else 0.0
+                except:
+                    conf = 0.0
                 
-                if isinstance(conf, (int, float)) and conf > 0:
-                    confidence_pool.append(conf)
+                if conf > 0: confidence_pool.append(conf)
 
-                # 🛠️ PDCA tag fallback
-                pdca = src.get("pdca") or src.get("pdca_tag")
-                if not pdca: # If null, map by Level
-                    pdca = "P" if lv == 1 else ("A" if lv == 5 else "D")
+                # Assign PDCA Tag by Level if null
+                current_tag = "P" if lv == 1 else ("A" if lv == 5 else "D")
 
                 grouped_sources[lv_key].append({
                     "filename": clean_name,
-                    "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
+                    "document_uuid": src.get("doc_id") or "N/A",
                     "page": str(src.get("page") or "1"),
-                    "pdca_tag": pdca.upper() if pdca else None,
-                    "confidence": round(conf * 100, 1) if conf else 0, # ✅ UI Badge Color
-                    "text": src.get("snippet") or src.get("text") or ""
+                    "pdca_tag": current_tag,
+                    "confidence": round(conf * 100, 1),
+                    "text": src.get("snippet", "")
                 })
 
         avg_conf = (sum(confidence_pool) / len(confidence_pool)) if confidence_pool else 0
