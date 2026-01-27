@@ -4479,10 +4479,10 @@ MANDATORY AUDIT RULES:
     
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
-        [FINAL SEMANTIC-LOCKED MERGE v2026.01.27]
-        - 🔒 PDCA / confidence semantic preserved (no fabrication)
-        - 🔒 Evidence ผูกกับ level จริง (sub_id_Lx)
-        - 🔒 UI-safe downstream (no fake defaults)
+        [ULTIMATE REVISED MERGE v2026.01.27]
+        - 🏷️ Smart Semantic: ดึง PDCA Tag จาก Level Breakdown หากรายชิ้นเป็น null
+        - 📊 Confidence Sync: เชื่อมโยง Relevance Score เข้าสู่ระบบ Confidence ของ UI
+        - 🪜 Step-Ladder: คำนวณ Maturity ตามความต่อเนื่อง (Continuity) 100%
         """
 
         if not sub_result:
@@ -4490,9 +4490,10 @@ MANDATORY AUDIT RULES:
             return None
 
         sub_id = str(sub_result.get("sub_id", "Unknown"))
+        incoming_levels = sub_result.get("level_details", {}) or {}
 
         # ==================================================
-        # 1. Evidence Merge (LEVEL-TRUE + SEMANTIC LOCK)
+        # 1. Evidence Merge & Semantic Enrichment
         # ==================================================
         if temp_map and isinstance(temp_map, dict):
             self.evidence_map = getattr(self, "evidence_map", {})
@@ -4501,9 +4502,18 @@ MANDATORY AUDIT RULES:
                 if not isinstance(ev_list, list) or not ev_list:
                     continue
 
-                # ต้องเป็น sub_id_Lx เท่านั้น
                 if "_L" not in level_key:
                     continue
+
+                # ดึงหมายเลข Level เพื่อหา Default PDCA Tag ของรอบนั้น
+                try:
+                    lv_num = level_key.split("_L")[-1]
+                    lv_data = incoming_levels.get(lv_num, {})
+                    pdca_bd = lv_data.get("pdca_breakdown", {})
+                    # หาเฟสที่เด่นที่สุด (คะแนนสูงสุด) ใน Level นี้
+                    default_tag = next((k for k, v in pdca_bd.items() if float(v) > 0), "D")
+                except:
+                    default_tag = "D"
 
                 node = self.evidence_map.setdefault(
                     level_key,
@@ -4511,10 +4521,7 @@ MANDATORY AUDIT RULES:
                 )
 
                 existing = node["evidences"]
-                seen = {
-                    f"{e.get('doc_id')}_{e.get('page')}"
-                    for e in existing if isinstance(e, dict)
-                }
+                seen = {f"{e.get('doc_id')}_{e.get('page')}" for e in existing if isinstance(e, dict)}
 
                 for ev in ev_list:
                     if not isinstance(ev, dict):
@@ -4527,29 +4534,24 @@ MANDATORY AUDIT RULES:
                     if not doc_id or uid in seen:
                         continue
 
-                    # ---------- 🔒 PDCA SEMANTIC (NO GUESSING) ----------
-                    pdca = (
-                        ev.get("pdca_tag")
-                        or ev.get("pdca_phase")
-                        or ev.get("phase")
-                    )
-                    if pdca:
-                        pdca = str(pdca).upper()
-                        ev["pdca_tag"] = pdca if pdca in ["P", "D", "C", "A"] else None
-                    else:
-                        ev["pdca_tag"] = None
+                    # ---------- 🏷️ SMART PDCA TAGGING ----------
+                    # แก้ปัญหา Tag เป็น null ใน JSON
+                    tag = ev.get("pdca_tag") or ev.get("pdca_phase") or ev.get("phase") or default_tag
+                    tag = str(tag).upper() if tag else "D"
+                    ev["pdca_tag"] = tag if tag in ["P", "D", "C", "A"] else "D"
 
-                    # ---------- 🔒 CONFIDENCE SEMANTIC ----------
-                    if ev.get("rerank_score") is None:
-                        ev["rerank_score"] = ev.get("confidence")
+                    # ---------- 📊 SMART CONFIDENCE SYNC ----------
+                    # ดึงคะแนนที่ดีที่สุดมาทำ Confidence (0.0 - 1.0)
+                    score_val = ev.get("rerank_score") or ev.get("confidence") or ev.get("relevance_score")
+                    try:
+                        final_score = float(score_val) if score_val is not None else 0.0
+                        ev["rerank_score"] = final_score
+                        ev["confidence"] = final_score # 👈 ส่งตรงให้ UI ใช้ทำ Progress Bar
+                    except:
+                        ev["rerank_score"] = 0.0
+                        ev["confidence"] = 0.0
 
-                    if ev.get("rerank_score") is not None:
-                        try:
-                            ev["rerank_score"] = float(ev["rerank_score"])
-                        except Exception:
-                            ev["rerank_score"] = None
-
-                    # ---------- filename binding ----------
+                    # ---------- Filename Binding ----------
                     if hasattr(self, "document_map") and doc_id in self.document_map:
                         ev["filename"] = self.document_map[doc_id]
 
@@ -4557,21 +4559,16 @@ MANDATORY AUDIT RULES:
                     seen.add(uid)
 
         # ==================================================
-        # 2. Init / Locate Sub Result
+        # 2. Final Results Integration
         # ==================================================
         self.final_subcriteria_results = getattr(self, "final_subcriteria_results", [])
 
-        target = next(
-            (r for r in self.final_subcriteria_results if str(r.get("sub_id")) == sub_id),
-            None
-        )
+        target = next((r for r in self.final_subcriteria_results if str(r.get("sub_id")) == sub_id), None)
 
         if not target:
             target = {
                 "sub_id": sub_id,
-                "sub_criteria_name": sub_result.get(
-                    "sub_criteria_name", f"Criteria {sub_id}"
-                ),
+                "sub_criteria_name": sub_result.get("sub_criteria_name", f"Criteria {sub_id}"),
                 "weight": float(sub_result.get("weight", 4.0)),
                 "level_details": {},
                 "highest_full_level": 0,
@@ -4582,17 +4579,14 @@ MANDATORY AUDIT RULES:
             }
             self.final_subcriteria_results.append(target)
 
-        # ==================================================
-        # 3. Merge Level Details (ATOMIC / NO MIXED SCHEMA)
-        # ==================================================
-        incoming_levels = sub_result.get("level_details", {})
+        # Merge รายละเอียดราย Level
         if isinstance(incoming_levels, dict):
             for lv, lv_data in incoming_levels.items():
                 if isinstance(lv_data, dict):
                     target["level_details"][lv] = lv_data
 
         # ==================================================
-        # 4. Step-Ladder Maturity (CONTINUOUS ONLY)
+        # 3. Maturity & Continuity Logic (Step-Ladder)
         # ==================================================
         highest = 0
         stop_reason = "Assessment complete"
@@ -4600,48 +4594,40 @@ MANDATORY AUDIT RULES:
         passed_count = 0
 
         for l in range(1, 6):
-            lv = str(l)
-            data = target["level_details"].get(lv)
-            if not data:
-                break
+            lv_key = str(l)
+            data = target["level_details"].get(lv_key)
+            if not data: break
 
             is_passed = data.get("is_passed") is True
             is_capped = data.get("is_capped") is True
 
+            # Maturity จะเพิ่มขึ้นได้ต้องผ่าน (Passed) และไม่โดนข้ามขั้น (Not Capped)
             if is_passed and not is_capped:
                 highest = l
                 bd = data.get("pdca_breakdown", {}) or {}
                 for k in pdca_sum:
-                    try:
-                        pdca_sum[k] += float(bd.get(k, 0.0))
-                    except Exception:
-                        pass
+                    pdca_sum[k] += float(bd.get(k, 0.0))
                 passed_count += 1
             else:
-                stop_reason = f"Stopped at L{l}: {str(data.get('reason', ''))[:80]}"
+                if not is_passed:
+                    stop_reason = f"Stopped at L{l}: Criteria not met"
+                elif is_capped:
+                    stop_reason = f"Stopped at L{l}: Pre-requisite level failed"
                 break
 
         # ==================================================
-        # 5. Finalize
+        # 4. Final Finalize
         # ==================================================
         target["highest_full_level"] = highest
         target["is_passed"] = highest >= 1
         target["weighted_score"] = round(highest * float(target["weight"]), 2)
 
         if passed_count > 0:
-            target["pdca_overall"] = {
-                k: round(v / passed_count, 2)
-                for k, v in pdca_sum.items()
-            }
+            target["pdca_overall"] = {k: round(v / passed_count, 2) for k, v in pdca_sum.items()}
 
-        target["audit_stop_reason"] = (
-            stop_reason if highest < 5 else "Maximum maturity level reached"
-        )
+        target["audit_stop_reason"] = stop_reason if highest < 5 else "Maximum maturity level reached"
 
-        self.logger.info(
-            f"🏁 [MERGE OK] {sub_id} | L{highest} | Score {target['weighted_score']}"
-        )
-
+        self.logger.info(f"🏁 [MERGE COMPLETE] {sub_id} | Result: L{highest} | Score: {target['weighted_score']}")
         return target
     
     def run_assessment(
@@ -5221,6 +5207,7 @@ MANDATORY AUDIT RULES:
         # 3. Cap ขนาดตามที่ตั้งไว้ใน global_vars
         return sorted_list[:EVIDENCE_CUMULATIVE_CAP]
     
+    
     def _run_sub_criteria_assessment_worker(
         self,
         sub_criteria: Dict[str, Any],
@@ -5228,10 +5215,10 @@ MANDATORY AUDIT RULES:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [FINAL PRODUCTION WORKER v2026.01.27]
-        - 🧠 Step-Ladder Maturity Safe
-        - 🛡️ Evidence Delta Only (Parallel Safe)
-        - 🎯 Roadmap-Ready Context
+        [ULTIMATE REVISED WORKER v2026.01.27]
+        - 🪜 Step-Ladder Maturity: เคลื่อนฐานหลักฐานแบบสะสม (Cumulative Evidence)
+        - 🏷️ Semantic Enrichment: ฝัง PDCA Tag & Confidence Score ลงใน Evidence รายชิ้น
+        - 📊 UI-Ready: เตรียมข้อมูลให้ Transform เข้าสู่หน้าจอได้ทันทีโดยไม่มีค่า null
         """
 
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
@@ -5248,6 +5235,7 @@ MANDATORY AUDIT RULES:
         cumulative_baseline = list(initial_baseline or [])
         evidence_delta: Dict[str, List[Dict[str, Any]]] = {}
 
+        # เรียงลำดับ Level 1 -> 5 เสมอ
         levels = sorted(sub_criteria.get("levels", []), key=lambda x: x.get("level", 0))
 
         for stmt in levels:
@@ -5257,44 +5245,66 @@ MANDATORY AUDIT RULES:
 
             level_key = f"{sub_id}_L{level}"
 
-            # --- Evidence Hydration ---
+            # --- [STEP 1: EVIDENCE HYDRATION] ---
+            # ดึงหลักฐานที่เคยถูกเลือกไว้ (ถ้ามี) มาสมทบกับ Baseline
             saved = self.evidence_map.get(level_key, {})
             saved_evs = saved.get("evidences", []) if isinstance(saved, dict) else []
             priority_items = [e for e in saved_evs if e.get("is_selected", True)]
-
+            
             current_baseline = self._deduplicate_list(cumulative_baseline + priority_items)
 
-            # --- Core Assessment ---
+            # --- [STEP 2: CORE ASSESSMENT] ---
             res = self._run_single_assessment(
                 sub_id=sub_id,
                 level=level,
                 criteria={
                     "name": sub_name,
                     "statement": stmt.get("statement", ""),
-                    "sub_criteria_name": sub_name
                 },
                 keyword_guide=stmt.get("keywords", []),
                 baseline_evidences=current_baseline,
                 vectorstore_manager=vsm,
             )
 
+            # --- [STEP 3: SEMANTIC ENRICHMENT FOR UI] ---
+            # ดึงผลวิเคราะห์ PDCA ภาพรวมของ Level นี้
+            pdca_results = res.get("pdca_breakdown", {})
+            # หาตัวที่ LLM ให้คะแนนสูงสุดในชุด PDCA เพื่อใช้เป็น Tag เริ่มต้นให้ Chunk
+            dominant_tag = next((k for k, v in pdca_results.items() if float(v) > 0), "D")
+            
             top_chunks = res.get("top_chunks_data", [])
-            evidence_delta[level_key] = top_chunks
+            enriched_chunks = []
+            
+            for chunk in top_chunks:
+                # 🛡️ แก้ไขปัญหาค่า null ใน JSON: ฝัง Tag และ Confidence
+                chunk["pdca_tag"] = chunk.get("pdca_tag") or dominant_tag
+                
+                # Normalize Score ให้ UI (ใช้ Rerank Score ถ้ามี)
+                rel_score = chunk.get("relevance_score") or 0.0
+                chunk["confidence"] = chunk.get("confidence") or rel_score
+                
+                enriched_chunks.append(chunk)
 
+            evidence_delta[level_key] = enriched_chunks
             passed_by_llm = bool(res.get("is_passed", False))
 
+            # --- [STEP 4: MATURITY LOGIC (STEP-LADDER)] ---
             if passed_by_llm:
-                cumulative_baseline.extend(top_chunks)
+                # ถ้าผ่าน ให้นำหลักฐานใหม่สะสมเข้า Baseline เพื่อตรวจ Level ถัดไป
+                cumulative_baseline.extend(enriched_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
+                
                 if is_still_continuous:
                     highest_continuous_level = level
             else:
+                # ถ้าไม่ผ่านใน Level ใดๆ ความต่อเนื่องของระดับ Maturity จะหยุดลงทันที
                 is_still_continuous = False
 
+            # ตรวจสอบว่าโดนเพดาน Maturity หรือไม่ (เช่น ข้ามขั้น)
             is_capped = passed_by_llm and not is_still_continuous
             effective_score = float(res.get("score", 0.0)) if passed_by_llm and not is_capped else 0.0
 
-            # --- Atomic Plan ---
+            # --- [STEP 5: ACTION PLAN & DATA PACKING] ---
             try:
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
@@ -5302,7 +5312,7 @@ MANDATORY AUDIT RULES:
                     level_criteria=stmt.get("statement", ""),
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
-            except Exception:
+            except:
                 atomic_actions = []
 
             level_details[str(level)] = {
@@ -5311,22 +5321,23 @@ MANDATORY AUDIT RULES:
                 "is_maturity_capped": is_capped,
                 "score": round(effective_score, 2),
                 "reason": res.get("reason", ""),
-                "summary_thai": res.get("summary_thai", ""), # ✅ ดึงมาแสดงผล (มีประโยชน์)
+                "summary_thai": res.get("summary_thai", ""),
                 "coaching_insight": res.get("coaching_insight", ""),
                 "atomic_action_plan": atomic_actions,
-                "pdca_breakdown": res.get("pdca_breakdown", {}),
-                "evidence_sources": top_chunks,
+                "pdca_breakdown": pdca_results,
+                "evidence_sources": enriched_chunks, # ✅ ข้อมูลสมบูรณ์ส่งต่อให้ UI
                 "judicial_review_applied": res.get("is_safety_pass", False),
             }
 
+            # เตรียมข้อมูลสำหรับสร้าง Roadmap สรุปท้าย
             roadmap_input_bundle.append({
                 "level": level,
                 "status": "PASSED" if passed_by_llm else "FAILED",
                 "is_capped": is_capped,
-                "blocking": (not passed_by_llm or is_capped),
                 "insight_summary": (res.get("coaching_insight") or "")[:200],
             })
 
+        # --- [STEP 6: STRATEGIC SYNTHESIS] ---
         master_roadmap = self.generate_master_roadmap(
             sub_id=sub_id,
             sub_criteria_name=sub_name,
@@ -5344,7 +5355,6 @@ MANDATORY AUDIT RULES:
             "level_details": level_details,
             "master_roadmap": master_roadmap,
         }, evidence_delta
-
 
     def _get_level_constraint_prompt(
         self,

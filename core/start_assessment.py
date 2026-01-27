@@ -149,7 +149,9 @@ def main():
         db_update_task_status(record_id, 0, f"Error: {str(e)}", status="FAILED")
         sys.exit(1)
 
-    # 6. Final Summary Extraction (CLI Display Logic)
+    # ---------------------------------------------------------------
+    # 6. Final Summary Extraction (CLI Display Logic) - REVISED v2026
+    # ---------------------------------------------------------------
     duration_s = time.time() - start_ts
     
     # ค่าเริ่มต้นป้องกัน Error
@@ -159,38 +161,49 @@ def main():
         "path": "N/A"
     }
 
-    # --- 🏁 ปรับปรุง Section 6: Robust Display Logic ---
     if isinstance(final_results, dict):
-        # 🛡️ Step 1: Unwrap ชั้นข้อมูล (ถ้ามี)
+        # 🛡️ Step 1: Unwrap ชั้นข้อมูล (รองรับหลายรูปแบบ Payload)
         data = final_results.get("result") or final_results.get("assessment_result") or final_results
-        
-        # 🛡️ Step 2: ดึง Summary ก้อนหลัก
         res_summary = data.get("result_summary") or data.get("summary") or {}
+        sub_details = data.get("sub_criteria_results") or data.get("sub_criteria_details") or []
         
-        # ดึง Level (รองรับทั้ง "L5" หรือ 5)
-        lvl = res_summary.get("maturity_level") or data.get("highest_full_level") or "L0"
-        summary_display["level"] = f"L{lvl}" if isinstance(lvl, int) else str(lvl)
+        # 🛡️ Step 2: Extract Level (Maturity)
+        # ลองดึงจาก Summary รวมก่อน ถ้าไม่เจอ (กรณีรัน --sub) ให้ดึงจากหัวข้อแรกที่ประเมิน
+        lvl = res_summary.get("maturity_level")
+        if lvl is None:
+            lvl = data.get("highest_full_level")
+        if lvl is None and sub_details:
+            lvl = sub_details[0].get("highest_full_level") or sub_details[0].get("maturity_level")
+        
+        # ประกันว่าต้องเป็นตัวเลข (Default 0)
+        try:
+            lvl_int = int(lvl) if lvl is not None else 0
+            summary_display["level"] = f"L{lvl_int}"
+        except:
+            summary_display["level"] = str(lvl or "L0")
 
-        # 🛡️ Step 3: ดึง Score (เจาะจงมากขึ้น)
-        # ลองดึงจากคะแนนถ่วงน้ำหนักรวมก่อน
+        # 🛡️ Step 3: Extract Score (Weighted Score)
+        # ตรรกะ: ถ้าคะแนนรวมเป็น 0 (อาจเพราะรันข้อเดียว) ให้ใช้คะแนนของ Sub-criteria นั้นๆ แทน
         score = res_summary.get("total_weighted_score") or data.get("weighted_score")
         
-        # ถ้ายังเป็น 0 ให้ลองเจาะไปที่ราย Sub-criteria ตัวแรก (กรณีรัน --sub 1.1)
         if not score or float(score) == 0:
-            sub_details = data.get("sub_criteria_details") or data.get("sub_criteria_results") or []
             if sub_details:
+                # ใช้คะแนนของข้อแรกที่เจอใน List (กรณีระบุ --sub)
                 score = sub_details[0].get("weighted_score") or sub_details[0].get("score")
 
         summary_display["score"] = float(score or 0.0)
         summary_display["path"] = data.get("export_path") or data.get("export_path_used") or "N/A"
 
-    # 🏁 Display Summary UI
+    # ---------------------------------------------------------------
+    # 🏁 Display Summary UI (Console Output)
+    # ---------------------------------------------------------------
     print("\n" + "═"*65)
     print(f" 🏁  ASSESSMENT COMPLETE | ID: {record_id}")
     print("═"*65)
     print(f" [MODE]        : {run_mode}")
-    print(f" [RESULT]      : Level {summary_display['level']}")
-    # แสดงผลคะแนน (ถ้าปรับหาร 5 แล้วจะได้ 4.00 / 5.00)
+    print(f" [RESULT]      : {summary_display['level']}") # จะแสดงเป็น L5 แทน L0
+    
+    # ถ้าคะแนนคือ 20.00 และ Weight คือ 4.0 จะหมายถึงได้ Level 5 เต็มในหัวข้อนั้น
     print(f" [SCORE]       : {summary_display['score']:.2f}") 
     print(f" [DURATION]    : {duration_s:.2f} seconds")
     print("-" * 65)
