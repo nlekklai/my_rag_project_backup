@@ -908,93 +908,101 @@ def create_docx_report_similar_to_ui(ui_data: dict) -> Document:
         
     return doc
 
-
-# ==================== API ENDPOINT: GET Status / Get Data ====================
 @assessment_router.get("/status/{record_id}")
 async def get_assessment_status(
     record_id: str, 
     current_user: UserMe = Depends(get_current_user)
 ):
     """
-    [v2026.6.19 — Final Status + Robust Polling & Fallback]
-    - Polling PROGRESS ชัดเจน (progress %, message, estimated_time)
-    - Fallback ถ้าไม่เจอไฟล์ → ส่ง "NOT_FOUND" + suggestion
-    - สิทธิ์ check ปลอดภัย + fallback tenant/enabler
-    - Error handling แยกกรณี + log ละเอียด
+    [v2026.01.27 — THE SHIELDED STATUS REVISE]
+    - ⚡ Layer 1: Check Database (The Truth) -> ป้องกัน Race Condition หลัง Start
+    - 🧠 Layer 2: Check Active Tasks (Memory) -> สำหรับ Real-time Update
+    - 📂 Layer 3: Check Disk (Persistence) -> สำหรับงานที่จบไปแล้ว
     """
-    # 1. เช็คใน Memory ก่อน (Polling สำหรับงานกำลังรัน)
-    active_tasks = globals().get("ACTIVE_TASKS", {})
-    if record_id in active_tasks:
-        task = active_tasks[record_id]
-        progress = task.get("progress", 0)
-        message = task.get("message", "กำลังประมวลผล...")
-        estimated_remaining = task.get("estimated_remaining_seconds", None)
-
-        return {
-            "status": "PROCESSING",
-            "record_id": record_id,
-            "progress": progress,
-            "message": message,
-            "estimated_remaining": estimated_remaining,
-            "started_at": task.get("started_at"),
-            "updated_at": datetime.now().isoformat()
-        }
-
-    # 2. หาไฟล์ที่เสร็จแล้วบน Disk
-    file_path = _find_assessment_file(record_id, current_user)
-    
-    if not file_path or not os.path.exists(file_path):
-        logger.warning(f"[Status] File not found for record_id: {record_id}")
-        return {
-            "status": "NOT_FOUND",
-            "record_id": record_id,
-            "message": "ไม่พบผลการประเมินนี้ อาจยังไม่เสร็จสิ้นหรือถูกลบ กรุณารอสักครู่หรือเริ่มการประเมินใหม่",
-            "suggestion": "ตรวจสอบสถานะอีกครั้งใน 1-2 นาที หรือติดต่อผู้ดูแลระบบ"
-        }
-
+    db = SessionLocal()
     try:
-        # 3. อ่าน JSON ต้นฉบับ
+        # --- LAYER 1: CHECK DATABASE (แก้ปัญหา 404 หลังกด Start) ---
+        task_record = db.query(AssessmentTaskTable).filter(
+            AssessmentTaskTable.record_id == record_id
+        ).first()
+
+        # ถ้าเจอใน DB แปลว่างานถูกลงทะเบียนแล้วแน่นอน (ไม่ควรตอบ 404)
+        if task_record:
+            # ถ้าสถานะยังไม่เสร็จ ให้ตอบสถานะจาก DB/Memory
+            if task_record.status not in ["COMPLETED", "FAILED"]:
+                # เช็ค Memory ประกอบ (ถ้ามีข้อมูลที่ละเอียดกว่า)
+                active_tasks = globals().get("ACTIVE_TASKS", {})
+                mem_task = active_tasks.get(record_id, {})
+                
+                return {
+                    "status": task_record.status, # QUEUED, PROCESSING
+                    "record_id": record_id,
+                    "progress": mem_task.get("progress") or task_record.progress_percent or 5,
+                    "message": mem_task.get("message") or task_record.progress_message or "กำลังเตรียมการ...",
+                    "enabler": task_record.enabler,
+                    "is_final": False,
+                    "updated_at": datetime.now().isoformat()
+                }
+            
+            # ถ้าใน DB บอกว่า FAILED ให้แจ้งทันที
+            if task_record.status == "FAILED":
+                return {
+                    "status": "FAILED",
+                    "record_id": record_id,
+                    "message": task_record.progress_message or "การประเมินล้มเหลว",
+                    "is_final": True
+                }
+
+        # --- LAYER 2: CHECK DISK (สำหรับงานที่ COMPLETED แล้ว) ---
+        # ฟังก์ชัน _find_assessment_file จะทำ Deep Scan หาไฟล์ JSON
+        try:
+            file_path = _find_assessment_file(record_id, current_user)
+        except HTTPException:
+            file_path = None
+
+        if not file_path or not os.path.exists(file_path):
+            # กรณีที่ไม่เจอทั้งใน DB และ Disk จริงๆ
+            if not task_record:
+                logger.warning(f"🔍 [Status] Record not found anywhere: {record_id}")
+                return {
+                    "status": "NOT_FOUND",
+                    "record_id": record_id,
+                    "message": "ไม่พบรหัสการประเมินนี้ในระบบ",
+                    "suggestion": "กรุณาตรวจสอบรหัสอีกครั้ง หรือเริ่มการประเมินใหม่"
+                }
+            
+            # กรณีมีใน DB ว่าเสร็จแล้วแต่ไฟล์ยังไม่มา (I/O Delay)
+            return {
+                "status": "PROCESSING",
+                "record_id": record_id,
+                "progress": 95,
+                "message": "AI ประมวลผลเสร็จแล้ว กำลังบันทึกข้อมูลลงระบบไฟล์...",
+                "is_final": False
+            }
+
+        # --- LAYER 3: DATA TRANSFORMATION ---
         with open(file_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
 
-        # 4. ดึง Metadata + fallback tenant/enabler
-        summary = raw_data.get("summary", {}) or raw_data.get("metadata", {}) or {}
-        file_enabler = (summary.get("enabler") or "KM").upper()
-        file_tenant = summary.get("tenant") or current_user.tenant or "unknown"
+        # ตรวจสอบสิทธิ์จาก Data ในไฟล์
+        meta = raw_data.get("metadata", {}) or raw_data.get("summary", {}) or {}
+        check_user_permission(current_user, meta.get("tenant"), meta.get("enabler"))
 
-        # ตรวจสอบสิทธิ์ (tenant + enabler)
-        try:
-            check_user_permission(current_user, file_tenant, file_enabler)
-        except Exception as perm_err:
-            logger.warning(f"[Status] Permission denied for {record_id}: {perm_err}")
-            raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์เข้าถึงผลการประเมินนี้")
-
-        # 5. Transform ให้ UI พร้อมใช้
+        # Transform ข้อมูลให้ UI
         ui_result = _transform_result_for_ui(raw_data, current_user)
-        
-        # เพิ่ม status + metadata สำคัญ
-        # ui_result["status"] = "COMPLETED"
+        ui_result["status"] = "COMPLETED"
         ui_result["record_id"] = record_id
-        ui_result["export_path"] = file_path
-        ui_result["exported_at"] = summary.get("export_at") or datetime.now().isoformat()
+        ui_result["is_final"] = True
 
-        logger.info(f"🚀 [Status] Returning COMPLETED for {record_id} | Enabler: {file_enabler} | Tenant: {file_tenant}")
         return ui_result
 
-    except json.JSONDecodeError:
-        logger.error(f"💥 [Status] Invalid JSON for {record_id} at {file_path}")
-        raise HTTPException(status_code=500, detail="ไฟล์ข้อมูลเสียหาย ไม่สามารถอ่านได้ กรุณาติดต่อผู้ดูแลระบบ")
-
-    except HTTPException as he:
-        raise he  # ส่งต่อ permission error
-
     except Exception as e:
-        logger.error(f"💥 [Status] Error processing {record_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="เกิดข้อผิดพลาดในการโหลดผลการประเมิน กรุณาลองใหม่หรือติดต่อผู้ดูแลระบบ"
-        )
-
+        logger.error(f"💥 [Status Error] {record_id}: {str(e)}", exc_info=True)
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail="Internal Server Error ในการดึงสถานะ")
+    finally:
+        db.close()
+        
 @assessment_router.get("/history")
 async def get_assessment_history(
     tenant: str, 
