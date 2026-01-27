@@ -416,28 +416,34 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [FINAL PRODUCTION VERSION - UI CONTRACT SAFE]
-    - รองรับ single-run / all-run
-    - Roadmap ไม่หาย
-    - grouped_sources ครบ (UI REQUIRED)
-    - backward compatible
+    [FINAL SEMANTIC-LOCKED UI TRANSFORM v2026.01.29]
+    - 🔒 Confidence never forced to 0
+    - 🔒 PDCA never guessed
+    - 🔒 Traceability = percentage (0–100)
+    - 🔒 Nested-safe / UI-contract-safe
     """
 
     if not raw_data or not isinstance(raw_data, dict):
         return {"status": "FAILED", "message": "Invalid result format"}
 
-    # ------------------------------------------------------------------
-    # 1. Metadata & Summary
-    # ------------------------------------------------------------------
-    metadata = raw_data.get("metadata", {})
-    summary = raw_data.get("result_summary", {})
+    # --------------------------------------------------
+    # 0. Unwrap common nesting
+    # --------------------------------------------------
+    if isinstance(raw_data.get("result"), dict):
+        raw_data = raw_data["result"]
+    elif isinstance(raw_data.get("assessment_result"), dict):
+        raw_data = raw_data["assessment_result"]
 
-    # ------------------------------------------------------------------
-    # 2. Strategic Roadmap (Enabler-level)
-    # ------------------------------------------------------------------
+    metadata = raw_data.get("metadata", {}) or {}
+    summary = raw_data.get("result_summary", {}) or {}
+
+    # --------------------------------------------------
+    # 1. Strategic Roadmap (safe + optional)
+    # --------------------------------------------------
     raw_roadmap = (
-        raw_data.get("strategic_roadmap") or
-        raw_data.get("master_roadmap") or {}
+        raw_data.get("strategic_roadmap")
+        or raw_data.get("master_roadmap")
+        or {}
     )
 
     ui_roadmap = {
@@ -445,12 +451,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "overall_strategy": (
             raw_roadmap.get("overall_strategy")
             or raw_roadmap.get("summary")
-            or "ยกระดับการจัดการความรู้ขององค์กร"
+            or ""
         ),
         "phases": []
     }
 
-    for phase in raw_roadmap.get("roadmap", []):
+    for phase in raw_roadmap.get("roadmap", []) or []:
         if isinstance(phase, dict):
             ui_roadmap["phases"].append({
                 "phase": phase.get("phase", "N/A"),
@@ -460,51 +466,72 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "expected_outcome": phase.get("expected_outcome", "")
             })
 
-    # ------------------------------------------------------------------
-    # 3. Resolve Sub-Criteria Results (NEW + LEGACY SAFE)
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # 2. Resolve sub criteria list (robust)
+    # --------------------------------------------------
     sub_results = []
 
-    if isinstance(raw_data.get("sub_criteria_details"), list):
-        sub_results = raw_data["sub_criteria_details"]
-    elif isinstance(raw_data.get("sub_criteria_results"), list):
-        sub_results = raw_data["sub_criteria_results"]
+    for key in [
+        "sub_criteria_details",
+        "sub_criteria_results",
+        "criteria_details",
+        "details"
+    ]:
+        if isinstance(raw_data.get(key), list):
+            sub_results = raw_data[key]
+            break
 
-    processed_subs = []
+    if not sub_results:
+        return {
+            "status": summary.get("status", "COMPLETED"),
+            "record_id": metadata.get("record_id"),
+            "tenant": metadata.get("tenant"),
+            "year": metadata.get("year"),
+            "enabler": metadata.get("enabler"),
+            "level": str(summary.get("maturity_level", "L0")).replace("L", ""),
+            "score": round(float(summary.get("total_weighted_score", 0.0)), 2),
+            "full_score": 5.0,
+            "strategic_roadmap": ui_roadmap,
+            "metrics": {
+                "completion_rate": 0,
+                "passed_criteria": 0,
+                "total_criteria": 0
+            },
+            "radar_data": [],
+            "sub_criteria": []
+        }
+
+    # --------------------------------------------------
+    # 3. Process sub criteria
+    # --------------------------------------------------
+    processed = []
     radar_data = []
     passed_count = 0
 
-    # ------------------------------------------------------------------
-    # 4. Process Each Sub-Criteria
-    # ------------------------------------------------------------------
     for sub in sub_results:
         sub_id = str(sub.get("sub_id", "N/A"))
         sub_name = sub.get("sub_criteria_name", "Unknown")
-
-        level_details_raw = sub.get("level_details", {}) or {}
+        level_details = sub.get("level_details", {}) or {}
 
         highest_level = int(sub.get("highest_full_level", 0))
         if highest_level > 0:
             passed_count += 1
 
-        # ---------- Level Details ----------
-        ui_level_details = {}
+        ui_levels = {}
         pdca_matrix = []
-
-        # ---------- UI REQUIRED: grouped_sources ----------
         grouped_sources = {str(i): [] for i in range(1, 6)}
+
         unique_files = set()
-        confidence_scores = []
+        confidence_pool: list[float] = []
 
         for lv in range(1, 6):
             lv_key = str(lv)
-            lv_info = level_details_raw.get(lv_key, {}) or {}
+            lv_info = level_details.get(lv_key, {}) or {}
 
-            score = float(lv_info.get("score", 0.0))
             is_passed = bool(lv_info.get("is_passed", False))
+            score = float(lv_info.get("score", 0.0))
 
-            # Level detail
-            ui_level_details[lv_key] = {
+            ui_levels[lv_key] = {
                 "level": lv,
                 "is_passed": is_passed,
                 "score": round(score, 2),
@@ -513,15 +540,18 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "action_plan": lv_info.get("atomic_action_plan", [])
             }
 
-            # PDCA matrix
+            # ---- PDCA matrix (binary, engine-truth only)
             pdca_raw = lv_info.get("pdca_breakdown", {}) or {}
             pdca_matrix.append({
                 "level": lv,
                 "is_passed": is_passed,
-                "pdca": {k: 1 if float(pdca_raw.get(k, 0)) > 0 else 0 for k in ["P", "D", "C", "A"]}
+                "pdca": {
+                    k: 1 if float(pdca_raw.get(k, 0)) > 0 else 0
+                    for k in ["P", "D", "C", "A"]
+                }
             })
 
-            # ---------- Evidence → grouped_sources ----------
+            # ---- Evidence sources (NO GUESS)
             for src in lv_info.get("evidence_sources", []) or []:
                 filename = (
                     src.get("filename")
@@ -531,60 +561,49 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 
                 unique_files.add(filename)
 
-                conf = float(
-                    src.get("rerank_score")
-                    or src.get("relevance_score")
-                    or src.get("score")
-                    or 0.0
-                )
-                confidence_scores.append(conf)
+                conf = src.get("rerank_score")
+                if isinstance(conf, (int, float)) and conf >= 0:
+                    confidence_pool.append(conf)
+
+                pdca = src.get("pdca_tag") or src.get("pdca_phase")
+                pdca = pdca.upper() if isinstance(pdca, str) else None
 
                 grouped_sources[lv_key].append({
                     "filename": filename,
                     "document_uuid": src.get("doc_id") or src.get("stable_doc_uuid"),
-                    "page": str(src.get("page", "1")),
-                    "pdca_tag": src.get("pdca_tag", "D"),
+                    "page": str(src.get("page") or src.get("page_label") or "1"),
+                    "pdca_tag": pdca,
                     "text": src.get("text") or src.get("content", "")
                 })
 
-        avg_conf = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+        avg_conf = (
+            sum(confidence_pool) / len(confidence_pool)
+            if confidence_pool else None
+        )
 
-        processed_subs.append({
+        processed.append({
             "code": sub_id,
             "name": sub_name,
             "level": f"L{highest_level}",
             "score": round(float(sub.get("weighted_score", 0.0)), 2),
             "pdca_overall": sub.get("pdca_overall", {}),
             "pdca_matrix": pdca_matrix,
-            "level_details": ui_level_details,
+            "level_details": ui_levels,
             "grouped_sources": grouped_sources,
             "audit_confidence": {
                 "source_count": len(unique_files),
-                "traceability_score": round(avg_conf, 1),
-                "consistency_check": True
+                "traceability_score": (
+                    round(avg_conf * 100, 1) if avg_conf is not None else None
+                ),
+                "consistency_check": True if avg_conf is not None else False
             }
         })
 
-        radar_data.append({
-            "axis": sub_id,
-            "value": highest_level
-        })
+        radar_data.append({"axis": sub_id, "value": highest_level})
 
-    # ------------------------------------------------------------------
-    # 5. Natural Sort (1.1, 1.2, 2.1 ...)
-    # ------------------------------------------------------------------
-    def natural_key(code: str):
-        try:
-            return [int(x) for x in code.split(".")]
-        except Exception:
-            return [999]
-
-    processed_subs.sort(key=lambda x: natural_key(x["code"]))
-    radar_data.sort(key=lambda x: natural_key(x["axis"]))
-
-    # ------------------------------------------------------------------
-    # 6. Final UI Payload
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # 4. Final UI Payload
+    # --------------------------------------------------
     return {
         "status": summary.get("status", "COMPLETED"),
         "record_id": metadata.get("record_id"),
@@ -596,14 +615,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "full_score": 5.0,
         "strategic_roadmap": ui_roadmap,
         "metrics": {
-            "completion_rate": round(
-                (passed_count / len(processed_subs)) * 100, 1
-            ) if processed_subs else 0,
+            "completion_rate": round((passed_count / len(processed)) * 100, 1),
             "passed_criteria": passed_count,
-            "total_criteria": len(processed_subs)
+            "total_criteria": len(processed)
         },
         "radar_data": radar_data,
-        "sub_criteria": processed_subs
+        "sub_criteria": processed
     }
 
 

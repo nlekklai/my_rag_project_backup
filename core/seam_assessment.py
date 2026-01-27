@@ -2235,134 +2235,174 @@ class SEAMPDCAEngine:
 
     def _export_results(self, results_data: Any, sub_criteria_id: str, **kwargs) -> str:
         """
-        [ULTIMATE EXPORTER v2026.1.25 - DATA INTEGRITY]
-        - 🛡️ Score Sync: ดึงคะแนนโดยตรงจาก total_stats ป้องกันคะแนน 0
-        - 🧬 Evidence Recovery: รองรับโครงสร้าง Map ทั้งแบบ List และ Dict (ป้องกัน Map หาย)
-        - 📊 Deep Audit Trail: เก็บ Snippet และ Confidence รายเลเวลเพื่อการตรวจสอบย้อนกลับ
+        [FINAL EXPORTER v2026.01.27 — SEMANTIC SAFE]
+        - ❌ ไม่ force confidence = 0
+        - ❌ ไม่ fabricate PDCA phase
+        - ✅ UI color / PDCA phase / confidence คงเดิม
+        - ✅ รองรับ evidence_map ทั้ง dict และ list
         """
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            record_id = kwargs.get("record_id", getattr(self, "current_record_id", f"auto_{timestamp}"))
-            tenant = getattr(self.config, 'tenant', 'unknown')
-            year = getattr(self.config, 'year', 'unknown')
-            enabler = getattr(self, 'enabler', 'unknown').upper()
 
-            # 1. 🔍 Data Source Selection (ลำดับความสำคัญของข้อมูล)
-            # ลำดับ: ข้อมูลที่ส่งมา > ข้อมูลใน Memory > ข้อมูลว่าง
+        try:
+            # --------------------------------------------------
+            # 0. Metadata
+            # --------------------------------------------------
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            record_id = kwargs.get(
+                "record_id",
+                getattr(self, "current_record_id", f"auto_{timestamp}")
+            )
+
+            tenant = getattr(self.config, "tenant", "unknown")
+            year = getattr(self.config, "year", "unknown")
+            enabler = getattr(self, "enabler", "unknown").upper()
+
+            # --------------------------------------------------
+            # 1. Result data normalization
+            # --------------------------------------------------
             if results_data is None:
-                results_data = getattr(self, 'final_subcriteria_results', [])
-            
+                results_data = getattr(self, "final_subcriteria_results", [])
+
             if isinstance(results_data, dict):
                 results_data = [results_data]
-            
+
             if not results_data:
-                self.logger.warning(f"⚠️ [EXPORT] No result data found for {sub_criteria_id}")
+                self.logger.warning(f"⚠️ [EXPORT] No result data for {sub_criteria_id}")
                 return ""
 
-            # 2. 📊 Summary Retrieval (ดึงค่าสถิติรวม)
-            # ดึงจาก total_stats ที่ผ่านการคำนวณ Smart Mapping มาแล้ว
-            stats = getattr(self, 'total_stats', {})
-            if not stats or stats.get('total_weighted_score') == 0:
-                # Fallback: ถ้า stats ว่าง ให้พยายามคำนวณสดจาก results_data
-                highest_lvl = max([int(r.get('highest_full_level', 0)) for r in results_data])
-                total_weighted = sum([float(r.get('weighted_score', 0.0)) for r in results_data])
-                is_passed = highest_lvl >= 1
-            else:
-                highest_lvl = stats.get('overall_max_level', 0)
-                total_weighted = stats.get('total_weighted_score', 0.0)
-                is_passed = stats.get('overall_level_label') != "L0"
+            # --------------------------------------------------
+            # 2. Summary stats (NO recompute unless missing)
+            # --------------------------------------------------
+            stats = getattr(self, "total_stats", {}) or {}
 
-            # 3. 🛡️ Robust Evidence Mapping (The Fix for Empty Maps)
-            master_map = getattr(self, 'evidence_map', {})
+            highest_lvl = stats.get(
+                "overall_max_level",
+                max(int(r.get("highest_full_level", 0)) for r in results_data)
+            )
+
+            total_weighted = stats.get(
+                "total_weighted_score",
+                sum(float(r.get("weighted_score", 0.0)) for r in results_data)
+            )
+
+            # --------------------------------------------------
+            # 3. Evidence Audit Trail (SEMANTIC SAFE)
+            # --------------------------------------------------
+            master_map = getattr(self, "evidence_map", {}) or {}
             processed_evidence = {}
-            
-            for lv_key, val in master_map.items():
-                if not val: continue
-                
-                # รองรับทั้งโครงสร้างใหม่ {"evidences": [...]} และโครงสร้างเก่า [...]
-                v_list = val.get("evidences", []) if isinstance(val, dict) else val
-                
-                if not isinstance(v_list, list) or not v_list:
+
+            for level_key, bucket in master_map.items():
+                if not bucket:
                     continue
-                
-                try:
-                    # เลือกหลักฐานที่มี Rerank Score สูงสุดในเลเวลนั้น
-                    sorted_ev = sorted(
-                        [ev for ev in v_list if isinstance(ev, dict)], 
-                        key=lambda x: x.get('rerank_score', x.get('relevance_score', 0)), 
-                        reverse=True
-                    )
-                    
-                    if sorted_ev:
-                        top_ev = sorted_ev[0]
-                        doc_id = top_ev.get("doc_id") or top_ev.get("stable_doc_uuid")
-                        
-                        # ดึงชื่อไฟล์จริงจาก Map กลาง
-                        filename = self.document_map.get(doc_id) if hasattr(self, 'document_map') else None
-                        filename = filename or top_ev.get("filename") or top_ev.get("source") or "Unknown_Source"
 
-                        processed_evidence[str(lv_key)] = {
-                            "file": filename,
-                            "page": top_ev.get("page", top_ev.get("page_label", "N/A")),
-                            "pdca": str(top_ev.get("pdca_tag", "N/A")).upper(),
-                            "confidence": round(float(top_ev.get("rerank_score", 0)), 4),
-                            "snippet": str(top_ev.get("content", ""))[:150] + "..."
-                        }
-                except Exception as ev_err:
-                    self.logger.debug(f"⚠️ Skip evidence key {lv_key}: {ev_err}")
+                # รองรับทั้ง:
+                # { level: { evidences: [...] } }
+                # { level: [...] }
+                ev_list = (
+                    bucket.get("evidences", [])
+                    if isinstance(bucket, dict)
+                    else bucket
+                )
 
-            # 4. 📝 Build Final Payload (Standard Schema v2026)
+                if not isinstance(ev_list, list) or not ev_list:
+                    continue
+
+                # เลือก evidence ที่มี confidence สูงสุดจริง
+                sorted_ev = sorted(
+                    [ev for ev in ev_list if isinstance(ev, dict)],
+                    key=lambda x: (
+                        x.get("rerank_score")
+                        if isinstance(x.get("rerank_score"), (int, float))
+                        else -1
+                    ),
+                    reverse=True
+                )
+
+                if not sorted_ev:
+                    continue
+
+                top_ev = sorted_ev[0]
+
+                # -------------------------------
+                # Filename resolve
+                # -------------------------------
+                doc_id = top_ev.get("doc_id") or top_ev.get("stable_doc_uuid")
+
+                filename = (
+                    top_ev.get("filename")
+                    or (self.document_map.get(doc_id) if hasattr(self, "document_map") else None)
+                    or top_ev.get("source")
+                    or "Unknown_Source"
+                )
+
+                # -------------------------------
+                # PDCA (NO DEFAULT, NO GUESS)
+                # -------------------------------
+                pdca = (
+                    top_ev.get("pdca_tag")
+                    or top_ev.get("pdca_phase")
+                )
+                pdca = pdca.upper() if isinstance(pdca, str) else None
+
+                # -------------------------------
+                # Confidence (NO FORCE 0)
+                # -------------------------------
+                confidence = top_ev.get("rerank_score")
+                if not isinstance(confidence, (int, float)) or confidence < 0:
+                    confidence = None
+
+                processed_evidence[str(level_key)] = {
+                    "file": filename,
+                    "page": top_ev.get("page") or top_ev.get("page_label", "N/A"),
+                    "pdca": pdca,
+                    "confidence": confidence,
+                    "snippet": (top_ev.get("content") or "")[:160]
+                }
+
+            # --------------------------------------------------
+            # 4. Final payload (STABLE SCHEMA)
+            # --------------------------------------------------
             payload = {
                 "metadata": {
                     "record_id": record_id,
                     "tenant": tenant,
                     "year": year,
                     "enabler": enabler,
-                    "engine_version": "SEAM-ENGINE-v2026.1.25",
+                    "engine_version": "SEAM-ENGINE-v2026.01.27",
                     "exported_at": datetime.now().isoformat()
                 },
                 "result_summary": {
-                    "maturity_level": stats.get('overall_level_label', f"L{highest_lvl}"),
-                    "is_passed": is_passed,
+                    "maturity_level": f"L{highest_lvl}",
                     "total_weighted_score": round(total_weighted, 4),
-                    "evidence_used_count": len(processed_evidence),
-                    "evaluated_sub_count": len(results_data),
                     "status": "COMPLETED"
                 },
                 "sub_criteria_details": results_data,
                 "evidence_audit_trail": processed_evidence,
-                "strategic_roadmap": getattr(self, 'master_roadmap_data', {
-                    "status": "GENERATED",
-                    "overall_strategy": "โปรดดูรายละเอียดในส่วน sub_criteria_details"
-                })
+                "strategic_roadmap": getattr(self, "master_roadmap_data", {})
             }
 
-            # 5. 💾 Save to JSON
-            # พยายามใช้ path จาก config ถ้าไม่มีให้ใช้ local exports
-            try:
-                from utils.path_utils import get_assessment_export_file_path
-                export_path = get_assessment_export_file_path(
-                    tenant=tenant, year=year, enabler=enabler.lower(),
-                    suffix=f"{sub_criteria_id}_{timestamp}", ext="json"
-                )
-            except ImportError:
-                out_dir = f"exports/{tenant}/{year}/{enabler.lower()}"
-                os.makedirs(out_dir, exist_ok=True)
-                export_path = f"{out_dir}/REPORT_{sub_criteria_id}_{timestamp}.json"
+            # --------------------------------------------------
+            # 5. Export
+            # --------------------------------------------------
+            export_path = get_assessment_export_file_path(
+                tenant=tenant,
+                year=year,
+                enabler=enabler.lower(),
+                suffix=f"{sub_criteria_id}_{timestamp}",
+                ext="json"
+            )
 
-            # 🎯 [ADD THIS LINE] สร้าง Folder ทันทีจาก export_path ที่ได้มา
             os.makedirs(os.path.dirname(export_path), exist_ok=True)
 
-            with open(export_path, 'w', encoding='utf-8') as f:
+            with open(export_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
 
-            self.logger.info(f"✅ [EXPORT SUCCESS] Report generated: {export_path}")
+            self.logger.info(f"✅ [EXPORT OK] {export_path}")
             return export_path
 
-        except Exception as e:
-            self.logger.error(f"🛑 [EXPORT CRITICAL ERROR] {str(e)}", exc_info=True)
+        except Exception:
+            self.logger.error("🛑 [EXPORT FAILED]", exc_info=True)
             return ""
-    
+
 
     def _guarantee_text_key(
         self,
@@ -2874,19 +2914,18 @@ class SEAMPDCAEngine:
         record_id: str = None
     ) -> Dict[str, Any]:
         """
-        จัดกลุ่มหลักฐานแบบ Multi-Layer Tagging:
-        1. Semantic (AI/Engine) -> 2. Heuristic (Keyword-based) -> 3. Forced (Fallback)
+        [FINAL LOCKED v2026.01.28.1]
+        - 🔒 Forced PDCA ≠ Real PDCA
+        - 🔒 ส่ง pdca_confidence downstream
         """
 
         pdca_groups = defaultdict(list)
         seen_texts = set()
         all_candidate = (evidences or []) + (baseline_evidences or [])
 
-        # ดึงรายชื่อ Phase ที่เกณฑ์เลเวลนี้ต้องการ (เช่น L1 ต้องการ P และ D)
         require_phases = self.get_rule_content(sub_id, level, "require_phase") or ["P", "D"]
 
         for idx, chunk in enumerate(all_candidate, start=1):
-            # --- 1. Data Cleaning & Deduplication ---
             txt = (chunk.get("text") or chunk.get("page_content") or "").strip()
             if not txt or len(txt) < 10:
                 continue
@@ -2896,94 +2935,77 @@ class SEAMPDCAEngine:
                 continue
             seen_texts.add(txt_hash)
 
-            # --- 2. Metadata Preparation ---
             meta = chunk.get("metadata", {}) or {}
             fname = chunk.get("source_filename") or meta.get("source_filename") or "Unknown"
             page = meta.get("page_label") or meta.get("page") or "N/A"
-            is_baseline = chunk.get("source") == "BASELINE" or chunk.get("is_baseline", False)
-            
-            prefix = "[BASELINE] " if is_baseline else ""
-            source_display = f"{prefix}{fname} (P.{page})"
+            is_baseline = chunk.get("is_baseline", False)
 
-            # --- 3. MULTI-LAYER TAGGING LOGIC (หัวใจสำคัญ) ---
+            source_display = f"{'[BASELINE] ' if is_baseline else ''}{fname} (P.{page})"
+
+            # ---------- MULTI-LAYER TAGGING ----------
             is_forced = False
-            
-            # Layer 1: Semantic Tag (ลองดึงจาก AI/Engine เดิม)
-            final_tag = self._get_semantic_tag(txt, sub_id, level, fname)
             tag_source = "Semantic-Engine"
+            final_tag = self._get_semantic_tag(txt, sub_id, level, fname)
 
-            # Layer 2: Heuristic Fallback (ถ้า Layer 1 หาไม่เจอ หรือได้ค่ากลางๆ)
-            if final_tag in [None, "Other", "OTHER", "N/A"]:
-                heuristic_tag = self._get_heuristic_pdca_tag(text=txt, level=level)
-                if heuristic_tag:
-                    final_tag = heuristic_tag
+            if final_tag not in {"P", "D", "C", "A"}:
+                heuristic = self._get_heuristic_pdca_tag(txt, level)
+                if heuristic in {"P", "D", "C", "A"}:
+                    final_tag = heuristic
                     tag_source = "Heuristic-Rule-Base"
 
-            # Layer 3: Forced Contextual Fallback (ทางเลือกสุดท้าย)
-            if final_tag in [None, "Other", "OTHER", "N/A"]:
+            if final_tag not in {"P", "D", "C", "A"}:
                 if level >= 4:
-                    # เลเวลสูงเราเน้นคุณภาพ ไม่แม่นจริงเราไม่เอามาคิด (Strict Mode)
-                    self.logger.debug(f"🚫 Excluded Other (L{level} strict): {source_display}")
-                    continue
-
+                    continue  # STRICT MODE
                 is_forced = True
-                # แจก Tag ตามลำดับ Require Phase (Round-robin)
                 final_tag = require_phases[(idx - 1) % len(require_phases)]
-                tag_source = f"Forced-Contextual-L{level} ({final_tag})"
-                self.logger.debug(f"⚠️ Forced {final_tag} → {source_display}")
+                tag_source = f"Forced-L{level}"
 
-            # --- 4. Append to Group (with Confidence Scoring) ---
-            
-            # กำหนดค่าความมั่นใจตามแหล่งที่มาของ Tag
-            # Semantic (AI) = 0.9, Heuristic (Keyword) = 0.7, Forced (เดา) = 0.4
-            confidence_map = {
-                "Semantic-Engine": 0.9,
-                "Heuristic-Rule-Base": 0.7
-            }
-            # ตรวจสอบ tag_source เพื่อระบุคะแนนความมั่นใจ
-            p_conf = confidence_map.get(tag_source, 0.4 if is_forced else 0.5)
+            pdca_confidence = (
+                0.9 if tag_source == "Semantic-Engine"
+                else 0.7 if tag_source == "Heuristic-Rule-Base"
+                else 0.4
+            )
 
             pdca_groups[final_tag].append({
                 "text": txt,
-                "source_display": source_display,
                 "filename": fname,
                 "page": page,
+                "source_display": source_display,
+                "pdca_tag": final_tag,
+                "pdca_confidence": pdca_confidence,
                 "is_forced": is_forced,
                 "is_baseline": is_baseline,
                 "relevance": float(chunk.get("rerank_score") or chunk.get("score") or 0.5),
-                "tag_source": tag_source,
-                "pdca_tag": final_tag,
-                "pdca_confidence": p_conf  # 👈 เพิ่มฟิลด์นี้เข้าไป
+                "tag_source": tag_source
             })
 
-        # --- 5. Block Construction for LLM ---
-        max_ch = getattr(self.config, 'MAX_CHUNKS_PER_BLOCK', 5)
+        # ---------- BLOCK OUTPUT ----------
+        max_ch = getattr(self.config, "MAX_CHUNKS_PER_BLOCK", 5)
         blocks = {
-            "sources": {}, 
+            "sources": {},
             "actual_counts": {},
-            "all_evidences_with_tags": [] # สำหรับส่งกลับไปทำ Report metadata
+            "all_evidences_with_tags": []
         }
 
         for tag in ["P", "D", "C", "A"]:
-            # เรียงลำดับความน่าเชื่อถือ: ของจริง(ไม่ forced) > คะแนนสูง > ไม่ใช่ baseline
+            real_only = [c for c in pdca_groups.get(tag, []) if not c["is_forced"]]
+
             ranked = sorted(
-                pdca_groups.get(tag, []),
-                key=lambda x: (x["is_forced"], -x["relevance"], x["is_baseline"])
+                real_only,
+                key=lambda x: (-x["pdca_confidence"], -x["relevance"])
             )[:max_ch]
 
+            blocks["actual_counts"][tag] = len(real_only)
+            blocks["sources"][tag] = [c["source_display"] for c in ranked]
+
             if ranked:
-                blocks[tag] = "\n\n".join([
-                    f"[{c['source_display']} | {c['tag_source']}{' ⚠️FORCED' if c['is_forced'] else ''}]\n"
-                    f"{c['text'][:1000]}"
+                blocks[tag] = "\n\n".join(
+                    f"[{c['source_display']} | {c['tag_source']}]\n{c['text'][:1000]}"
                     for c in ranked
-                ])
-                # เก็บก้อนหลักฐานแบบละเอียดไว้ทำ UI JSON
+                )
                 blocks["all_evidences_with_tags"].extend(ranked)
             else:
-                blocks[tag] = f"[ไม่พบหลักฐานชัดเจนในหมวด {tag}]"
-
-            blocks["sources"][tag] = [c["source_display"] for c in ranked]
-            blocks["actual_counts"][tag] = len([c for c in ranked if not c["is_forced"]])
+                blocks[tag] = f"[ไม่พบหลักฐาน PDCA จริงในหมวด {tag}]"
 
         return blocks
 
@@ -2999,96 +3021,63 @@ class SEAMPDCAEngine:
         highest_rerank_score: float = 0.0
     ) -> float:
         """
-        บันทึกหลักฐาน + Retroactive Sync จาก AI Extraction + คำนวณ Strength
+        [FINAL STRENGTH v2026.01.28.1]
+        - 🔒 Forced PDCA NEVER counted
         """
-        map_key = f"{sub_id}.L{level}"
-        ai_contexts = {t: str(llm_result.get(f"Extraction_{t}", "")).lower() for t in "PDCA"}
 
+        map_key = f"{sub_id}_L{level}"
         new_evidence_list = []
-        seen_keys = set()
-        PASS_STATUS = "PASS" if llm_result.get("is_passed", False) else "FAIL"
+        seen = set()
 
-        # ดึง require_phase ไว้ใช้ fallback ล่วงหน้า (ลดการเรียกซ้ำ)
-        require_phases = self.get_rule_content(sub_id, level, "require_phase") or []
-        default_fallback = require_phases[0] if require_phases else ("P" if level == 1 else "D")
+        for ev in level_temp_map:
+            if ev.get("is_forced"):
+                continue  # 🔥 DROP FORCED
 
-        for chunk in level_temp_map:
-            text = chunk.get("text") or ""
-            if not text.strip():
+            tag = ev.get("pdca_tag")
+            if tag not in {"P", "D", "C", "A"}:
                 continue
 
-            meta = chunk.get("metadata", {})
-            fname = os.path.basename(str(meta.get("source") or "Unknown")).lower()
-
-            doc_id = chunk.get("stable_doc_uuid") or meta.get("stable_doc_uuid") or "unknown"
-            chunk_uuid = chunk.get("chunk_uuid") or hashlib.sha256(text.encode()).hexdigest()[:16]
-            unique_key = f"{doc_id}:{chunk_uuid}"
-            if unique_key in seen_keys:
+            uid = f"{ev.get('doc_id')}:{ev.get('page')}:{tag}"
+            if uid in seen:
                 continue
-            seen_keys.add(unique_key)
+            seen.add(uid)
 
-            pdca_tag = chunk.get("pdca_tag") or "Other"
-            self.logger.debug(f"[EVI-TAG-INPUT] {fname} | raw_pdca_tag: {pdca_tag}")
-
-            # 1. Retroactive Sync จาก AI Extraction (ก่อน retry)
-            for tag, summary in ai_contexts.items():
-                if fname in summary and len(summary.strip()) > 5:
-                    pdca_tag = tag
-                    self.logger.info(f"[EVI-TAG-RETRO] {fname} → {pdca_tag} (from AI extraction)")
-                    break
-
-            # 2. ถ้ายังเป็น "Other" → พยายาม tag ใหม่ด้วย _get_semantic_tag
-            if pdca_tag == "Other":
-                try:
-                    pdca_tag = self._get_semantic_tag(text, sub_id, level, fname)
-                    self.logger.info(f"[EVI-TAG-RETRY] {fname} → {pdca_tag} (retry from Other)")
-                except Exception as e:
-                    self.logger.warning(f"[EVI-TAG-RETRY-ERR] {fname}: {e}")
-
-            # 3. ถ้ายังเป็น "Other" อีก → บังคับ fallback ไป require_phase[0] หรือ default
-            if pdca_tag == "Other":
-                pdca_tag = default_fallback
-                self.logger.info(f"[EVI-TAG-FORCE] {fname} → {pdca_tag} (force from require_phase/default)")
-
-            entry = {
+            new_evidence_list.append({
                 "sub_id": sub_id,
                 "level": level,
-                "pdca_tag": pdca_tag,
-                "doc_id": doc_id,
-                "chunk_uuid": chunk_uuid,
-                "source_filename": fname,
-                "page": str(meta.get("page_label") or meta.get("page") or "N/A"),
-                "relevance_score": float(chunk.get("rerank_score") or chunk.get("score") or 0.5),
-                "text_preview": text[:300].replace("\n", " ") + "..." if len(text) > 300 else text,
-                "status": PASS_STATUS,
-                "timestamp": datetime.now().isoformat(),
-            }
-            new_evidence_list.append(entry)
+                "pdca_tag": tag,
+                "doc_id": ev.get("doc_id"),
+                "filename": ev.get("filename"),
+                "page": ev.get("page"),
+                "relevance_score": ev.get("relevance", 0.0),
+                "pdca_confidence": ev.get("pdca_confidence", 0.5),
+                "timestamp": datetime.now().isoformat()
+            })
 
         if not new_evidence_list:
             return 0.0
 
-        self.evidence_map.setdefault(map_key, []).extend(deepcopy(new_evidence_list))
+        self.evidence_map.setdefault(map_key, []).extend(new_evidence_list)
 
-        tags_set = {"P", "D", "C", "A"}
-        found_tags = {ev["pdca_tag"] for ev in new_evidence_list if ev["pdca_tag"] in tags_set}
-        coverage = len(found_tags) / 4.0
-        strength = round((highest_rerank_score * 0.6) + (coverage * 0.4), 2)
+        # ---------- REAL COVERAGE ONLY ----------
+        found = {e["pdca_tag"] for e in new_evidence_list}
+        coverage = len(found) / 4.0
+
+        # ---------- STRENGTH ----------
+        strength = round(
+            (highest_rerank_score * 0.6) +
+            (coverage * 0.4),
+            2
+        )
 
         self.assessment_results_map[map_key] = {
             "is_passed": llm_result.get("is_passed", False),
-            "score": llm_result.get("score", 0.0),
-            "strength": strength
+            "strength": strength,
+            "coverage": coverage
         }
 
-        counts = {t: sum(1 for e in new_evidence_list if e["pdca_tag"] == t) for t in list(tags_set) + ["Other"]}
-        self.logger.info(
-            f"[EVI-SAVED] {map_key} | items:{len(new_evidence_list)} "
-            f"P:{counts['P']} D:{counts['D']} C:{counts['C']} A:{counts['A']} Other:{counts['Other']} "
-            f"strength:{strength:.2f}"
-        )
-
         return strength
+
 
     def _robust_hydrate_documents_for_priority_chunks(
         self,
@@ -3138,7 +3127,10 @@ class SEAMPDCAEngine:
                 return chunk
             meta = chunk.get("metadata", {})
             fname = os.path.basename(str(meta.get("source") or meta.get("file_name") or "unknown"))
-            chunk["pdca_tag"] = _safe_classify(text, fname)
+
+            if not chunk.get("pdca_tag"):
+                chunk["pdca_tag"] = _safe_classify(text, fname)
+
             chunk["rerank_score"] = max(float(chunk.get("rerank_score", 0.0)), boost_score)
             chunk["score"] = max(float(chunk.get("score", 0.0)), boost_score)
             return chunk
@@ -4253,10 +4245,10 @@ MANDATORY AUDIT RULES:
     
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
-        [CLEAN ARCHITECTURAL REVISE v2026.01.27]
-        - ✅ Evidence ผูกกับ level จริงเท่านั้น
-        - ✅ level_details ไม่มี schema ปน
-        - ✅ PDCA overall สะท้อน maturity ต่อเนื่องจริง
+        [FINAL SEMANTIC-LOCKED MERGE v2026.01.27]
+        - 🔒 PDCA / confidence semantic preserved (no fabrication)
+        - 🔒 Evidence ผูกกับ level จริง (sub_id_Lx)
+        - 🔒 UI-safe downstream (no fake defaults)
         """
 
         if not sub_result:
@@ -4265,17 +4257,17 @@ MANDATORY AUDIT RULES:
 
         sub_id = str(sub_result.get("sub_id", "Unknown"))
 
-        # --------------------------------------------------
-        # 1. Evidence Merge (LEVEL-TRUE)
-        # --------------------------------------------------
+        # ==================================================
+        # 1. Evidence Merge (LEVEL-TRUE + SEMANTIC LOCK)
+        # ==================================================
         if temp_map and isinstance(temp_map, dict):
             self.evidence_map = getattr(self, "evidence_map", {})
 
             for level_key, ev_list in temp_map.items():
-                if not ev_list or not isinstance(ev_list, list):
+                if not isinstance(ev_list, list) or not ev_list:
                     continue
 
-                # level_key ต้องเป็นรูปแบบ sub_id_Lx เท่านั้น
+                # ต้องเป็น sub_id_Lx เท่านั้น
                 if "_L" not in level_key:
                     continue
 
@@ -4285,28 +4277,54 @@ MANDATORY AUDIT RULES:
                 )
 
                 existing = node["evidences"]
-                seen = {f"{e.get('doc_id')}_{e.get('page')}" for e in existing}
+                seen = {
+                    f"{e.get('doc_id')}_{e.get('page')}"
+                    for e in existing if isinstance(e, dict)
+                }
 
                 for ev in ev_list:
                     if not isinstance(ev, dict):
                         continue
 
                     doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid")
-                    page = str(ev.get("page") or ev.get("page_label", "0"))
+                    page = str(ev.get("page") or ev.get("page_label") or "0")
                     uid = f"{doc_id}_{page}"
 
                     if not doc_id or uid in seen:
                         continue
 
+                    # ---------- 🔒 PDCA SEMANTIC (NO GUESSING) ----------
+                    pdca = (
+                        ev.get("pdca_tag")
+                        or ev.get("pdca_phase")
+                        or ev.get("phase")
+                    )
+                    if pdca:
+                        pdca = str(pdca).upper()
+                        ev["pdca_tag"] = pdca if pdca in ["P", "D", "C", "A"] else None
+                    else:
+                        ev["pdca_tag"] = None
+
+                    # ---------- 🔒 CONFIDENCE SEMANTIC ----------
+                    if ev.get("rerank_score") is None:
+                        ev["rerank_score"] = ev.get("confidence")
+
+                    if ev.get("rerank_score") is not None:
+                        try:
+                            ev["rerank_score"] = float(ev["rerank_score"])
+                        except Exception:
+                            ev["rerank_score"] = None
+
+                    # ---------- filename binding ----------
                     if hasattr(self, "document_map") and doc_id in self.document_map:
                         ev["filename"] = self.document_map[doc_id]
 
                     existing.append(ev)
                     seen.add(uid)
 
-        # --------------------------------------------------
+        # ==================================================
         # 2. Init / Locate Sub Result
-        # --------------------------------------------------
+        # ==================================================
         self.final_subcriteria_results = getattr(self, "final_subcriteria_results", [])
 
         target = next(
@@ -4317,7 +4335,9 @@ MANDATORY AUDIT RULES:
         if not target:
             target = {
                 "sub_id": sub_id,
-                "sub_criteria_name": sub_result.get("sub_criteria_name", f"Criteria {sub_id}"),
+                "sub_criteria_name": sub_result.get(
+                    "sub_criteria_name", f"Criteria {sub_id}"
+                ),
                 "weight": float(sub_result.get("weight", 4.0)),
                 "level_details": {},
                 "highest_full_level": 0,
@@ -4328,18 +4348,18 @@ MANDATORY AUDIT RULES:
             }
             self.final_subcriteria_results.append(target)
 
-        # --------------------------------------------------
-        # 3. Merge Level Details (ATOMIC)
-        # --------------------------------------------------
+        # ==================================================
+        # 3. Merge Level Details (ATOMIC / NO MIXED SCHEMA)
+        # ==================================================
         incoming_levels = sub_result.get("level_details", {})
         if isinstance(incoming_levels, dict):
             for lv, lv_data in incoming_levels.items():
                 if isinstance(lv_data, dict):
                     target["level_details"][lv] = lv_data
 
-        # --------------------------------------------------
+        # ==================================================
         # 4. Step-Ladder Maturity (CONTINUOUS ONLY)
-        # --------------------------------------------------
+        # ==================================================
         highest = 0
         stop_reason = "Assessment complete"
         pdca_sum = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
@@ -4356,17 +4376,20 @@ MANDATORY AUDIT RULES:
 
             if is_passed and not is_capped:
                 highest = l
-                bd = data.get("pdca_breakdown", {})
+                bd = data.get("pdca_breakdown", {}) or {}
                 for k in pdca_sum:
-                    pdca_sum[k] += float(bd.get(k, 0.0))
+                    try:
+                        pdca_sum[k] += float(bd.get(k, 0.0))
+                    except Exception:
+                        pass
                 passed_count += 1
             else:
-                stop_reason = f"Stopped at L{l}: {data.get('reason', '')[:80]}"
+                stop_reason = f"Stopped at L{l}: {str(data.get('reason', ''))[:80]}"
                 break
 
-        # --------------------------------------------------
+        # ==================================================
         # 5. Finalize
-        # --------------------------------------------------
+        # ==================================================
         target["highest_full_level"] = highest
         target["is_passed"] = highest >= 1
         target["weighted_score"] = round(highest * float(target["weight"]), 2)
@@ -4386,7 +4409,6 @@ MANDATORY AUDIT RULES:
         )
 
         return target
-
     
     def run_assessment(
         self,
