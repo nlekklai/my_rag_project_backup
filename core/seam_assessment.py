@@ -4268,104 +4268,194 @@ MANDATORY AUDIT RULES:
     #   }
     # }
 
-    def _save_evidence_map(self, map_to_save: Optional[Dict[str, Any]] = None, clear_existing: bool = False):
+    def _save_evidence_map(
+        self,
+        map_to_save: Optional[Dict[str, Any]] = None,
+        clear_existing: bool = False
+    ):
         """
-        [ULTIMATE REVISE v2026.1.25 - THE STABLE ATOMIC BUILD]
-        - 🎯 บังคับโครงสร้าง Nested Level Key: "1.1_L1", "1.1_L2"
-        - 🛡️ Atomic Write: ป้องกันไฟล์พังด้วยการใช้ tempfile + shutil.move
-        - 🧹 Post-Merge: เรียงคะแนนและอัปเดตสถานะอัตโนมัติ
+        [ULTIMATE STABLE REVISE v2026.01.27]
+        - 🎯 Enforced Nested Level Key: "1.1_L1", "1.1_L2"
+        - 🛡️ Atomic Write (tempfile + shutil.move)
+        - 🧹 Post-Merge Sorting & Status Update
+        - 🚫 Zero-tolerance for float(None)
+        - 🧯 Evidence Map failure MUST NOT break assessment core
         """
+
+        def _safe_float(val, default=0.0) -> float:
+            try:
+                if val is None:
+                    return float(default)
+                return float(val)
+            except (TypeError, ValueError):
+                return float(default)
+
         try:
-            # 1. เตรียม Path และ Folder
+            # -------------------------------------------------
+            # 1. Prepare Path
+            # -------------------------------------------------
             map_file_path = get_evidence_mapping_file_path(
-                tenant=self.config.tenant, year=self.config.year, enabler=self.enabler
+                tenant=self.config.tenant,
+                year=self.config.year,
+                enabler=self.enabler
             )
             os.makedirs(os.path.dirname(map_file_path), exist_ok=True)
-            
-            # 2. โหลดข้อมูลเดิมมาตั้งต้น (ยกเว้นสั่งล้างเครื่อง)
-            final_map = {} if clear_existing else self._load_evidence_map(is_for_merge=True)
-            
-            # เลือกใช้ข้อมูลที่ส่งมา หรือข้อมูลใน Class memory
-            incoming = map_to_save if map_to_save is not None else getattr(self, 'evidence_map', {})
 
-            # 3. เริ่มขั้นตอน Merge ข้อมูล
+            # -------------------------------------------------
+            # 2. Load Existing Map
+            # -------------------------------------------------
+            final_map = {} if clear_existing else self._load_evidence_map(is_for_merge=True)
+
+            incoming = (
+                map_to_save
+                if map_to_save is not None
+                else getattr(self, "evidence_map", {})
+            )
+
+            if not isinstance(incoming, dict):
+                self.logger.warning("⚠️ [EVIDENCE-MAP] Incoming map is not dict, skipped")
+                return
+
+            # -------------------------------------------------
+            # 3. Merge Evidence
+            # -------------------------------------------------
             for key, evidence_data in incoming.items():
-                # ตรวจสอบรูปแบบ Key (ต้องเป็น 1.1_L1)
                 if "_L" not in key:
-                    self.logger.warning(f"⚠️ [EVIDENCE-MAP] Key format mismatch: '{key}' should be like '1.1_L1'")
-                
-                target_bucket = final_map.setdefault(key, {"status": "pending", "evidences": []})
-                existing_evs = target_bucket["evidences"]
-                
-                # จัดการ list ของหลักฐาน
-                new_evs = evidence_data.get("evidences", []) if isinstance(evidence_data, dict) else evidence_data
-                if not isinstance(new_evs, list): continue
+                    self.logger.warning(
+                        f"⚠️ [EVIDENCE-MAP] Key format mismatch: '{key}' (expected 1.1_Lx)"
+                    )
+
+                bucket = final_map.setdefault(
+                    key, {"status": "pending", "evidences": []}
+                )
+                existing_evs = bucket["evidences"]
+
+                new_evs = (
+                    evidence_data.get("evidences", [])
+                    if isinstance(evidence_data, dict)
+                    else evidence_data
+                )
+
+                if not isinstance(new_evs, list):
+                    continue
 
                 for new_e in new_evs:
-                    if not isinstance(new_e, dict): continue
-                    
+                    if not isinstance(new_e, dict):
+                        continue
+
                     doc_id = new_e.get("doc_id") or new_e.get("chunk_uuid")
-                    if not doc_id: continue
+                    if not doc_id:
+                        continue
 
-                    page = str(new_e.get("page") or new_e.get("page_label", "0"))
+                    page = str(new_e.get("page") or new_e.get("page_label") or "0")
                     idx_key = f"{doc_id}_{page}"
-                    
-                    # ค้นหาว่ามีไฟล์นี้ใน bucket นี้หรือยัง (Deduplicate ราย Level)
-                    match = next((e for e in existing_evs if f"{e.get('doc_id')}_{e.get('page')}" == idx_key), None)
 
+                    match = next(
+                        (
+                            e for e in existing_evs
+                            if f"{e.get('doc_id')}_{e.get('page')}" == idx_key
+                        ),
+                        None
+                    )
+
+                    # -------------------------------
+                    # UPDATE EXISTING
+                    # -------------------------------
                     if match:
-                        # --- UPDATE EXISTING ---
-                        match["relevance_score"] = float(new_e.get("relevance_score", match.get("relevance_score", 0.0)))
-                        match["is_selected"] = new_e.get("is_selected", match.get("is_selected", True))
-                        
+                        match["relevance_score"] = _safe_float(
+                            new_e.get("relevance_score"),
+                            match.get("relevance_score", 0.0)
+                        )
+                        match["is_selected"] = new_e.get(
+                            "is_selected", match.get("is_selected", True)
+                        )
+
                         if new_e.get("source_type") == "human_map":
                             match["source_type"] = "human_map"
+
                         if new_e.get("note"):
                             match["note"] = new_e["note"]
+
+                    # -------------------------------
+                    # INSERT NEW
+                    # -------------------------------
                     else:
-                        # --- INSERT NEW ---
                         if not new_e.get("filename"):
-                            new_e["filename"] = getattr(self, 'document_map', {}).get(doc_id, "Unknown File")
-                        
+                            new_e["filename"] = (
+                                getattr(self, "document_map", {}).get(doc_id)
+                                or "Unknown File"
+                            )
+
                         new_node = {
                             "doc_id": doc_id,
                             "filename": new_e.get("filename"),
                             "page": page,
                             "source_type": new_e.get("source_type", "system_gen"),
                             "is_selected": new_e.get("is_selected", True),
-                            "relevance_score": float(new_e.get("relevance_score", new_e.get("rerank_score", 0.0))),
+                            "relevance_score": _safe_float(
+                                new_e.get("relevance_score"),
+                                new_e.get("rerank_score", 0.0)
+                            ),
                             "note": new_e.get("note", "")
                         }
                         existing_evs.append(new_node)
 
-            # 4. 🧹 Post-Processing: Sorting & Status Update
-            for k in final_map:
-                evs = final_map[k]["evidences"]
-                # เรียงคะแนนจากสูงไปต่ำเพื่อให้ UI/AI เห็นหลักฐานที่ดีที่สุดก่อน
-                evs.sort(key=lambda x: x.get("relevance_score", 0.0), reverse=True)
-                
-                # อัปเดตสถานะความน่าเชื่อถือ
-                has_human = any(e.get("source_type") == "human_map" for e in evs)
-                final_map[k]["status"] = "reviewed" if has_human else "ai_generated"
+            # -------------------------------------------------
+            # 4. Post-Processing
+            # -------------------------------------------------
+            for k, bucket in final_map.items():
+                evs = bucket.get("evidences", [])
 
-            # 5. 🛡️ Atomic Saving: บันทึกไฟล์แบบปลอดภัย
+                evs.sort(
+                    key=lambda x: _safe_float(x.get("relevance_score")),
+                    reverse=True
+                )
+
+                has_human = any(
+                    e.get("source_type") == "human_map" for e in evs
+                )
+                bucket["status"] = "reviewed" if has_human else "ai_generated"
+
+            # -------------------------------------------------
+            # 5. Atomic Save
+            # -------------------------------------------------
             temp_dir = os.path.dirname(map_file_path)
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, dir=temp_dir, suffix='.tmp', encoding="utf-8") as tmp:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                delete=False,
+                dir=temp_dir,
+                suffix=".tmp",
+                encoding="utf-8"
+            ) as tmp:
                 json.dump(final_map, tmp, indent=4, ensure_ascii=False)
                 tmp_path = tmp.name
-            
-            # ย้ายไฟล์ temp ไปทับไฟล์จริง (Atomic Operation ใน OS ส่วนใหญ่)
+
             shutil.move(tmp_path, map_file_path)
-            
-            # อัปเดต Cache ในหน่วยความจำด้วย
+
+            # Update memory cache
             self.evidence_map = final_map
-            self.logger.info(f"✅ [EVIDENCE-MAP] Save Successful: {map_file_path}")
+
+            self.logger.info(
+                f"✅ [EVIDENCE-MAP] Save Successful: {map_file_path}"
+            )
 
         except Exception as e:
-            self.logger.error(f"❌ [EVIDENCE-MAP] Fatal Save Error: {str(e)}")
-            # พยายามล้างไฟล์ขยะถ้าเกิด Error
-            if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            # 🔥 HARD RULE: Evidence map must NEVER break assessment
+            self.logger.error(
+                f"❌ [EVIDENCE-MAP] Fatal Save Error (ignored): {str(e)}"
+            )
+
+            if "tmp_path" in locals() and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+            self.logger.warning(
+                "🧯 [EVIDENCE-MAP] Skipped saving, assessment continues"
+            )
+            return
+
 
     def merge_evidence_mappings(self, results_list: List[Any]) -> Dict[str, Any]:
         """
