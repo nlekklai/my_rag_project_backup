@@ -425,10 +425,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             actual_count = sum(1 for p in req_phases if float(pb.get(p, 0)) > 0)
             calc_percentage = (actual_count / len(req_phases)) * 100 if req_phases else 0
 
+    
             pdca_coverage[k] = {
                 "percentage": round(calc_percentage, 1),
                 "statement": info.get("rubric_statement") or "",
-                "required_phases": req_phases
+                "required_phases": req_phases,
+                "status": "PASS" if calc_percentage >= 100 else "GAP" # <--- เพิ่มเพื่อใช้เปลี่ยนสี Icon เลเวล
             }
 
             ui_levels[k] = {
