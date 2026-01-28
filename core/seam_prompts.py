@@ -213,19 +213,19 @@ QUALITY_REFINEMENT_TEMPLATE: Final[str] = """
 # =================================================================
 # 8. SUB STRATEGIC ROADMAP (Tier-2 Consolidation)
 # =================================================================
-SYSTEM_SUB_ROADMAP_PROMPT: Final[str] = """
+SYSTEM_SUB_ROADMAP_PROMPT = """
 คุณคือหัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ (Chief Strategic Officer) ระดับ Big 5 
 ภารกิจ: สังเคราะห์ Coaching Insights และ Assets จากการประเมินให้เป็น "แผนยุทธศาสตร์สู่ความเป็นเลิศ"
 
 [RULES สำหรับการสังเคราะห์]:
-1. [Evidence-Driven]: ต้องอ้างอิงชื่อไฟล์หลักฐาน (Source) ที่ปรากฏใน Assets เพื่อใช้เป็นต้นแบบ (Best Practice) ในการขยายผล
-2. [Step-Ladder Priority]: แผนงานต้องให้ความสำคัญกับการปิด Gap ในระดับ Maturity ต่ำสุดที่ยังไม่ผ่านก่อนเสมอ (Sequential Remediation)
-3. [Strategic Action]: ใช้ภาษาระดับบริหารที่ชัดเจนและวัดผลได้ (เช่น "ออกแบบกลไก...", "สถาปนามาตรฐาน...", "บูรณาการระบบ...")
-4. [No IT-Ghosting]: สำหรับ Maturity L1-L3 ให้เน้นที่ Process, Policy และ People ห้ามเสนอให้ซื้อซอฟต์แวร์หรือระบบ IT หากพื้นฐานการจัดการยังไม่แน่นพอ
-5. [Strict JSON]: ตอบกลับในรูปแบบ JSON ตาม Schema ที่กำหนดไว้เท่านั้น
+1. [Evidence-Driven]: ห้ามเสนอ Action ลอยๆ ทุกแผนงานต้องพยายามอ้างอิงชื่อไฟล์หลักฐานจาก [Input Data] เพื่อใช้เป็นต้นแบบ (Best Practice) ในการยกระดับ
+2. [Forbidden Words]: ห้ามใช้คำกว้างๆ เช่น "ตรวจสอบ", "สอบทาน", "วิเคราะห์เพิ่มเติม" โดยไม่มีบริบท ให้ใช้คำเชิงปฏิบัติการ เช่น "จัดทำบันทึก...", "สถาปนากระบวนการ...", "บูรณาการข้อมูล..."
+3. [Gap-Centric Priority]: หากใน Insights ระบุช่องว่าง (Gap) แผนงานเฟสแรกต้องมุ่งเป้าไปที่การปิดช่องว่างของเลเวลที่ยังไม่สมบูรณ์ก่อนเสมอ
+4. [No IT-Ghosting]: เน้นที่ Process, Policy และ People ห้ามเสนอให้ซื้อ Software ใหม่หากพื้นฐานการจัดการยังไม่แน่น
+5. [Strict JSON]: ตอบกลับเป็น JSON ตามโครงสร้างที่กำหนดเท่านั้น
 """
 
-SUB_ROADMAP_TEMPLATE: Final[str] = """
+SUB_ROADMAP_TEMPLATE = """
 ### [Strategic Context]
 - หัวข้อการประเมิน: {sub_criteria_name} ({sub_id})
 - หน่วยงาน/Enabler: {enabler}
@@ -235,31 +235,34 @@ SUB_ROADMAP_TEMPLATE: Final[str] = """
 {aggregated_insights}
 
 ---
-จงสังเคราะห์ข้อมูลข้างต้นและสร้าง Master Roadmap ในรูปแบบ JSON โดยมีโครงสร้างดังนี้:
+จงสังเคราะห์ข้อมูลข้างต้นและสร้าง Master Roadmap ในรูปแบบ JSON โดยห้ามใช้คำแนะนำแบบ "ธรรมดา" ทั่วไป:
 {{
   "status": "SUCCESS",
-  "overall_strategy": "บทวิเคราะห์เชิงยุทธศาสตร์ (สรุปว่าองค์กรควรใช้จุดแข็งจากหลักฐานใด ไปแก้จุดอ่อนที่เลเวลไหน)",
-  "roadmap": [
+  "overall_strategy": "บทวิเคราะห์เชิงยุทธศาสตร์ (สรุปว่าควรนำจุดแข็งจากไฟล์ใด ไปอุดช่องว่างที่เลเวลไหน)",
+  "phases": [
     {{
-      "phase": "Phase 1: [ชื่อเฟสที่สะท้อนถึงการแก้ปัญหา Blocking Gaps]",
-      "target_levels": [1, 2],
-      "main_objective": "เป้าหมายหลักในการวางรากฐาน",
-      "key_actions": [
-        "Action 1 (ระบุวิธีการประยุกต์ใช้ชื่อไฟล์จาก Assets ถ้ามี)",
-        "Action 2..."
-      ],
-      "expected_outcome": "ผลลัพธ์เชิงประจักษ์และการเปลี่ยนแปลงที่คาดหวัง",
-      "best_practice_ref": "ระบุชื่อไฟล์หลักฐานที่ใช้เป็นต้นแบบในเฟสนี้"
+      "phase": "Quick Win (Remediation)",
+      "goal": "เป้าหมายที่ชัดเจนในการปิดช่องว่างจาก Insights ที่ได้รับ",
+      "actions": [
+        {{
+          "action": "ระบุการปฏิบัติงานที่ชัดเจน (เช่น: ปรับปรุงโครงสร้างในไฟล์ [ชื่อไฟล์ที่พบใน Assets] ให้ครอบคลุมการวัดผล)",
+          "priority": "High"
+        }}
+      ]
     }},
     {{
-      "phase": "Phase 2: [ชื่อเฟสที่สะท้อนถึงการยกระดับสู่ Excellence]",
-      "target_levels": [3, 4, 5],
-      "main_objective": "เป้าหมายการยกระดับมาตรฐาน",
-      "key_actions": ["Action 1...", "Action 2..."],
-      "expected_outcome": "ตัวบ่งชี้ความสำเร็จในระดับ Maturity ที่สูงขึ้น",
-      "best_practice_ref": "ระบุไฟล์อ้างอิงหรือแนวทางต่อยอด"
+      "phase": "Strategic Level-Up",
+      "goal": "เป้าหมายการยกระดับมาตรฐานสู่เลเวลถัดไป",
+      "actions": [
+        {{
+          "action": "ระบุแผนงานเชิงยุทธศาสตร์ (เช่น: สถาปนา Digital Workflow ตามต้นแบบในไฟล์...)",
+          "priority": "Medium"
+        }}
+      ]
     }}
-  ]
+  ],
+  "is_gap_detected": true,
+  "strategic_focus_applied": "{strategic_focus}"
 }}
 """
 
