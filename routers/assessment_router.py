@@ -1227,13 +1227,13 @@ async def start_assessment(
     # 4. Delegate to Background Worker
     background_tasks.add_task(
         run_assessment_engine_task,
-        semaphore=assessment_semaphore, # เพิ่มอันนี้
-        record_id=record_id,
-        tenant=request.tenant,
-        year=target_year,
-        enabler=enabler_uc,
-        sub_id=target_sub,
-        sequential=request.sequential_mode  # True สำหรับ Mac (sequential)
+        assessment_semaphore,     # ส่งตัวแปรไปเลย ไม่ต้องระบุชื่อ
+        record_id,
+        request.tenant,
+        target_year,
+        enabler_uc,
+        target_sub,
+        request.sequential_mode
     )
 
     return {
@@ -1249,76 +1249,108 @@ async def start_assessment(
 # 2. Background Task Engine (Robust Implementation)
 # ------------------------------------------------------------------
 async def run_assessment_engine_task(
-    record_id: str, tenant: str, year: str, enabler: str, sub_id: str, sequential: bool
+    semaphore: asyncio.Semaphore, 
+    record_id: str, 
+    tenant: str, 
+    year: str, 
+    enabler: str, 
+    sub_id: str, 
+    sequential: bool
 ):
     """
-    [v2026.6.20 — Robust Background Worker + Progress Update]
-    - Update progress ทุกขั้นตอนสำคัญ
-    - Use asyncio.to_thread สำหรับ CPU-bound
-    - Error handling + DB update เมื่อ fail
+    [v2026.FINAL.REVISED — Robust Background Worker]
+    - 🔒 Semaphore Control: จำกัดการใช้ GPU/RAM พร้อมกัน
+    - 🧹 Memory Management: Cleanup ทรัพยากรทันทีหลังจบงาน
+    - 📊 Accurate DB Sync: บันทึก Scope และ Level จริงลงฐานข้อมูล
     """
-    try:
-        logger.info(f"⚙️ [Task {record_id}] Processing Started...")
-
-        # Step 1: Resource Hydration
-        db_update_task_status(record_id, 10, "เชื่อมต่อ Vector Database และโหลด Mapping...")
+    # 1. 🔒 Acquire Semaphore (Queue Management)
+    async with semaphore:
+        logger.info(f"⚙️ [Task {record_id}] Processing Started (Semaphore Acquired)...")
+        engine = None
+        vsm = None
         
-        vsm = await asyncio.to_thread(
-            load_all_vectorstores, tenant, year, None, EVIDENCE_DOC_TYPES, enabler
-        )
-        
-        doc_map_raw = await asyncio.to_thread(
-            load_doc_id_mapping, EVIDENCE_DOC_TYPES, tenant, year, enabler
-        )
-        doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
-
-        # Step 2: Engine & Model Setup
-        db_update_task_status(record_id, 20, f"โหลด AI Model ({DEFAULT_LLM_MODEL_NAME})...")
-        
-        llm = await asyncio.to_thread(
-            create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0
-        )
-        
-        config = AssessmentConfig(
-            enabler=enabler, tenant=tenant, year=year, 
-            force_sequential=sequential,
-            export_path=None
-        )
-        
-        engine = SEAMPDCAEngine(
-            config=config, 
-            llm_instance=llm, 
-            logger_instance=logger, 
-            doc_type=EVIDENCE_DOC_TYPES, 
-            vectorstore_manager=vsm, 
-            document_map=doc_map,
-            record_id=record_id  # 👈 เพิ่มบรรทัดนี้ เพื่อให้ Engine ภายใน Thread รู้จัก record_id
-        )
-
-        # Step 3: Core Assessment
-        db_update_task_status(record_id, 35, "AI กำลังตรวจสอบหลักฐาน (RAG Assessment)...")
-        
-        result = await asyncio.to_thread(
-            engine.run_assessment, 
-            target_sub_id=sub_id, 
-            export=True, 
-            record_id=record_id,
-            vectorstore_manager=vsm,
-            sequential=sequential
-        )
-
-        # Step 4: Finalize
-        if isinstance(result, dict) and result.get("status") == "FAILED":
-            error_msg = result.get("error_message", "AI Engine Error")
-            db_update_task_status(record_id, 0, f"ล้มเหลว: {error_msg}", status="FAILED")
-        else:
-            await asyncio.to_thread(db_finish_task, record_id, result)
-            db_update_task_status(record_id, 100, "การประเมินเสร็จสมบูรณ์", status="COMPLETED")
-            logger.info(f"✅ [Task {record_id}] Finished Successfully")
+        try:
+            # --- [STEP 1: RESOURCE HYDRATION] ---
+            db_update_task_status(record_id, 10, "เชื่อมต่อ Vector Database และโหลด Mapping...")
             
-    except Exception as e:
-        logger.error(f"💥 [Task {record_id}] Critical Failure: {str(e)}", exc_info=True)
-        db_update_task_status(record_id, 0, f"ระบบขัดข้อง: {str(e)}", status="FAILED")
+            # รัน CPU/IO Bound tasks ใน Thread
+            vsm = await asyncio.to_thread(
+                load_all_vectorstores, tenant, year, None, EVIDENCE_DOC_TYPES, enabler
+            )
+            doc_map_raw = await asyncio.to_thread(
+                load_doc_id_mapping, EVIDENCE_DOC_TYPES, tenant, year, enabler
+            )
+            doc_map = {d_id: d.get("file_name", d_id) for d_id, d in doc_map_raw.items()}
+
+            # --- [STEP 2: ENGINE & MODEL SETUP] ---
+            db_update_task_status(record_id, 20, f"โหลด AI Model ({DEFAULT_LLM_MODEL_NAME})...")
+            
+            llm = await asyncio.to_thread(
+                create_llm_instance, model_name=DEFAULT_LLM_MODEL_NAME, temperature=0.0
+            )
+            
+            config = AssessmentConfig(
+                enabler=enabler, 
+                tenant=tenant, 
+                year=year, 
+                force_sequential=sequential
+            )
+            
+            engine = SEAMPDCAEngine(
+                config=config, 
+                llm_instance=llm, 
+                logger_instance=logger, 
+                doc_type=EVIDENCE_DOC_TYPES, 
+                vectorstore_manager=vsm, 
+                document_map=doc_map,
+                record_id=record_id 
+            )
+
+            # --- [STEP 3: CORE ASSESSMENT] ---
+            db_update_task_status(record_id, 35, "AI กำลังตรวจสอบหลักฐาน (RAG Assessment)...")
+            
+            result = await asyncio.to_thread(
+                engine.run_assessment, 
+                target_sub_id=sub_id, 
+                export=True, 
+                record_id=record_id,
+                vectorstore_manager=vsm,
+                sequential=sequential
+            )
+
+            # --- [STEP 4: FINALIZE & SYNC DB] ---
+            if isinstance(result, dict) and result.get("status") == "FAILED":
+                error_msg = result.get("error_message", "AI Engine Error")
+                db_update_task_status(record_id, 0, f"ล้มเหลว: {error_msg}", status="FAILED")
+            else:
+                # 🎯 [CRITICAL] บันทึกผลลัพธ์สุดท้ายและสรุปคะแนนลง DB ทันที
+                # เพื่อให้ API /history ดึง Scope และ Level ที่ถูกต้องมาแสดงได้
+                await asyncio.to_thread(db_finish_task, record_id, result)
+                
+                # อัปเดตสถานะสุดท้าย
+                db_update_task_status(record_id, 100, "การประเมินเสร็จสมบูรณ์", status="COMPLETED")
+                logger.info(f"✅ [Task {record_id}] Finished Successfully")
+                
+        except Exception as e:
+            logger.error(f"💥 [Task {record_id}] Critical Failure: {str(e)}", exc_info=True)
+            db_update_task_status(record_id, 0, f"ระบบขัดข้อง: {str(e)}", status="FAILED")
+            
+        finally:
+            # --- [STEP 5: POLISHING & CLEANUP] ---
+            # สำคัญมากสำหรับการรันบน GPU L40S เพื่อไม่ให้ Memory ค้าง
+            import gc
+            import torch
+            
+            # ลบ Instance ขนาดใหญ่
+            del engine
+            del vsm
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache() # คืน VRAM
+            
+            gc.collect() # คืน RAM
+            logger.info(f"🧹 [Task {record_id}] Memory cleanup completed.")
+            
 
 def _find_assessment_file(search_id: str, current_user: UserMe) -> str:
     """
