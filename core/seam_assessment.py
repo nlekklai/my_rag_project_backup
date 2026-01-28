@@ -5186,7 +5186,6 @@ class SEAMPDCAEngine:
         # 3. Apply Cap
         return sorted_list[:EVIDENCE_CUMULATIVE_CAP]
     
-    
     def _run_sub_criteria_assessment_worker(
         self,
         sub_criteria: Dict[str, Any],
@@ -5194,10 +5193,7 @@ class SEAMPDCAEngine:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [STRATEGIC WORKER v2026.01.28]
-        - 🪜 Step-Ladder: บังคับลำดับความต่อเนื่องของ Maturity
-        - 🎯 Focus-Driven: สร้าง Strategic Focus อัตโนมัติเพื่อคุมทิศทาง Roadmap
-        - 🧩 Evidence-Rich: สะสมหลักฐาน (Cumulative) เพื่อใช้เป็น Assets ในเลเวลถัดไป
+        [FULL REVISED v2026.01.29] - FIX NULL CONFIDENCE & PDCA TAGS
         """
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
@@ -5213,7 +5209,6 @@ class SEAMPDCAEngine:
         cumulative_baseline = list(initial_baseline or [])
         evidence_delta: Dict[str, List[Dict[str, Any]]] = {}
 
-        # 1. เรียงลำดับ Level 1 -> 5 เพื่อรักษา Logic ความต่อเนื่อง
         levels = sorted(sub_criteria.get("levels", []), key=lambda x: x.get("level", 0))
 
         for stmt in levels:
@@ -5223,103 +5218,115 @@ class SEAMPDCAEngine:
 
             level_key = f"{sub_id}_L{level}"
 
+            # --- [STEP 0: CONTEXTUAL DATA EXTRACTION] ---
+            required_pdca = self.get_rule_content(sub_id, level, "require_phase") or ["P"]
+            specific_statement = self.get_rule_content(sub_id, level, "specific_contextual_rule")
+            final_statement = specific_statement if specific_statement else stmt.get("statement", "")
+
             # --- [STEP 1: EVIDENCE HYDRATION] ---
-            # ดึงหลักฐานที่เคยคัดเลือกไว้มาสมทบกับ Baseline เดิม
             saved = self.evidence_map.get(level_key, {})
             saved_evs = saved.get("evidences", []) if isinstance(saved, dict) else []
             priority_items = [e for e in saved_evs if e.get("is_selected", True)]
-            
-            # สร้าง Context ที่แข็งแกร่ง (อดีต + ปัจจุบัน)
             current_baseline = self._deduplicate_list(cumulative_baseline + priority_items)
 
             # --- [STEP 2: CORE ASSESSMENT] ---
             res = self._run_single_assessment(
                 sub_id=sub_id,
                 level=level,
-                criteria={"name": sub_name, "statement": stmt.get("statement", "")},
+                criteria={"name": sub_name, "statement": final_statement},
                 keyword_guide=stmt.get("keywords", []),
                 baseline_evidences=current_baseline,
                 vectorstore_manager=vsm,
             )
 
-            # --- [STEP 3: SEMANTIC ENRICHMENT] ---
+            # --- [STEP 3: SEMANTIC ENRICHMENT - 🛡️ FIX NULLS HERE] ---
             pdca_results = res.get("pdca_breakdown", {})
-            dominant_tag = next((k for k, v in pdca_results.items() if float(v) > 0), "D")
+            # หา dominant_tag โดยห้ามเป็น None (Default 'D')
+            dominant_tag = next((k for k, v in pdca_results.items() if float(v or 0) > 0), "D")
             
-            top_chunks = res.get("top_chunks_data", [])
+            top_chunks = res.get("top_chunks_data", []) or []
             enriched_chunks = []
+            
             for chunk in top_chunks:
-                chunk["pdca_tag"] = chunk.get("pdca_tag") or dominant_tag
-                chunk["confidence"] = chunk.get("confidence") or chunk.get("relevance_score", 0.0)
+                # 1. ป้องกัน PDCA Tag หาย (UI วงกลมเทา)
+                chunk["pdca_tag"] = (chunk.get("pdca_tag") or dominant_tag).upper()
+                
+                # 2. ป้องกัน Confidence หาย (UI แถบว่าง)
+                # ดึงจากหลาย source: confidence -> relevance -> rerank -> default 0.5
+                raw_score = chunk.get("confidence") or chunk.get("relevance_score") or chunk.get("rerank_score") or 0.5
+                chunk["confidence"] = float(raw_score)
+                
+                # 3. ป้องกัน Snippet/Content หาย
+                chunk["content"] = chunk.get("content") or chunk.get("text") or "ไม่พบรายละเอียดข้อความ"
+                
                 enriched_chunks.append(chunk)
 
             evidence_delta[level_key] = enriched_chunks
             passed_by_llm = bool(res.get("is_passed", False))
 
-            # --- [STEP 4: MATURITY LOGIC (STEP-LADDER)] ---
-            # [Logic] ถ้าผ่านเลเวลนี้ ให้สะสมหลักฐานไว้ใช้เลเวลหน้า
+            # --- [STEP 4: MATURITY LOGIC] ---
             if passed_by_llm:
                 cumulative_baseline.extend(enriched_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
                 if is_still_continuous:
                     highest_continuous_level = level
             else:
-                # [Logic] ถ้าตกเลเวลใดเลเวลหนึ่ง ความต่อเนื่องจะขาดทันที (Capped)
                 is_still_continuous = False
 
             is_capped = passed_by_llm and not is_still_continuous
             effective_score = float(res.get("score", 0.0)) if passed_by_llm and not is_capped else 0.0
 
             # --- [STEP 5: ATOMIC ACTION PLAN] ---
-            # สร้าง Action Plan รายเลเวล (มี Anti-IT Ghost ในตัว)
             try:
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
                     level=level,
-                    level_criteria=stmt.get("statement", ""),
+                    level_criteria=final_statement,
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
-            except Exception as e:
-                self.logger.warning(f"⚠️ Action Plan Error at {level_key}: {e}")
+            except Exception:
                 atomic_actions = []
 
+            # 🎯 [CORE DATA FOR UI & EXPORT]
             level_details[str(level)] = {
                 "level": level,
                 "is_passed": passed_by_llm,
                 "is_maturity_capped": is_capped,
                 "score": round(effective_score, 2),
-                "reason": res.get("reason", ""),
+                "reason": res.get("reason", "ไม่มีเหตุผลระบุ"),
                 "coaching_insight": res.get("coaching_insight", ""),
                 "atomic_action_plan": atomic_actions,
-                "evidence_sources": enriched_chunks,
-                "pdca_breakdown": pdca_results
+                "evidence_sources": enriched_chunks, # 🛡️ ข้อมูลที่ Enriched แล้วจะถูกส่งตรงไป UI
+                "pdca_breakdown": pdca_results,
+                "rubric_statement": final_statement,
+                "required_pdca_phases": required_pdca
             }
 
-            # เก็บข้อมูลไว้สังเคราะห์ Roadmap ใหญ่
+            # --- [STEP 5.1: ROADMAP BUNDLE] ---
+            top_file = enriched_chunks[0].get("filename", "N/A") if enriched_chunks else "N/A"
             roadmap_input_bundle.append({
                 "level": level,
                 "status": "PASSED" if passed_by_llm else "FAILED",
                 "is_capped": is_capped,
-                "insight_summary": res.get("coaching_insight", "")[:300],
+                "statement": final_statement,
+                "required_phases": required_pdca,
+                "insight_summary": f"Ref File: {top_file} | {res.get('coaching_insight', '')}"[:1000],
             })
 
-        # --- [STEP 6: STRATEGIC SYNTHESIS (THE FINISHER)] ---
-        
-        # 1. คำนวณ Strategic Focus ตาม Maturity Level จริง
+        # --- [STEP 6: STRATEGIC SYNTHESIS] ---
         if highest_continuous_level < 3:
-            strategic_focus = "Focus: Stabilization (เน้นการสถาปนามาตรฐานและปิด Gap เชิงโครงสร้าง)"
+            strategic_focus = "Focus: Stabilization (เน้นการสถาปนามาตรฐาน)"
         elif 3 <= highest_continuous_level < 5:
-            strategic_focus = "Focus: Scaling & Integration (เน้นการเชื่อมโยง KM เข้ากับกระบวนการทำงานจริง)"
+            strategic_focus = "Focus: Scaling & Integration (เน้นการเชื่อมโยงกระบวนการ)"
         else:
-            strategic_focus = "Focus: Strategic Excellence (เน้นการสร้างนวัตกรรมและเป็นต้นแบบ)"
+            strategic_focus = "Focus: Strategic Excellence (เน้นนวัตกรรมและต้นแบบ)"
 
-        # 2. เรียกใช้ Master Roadmap พร้อมส่ง Parameter ครบ 5 ตัวตาม PromptTemplate
         sub_roadmap = self.generate_sub_roadmap(
             sub_id=sub_id,
             sub_criteria_name=sub_name,
             enabler=getattr(self, "enabler", "KM"),
             aggregated_insights=roadmap_input_bundle,
-            strategic_focus=strategic_focus # ✅ เพิ่มตัวแปรที่ขาดไป
+            strategic_focus=strategic_focus
         )
 
         return {
@@ -5333,7 +5340,7 @@ class SEAMPDCAEngine:
             "sub_roadmap": sub_roadmap,
             "strategic_focus": strategic_focus
         }, evidence_delta
-
+    
     def _get_level_constraint_prompt(
         self,
         sub_id: str,
