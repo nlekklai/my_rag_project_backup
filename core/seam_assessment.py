@@ -5220,8 +5220,16 @@ class SEAMPDCAEngine:
 
             # --- [STEP 0: CONTEXTUAL DATA EXTRACTION] ---
             required_pdca = self.get_rule_content(sub_id, level, "require_phase") or ["P"]
-            specific_statement = self.get_rule_content(sub_id, level, "specific_contextual_rule")
-            final_statement = specific_statement if specific_statement else stmt.get("statement", "")
+
+            flattened_item = next((item for item in self.flattened_rubric if item['sub_id'] == sub_id), None)
+            correct_statement = ""
+            if flattened_item:
+                # หา statement ที่ตรงกับ level ปัจจุบัน
+                lvl_data = next((l for l in flattened_item.get('levels', []) if l['level'] == level), None)
+                correct_statement = lvl_data.get('statement', "") if lvl_data else ""
+
+            # กำหนด Priority: ถ้ามีใน flattened_rubric ให้ใช้ก่อน ถ้าไม่มีค่อยถอยไปหา stmt
+            final_statement = correct_statement if correct_statement else stmt.get("statement", "")
 
             # --- [STEP 1: EVIDENCE HYDRATION] ---
             saved = self.evidence_map.get(level_key, {})
