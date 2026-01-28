@@ -5055,36 +5055,36 @@ MANDATORY AUDIT RULES:
             self.logger.error(f"🛑 [ATOMIC-PLAN-CRITICAL] {str(e)}", exc_info=True)
             return [{"action": "ดำเนินการพัฒนางานตามข้อเสนอแนะของเกณฑ์", "target_evidence": "หลักฐานเชิงประจักษ์", "level": level}]
         
-
     # ------------------------------------------------------------------
-    # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026.1.28
+    # 🏛️ [TIER-3 METHOD] generate_master_roadmap - FULL REVISE v2026.01.28
     # ------------------------------------------------------------------
     def generate_master_roadmap(
         self,
         sub_id: str,
         sub_criteria_name: str,
         enabler: str,
-        aggregated_insights: List[Dict[str, Any]]
+        aggregated_insights: List[Dict[str, Any]],
+        strategic_focus: str = ""  # ✅ เพิ่มพารามิเตอร์รับค่าจาก Worker
     ) -> Dict[str, Any]:
         """
         [BIG-5 STRATEGIC REVISION v2026.01.28]
-        - 🧩 Evidence-Linked: เชื่อมโยงไฟล์ต้นแบบ (Best Practice) เข้ากับ Gap Analysis
-        - 🪜 Sequential Logic: บังคับการเดินตามลำดับ Maturity (Step-Ladder) อย่างเคร่งครัด
-        - 💎 Actionable Bespoke: สร้าง Roadmap ที่อิงจากข้อมูลจริง ไม่ใช่แค่ Generic Template
+        - 🎯 Focus-Driven: นำ strategic_focus มากำกับทิศทางแผนงาน
+        - 🧩 Evidence-Linked: ดึง Assets จากไฟล์จริงมาเป็นต้นแบบการขยายผล
+        - 🪜 Step-Ladder: เรียงลำดับการปิด Gap ตาม Maturity
         """
 
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        self.logger.info(f"🚀 [ROADMAP] Generating strategic plan for {sub_id}: {sub_criteria_name}")
+        self.logger.info(f"🚀 [ROADMAP] Generating strategic plan for {sub_id}: {sub_criteria_name} | Focus: {strategic_focus}")
 
-        # 1. 🔍 ขุดค้นบริบทเชิงลึก (Strategic Context Enrichment)
+        # --- [STEP 1: STRATEGIC CONTEXT ENRICHMENT] ---
         condensed_insights = []
         best_practice_assets = []
         highest_continuous = 0
         has_gap = False
         
-        # ค้นหา Metadata ของหลักฐานผ่าน evidence_map ที่ Sync ไว้แล้วในขั้นตอน Guard
+        # ค้นหา Metadata ของหลักฐานผ่าน evidence_map
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
@@ -5092,7 +5092,7 @@ MANDATORY AUDIT RULES:
             status_raw = item.get("status", "FAILED")
             passed = (status_raw == "PASSED")
             
-            # ดึงชื่อไฟล์จาก Evidence Map มาเป็น Assets เพื่อให้ AI แนะนำการขยายผลได้
+            # ดึงชื่อไฟล์จาก Evidence Map
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
             filename = ev_node.get("file")
@@ -5111,10 +5111,7 @@ MANDATORY AUDIT RULES:
             insight_text = item.get('insight_summary', '').strip()
             condensed_insights.append(f"- L{lv} [{state_label}]: {insight_text}")
 
-        
-
-        # 2. 💎 ปรุง Parameter 'aggregated_insights' ให้มีความเป็นที่ปรึกษา
-        # เราส่งทั้งสิ่งที่ "ขาด" และสิ่งที่มี "ดี" เพื่อให้ LLM แนะนำการต่อยอดจากทุนเดิม
+        # --- [STEP 2: PREPARE ENRICHED CONTEXT FOR LLM] ---
         enriched_context = (
             "💎 EXISTING STRATEGIC ASSETS (ต้นทุนความสำเร็จที่มีอยู่):\n" +
             ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานที่เป็นต้นแบบชัดเจน") +
@@ -5122,13 +5119,15 @@ MANDATORY AUDIT RULES:
             "\n".join(condensed_insights)
         )
 
-        strategic_focus = (
-            f"ระดับ Maturity ปัจจุบันอยู่ที่ L{highest_continuous} "
-            + ("(ตรวจพบช่องว่างสำคัญที่ต้องปิดกั้นก่อนยกระดับ)" if has_gap else "(รากฐานแข็งแกร่ง พร้อมขยายผลสู่ระดับถัดไป)")
-        )
+        # หาก strategic_focus ว่างมา (Fallback) ให้คำนวณเบื้องต้น
+        if not strategic_focus:
+            strategic_focus = (
+                f"ระดับ Maturity ปัจจุบัน L{highest_continuous} "
+                + ("(เน้นปิด Gap พื้นฐาน)" if has_gap else "(เน้นขยายผลสู่ Excellence)")
+            )
 
-        # 3. 🎼 Prompt Orchestration (ส่งข้อมูลเข้าสู่ตัวประมวลผลยุทธศาสตร์)
-        # ใช้โครงสร้าง MASTER_ROADMAP_PROMPT ที่คุณกำหนดไว้ใน Header
+        # --- [STEP 3: PROMPT ORCHESTRATION] ---
+        # ต้องส่งครบ 5 ตัวแปรตามที่ PromptTemplate (input_variables) กำหนดไว้
         prompt = MASTER_ROADMAP_PROMPT.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
@@ -5138,7 +5137,7 @@ MANDATORY AUDIT RULES:
         )
 
         try:
-            # ใช้ System Prompt ที่ปรับจูนให้เป็น Big 5 Consultant (McKinsey/Deloitte Style)
+            # ใช้ System Prompt ที่ปรับจูนให้เป็น Strategic Consultant
             raw = _fetch_llm_response(
                 system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
                 user_prompt=prompt,
@@ -5146,27 +5145,27 @@ MANDATORY AUDIT RULES:
             )
 
             data = _robust_extract_json(raw) or {}
-            raw_phases = data.get("phases") or data.get("roadmap") or data.get("action_plan") or []
+            # รองรับ Key หลายรูปแบบที่ AI อาจจะพ่นออกมา
+            raw_phases = data.get("roadmap") or data.get("phases") or data.get("action_plan") or []
 
-            # 4. 🪜 Normalize Phases เข้าสู่ UI Schema
+            # --- [STEP 4: NORMALIZE PHASES FOR UI SCHEMA] ---
             final_phases = []
-            for i, p in enumerate(raw_phases, 1):
-                if isinstance(p, dict):
-                    # AI จะต้องพยายามระบุ 'best_practice_ref' ตามที่เราใส่ไว้ใน Context
-                    ref_doc = p.get("best_practice_ref") or p.get("reference")
-                    
-                    final_phases.append({
-                        "phase": p.get("phase", f"Phase {i}: ยกระดับศักยภาพ {sub_id}"),
-                        "target_levels": p.get("target_levels") or f"L{highest_continuous + 1}",
-                        "main_objective": p.get("main_objective") or p.get("goal") or "ปิด Gap และสร้างความยั่งยืน",
-                        "key_actions": p.get("key_actions") or p.get("actions") or [],
-                        "expected_outcome": p.get("expected_outcome") or "บรรลุเกณฑ์การประเมินในระดับถัดไป",
-                        "best_practice_ref": ref_doc or "พิจารณาต้นแบบจากหลักฐานที่ผ่านการประเมินแล้ว"
-                    })
+            if isinstance(raw_phases, list):
+                for i, p in enumerate(raw_phases, 1):
+                    if isinstance(p, dict):
+                        final_phases.append({
+                            "phase": p.get("phase", f"Phase {i}: การยกระดับ {sub_id}"),
+                            "target_levels": p.get("target_levels") or [highest_continuous + 1],
+                            "main_objective": p.get("main_objective") or "ปิดช่องว่างและพัฒนามาตรฐาน",
+                            "key_actions": p.get("key_actions") or [],
+                            "expected_outcome": p.get("expected_outcome") or "ผลลัพธ์เชิงประจักษ์",
+                            "best_practice_ref": p.get("best_practice_ref") or "ใช้หลักฐานที่ผ่านการประเมินเป็นต้นแบบ"
+                        })
 
-            # กรณี LLM ไม่พ่น Phases กลับมา ให้ใช้ Fallback ที่มีความหมาย
+            # กรณี JSON ผิดพลาด ให้ใช้ Fallback Plan
             if not final_phases:
-                final_phases = self._get_emergency_fallback_plan(sub_id, sub_criteria_name)["phases"]
+                fallback = self._get_emergency_fallback_plan(sub_id, sub_criteria_name)
+                final_phases = fallback.get("phases", [])
 
             return {
                 "scope": "SUB_CRITERIA",
@@ -5178,13 +5177,13 @@ MANDATORY AUDIT RULES:
                 "is_gap_detected": has_gap,
                 "status": "SUCCESS",
                 "generated_at": datetime.now().isoformat(),
-                "assets_found": len(best_practice_assets)
+                "strategic_focus_applied": strategic_focus
             }
 
         except Exception as e:
-            self.logger.error(f"🛑 [MASTER-ROADMAP-CRITICAL] Error for {sub_id}: {e}", exc_info=True)
+            self.logger.error(f"🛑 [ROADMAP-CRITICAL] Error for {sub_id}: {e}", exc_info=True)
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
-            
+        
     def _get_emergency_fallback_plan(self, sub_id, name, error_msg=""):
         """สร้างแผนสำรองกรณี LLM พัง เพื่อไม่ให้ระบบหยุดทำงาน"""
         return {
