@@ -203,158 +203,6 @@ async def view_document(
     # ส่งไฟล์ PDF กลับไป
     return FileResponse(file_path, media_type="application/pdf")
 
-
-# def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
-#     """
-#     [ULTIMATE UI TRANSFORMER v2026.01.29 - NON-BREAKING REVISE]
-#     - 🛡️ KEEP VIEW FILE: รักษา Logic การดึง document_uuid เดิมไว้ 100% เพื่อไม่ให้กระทบการเปิด PDF
-#     - 🚀 ADD ROADMAPS: เพิ่มการดึง enabler_roadmap และ sub_roadmap เข้าไปใน Payload
-#     - 🪜 SORTED: เรียงลำดับข้อตามมาตรฐาน SE-AM (1.1, 1.2, 1.10)
-#     """
-#     if not raw_data or not isinstance(raw_data, dict):
-#         return {"status": "FAILED", "message": "Invalid data format"}
-
-#     # --- [0] RESOLVE CORE DATA ---
-#     res = raw_data.get("result") or raw_data.get("assessment_result") or raw_data
-#     metadata = res.get("metadata", {})
-#     summary = res.get("summary") or res.get("result_summary", {})
-
-#     # --- [1] ENABLER (GLOBAL) ROADMAP ---
-#     raw_global_roadmap = res.get("enabler_roadmap") or res.get("strategic_roadmap") or {}
-#     ui_global_roadmap = {
-#         "status": raw_global_roadmap.get("status", "SUCCESS"),
-#         "overall_strategy": raw_global_roadmap.get("overall_strategy") or "มุ่งเน้นการยกระดับตามมาตรฐาน SE-AM",
-#         "phases": raw_global_roadmap.get("phases") or []
-#     }
-
-#     # --- [2] SUB-CRITERIA PROCESSING ---
-#     processed = []
-#     radar_data = []
-#     sub_list = res.get("sub_criteria_details") or res.get("sub_criteria_results") or []
-
-#     for sub in sub_list:
-#         sub_id = str(sub.get("sub_id", "N/A"))
-#         lv_details = sub.get("level_details", {}) or {}
-        
-#         # 🎯 ADD SUB-ROADMAP (ดึงแผนงานรายข้อ)
-#         raw_sub_roadmap = sub.get("sub_roadmap") or {}
-#         ui_sub_roadmap = {
-#             "strategy": raw_sub_roadmap.get("overall_strategy") or sub.get("strategic_focus", ""),
-#             "phases": raw_sub_roadmap.get("phases") or [],
-#             "is_gap_detected": raw_sub_roadmap.get("is_gap_detected", False)
-#         }
-
-#         ui_levels = {}
-#         pdca_matrix = []
-#         pdca_coverage = {} # 🎯 เพิ่มตัวแปรเก็บข้อมูลสำหรับ Tooltip
-#         grouped_sources = {str(i): [] for i in range(1, 6)}
-#         sub_conf_pool = {} 
-
-#         for lv in range(1, 6):
-#             k = str(lv)
-#             info = lv_details.get(k, {}) or {}
-#             is_passed = bool(info.get("is_passed", False))
-            
-#             # 🎯 1. ดึงข้อมูลจาก Contextual Rules ที่ฝังไว้
-#             req_phases = info.get("required_pdca_phases", [])
-#             rubric_stmt = info.get("rubric_statement", "")
-            
-#             # 🎯 2. คำนวณ Coverage Percentage ตามกฎเฉพาะข้อ
-#             # (นับจำนวน phase ที่มีหลักฐาน เทียบกับ จำนวน phase ที่ถูกบังคับ)
-#             pb = info.get("pdca_breakdown", {}) or {}
-#             actual_count = sum(1 for p in req_phases if float(pb.get(p, 0)) > 0)
-#             required_count = len(req_phases) if req_phases else 1
-#             calc_percentage = (actual_count / required_count) * 100
-
-#             pdca_coverage[k] = {
-#                 "percentage": calc_percentage,
-#                 "statement": rubric_stmt,      # 🎯 ส่งเกณฑ์ไปโชว์ใน Tooltip
-#                 "required_phases": req_phases  # 🎯 ส่งตัวบังคับไปโชว์ใน Tooltip
-#             }
-
-#             ui_levels[k] = {
-#                 "level": lv, 
-#                 "is_passed": is_passed,
-#                 "score": round(float(info.get("score") or (1.0 if is_passed else 0.0)), 2),
-#                 "reason": info.get("reason", ""),
-#                 "coaching_insight": info.get("coaching_insight", ""),
-#                 "action_plan": info.get("action_plan") or info.get("atomic_action_plan", [])
-#             }
-
-#             pb = info.get("pdca_breakdown", {}) or {}
-    
-#             pdca_matrix.append({
-#                 "level": lv, 
-#                 "is_passed": is_passed,
-#                 # ส่งสถานะการพบหลักฐานรายตัว
-#                 "pdca": {p: 1 if float(pb.get(p, 0)) > 0 else 0 for p in ["P", "D", "C", "A"]}
-#             })
-
-#             # --- [3] EVIDENCE & VIEW FILE (Logic เดิมของคุณ ห้ามเปลี่ยน Key) ---
-#             sources = info.get("evidence_sources") or info.get("evidences") or []
-#             for src in sources:
-#                 fname = src.get("filename") or src.get("source_filename") or src.get("source") or "Unknown"
-                
-#                 try:
-#                     conf_val = float(src.get("rerank_score") or src.get("confidence") or src.get("relevance_score") or 0.5)
-#                     if conf_val > 1.0: conf_val /= 100 
-#                 except:
-#                     conf_val = 0.5
-                
-#                 sub_conf_pool[fname] = max(conf_val, sub_conf_pool.get(fname, 0))
-
-#                 # 🛡️ KEEP ORIGINAL VIEW FILE KEYS (document_uuid & page)
-#                 doc_uuid = src.get("stable_doc_uuid") or src.get("doc_id")
-
-#                 grouped_sources[k].append({
-#                     "filename": fname,
-#                     "document_uuid": doc_uuid, # Frontend ใช้ตัวนี้เปิด PDF
-#                     "page": str(src.get("page", "1")),
-#                     "pdca_tag": (src.get("pdca_tag") or "D").upper(),
-#                     "confidence": round(conf_val * 100, 1),
-#                     "text": src.get("content") or src.get("text", "")
-#                 })
-
-#         # --- [4] FINAL ASSEMBLY ---
-#         avg_trace = (sum(sub_conf_pool.values()) / len(sub_conf_pool)) if sub_conf_pool else 0
-
-#         processed.append({
-#             "code": sub_id,
-#             "name": sub.get("sub_criteria_name", "Unknown"),
-#             "level": f"L{sub.get('highest_full_level', 0)}",
-#             "score": round(float(sub.get("weighted_score", 0.0)), 2),
-#             "strategic_focus": sub.get("strategic_focus", ""),
-#             "sub_roadmap": ui_sub_roadmap,  # 🎯 เพิ่มข้อมูล Roadmap เข้าไป
-#             "pdca_matrix": pdca_matrix,
-#             "pdca_coverage": pdca_coverage, # 🎯 ส่งก้อนใหม่นี้ไปให้ Frontend
-#             "level_details": ui_levels,
-#             "grouped_sources": grouped_sources, # โครงสร้างเดิมที่ PDF เปิดได้
-#             "audit_confidence": {
-#                 "source_count": len(sub_conf_pool),
-#                 "traceability_score": round(avg_trace * 100, 1)
-#             }
-#         })
-#         radar_data.append({"axis": sub_id, "value": sub.get("highest_full_level", 0)})
-
-#     # เรียงลำดับ Sub ID
-#     try:
-#         processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
-#     except: pass
-    
-#     return {
-#         "status": summary.get("status", "COMPLETED"),
-#         "record_id": metadata.get("record_id") or raw_data.get("record_id"),
-#         "tenant": metadata.get("tenant"),
-#         "year": metadata.get("year"),
-#         "enabler": metadata.get("enabler") or raw_data.get("enabler"),
-#         "level": str(summary.get("overall_max_level") or summary.get("maturity_level") or "0").replace("L", ""),
-#         "score": round(float(summary.get("total_weighted_score") or 0.0), 2),
-#         "enabler_roadmap": ui_global_roadmap, # 🎯 เพิ่มแผนภาพรวมยุทธศาสตร์
-#         "radar_data": radar_data,
-#         "sub_criteria": processed
-#     }
-
-
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
     [ULTIMATE UI TRANSFORMER v2026.01.29 - FULL ROBUST REVISE]
@@ -508,6 +356,158 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         "radar_data": radar_data,
         "sub_criteria": processed
     }
+
+
+# def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
+#     """
+#     [ULTIMATE UI TRANSFORMER v2026.01.29 - NON-BREAKING REVISE]
+#     - 🛡️ KEEP VIEW FILE: รักษา Logic การดึง document_uuid เดิมไว้ 100% เพื่อไม่ให้กระทบการเปิด PDF
+#     - 🚀 ADD ROADMAPS: เพิ่มการดึง enabler_roadmap และ sub_roadmap เข้าไปใน Payload
+#     - 🪜 SORTED: เรียงลำดับข้อตามมาตรฐาน SE-AM (1.1, 1.2, 1.10)
+#     """
+#     if not raw_data or not isinstance(raw_data, dict):
+#         return {"status": "FAILED", "message": "Invalid data format"}
+
+#     # --- [0] RESOLVE CORE DATA ---
+#     res = raw_data.get("result") or raw_data.get("assessment_result") or raw_data
+#     metadata = res.get("metadata", {})
+#     summary = res.get("summary") or res.get("result_summary", {})
+
+#     # --- [1] ENABLER (GLOBAL) ROADMAP ---
+#     raw_global_roadmap = res.get("enabler_roadmap") or res.get("strategic_roadmap") or {}
+#     ui_global_roadmap = {
+#         "status": raw_global_roadmap.get("status", "SUCCESS"),
+#         "overall_strategy": raw_global_roadmap.get("overall_strategy") or "มุ่งเน้นการยกระดับตามมาตรฐาน SE-AM",
+#         "phases": raw_global_roadmap.get("phases") or []
+#     }
+
+#     # --- [2] SUB-CRITERIA PROCESSING ---
+#     processed = []
+#     radar_data = []
+#     sub_list = res.get("sub_criteria_details") or res.get("sub_criteria_results") or []
+
+#     for sub in sub_list:
+#         sub_id = str(sub.get("sub_id", "N/A"))
+#         lv_details = sub.get("level_details", {}) or {}
+        
+#         # 🎯 ADD SUB-ROADMAP (ดึงแผนงานรายข้อ)
+#         raw_sub_roadmap = sub.get("sub_roadmap") or {}
+#         ui_sub_roadmap = {
+#             "strategy": raw_sub_roadmap.get("overall_strategy") or sub.get("strategic_focus", ""),
+#             "phases": raw_sub_roadmap.get("phases") or [],
+#             "is_gap_detected": raw_sub_roadmap.get("is_gap_detected", False)
+#         }
+
+#         ui_levels = {}
+#         pdca_matrix = []
+#         pdca_coverage = {} # 🎯 เพิ่มตัวแปรเก็บข้อมูลสำหรับ Tooltip
+#         grouped_sources = {str(i): [] for i in range(1, 6)}
+#         sub_conf_pool = {} 
+
+#         for lv in range(1, 6):
+#             k = str(lv)
+#             info = lv_details.get(k, {}) or {}
+#             is_passed = bool(info.get("is_passed", False))
+            
+#             # 🎯 1. ดึงข้อมูลจาก Contextual Rules ที่ฝังไว้
+#             req_phases = info.get("required_pdca_phases", [])
+#             rubric_stmt = info.get("rubric_statement", "")
+            
+#             # 🎯 2. คำนวณ Coverage Percentage ตามกฎเฉพาะข้อ
+#             # (นับจำนวน phase ที่มีหลักฐาน เทียบกับ จำนวน phase ที่ถูกบังคับ)
+#             pb = info.get("pdca_breakdown", {}) or {}
+#             actual_count = sum(1 for p in req_phases if float(pb.get(p, 0)) > 0)
+#             required_count = len(req_phases) if req_phases else 1
+#             calc_percentage = (actual_count / required_count) * 100
+
+#             pdca_coverage[k] = {
+#                 "percentage": calc_percentage,
+#                 "statement": rubric_stmt,      # 🎯 ส่งเกณฑ์ไปโชว์ใน Tooltip
+#                 "required_phases": req_phases  # 🎯 ส่งตัวบังคับไปโชว์ใน Tooltip
+#             }
+
+#             ui_levels[k] = {
+#                 "level": lv, 
+#                 "is_passed": is_passed,
+#                 "score": round(float(info.get("score") or (1.0 if is_passed else 0.0)), 2),
+#                 "reason": info.get("reason", ""),
+#                 "coaching_insight": info.get("coaching_insight", ""),
+#                 "action_plan": info.get("action_plan") or info.get("atomic_action_plan", [])
+#             }
+
+#             pb = info.get("pdca_breakdown", {}) or {}
+    
+#             pdca_matrix.append({
+#                 "level": lv, 
+#                 "is_passed": is_passed,
+#                 # ส่งสถานะการพบหลักฐานรายตัว
+#                 "pdca": {p: 1 if float(pb.get(p, 0)) > 0 else 0 for p in ["P", "D", "C", "A"]}
+#             })
+
+#             # --- [3] EVIDENCE & VIEW FILE (Logic เดิมของคุณ ห้ามเปลี่ยน Key) ---
+#             sources = info.get("evidence_sources") or info.get("evidences") or []
+#             for src in sources:
+#                 fname = src.get("filename") or src.get("source_filename") or src.get("source") or "Unknown"
+                
+#                 try:
+#                     conf_val = float(src.get("rerank_score") or src.get("confidence") or src.get("relevance_score") or 0.5)
+#                     if conf_val > 1.0: conf_val /= 100 
+#                 except:
+#                     conf_val = 0.5
+                
+#                 sub_conf_pool[fname] = max(conf_val, sub_conf_pool.get(fname, 0))
+
+#                 # 🛡️ KEEP ORIGINAL VIEW FILE KEYS (document_uuid & page)
+#                 doc_uuid = src.get("stable_doc_uuid") or src.get("doc_id")
+
+#                 grouped_sources[k].append({
+#                     "filename": fname,
+#                     "document_uuid": doc_uuid, # Frontend ใช้ตัวนี้เปิด PDF
+#                     "page": str(src.get("page", "1")),
+#                     "pdca_tag": (src.get("pdca_tag") or "D").upper(),
+#                     "confidence": round(conf_val * 100, 1),
+#                     "text": src.get("content") or src.get("text", "")
+#                 })
+
+#         # --- [4] FINAL ASSEMBLY ---
+#         avg_trace = (sum(sub_conf_pool.values()) / len(sub_conf_pool)) if sub_conf_pool else 0
+
+#         processed.append({
+#             "code": sub_id,
+#             "name": sub.get("sub_criteria_name", "Unknown"),
+#             "level": f"L{sub.get('highest_full_level', 0)}",
+#             "score": round(float(sub.get("weighted_score", 0.0)), 2),
+#             "strategic_focus": sub.get("strategic_focus", ""),
+#             "sub_roadmap": ui_sub_roadmap,  # 🎯 เพิ่มข้อมูล Roadmap เข้าไป
+#             "pdca_matrix": pdca_matrix,
+#             "pdca_coverage": pdca_coverage, # 🎯 ส่งก้อนใหม่นี้ไปให้ Frontend
+#             "level_details": ui_levels,
+#             "grouped_sources": grouped_sources, # โครงสร้างเดิมที่ PDF เปิดได้
+#             "audit_confidence": {
+#                 "source_count": len(sub_conf_pool),
+#                 "traceability_score": round(avg_trace * 100, 1)
+#             }
+#         })
+#         radar_data.append({"axis": sub_id, "value": sub.get("highest_full_level", 0)})
+
+#     # เรียงลำดับ Sub ID
+#     try:
+#         processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
+#     except: pass
+    
+#     return {
+#         "status": summary.get("status", "COMPLETED"),
+#         "record_id": metadata.get("record_id") or raw_data.get("record_id"),
+#         "tenant": metadata.get("tenant"),
+#         "year": metadata.get("year"),
+#         "enabler": metadata.get("enabler") or raw_data.get("enabler"),
+#         "level": str(summary.get("overall_max_level") or summary.get("maturity_level") or "0").replace("L", ""),
+#         "score": round(float(summary.get("total_weighted_score") or 0.0), 2),
+#         "enabler_roadmap": ui_global_roadmap, # 🎯 เพิ่มแผนภาพรวมยุทธศาสตร์
+#         "radar_data": radar_data,
+#         "sub_criteria": processed
+#     }
+
 
 def set_thai_font(run, size=14, bold=False, color=None):
     """ตั้งค่าฟอนต์ TH Sarabun New ให้รองรับทั้งภาษาไทยและอังกฤษ"""
