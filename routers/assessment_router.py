@@ -205,10 +205,10 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [REVISED STRATEGIC PATCH 2026.01.29]
-    - FIX: Roadmap Support (ดึงจาก 'phases' และ Unpack Action Objects)
-    - FIX: Confidence Support (ดึงจาก 'relevance_score' ตรงตาม JSON จริง)
-    - FIX: Sub-Roadmap Integration (เชื่อมโยงแผนรายข้อ)
+    [ULTIMATE UI TRANSFORMER v2026.01.29]
+    - SYNC: รองรับ key 'enabler_roadmap' และ 'sub_roadmap' จาก Engine ล่าสุด
+    - FIX: Traceability calculation แม่นยำระดับไฟล์ (No Duplicate)
+    - VIEW: มั่นใจว่า stable_doc_uuid ถูกส่งไปยัง Frontend เพื่อเปิด PDF
     """
     if not raw_data or not isinstance(raw_data, dict):
         return {"status": "FAILED", "message": "Invalid data format"}
@@ -216,38 +216,31 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     # --- [0] RESOLVE CORE DATA ---
     res = raw_data.get("result") or raw_data.get("assessment_result") or raw_data
     metadata = res.get("metadata", {})
-    summary = res.get("result_summary", {})
+    summary = res.get("summary") or res.get("result_summary", {})
 
-    # --- [1] STRATEGIC ROADMAP (MASTER) ---
-    raw_roadmap = res.get("strategic_roadmap") or {}
-    ui_roadmap = {
-        "status": raw_roadmap.get("status", "SUCCESS"),
-        "overall_strategy": raw_roadmap.get("overall_strategy") or "",
-        "phases": []
+    # --- [1] ENABLER (GLOBAL) ROADMAP ---
+    # ดึงแผนภาพรวมยุทธศาสตร์ที่สังเคราะห์มาจากทุก Sub-criteria
+    raw_global_roadmap = res.get("enabler_roadmap") or res.get("strategic_roadmap") or {}
+    ui_global_roadmap = {
+        "status": raw_global_roadmap.get("status", "SUCCESS"),
+        "overall_strategy": raw_global_roadmap.get("overall_strategy") or "มุ่งเน้นการยกระดับตามมาตรฐาน SE-AM",
+        "phases": [],
+        "metadata": raw_global_roadmap.get("metadata", {})
     }
     
-    # 🎯 FIX: เปลี่ยนมาดึงจาก 'phases' ตาม JSON จริง และรองรับ 'roadmap' เป็น fallback
-    phases_source = raw_roadmap.get("phases") or raw_roadmap.get("roadmap") or []
-    for ph in phases_source:
-        # 🎯 FIX: แปลง Action จาก Object List เป็น String List (ป้องกัน UI Crash)
-        raw_actions = ph.get("actions") or ph.get("key_actions") or []
-        processed_actions = [
-            (a.get("action") if isinstance(a, dict) else str(a)) 
-            for a in raw_actions
-        ]
-        
-        ui_roadmap["phases"].append({
+    for ph in raw_global_roadmap.get("phases", []) or []:
+        ui_global_roadmap["phases"].append({
             "phase": ph.get("phase", "N/A"),
-            "target_levels": ph.get("target_levels", []),
-            "main_objective": ph.get("goal") or ph.get("main_objective") or "",
-            "key_actions": processed_actions,
+            "target_levels": ph.get("target_levels", ""),
+            "main_objective": ph.get("main_objective") or ph.get("goal", ""),
+            "key_actions": ph.get("key_actions") or [],
             "expected_outcome": ph.get("expected_outcome", "")
         })
 
     # --- [2] SUB-CRITERIA PROCESSING ---
     processed = []
     radar_data = []
-    sub_list = res.get("sub_criteria_details", [])
+    sub_list = res.get("sub_criteria_details") or res.get("sub_criteria_results") or []
 
     for sub in sub_list:
         sub_id = str(sub.get("sub_id", "N/A"))
@@ -256,54 +249,66 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         ui_levels = {}
         pdca_matrix = []
         grouped_sources = {str(i): [] for i in range(1, 6)}
-        sub_conf_pool = {} 
+        sub_conf_pool = {} # filename -> confidence (เพื่อเฉลี่ยแบบไม่นับซ้ำ)
+
+        # ดึง Roadmap รายข้อ (Sub-Roadmap)
+        raw_sub_roadmap = sub.get("sub_roadmap") or {}
+        ui_sub_roadmap = {
+            "strategy": raw_sub_roadmap.get("overall_strategy") or sub.get("strategic_focus", ""),
+            "phases": raw_sub_roadmap.get("phases", []),
+            "is_gap_detected": raw_sub_roadmap.get("is_gap_detected", False)
+        }
 
         for lv in range(1, 6):
             k = str(lv)
             info = lv_details.get(k, {})
             is_passed = bool(info.get("is_passed", False))
             
+            # ข้อมูลระดับเลเวล (Level Details)
             ui_levels[k] = {
-                "level": lv, "is_passed": is_passed,
-                "score": round(float(info.get("score", 0.0)), 2),
+                "level": lv, 
+                "is_passed": is_passed,
+                "score": round(float(info.get("score") or (1.0 if is_passed else 0.0)), 2),
                 "reason": info.get("reason", ""),
                 "coaching_insight": info.get("coaching_insight", ""),
-                "action_plan": info.get("atomic_action_plan", [])
+                "action_plan": info.get("action_plan") or info.get("atomic_action_plan", [])
             }
 
+            # PDCA Matrix Visualization
             pb = info.get("pdca_breakdown", {})
             pdca_matrix.append({
-                "level": lv, "is_passed": is_passed,
+                "level": lv, 
+                "is_passed": is_passed,
                 "pdca": {p: 1 if float(pb.get(p, 0)) > 0 else 0 for p in ["P", "D", "C", "A"]}
             })
 
-            # --- [3] VIEW FILE & EVIDENCE (FIXED CONFIDENCE) ---
-            for src in info.get("evidence_sources", []):
-                raw_filename = src.get("source_filename") or src.get("filename") or "Unknown"
-                fname, _, score_part = raw_filename.partition("|SCORE:")
+            # --- [3] EVIDENCE & VIEW FILE SEGMENT ---
+            sources = info.get("evidence_sources") or info.get("evidences") or []
+            for src in sources:
+                # 1. จัดการชื่อไฟล์และ Confidence
+                fname = src.get("filename") or src.get("source_filename") or src.get("source") or "Unknown"
                 
-                # 🎯 FIX: ดึงจาก relevance_score (ค่า 0.556 ใน JSON)
                 try:
-                    conf_val = (
-                        float(score_part) if score_part else 
-                        float(src.get("relevance_score") or src.get("confidence") or src.get("score") or 0.5)
-                    )
-                    if conf_val > 1.0: conf_val /= 100
-                except: conf_val = 0.5
+                    conf_val = float(src.get("rerank_score") or src.get("confidence") or src.get("relevance_score") or 0.5)
+                    if conf_val > 1.0: conf_val /= 100 # Normalize 0-1
+                except:
+                    conf_val = 0.5
                 
-                sub_conf_pool[fname.strip()] = max(conf_val, sub_conf_pool.get(fname.strip(), 0))
+                sub_conf_pool[fname] = max(conf_val, sub_conf_pool.get(fname, 0))
+
+                # 2. VIEW FILE SUPPORT (สำคัญสำหรับ Frontend)
+                doc_uuid = src.get("stable_doc_uuid") or src.get("doc_id")
 
                 grouped_sources[k].append({
-                    "filename": fname.strip(),
-                    "document_uuid": src.get("stable_doc_uuid") or src.get("doc_id"),
+                    "filename": fname,
+                    "document_uuid": doc_uuid,
                     "page": str(src.get("page", "1")),
                     "pdca_tag": (src.get("pdca_tag") or "D").upper(),
-                    "confidence": round(conf_val * 100, 1), 
+                    "confidence": round(conf_val * 100, 1),
                     "text": src.get("content") or src.get("text", "")
                 })
 
-        # --- [4] SUB-ROADMAP INTEGRATION ---
-        raw_sub_roadmap = sub.get("strategic_roadmap") or {}
+        # --- [4] TRACEABILITY CALCULATION ---
         avg_trace = (sum(sub_conf_pool.values()) / len(sub_conf_pool)) if sub_conf_pool else 0
 
         processed.append({
@@ -311,13 +316,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "name": sub.get("sub_criteria_name", "Unknown"),
             "level": f"L{sub.get('highest_full_level', 0)}",
             "score": round(float(sub.get("weighted_score", 0.0)), 2),
+            "strategic_focus": sub.get("strategic_focus", ""),
+            "sub_roadmap": ui_sub_roadmap,  # 🎯 แผนยกระดับรายข้อ
             "pdca_matrix": pdca_matrix,
             "level_details": ui_levels,
             "grouped_sources": grouped_sources,
-            "strategic_roadmap": { # 🎯 เพิ่มเพื่อให้ UI รายข้อไม่พัง
-                "overall_strategy": raw_sub_roadmap.get("overall_strategy", ""),
-                "phases": raw_sub_roadmap.get("phases") or []
-            },
             "audit_confidence": {
                 "source_count": len(sub_conf_pool),
                 "traceability_score": round(avg_trace * 100, 1),
@@ -327,17 +330,22 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         radar_data.append({"axis": sub_id, "value": sub.get("highest_full_level", 0)})
 
     # --- [5] FINAL UI PAYLOAD ---
-    processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
+    # เรียงลำดับตาม Sub ID (e.g., 1.1, 1.2, 1.10)
+    try:
+        processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
+    except:
+        pass
     
     return {
         "status": summary.get("status", "COMPLETED"),
-        "record_id": metadata.get("record_id"),
+        "record_id": metadata.get("record_id") or raw_data.get("record_id"),
         "tenant": metadata.get("tenant"),
         "year": metadata.get("year"),
-        "enabler": metadata.get("enabler"),
-        "level": str(summary.get("maturity_level", "0")).replace("L", ""),
-        "score": round(float(summary.get("total_weighted_score", 0.0)), 2),
-        "strategic_roadmap": ui_roadmap, # Master Roadmap
+        "enabler": metadata.get("enabler") or raw_data.get("enabler"),
+        "level": str(summary.get("overall_max_level") or summary.get("maturity_level") or "0").replace("L", ""),
+        "score": round(float(summary.get("total_weighted_score") or summary.get("score") or 0.0), 2),
+        "full_score": 5.0,
+        "enabler_roadmap": ui_global_roadmap, # 🚀 แผนยุทธศาสตร์ภาพรวม
         "metrics": {
             "completion_rate": round((len([s for s in processed if "L0" not in s["level"]]) / len(processed) * 100), 1) if processed else 0,
             "passed_criteria": len([s for s in processed if "L0" not in s["level"]]),
@@ -494,6 +502,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #         "radar_data": radar_data,
 #         "sub_criteria": processed
 #     }
+
 
 
 def set_thai_font(run, size=14, bold=False, color=None):
