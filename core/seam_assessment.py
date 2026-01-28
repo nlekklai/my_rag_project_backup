@@ -2287,23 +2287,25 @@ class SEAMPDCAEngine:
             "status": "NO_DATA"
         }
 
-    def _export_results(self, results_data: Any, sub_criteria_id: str, **kwargs) -> str:
+    def _export_results(self, results_data: Any, sub_criteria_id: str, record_id: str = None, **kwargs) -> str:
         """
-        [FINAL EXPORTER v2026.01.27 — SEMANTIC SAFE]
-        - ❌ ไม่ force confidence = 0
-        - ❌ ไม่ fabricate PDCA phase
-        - ✅ UI color / PDCA phase / confidence คงเดิม
-        - ✅ รองรับ evidence_map ทั้ง dict และ list
+        [FINAL EXPORTER v2026.01.28 — SEMANTIC SAFE & POSITION-AWARE]
+        - ✅ แก้ไข TypeError โดยรองรับ record_id เป็น positional arg ตัวที่ 3
+        - ✅ ป้องกันปัญหาค่า null หรือ Empty List ในการหา Max Level
+        - ✅ รักษาค่า PDCA และ Confidence ดั้งเดิม (ไม่ Force/ไม่ Fabricate)
         """
 
         try:
             # --------------------------------------------------
-            # 0. Metadata
+            # 0. Metadata (Priority: Arg > Kwargs > Self)
             # --------------------------------------------------
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            record_id = kwargs.get(
-                "record_id",
-                getattr(self, "current_record_id", f"auto_{timestamp}")
+            
+            # แก้ไขจุดนี้เพื่อรองรับค่าที่ส่งมาจาก run_assessment
+            final_record_id = (
+                record_id 
+                or kwargs.get("record_id") 
+                or getattr(self, "current_record_id", f"auto_{timestamp}")
             )
 
             tenant = getattr(self.config, "tenant", "unknown")
@@ -2324,13 +2326,14 @@ class SEAMPDCAEngine:
                 return ""
 
             # --------------------------------------------------
-            # 2. Summary stats (NO recompute unless missing)
+            # 2. Summary stats (Safety Logic)
             # --------------------------------------------------
             stats = getattr(self, "total_stats", {}) or {}
 
+            # ใช้ default=0 เพื่อป้องกัน ValueError กรณี list ว่าง
             highest_lvl = stats.get(
                 "overall_max_level",
-                max(int(r.get("highest_full_level", 0)) for r in results_data)
+                max((int(r.get("highest_full_level", 0)) for r in results_data), default=0)
             )
 
             total_weighted = stats.get(
@@ -2339,48 +2342,31 @@ class SEAMPDCAEngine:
             )
 
             # --------------------------------------------------
-            # 3. Evidence Audit Trail (SEMANTIC SAFE)
+            # 3. Evidence Audit Trail (Semantic Safe)
             # --------------------------------------------------
             master_map = getattr(self, "evidence_map", {}) or {}
             processed_evidence = {}
 
             for level_key, bucket in master_map.items():
-                if not bucket:
-                    continue
+                if not bucket: continue
 
-                # รองรับทั้ง:
-                # { level: { evidences: [...] } }
-                # { level: [...] }
-                ev_list = (
-                    bucket.get("evidences", [])
-                    if isinstance(bucket, dict)
-                    else bucket
-                )
+                # Normalization
+                ev_list = bucket.get("evidences", []) if isinstance(bucket, dict) else bucket
+                if not isinstance(ev_list, list) or not ev_list: continue
 
-                if not isinstance(ev_list, list) or not ev_list:
-                    continue
+                # Sort by highest confidence (rerank_score)
+                valid_evs = [ev for ev in ev_list if isinstance(ev, dict)]
+                if not valid_evs: continue
 
-                # เลือก evidence ที่มี confidence สูงสุดจริง
                 sorted_ev = sorted(
-                    [ev for ev in ev_list if isinstance(ev, dict)],
-                    key=lambda x: (
-                        x.get("rerank_score")
-                        if isinstance(x.get("rerank_score"), (int, float))
-                        else -1
-                    ),
+                    valid_evs,
+                    key=lambda x: float(x.get("rerank_score") or -1.0),
                     reverse=True
                 )
-
-                if not sorted_ev:
-                    continue
-
                 top_ev = sorted_ev[0]
 
-                # -------------------------------
-                # Filename resolve
-                # -------------------------------
+                # Resolve Filename
                 doc_id = top_ev.get("doc_id") or top_ev.get("stable_doc_uuid")
-
                 filename = (
                     top_ev.get("filename")
                     or (self.document_map.get(doc_id) if hasattr(self, "document_map") else None)
@@ -2388,18 +2374,11 @@ class SEAMPDCAEngine:
                     or "Unknown_Source"
                 )
 
-                # -------------------------------
-                # PDCA (NO DEFAULT, NO GUESS)
-                # -------------------------------
-                pdca = (
-                    top_ev.get("pdca_tag")
-                    or top_ev.get("pdca_phase")
-                )
+                # PDCA (No Guesses)
+                pdca = top_ev.get("pdca_tag") or top_ev.get("pdca_phase")
                 pdca = pdca.upper() if isinstance(pdca, str) else None
 
-                # -------------------------------
-                # Confidence (NO FORCE 0)
-                # -------------------------------
+                # Confidence (No Force 0)
                 confidence = top_ev.get("rerank_score")
                 if not isinstance(confidence, (int, float)) or confidence < 0:
                     confidence = None
@@ -2409,7 +2388,7 @@ class SEAMPDCAEngine:
                     "page": top_ev.get("page") or top_ev.get("page_label", "N/A"),
                     "pdca": pdca,
                     "confidence": confidence,
-                    "snippet": (top_ev.get("content") or "")[:160]
+                    "snippet": (top_ev.get("content") or top_ev.get("text") or "")[:160].strip()
                 }
 
             # --------------------------------------------------
@@ -2417,11 +2396,11 @@ class SEAMPDCAEngine:
             # --------------------------------------------------
             payload = {
                 "metadata": {
-                    "record_id": record_id,
+                    "record_id": final_record_id,
                     "tenant": tenant,
                     "year": year,
                     "enabler": enabler,
-                    "engine_version": "SEAM-ENGINE-v2026.01.27",
+                    "engine_version": "SEAM-ENGINE-v2026.01.28",
                     "exported_at": datetime.now().isoformat()
                 },
                 "result_summary": {
@@ -2438,25 +2417,20 @@ class SEAMPDCAEngine:
             # 5. Export
             # --------------------------------------------------
             export_path = get_assessment_export_file_path(
-                tenant=tenant,
-                year=year,
-                enabler=enabler.lower(),
-                suffix=f"{sub_criteria_id}_{timestamp}",
-                ext="json"
+                tenant=tenant, year=year, enabler=enabler.lower(),
+                suffix=f"{sub_criteria_id}_{timestamp}", ext="json"
             )
 
             os.makedirs(os.path.dirname(export_path), exist_ok=True)
-
             with open(export_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
 
             self.logger.info(f"✅ [EXPORT OK] {export_path}")
             return export_path
 
-        except Exception:
-            self.logger.error("🛑 [EXPORT FAILED]", exc_info=True)
+        except Exception as e:
+            self.logger.error(f"🛑 [EXPORT FAILED] {str(e)}", exc_info=True)
             return ""
-
 
     def _guarantee_text_key(
         self,
