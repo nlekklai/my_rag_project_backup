@@ -87,14 +87,16 @@ try:
     # --- Prompts ---
     try:
         from core.seam_prompts import (
-            ATOMIC_ACTION_PROMPT, MASTER_ROADMAP_PROMPT,
-            SYSTEM_ATOMIC_ACTION_PROMPT, SYSTEM_MASTER_ROADMAP_PROMPT, MASTER_ROADMAP_TEMPLATE
+            ATOMIC_ACTION_PROMPT, SUB_ROADMAP_PROMPT,
+            SYSTEM_ATOMIC_ACTION_PROMPT, SYSTEM_SUB_ROADMAP_PROMPT,
+            STRATEGIC_OVERALL_PROMPT, SYSTEM_OVERALL_STRATEGIC_PROMPT
         )
     except ImportError:
         ATOMIC_ACTION_PROMPT = "Recommendation: {coaching_insight} Level: {level}"
-        MASTER_ROADMAP_PROMPT = "Roadmap for {sub_criteria_name}: {aggregated_insights}"
+        SUB_ROADMAP_PROMPT = "Roadmap: {aggregated_insights}"
+        STRATEGIC_OVERALL_PROMPT = "Overall: {aggregated_context}"
         SYSTEM_ATOMIC_ACTION_PROMPT = "Assistant mode."
-        SYSTEM_MASTER_ROADMAP_PROMPT = "Strategy mode."
+        SYSTEM_SUB_ROADMAP_PROMPT = "Strategy mode."
 
 except ImportError as e:
     # 🚨 EMERGENCY FALLBACK: ด่านสุดท้าย 🚨
@@ -146,9 +148,9 @@ except ImportError as e:
     def _check_and_handle_empty_context(*args, **kwargs): return None, False
 
     ATOMIC_ACTION_PROMPT = "Level {level}: {coaching_insight}"
-    MASTER_ROADMAP_PROMPT = "Roadmap: {aggregated_insights}"
+    SUB_ROADMAP_PROMPT = "Roadmap: {aggregated_insights}"
     SYSTEM_ATOMIC_ACTION_PROMPT = "Assistant"
-    SYSTEM_MASTER_ROADMAP_PROMPT = "Strategist"
+    SYSTEM_SUB_ROADMAP_PROMPT = "Strategist"
 
 # -------------------- 5. LOGGER SETUP --------------------
 logger = logging.getLogger(__name__)
@@ -4800,144 +4802,118 @@ MANDATORY AUDIT RULES:
         llm_executor: Any
     ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC ORCHESTRATOR - FINAL v2026.01.27]
-        - 🎯 Maturity-aware (Step-Ladder)
-        - 🧠 Gap-driven (Blocking first)
-        - 🛡️ UI-schema aligned (phases)
+        [TIER-3 STRATEGIC ORCHESTRATOR - FULL REVISE v2026.01.28]
+        - 🧩 Macro-Synthesis: สังเคราะห์แผนภาพรวมจากทุก Sub-id
+        - 🛡️ KeyError Shield: ใช้ STRATEGIC_OVERALL_PROMPT ที่แยกตัวแปรชัดเจน
+        - 🚀 Performance: ปรับลดความซับซ้อนของ Context เพื่อให้ L40S ตอบสนองไวขึ้น
         """
 
-        self.logger.info(f"🌐 [TIER-3] Synthesizing Master Roadmap for {enabler_name}")
+        self.logger.info(f"🌐 [TIER-3] Synthesizing Strategic Master Plan for {enabler_name}")
 
         if not sub_criteria_results:
             return {
                 "status": "INCOMPLETE",
-                "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผน",
+                "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผนภาพรวม",
                 "phases": []
             }
 
-        # --------------------------------------------------
-        # 1. Determine Global Maturity Baseline
-        # --------------------------------------------------
+        # --- [STEP 1: DETERMINING GLOBAL MATURITY & FOCUS] ---
+        # หาเลเวลต่ำสุดที่ทุกข้อผ่าน (Baseline)
         global_maturity = min(
             [int(r.get("highest_full_level", 0)) for r in sub_criteria_results if r],
             default=0
         )
 
-        # --------------------------------------------------
-        # 2. Gap Aggregation (BLOCKING FIRST)
-        # --------------------------------------------------
+        # กำหนด Strategic Focus สำหรับภาพรวมองค์กร
+        if global_maturity < 3:
+            global_focus = f"Focus: Foundational Integrity (การสถาปนารากฐานระบบ {enabler_name} และปิดช่องว่างมาตรฐาน)"
+        elif 3 <= global_maturity < 5:
+            global_focus = f"Focus: Strategic Integration (การเชื่อมโยงระบบ {enabler_name} เข้ากับเป้าหมายยุทธศาสตร์องค์กร)"
+        else:
+            global_focus = f"Focus: Excellence & Innovation (การสร้างนวัตกรรมและเป็นต้นแบบระดับสากล)"
+
+        # --- [STEP 2: AGGREGATING MULTI-SUB GAPS] ---
         blocking_gaps = []
-        improvement_gaps = []
+        key_strengths = []
 
         for res in sub_criteria_results:
-            sub_id = res.get("sub_id", "N/A")
-            sub_name = res.get("sub_criteria_name", "N/A")
-            level_details = res.get("level_details", {})
+            sid = res.get("sub_id", "N/A")
+            sname = res.get("sub_criteria_name", "N/A")
+            
+            # เก็บจุดแข็ง (เลเวลสูงสุดที่ผ่าน)
+            if res.get("highest_full_level", 0) > 0:
+                key_strengths.append(f"- [{sid}] ผ่านระดับ L{res.get('highest_full_level')}: {sname}")
 
-            # ตรวจเฉพาะ level ที่ “ควรผ่านแล้ว”
-            for lv in range(1, global_maturity + 2):
-                lv_str = str(lv)
-                detail = level_details.get(lv_str)
-                if not detail:
-                    continue
+            # ดึงเฉพาะ Coaching Insight ของเลเวลที่ติดขัด (Next Target Level)
+            next_lv = str(res.get("highest_full_level", 0) + 1)
+            details = res.get("level_details", {}).get(next_lv)
+            
+            if details and not details.get("is_passed"):
+                insight = details.get("coaching_insight", "").strip()
+                if insight:
+                    blocking_gaps.append(f"🔴 [{sid} L{next_lv}]: {insight[:200]}")
 
-                is_passed = detail.get("is_passed") is True
-                is_capped = detail.get("is_capped") is True
-                insight = (detail.get("coaching_insight") or "").replace('"', "'").strip()
-
-                if not insight or len(insight) < 5:
-                    continue
-
-                tagged = f"[{sub_id} L{lv}] {insight}"
-
-                if not is_passed or is_capped:
-                    blocking_gaps.append(tagged)
-                else:
-                    improvement_gaps.append(tagged)
-
-        # จำกัด context ไม่ให้ LLM ล้น
-        blocking_gaps = blocking_gaps[:8]
-        improvement_gaps = improvement_gaps[:5]
-
+        # จำกัดปริมาณข้อมูลไม่ให้ LLM สับสน
         aggregated_context = (
-            "🔴 BLOCKING GAPS (ต้องแก้ก่อน):\n" +
-            "\n".join(blocking_gaps) +
-            "\n\n🟡 IMPROVEMENT AREAS (เสริมความแข็งแรง):\n" +
-            "\n".join(improvement_gaps)
+            "💎 KEY STRENGTHS (จุดแข็งที่เป็นต้นทุน):\n" +
+            ("\n".join(key_strengths[:5]) if key_strengths else "- อยู่ระหว่างการเริ่มต้น") +
+            "\n\n🚨 CRITICAL BLOCKING GAPS (ช่องว่างรวมที่ต้องเร่งปิด):\n" +
+            ("\n".join(blocking_gaps[:10]) if blocking_gaps else "- ไม่พบช่องว่างวิกฤต")
         )
 
-        # --------------------------------------------------
-        # 3. Prompt Orchestration
-        # --------------------------------------------------
-        final_prompt = MASTER_ROADMAP_PROMPT.format(
-            sub_id="OVERALL",
-            sub_criteria_name=enabler_name,
-            enabler=enabler_name,
-            aggregated_insights=aggregated_context
+        # --- [STEP 3: PROMPT ORCHESTRATION (THE FIX)] ---
+        # 🛡️ ใช้ Prompt ตัวใหม่ที่รับ 3 ตัวแปร (ตรงกับ seam_prompts.py)
+        final_prompt = STRATEGIC_OVERALL_PROMPT.format(
+            enabler_name=enabler_name,
+            aggregated_context=aggregated_context,
+            strategic_focus=global_focus
         )
 
         try:
-            response = llm_executor.generate(
-                system=SYSTEM_MASTER_ROADMAP_PROMPT,
-                prompts=[final_prompt],
-                temperature=0.2
+            # ใช้ helper _fetch_llm_response หรือเรียก llm_executor โดยตรง
+            raw = _fetch_llm_response(
+                system_prompt=SYSTEM_OVERALL_STRATEGIC_PROMPT,
+                user_prompt=final_prompt,
+                llm_executor=llm_executor
             )
 
-            raw_text = getattr(response, "content", str(response)).strip()
-            plan_json = _robust_extract_json(raw_text) or {}
+            data = _robust_extract_json(raw) or {}
+            raw_phases = data.get("phases") or data.get("roadmap") or []
 
-            raw_phases = (
-                plan_json.get("phases") or
-                plan_json.get("roadmap") or
-                plan_json.get("action_plan") or []
-            )
-
-            # --------------------------------------------------
-            # 4. Normalize to UI Schema
-            # --------------------------------------------------
-            phases = []
+            # --- [STEP 4: NORMALIZE PHASES] ---
+            final_phases = []
             for i, p in enumerate(raw_phases, 1):
                 if isinstance(p, dict):
-                    phases.append({
-                        "phase": p.get("phase", f"Phase {i}"),
-                        "target_levels": p.get("target_levels", f"L{global_maturity + 1}"),
-                        "main_objective": p.get("main_objective") or p.get("goal"),
-                        "key_actions": p.get("key_actions") or p.get("actions") or [],
-                        "expected_outcome": p.get("expected_outcome") or "ยกระดับ maturity สำเร็จ"
+                    final_phases.append({
+                        "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
+                        "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
+                        "main_objective": p.get("main_objective") or p.get("target_objectives") or "ปิดช่องว่างเชิงยุทธศาสตร์",
+                        "key_actions": p.get("key_actions") or p.get("strategic_actions") or [],
+                        "expected_outcome": p.get("expected_outcome") or p.get("key_performance_indicator") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
                     })
 
-            if not phases:
-                phases = [{
-                    "phase": "Strategic Stabilization",
-                    "target_levels": f"L{global_maturity + 1}",
-                    "main_objective": "ปิด Gap ที่ขวางการยกระดับ maturity",
-                    "key_actions": blocking_gaps[:3],
-                    "expected_outcome": "พร้อมเข้าสู่ระดับ maturity ถัดไป"
-                }]
+            if not final_phases:
+                final_phases = self._get_emergency_fallback_plan("OVERALL", enabler_name).get("phases", [])
 
             return {
                 "status": "SUCCESS",
-                "overall_strategy": (
-                    plan_json.get("overall_strategy") or
-                    plan_json.get("summary") or
-                    f"ยกระดับ {enabler_name} จาก L{global_maturity} สู่ L{global_maturity + 1}"
-                ),
-                "phases": phases,
+                "overall_strategy": data.get("overall_strategy") or global_focus,
+                "phases": final_phases,
                 "metadata": {
-                    "generated_at": datetime.now().isoformat(),
-                    "global_maturity": global_maturity,
-                    "input_sub_count": len(sub_criteria_results),
-                    "enabler": enabler_name
+                    "global_maturity_baseline": global_maturity,
+                    "applied_strategic_focus": global_focus,
+                    "total_sub_evaluated": len(sub_criteria_results),
+                    "generated_at": datetime.now().isoformat()
                 }
             }
 
         except Exception as e:
-            self.logger.error("💥 Master Roadmap Error", exc_info=True)
+            self.logger.error(f"🛑 [TIER-3-CRITICAL] Global Roadmap Error: {e}", exc_info=True)
             return {
                 "status": "ERROR",
-                "overall_strategy": "ไม่สามารถสังเคราะห์แผนได้",
-                "phases": [],
-                "reason": str(e)
+                "overall_strategy": "เกิดข้อผิดพลาดในการสังเคราะห์แผนยุทธศาสตร์",
+                "reason": str(e),
+                "phases": []
             }
 
     def create_atomic_action_plan(
@@ -5128,7 +5104,7 @@ MANDATORY AUDIT RULES:
 
         # --- [STEP 3: PROMPT ORCHESTRATION] ---
         # ต้องส่งครบ 5 ตัวแปรตามที่ PromptTemplate (input_variables) กำหนดไว้
-        prompt = MASTER_ROADMAP_PROMPT.format(
+        prompt = SUB_ROADMAP_PROMPT.format(
             sub_id=sub_id,
             sub_criteria_name=sub_criteria_name,
             enabler=enabler,
@@ -5139,7 +5115,7 @@ MANDATORY AUDIT RULES:
         try:
             # ใช้ System Prompt ที่ปรับจูนให้เป็น Strategic Consultant
             raw = _fetch_llm_response(
-                system_prompt=SYSTEM_MASTER_ROADMAP_PROMPT,
+                system_prompt=SYSTEM_SUB_ROADMAP_PROMPT,
                 user_prompt=prompt,
                 llm_executor=self.llm
             )

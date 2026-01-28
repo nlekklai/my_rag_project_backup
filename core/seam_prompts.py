@@ -210,9 +210,9 @@ QUALITY_REFINEMENT_TEMPLATE: Final[str] = """
 """
 
 # =================================================================
-# 8. MASTER STRATEGIC ROADMAP (Tier-2 Consolidation)
+# 8. SUB STRATEGIC ROADMAP (Tier-2 Consolidation)
 # =================================================================
-SYSTEM_MASTER_ROADMAP_PROMPT: Final[str] = """
+SYSTEM_SUB_ROADMAP_PROMPT: Final[str] = """
 คุณคือหัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ (Chief Strategic Officer) ระดับ Big 5 
 ภารกิจ: สังเคราะห์ Coaching Insights และ Assets จากการประเมินให้เป็น "แผนยุทธศาสตร์สู่ความเป็นเลิศ"
 
@@ -224,7 +224,7 @@ SYSTEM_MASTER_ROADMAP_PROMPT: Final[str] = """
 5. [Strict JSON]: ตอบกลับในรูปแบบ JSON ตาม Schema ที่กำหนดไว้เท่านั้น
 """
 
-MASTER_ROADMAP_TEMPLATE: Final[str] = """
+SUB_ROADMAP_TEMPLATE: Final[str] = """
 ### [Strategic Context]
 - หัวข้อการประเมิน: {sub_criteria_name} ({sub_id})
 - หน่วยงาน/Enabler: {enabler}
@@ -257,6 +257,56 @@ MASTER_ROADMAP_TEMPLATE: Final[str] = """
       "key_actions": ["Action 1...", "Action 2..."],
       "expected_outcome": "ตัวบ่งชี้ความสำเร็จในระดับ Maturity ที่สูงขึ้น",
       "best_practice_ref": "ระบุไฟล์อ้างอิงหรือแนวทางต่อยอด"
+    }}
+  ]
+}}
+"""
+
+# =================================================================
+# 9. OVERALL STRATEGIC ROADMAP (Tier-3 Executive Summary)
+# =================================================================
+SYSTEM_OVERALL_STRATEGIC_PROMPT: Final[str] = """
+คุณคือประธานที่ปรึกษาด้านการจัดการองค์กร (Executive Chairman Advisory)
+ภารกิจ: สังเคราะห์ผลการประเมิน "ทุกหัวข้อ" ของ Enabler ให้เป็นแผนยุทธศาสตร์ภาพรวมระดับองค์กร
+
+[STRATEGIC RULES]:
+1. [Synergy Focus]: มองหาความเชื่อมโยงระหว่าง Sub-criteria เช่น ถ้าตกเรื่อง 'แผน' ในหลายๆ ข้อ ให้เสนอการแก้ที่ 'ระบบการวางแผนภาพรวม'
+2. [Portfolio View]: วิเคราะห์ว่า Enabler นี้อยู่ในระยะใด (Foundation / Integration / Excellence)
+3. [Resource Optimization]: เสนอการใช้ทรัพยากรที่คุ้มค่าที่สุดเพื่อปิด Gap ใหญ่ (Blocking Gaps)
+4. [No IT-Ghosting]: เน้น Governance และ Leadership ในระดับภาพรวม
+"""
+
+OVERALL_STRATEGIC_TEMPLATE: Final[str] = """
+### [Executive Context]
+- ระบบงาน (Enabler): {enabler_name}
+- จุดเน้นเชิงกลยุทธ์: {strategic_focus}
+
+### [Summary of Assessment Results]
+{aggregated_context}
+
+---
+จงสร้าง Strategic Master Plan (JSON) เพื่อยกระดับองค์กรภาพรวม:
+{{
+  "status": "SUCCESS",
+  "overall_strategy": "บทวิเคราะห์ยุทธศาสตร์องค์กร (วิเคราะห์ภาพรวมความพร้อมและทิศทางหลัก)",
+  "phases": [
+    {{
+      "phase": "Phase 1: Stabilization & Governance",
+      "target_objectives": "การแก้ปัญหาเชิงโครงสร้างที่กระทบหลายหัวข้อ",
+      "strategic_actions": [
+          "Action 1...",
+          "Action 2..."
+      ],
+      "key_performance_indicator": "ตัวชี้วัดความสำเร็จระดับ Enabler"
+    }},
+    {{
+      "phase": "Phase 2: Full Integration & Excellence",
+      "target_objectives": "การสร้างนวัตกรรมและผลลัพธ์ที่เป็นเลิศ",
+      "strategic_actions": [
+          "Action 1...",
+          "Action 2..."
+      ],
+      "key_performance_indicator": "การบรรลุมาตรฐานระดับสากล"
     }}
   ]
 }}
@@ -325,7 +375,12 @@ QUALITY_REFINEMENT_PROMPT = PromptTemplate(
     template=SYSTEM_QUALITY_PROMPT + QUALITY_REFINEMENT_TEMPLATE
 )
 
-MASTER_ROADMAP_PROMPT = PromptTemplate(
+SUB_ROADMAP_PROMPT = PromptTemplate(
     input_variables=["sub_id", "sub_criteria_name", "enabler", "aggregated_insights","strategic_focus"],
-    template=SYSTEM_MASTER_ROADMAP_PROMPT + MASTER_ROADMAP_TEMPLATE
+    template=SYSTEM_SUB_ROADMAP_PROMPT + SUB_ROADMAP_TEMPLATE
+)
+
+STRATEGIC_OVERALL_PROMPT = PromptTemplate(
+    input_variables=["enabler_name", "aggregated_context", "strategic_focus"],
+    template=SYSTEM_OVERALL_STRATEGIC_PROMPT + OVERALL_STRATEGIC_TEMPLATE
 )

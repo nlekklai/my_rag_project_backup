@@ -56,6 +56,9 @@ from database import (
     db_finish_task
 )
 
+MAX_CONCURRENT_TASKS = 4 
+assessment_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+
 
 # ตั้งค่า Logger และ Router
 logger = logging.getLogger(__name__)
@@ -1002,7 +1005,7 @@ async def get_assessment_status(
         raise HTTPException(status_code=500, detail="Internal Server Error ในการดึงสถานะ")
     finally:
         db.close()
-        
+
 @assessment_router.get("/history")
 async def get_assessment_history(
     tenant: str, 
@@ -1070,30 +1073,41 @@ async def get_assessment_history(
                     if target_enabler and file_enabler != target_enabler: continue
 
                     # 4. SCOPE (แก้ไขเพื่อให้ดึง sub_id จากโครงสร้างใหม่ได้แม่นยำ)
-                    scope = metadata.get("sub_id") or old_sum.get("sub_criteria_id")
-                    
-                    if not scope or str(scope).upper() in ["ALL", "NONE"]:
-                        # เจาะเข้าที่ sub_criteria_details -> sub_criteria_results
-                        details = data.get("sub_criteria_details", [])
-                        found_subs = []
-                        
+                    details = data.get("sub_criteria_details", [])
+                    found_subs = []
+
+                    # ดึงรายการ sub_id ที่มีการประเมินจริงในไฟล์นี้
+                    if isinstance(details, list):
                         for detail in details:
-                            # ดึงจากรายการผลลัพธ์ย่อย
+                            # กรณีรันผ่าน Worker (โครงสร้าง Tier-2)
                             sub_results = detail.get("sub_criteria_results", [])
                             for res in sub_results:
-                                if res.get("sub_id"):
-                                    found_subs.append(str(res.get("sub_id")))
-                        
-                        # ตัดตัวซ้ำและสรุปผล
-                        unique_subs = list(set(found_subs))
-                        if len(unique_subs) == 1:
-                            scope = unique_subs[0]
-                        elif len(unique_subs) > 1:
-                            scope = "MULTI"
-                        else:
-                            scope = "ALL"
-                    
-                    scope = str(scope).upper()
+                                sid = res.get("sub_id")
+                                if sid: found_subs.append(str(sid))
+                            
+                            # กรณีไฟล์โครงสร้างเดี่ยว (Tier-1)
+                            if not sub_results and detail.get("sub_id"):
+                                found_subs.append(str(detail.get("sub_id")))
+
+                    # กำจัดตัวซ้ำและเรียงลำดับ (เช่น 1.1, 1.2)
+                    unique_subs = sorted(list(set(found_subs)))
+
+                    # --- ตัดสินใจเลือกข้อความที่จะแสดงบน UI ---
+                    if len(unique_subs) == 1:
+                        # 🎯 กรณีประเมินรายข้อ: แสดงเลขข้อไปเลย เช่น "1.1"
+                        scope = unique_subs[0]
+                    elif 1 < len(unique_subs) <= 3:
+                        # 🎯 กรณีประเมินบางส่วน (2-3 ข้อ): แสดงเลขข้อเรียงกัน เช่น "1.1, 1.2"
+                        scope = ", ".join(unique_subs)
+                    elif len(unique_subs) > 3:
+                        # 🎯 กรณีประเมินจำนวนมาก แต่ไม่ครบทั้ง Enabler
+                        scope = "MULTI"
+                    else:
+                        # 🎯 Fallback สุดท้ายถ้าหาไม่เจอจริงๆ หรือเป็นการประเมินทั้ง Enabler
+                        raw_scope = metadata.get("sub_id") or old_sum.get("sub_criteria_id") or "ALL"
+                        scope = str(raw_scope).upper()
+
+                    scope = scope.upper()
 
                     # 5. LEVEL LOGIC
                     display_level = res_sum.get("maturity_level") or old_sum.get("highest_pass_level")
@@ -1213,6 +1227,7 @@ async def start_assessment(
     # 4. Delegate to Background Worker
     background_tasks.add_task(
         run_assessment_engine_task,
+        semaphore=assessment_semaphore, # เพิ่มอันนี้
         record_id=record_id,
         tenant=request.tenant,
         year=target_year,

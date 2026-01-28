@@ -1,39 +1,45 @@
 version: '3.8'
 
 services:
-  # --- Ollama Service ---
+  # --- Ollama Service: หอคอยหลักสำหรับประมวลผล LLM ---
   ollama_service:
     image: ollama/ollama:latest
     container_name: ollama_container
+    shm_size: '4gb'  # เพิ่ม Shared Memory สำหรับ Tensor ขนาดใหญ่ (70B Model)
     volumes:
       - ./ollama_data:/root/.ollama
     ports:
       - "11434:11434"
     environment:
-      # ปรับให้ Ollama รองรับการประมวลผล 4 ข้อพร้อมกัน (Parallel)
-      - OLLAMA_NUM_PARALLEL=4      
-      - OLLAMA_MAX_LOADED_MODELS=1 
-      - OLLAMA_SCHED_SPREAD=true    # <--- เพิ่มบรรทัดนี้เพื่อกระจายโหลดลง 8 GPU
+      - OLLAMA_NUM_PARALLEL=4       # สอดคล้องกับ MAX_CONCURRENT_TASKS ของ Backend
+      - OLLAMA_MAX_LOADED_MODELS=1  # บังคับโหลด 1 โมเดลขนาดใหญ่ (70B) เพื่อคุม VRAM
+      - OLLAMA_SCHED_SPREAD=true     # กระจายโหลด Model ลงบน L40S ทั้ง 8 ใบ
+      - OLLAMA_KEEP_ALIVE=-1        # ให้โมเดลอยู่ใน Memory ตลอดเวลา ลดความหน่วง (Latency)
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all          # ใช้ GPU ทั้ง 8 ใบ
+              count: all           # รีดพลังจาก GPU ทั้ง 8 ใบ
               capabilities: [gpu]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # --- Backend Service ---
+  # --- Backend Service: สมองกล RAG และ SE-AM PDCA Engine ---
   backend:
     build: .
     container_name: rag_backend
     user: "${UID}:${GID}"
+    shm_size: '2gb'
     volumes:
       - .:/app
       - ./data_store:/app/data_store
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-    # ใช้ env_file เพื่อดึงค่าจาก .env มาใช้โดยไม่ต้องประกาศซ้ำ
     env_file:
       - .env
     environment:
@@ -43,14 +49,15 @@ services:
       - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
-      # --- เพิ่ม 3 บรรทัดนี้เพื่อแก้ Permission Error ---
-      - HOME=/app/data_store  # <--- บรรทัดสำคัญที่สุด: เพื่อหลอก Library ว่า User Home อยู่ที่นี่
+      # --- Permission & Cache Shielding ---
+      - HOME=/app/data_store  # แก้ปัญหา Permission Error ใน Docker
       - PYTHAINLP_DATA_DIR=/app/data_store/.pythainlp
       - HF_HOME=/app/data_store/.huggingface
       - TRANSFORMERS_CACHE=/app/data_store/.cache/huggingface
     depends_on:
-      - ollama_service
-    command: uvicorn app:app --host 0.0.0.0 --port 8000
+      ollama_service:
+        condition: service_healthy  # รอให้ Ollama พร้อมจริงๆ ก่อนเริ่ม Backend
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1
     ports:
       - "8000:8000" 
     deploy:
@@ -58,7 +65,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: all  # Backend ใช้ GPU สำหรับ Embedding/Rerank
               capabilities: [gpu]
     stdin_open: true
     tty: true
