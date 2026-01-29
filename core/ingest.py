@@ -420,56 +420,102 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     is_separator_regex=False
 )
 
+
 def _detect_sub_topic_and_page(text: str) -> Dict[str, Any]:
     """
-    [ULTIMATE DETECTOR v2026] 
-    ตรวจจับ sub_topic และ page number โดยเน้นความแม่นยำภาษาไทยและโครงสร้าง PEA
+    [ULTIMATE DETECTOR v2026.02.01-final-fixed]
+    - FIX: แก้ปัญหา re.error: bad character range โดยการ escape เครื่องหมายขีดกลาง (\-)
+    - รองรับเลขหน้าไทย/อังกฤษ และรหัสเกณฑ์ SEAM ทุกรูปแบบ (Tier 2-3)
     """
     result = {"sub_topic": None, "page_number": None}
-    if not text: return result
+    if not text or not text.strip():
+        return result
 
-    # 1. 🎯 จับ Page Number (เน้นเลขหน้าที่อยู่เดี่ยวๆ หรือมีคำนำหน้า)
-    # รองรับ: "หน้า 1", "Page 5", "- 10 -", "(หน้า 12)"
+    # ล้างอักขระพิเศษที่มักมากับ PDF ราชการ (Non-breaking space / หลายช่องว่าง)
+    text_lower = text.lower().replace('\xa0', ' ')
+    text_lower = re.sub(r'\s+', ' ', text_lower).strip()
+
+    # --- 1. 🎯 จับ Page Number (Fixed Regex) ---
     page_patterns = [
-        r'(?:หน้า|Page|P\.)\s*(\d+)',           # หน้า 1, Page 5
-        r'[\s\(]-?\s*(\d+)\s*-?[\s\)]',         # - 10 -, ( 11 ) มักอยู่ท้าย/หัวกระดาษ
+        r'(?:หน้า|page|p\.|pg\.)\s*(\d{1,3})',                    # หน้า 12, Page 5
+        r'(?:หน้า|page)\s*(\d{1,3})\s*(?:of|จาก|จากทั้งหมด)\s*\d+',    # หน้า 12 จาก 50
+        # 🟢 [FIXED] ใช้ \- แทน - และย้ายตำแหน่งเพื่อกัน range error
+        r'[\s\(–\-]\s*(\d{1,3})\s*[–\-\)\]]',                      # - 10 -, – 15 –, ( 12 )
+        r'เล่ม\s*\d+\s*(?:หน้า|page)\s*(\d{1,3})',                # เล่ม 3 หน้า 45
+        r'(?:ฉบับที่|ฉบับ)\s*\d+\s*(?:หน้า|page)\s*(\d{1,3})',     # ฉบับที่ 12 หน้า 8
     ]
-    for p in page_patterns:
-        match = re.search(p, text, re.IGNORECASE)
-        if match:
-            p_num = match.group(1)
-            # Sanity Check: เลขหน้าไม่ควรเกิน 1000 สำหรับเอกสารประเมินทั่วไป
-            if 0 < int(p_num) < 1000:
-                result["page_number"] = p_num
-                break
 
-    # 2. 🎯 จับ Sub-topic (รหัสเกณฑ์ SEAM)
-    # ปรับ Pattern ให้เน้น "จุดเริ่มต้นบรรทัด" หรือ "มีช่องว่างล้อมรอบ" เพื่อกันเลขสถิติ
-    patterns = [
-        r'(?:KM|หมวด|เกณฑ์)?\s*(\d\.\d+)',      # KM 1.2, 4.1
-        r'\b(\d+-\d+)\b',                       # 1-02 (Format PEA บางปี)
+    for pattern in page_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            try:
+                p_num = match.group(1)
+                if 1 <= int(p_num) <= 999:
+                    result["page_number"] = p_num
+                    break
+            except (ValueError, IndexError):
+                continue
+
+    # --- 2. 🎯 จับ Sub-topic / รหัสเกณฑ์ (Fixed Regex for Tier-3) ---
+    sub_topic_patterns = [
+        # 🟢 [FIXED] ใช้ [.\-] เพื่อรองรับทั้งจุดและขีดในรหัสเกณฑ์
+        r'(?:km|หมวด|เกณฑ์|มาตรา|ข้อ|section|หัวข้อ|enabler)?\s*(\d{1,2}[.\-]\d{1,2}(?:\.\d{1,2})?)\b',
+        r'\b(\d{1,2}[.\-]\d{1,2}(?:\.\d{1,2})?)\b',
+        r'(?:หมวด|ส่วน|ตอน)\s*(\d{1,2})\s*[.\-]?\s*(\d{1,2})(?:\.\s*(\d{1,2}))?',
     ]
-    
+
     found_key = None
-    for pattern in patterns:
-        match = re.search(pattern, text)
+    for pattern in sub_topic_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
         if match:
-            found_key = match.group(1).replace("-", ".")
-            break
+            # ดึงเฉพาะกลุ่มที่เป็นตัวเลขและจุดมาเชื่อมกัน
+            groups = [g for g in match.groups() if g is not None]
+            if groups:
+                # Normalize ให้เป็นรูปแบบจุด (เช่น 1-02 -> 1.02)
+                normalized_key = '.'.join(groups).replace('-', '.')
+                # ลบจุดที่อาจจะติดมาเกิน
+                normalized_key = re.sub(r'\.+', '.', normalized_key).strip('.')
+                
+                dot_count = normalized_key.count('.')
+                # รองรับ 1.2 (1 จุด) หรือ 1.2.1 (2 จุด)
+                if 1 <= dot_count <= 2:
+                    # ตรวจสอบว่าทุก part เป็นตัวเลขจริงๆ
+                    if all(p.isdigit() for p in normalized_key.split('.')):
+                        found_key = normalized_key
+                        break
 
-    # 3. 🎯 ตรวจสอบกับ SEAM_SUBTOPIC_MAP (ข้ามการวน Loop ใหญ่ถ้าเจอ Key แล้ว)
-    if found_key and found_key in SEAM_SUBTOPIC_MAP:
-        result["sub_topic"] = SEAM_SUBTOPIC_MAP[found_key]
-    else:
-        # Fallback: ค้นหาชื่อหัวข้อเต็ม (ยืดหยุ่นด้วยการลบช่องว่างออก)
-        clean_text = text.replace(" ", "")
-        for key, code in SEAM_SUBTOPIC_MAP.items():
-            if key in text or key.replace(".", "-") in text:
-                result["sub_topic"] = code
-                break
+    # --- 3. 🎯 ตรวจสอบกับ SEAM_SUBTOPIC_MAP (Truth Source) ---
+    if found_key:
+        if found_key in SEAM_SUBTOPIC_MAP:
+            result["sub_topic"] = SEAM_SUBTOPIC_MAP[found_key]
+        else:
+            # Fallback: ลองหา Parent Key (เช่น 1.2.1 หาไม่เจอ ให้ใช้ 1.2)
+            parts = found_key.split('.')
+            if len(parts) > 2:
+                parent_key = f"{parts[0]}.{parts[1]}"
+                if parent_key in SEAM_SUBTOPIC_MAP:
+                    result["sub_topic"] = f"{SEAM_SUBTOPIC_MAP[parent_key]} (ย่อย {found_key})"
+            
+            # Last Resort: ค้นหาจาก Keyword ในเนื้อหา (ถ้ายังไม่มี sub_topic)
+            if not result["sub_topic"]:
+                clean_text_no_space = text.replace(" ", "").replace("\n", "")
+                for key, code in SEAM_SUBTOPIC_MAP.items():
+                    if key.replace(" ", "") in clean_text_no_space:
+                        result["sub_topic"] = code
+                        break
+
+    # --- 4. 🎯 Final Sanity Check ---
+    # ป้องกันเลขปี พ.ศ. หรือรหัสเกณฑ์มาเนียนเป็นเลขหน้า
+    if result["page_number"]:
+        p_val = result["page_number"]
+        # ถ้าเลขหน้าดันไปตรงกับรหัสเกณฑ์เด่นๆ ให้ดีดออก
+        if p_val in ["1.2", "4.1", "3.3", "5.2"] or "." in p_val:
+            result["page_number"] = None
+        # ถ้าเลขหน้ามีค่าสูงเกินจริง (เช่น พ.ศ. 2567) ให้ดีดออก
+        elif int(p_val) > 900: 
+            result["page_number"] = None
 
     return result
-
 
 def _n(s: Union[str, None]) -> str:
     """Normalize string และจัดการเรื่อง macOS NFD ให้เป็น NFKC"""
@@ -557,6 +603,7 @@ def load_and_chunk_document(
     """
     Full Version: Load + Clean + Chunk + Metadata Normalization
     รองรับการรักษาเลขหน้า (Page Label) ให้แสดงผลบน UI ได้ถูกต้อง ไม่เป็น N/A
+    FIX: Propagate ชื่อไฟล์จริงให้ทุก chunk + ดักจับ "เอกสารอ้างอิง" / "Unknown File"
     """
     
     file_extension = os.path.splitext(file_path)[1].lower()
@@ -577,13 +624,14 @@ def load_and_chunk_document(
         logger.warning(f"⚠️ ไม่พบเนื้อหาในไฟล์: {os.path.basename(file_path)}")
         return []
 
-    # --- 2. Base Metadata Setup ---
+    # --- 2. Base Metadata Setup (ชื่อไฟล์จริงต้องอยู่ที่นี่ก่อน) ---
+    real_filename = os.path.basename(file_path)  # ชื่อไฟล์จริง (เช่น KM6.1L301.pdf)
     base_metadata = {
         "doc_type": doc_type,
         "doc_id": stable_doc_uuid,
         "stable_doc_uuid": stable_doc_uuid,
-        "source": os.path.basename(file_path),
-        "source_filename": os.path.basename(file_path),
+        "source": real_filename,               # ชื่อไฟล์จริง
+        "source_filename": real_filename,      # ชื่อไฟล์จริง (ใช้แสดงผล)
         "version": version,
     }
     if enabler: base_metadata["enabler"] = enabler
@@ -591,22 +639,22 @@ def load_and_chunk_document(
     if year: base_metadata["year"] = year
     if metadata: base_metadata.update(metadata)
 
-    # จัดการเรื่องเลขหน้าเบื้องต้นจาก Loader (เช่น PyPDFLoader)
+    # Inject ชื่อไฟล์จริงให้ทุก raw_doc ก่อน split
     for d in raw_docs:
         d.metadata.update(base_metadata)
         raw_p = d.metadata.get("page")
         if raw_p is not None:
             try:
-                # แปลงจาก 0-based index เป็นเลขหน้าจริง (เริ่มที่ 1)
                 p_num = int(raw_p) + 1 
                 d.metadata["page_number"] = p_num
                 d.metadata["page"] = str(p_num)
+                d.metadata["page_label"] = str(p_num)  # สำหรับ UI
             except (ValueError, TypeError):
-                pass
+                d.metadata["page"] = "N/A"
+                d.metadata["page_label"] = "N/A"
 
     # --- 3. Split into Chunks ---
     try:
-        # TEXT_SPLITTER ต้องถูกประกาศไว้ด้านนอกฟังก์ชันนี้
         chunks = TEXT_SPLITTER.split_documents(raw_docs)
     except Exception as e:
         logger.error(f"❌ การ Split เนื้อหาล้มเหลว: {e}")
@@ -615,7 +663,7 @@ def load_and_chunk_document(
     # --- 4. Final Processing & Metadata Normalization ---
     final_chunks = []
     
-    # สร้าง Namespace สำหรับ Deterministic UUID V5
+    # Namespace สำหรับ UUID V5
     try:
         namespace_uuid = uuid.UUID(stable_doc_uuid)
     except ValueError:
@@ -628,33 +676,44 @@ def load_and_chunk_document(
         # Clean text
         chunk.page_content = clean_text(chunk.page_content)
 
-        # [NEW] ตรวจจับเลขหน้าและ Sub-topic จากเนื้อหา (Regex Fallback)
+        # [CRITICAL FIX] ตรวจสอบและ fallback ชื่อไฟล์จริงให้ทุก chunk
+        current_filename = chunk.metadata.get("source_filename") or chunk.metadata.get("source") or real_filename
+        if current_filename in ["Unknown File", "N/A", "เอกสารอ้างอิง", "Reference Document", "", "SCORE:"]:
+            snippet = chunk.page_content[:80].strip()
+            if snippet:
+                current_filename = f"หลักฐาน KM เรื่อง '{snippet}' (fallback จากเนื้อหา)"
+            else:
+                current_filename = f"หลักฐานเกณฑ์ {doc_type} (fallback จาก doc_type)"
+        
+        # อัปเดต metadata ให้ทุก chunk มีชื่อไฟล์จริง
+        chunk.metadata["source_filename"] = current_filename
+        chunk.metadata["source"] = current_filename
+
+        # ตรวจจับเลขหน้าและ sub-topic จากเนื้อหา (fallback)
         detected = _detect_sub_topic_and_page(chunk.page_content)
         
-        # ลำดับความสำคัญ: 1. จาก Loader -> 2. จาก Regex
         if not chunk.metadata.get("page_number") and detected["page_number"]:
             chunk.metadata["page_number"] = detected["page_number"]
         
         if detected["sub_topic"]:
             chunk.metadata["sub_topic"] = detected["sub_topic"]
 
-        # --- 🟢 จุดสำคัญ: ทำ Metadata ให้รองรับการแสดงผลบน UI 🟢 ---
-        final_page = chunk.metadata.get("page_number") or chunk.metadata.get("page")
+        # --- จุดสำคัญ: ทำ Metadata ให้รองรับ UI 🟢 ---
+        final_page = chunk.metadata.get("page_number") or chunk.metadata.get("page") or detected["page_number"]
         
-        if final_page and str(final_page).strip().lower() != "n/a":
+        if final_page and str(final_page).strip().lower() not in ["n/a", ""]:
             p_str = str(final_page).strip()
-            chunk.metadata["page"] = p_str        # สำหรับทั่วไป
-            chunk.metadata["page_label"] = p_str  # 📌 สำหรับ UI แสดงผล (แก้ปัญหา N/A)
-            chunk.metadata["page_number"] = p_str # สำหรับ Metadata filtering
+            chunk.metadata["page"] = p_str
+            chunk.metadata["page_label"] = p_str          # สำหรับ UI
+            chunk.metadata["page_number"] = p_str         # สำหรับ filtering
         else:
             chunk.metadata["page"] = "N/A"
             chunk.metadata["page_label"] = "N/A"
 
-        # 🟢 GENERATE DETERMINISTIC CHUNK UUID
+        # Generate Deterministic Chunk UUID
         combined_seed = f"{stable_doc_uuid}_chunk_{idx}"
         chunk_uuid = str(uuid.uuid5(namespace_uuid, combined_seed))
         
-        # Update Chunk Identifiers
         chunk.metadata.update({
             "chunk_uuid": chunk_uuid,
             "chunk_index": idx,
@@ -662,14 +721,15 @@ def load_and_chunk_document(
             "stable_doc_uuid": stable_doc_uuid
         })
 
-        # กรองข้อมูลที่ซับซ้อนเกินไปก่อนเก็บลง ChromaDB
+        # กรอง metadata ก่อนเก็บลง ChromaDB
         chunk.metadata = _safe_filter_complex_metadata(chunk.metadata)
         final_chunks.append(chunk)
 
-    # สรุปผลการ Trace เลขหน้า
+    # สรุปผลการ Trace
     pages_found = len([c for c in final_chunks if c.metadata.get('page') != 'N/A'])
+    filenames_used = set(c.metadata.get('source_filename', 'Unknown') for c in final_chunks)
     logger.info(f"✅ ประมวลผลสำเร็จ: {os.path.basename(file_path)} "
-                f"| {len(final_chunks)} chunks | Page traces: {pages_found}")
+                f"| {len(final_chunks)} chunks | Page traces: {pages_found} | Filenames: {', '.join(filenames_used)}")
     
     return final_chunks
 
@@ -688,15 +748,19 @@ def process_document(
     source_name_for_display: Optional[str] = None,
     ocr_pages: Optional[Iterable[int]] = None
 ) -> Tuple[List[Document], str, str]: 
-
-            
+    """
+    Process single document with full metadata injection
+    FIX: Inject ชื่อไฟล์จริงเข้า metadata ก่อนส่ง load_and_chunk_document
+    Priority: source_name_for_display > file_name > basename
+    """
+    
     doc_type = doc_type or DEFAULT_DOC_TYPES
     
     resolved_enabler = None
     if doc_type.lower() == EVIDENCE_DOC_TYPES.lower():
         resolved_enabler = (enabler or DEFAULT_ENABLER).upper()
 
-    # 🟢 รวบรวม Metadata ที่จำเป็นทั้งหมดไว้ใน injected_metadata ณ จุดนี้
+    # 🟢 รวบรวม Metadata ที่จำเป็นทั้งหมด (injected_metadata)
     injected_metadata = metadata or {}
     
     # 1. ข้อมูลที่ถูก Resolve
@@ -707,17 +771,38 @@ def process_document(
     if tenant: 
         injected_metadata["tenant"] = tenant
         
-    # 💡 FIX: ต้องเพิ่ม year เข้าไปใน injected_metadata ด้วย (ถ้ามีค่า)
+    # 💡 FIX: เพิ่ม year เข้าไป (ถ้ามีค่า)
     if year is not None: 
         injected_metadata["year"] = year
         
     if subject: 
-        injected_metadata["subject"] = subject
-        
-    logger.info(f"================== START DEBUG INGESTION: {file_name} ==================")
-    logger.info(f"🔍 DEBUG ID (stable_doc_uuid, UUID V5): {len(stable_doc_uuid)}-char: {stable_doc_uuid[:36]}...")
+        injected_metadata["subject"] = subject.strip()
+    
+    # 💡 CRITICAL FIX: Inject ชื่อไฟล์จริงให้ชัวร์ที่สุด (priority order)
+    # ใช้ source_name_for_display ก่อน (ถ้ามี) → file_name → basename(file_path)
+    real_filename = (
+        source_name_for_display or 
+        file_name or 
+        os.path.basename(file_path) or 
+        "Unknown_Document_Fallback"
+    )
+    
+    # ดักจับและ clean ชื่อไฟล์ที่เป็น noise (ป้องกัน "เอกสารอ้างอิง" หรือ label จากตาราง)
+    if real_filename in ["เอกสารอ้างอิง", "Reference Document", "Unknown File", "N/A", ""]:
+        logger.warning(f"[METADATA-FIX] Detected noise filename '{real_filename}' → fallback to basename")
+        real_filename = os.path.basename(file_path) or f"Document_{stable_doc_uuid[:8]}"
+    
+    # Inject ชื่อไฟล์จริงเข้า metadata (สำคัญมาก!)
+    injected_metadata["source_filename"] = real_filename
+    injected_metadata["source"] = real_filename  # สำหรับ ChromaDB / retrieval
+    
+    # Logging ชัดเจนเพื่อ debug
+    logger.info(f"================== START DEBUG INGESTION: {real_filename} ==================")
+    logger.info(f"🔍 DEBUG ID (stable_doc_uuid, UUID V5): {stable_doc_uuid[:36]}...")
+    logger.info(f"Injected real filename: {real_filename}")
+    logger.info(f"Injected metadata keys: {list(injected_metadata.keys())}")
 
-    # 🎯 ส่ง Metadata ทั้งหมดผ่าน dict ไปให้ load_and_chunk_document
+    # 🎯 ส่ง Metadata ทั้งหมด (ที่มีชื่อไฟล์จริงแล้ว) ไปให้ load_and_chunk_document
     chunks = load_and_chunk_document(
         file_path=file_path,
         stable_doc_uuid=stable_doc_uuid,
@@ -725,15 +810,17 @@ def process_document(
         enabler=resolved_enabler, 
         subject=subject, 
         version=version,
-        metadata=injected_metadata, # <--- **สำคัญ:** มี year อยู่ในนี้แล้ว
+        metadata=injected_metadata,  # ชื่อไฟล์จริงอยู่ในนี้แล้ว
         ocr_pages=ocr_pages
     )
     
     if chunks:
-         logger.debug(f"Chunk metadata preview: {chunks[0].metadata}")
-        
+        # Log preview ของ chunk แรกเพื่อยืนยันว่า metadata ถูกต้อง
+        first_chunk_meta = chunks[0].metadata
+        logger.debug(f"First chunk metadata preview: source_filename={first_chunk_meta.get('source_filename')}, "
+                     f"source={first_chunk_meta.get('source')}, page={first_chunk_meta.get('page')}")
+    
     return chunks, stable_doc_uuid, doc_type
-
 
 # -------------------- Vectorstore / Mapping Utilities --------------------
 _VECTORSTORE_SERVICE_CACHE: dict = {}

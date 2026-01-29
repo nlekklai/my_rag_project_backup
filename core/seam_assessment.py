@@ -4850,15 +4850,15 @@ class SEAMPDCAEngine:
         strategic_focus: str = ""
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE REVISED v2026.01.31] - NON-GENERIC ROADMAP + EMPTY EVIDENCE HANDLING
-        - Discovery Mode เมื่อไม่มีหลักฐาน
-        - Post-check & Regenerate ถ้าเจอ generic verb
-        - Token-aware truncation + logging
+        [ULTIMATE REVISED v2026.02.01] - NO-NOISE & NO-GENERIC VERSION
+        - Sanitization: กรองชื่อไฟล์ "เอกสารอ้างอิง" ออกก่อนส่ง LLM
+        - Precision: บังคับอ้างอิงชื่อไฟล์จริง (Real Evidence Only)
+        - Dynamic Phase: ป้องกันการลอกข้อความตัวอย่างใน Template
         """
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        self.logger.info(f"🚀 [ROADMAP] Generating for {sub_id}: {sub_criteria_name} | Focus: {strategic_focus}")
+        self.logger.info(f"🚀 [ROADMAP] Generating for {sub_id}: {sub_criteria_name}")
 
         # --- [STEP 0: CHECK FOR EMPTY EVIDENCE MODE] ---
         is_no_evidence = all(
@@ -4867,15 +4867,16 @@ class SEAMPDCAEngine:
         ) or len(aggregated_insights) == 0
 
         if is_no_evidence:
-            self.logger.warning(f"[DISCOVERY-MODE] No real evidence for {sub_id} → Switching to Discovery Roadmap")
             return self._generate_discovery_roadmap(sub_id, sub_criteria_name, enabler, strategic_focus)
 
-        # --- [STEP 1: STRATEGIC CONTEXT ENRICHMENT] ---
+        # --- [STEP 1: STRATEGIC CONTEXT ENRICHMENT & SANITIZATION] ---
         condensed_insights = []
         best_practice_assets = []
         highest_continuous = 0
         has_gap = False
-
+        
+        # รายชื่อไฟล์ที่เป็น Noise ซึ่งต้องล้างออก
+        noise_filenames = ["Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""]
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
@@ -4885,45 +4886,40 @@ class SEAMPDCAEngine:
 
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
-            filename = ev_node.get("file", "Unknown File")
+            
+            # 🟢 [FIX] ดึงชื่อไฟล์และทำการ Clean ทันที
+            raw_filename = ev_node.get("file", "Unknown File")
+            clean_filename = raw_filename if raw_filename not in noise_filenames else None
 
             if passed:
-                if filename and filename not in ["Unknown File", "N/A"]:
-                    best_practice_assets.append(f"Level {lv} Asset: {filename} (ใช้เป็นต้นแบบ)")
+                if clean_filename:
+                    best_practice_assets.append(f"Level {lv} Asset: {clean_filename} (ใช้เป็นต้นแบบ/Reference หลัก)")
                 else:
-                    snippet = ev_node.get("snippet", "")
-                    if snippet:
-                        best_practice_assets.append(f"Level {lv} Context: พบเนื้อหา '{snippet[:60]}...'")
+                    # ถ้าไม่มีชื่อไฟล์จริง ให้ใช้ชื่อเกณฑ์เป็นตัวตั้ง เพื่อกัน AI มโนชื่อไฟล์เอง
+                    best_practice_assets.append(f"Level {lv} Context: ใช้แนวทางปฏิบัติเดิมของหัวข้อ {sub_criteria_name}")
 
+            # Tracking Gap
             if passed and not has_gap:
                 highest_continuous = lv
-                state_label = "✅ PASSED (SOLID)"
-            elif passed and has_gap:
-                state_label = "⚠️ PASSED BUT CAPPED"
+                state_label = "✅ PASSED"
             else:
-                state_label = "❌ GAP DETECTED"
+                state_label = "❌ GAP"
                 has_gap = True
 
             insight_text = item.get('insight_summary', '').strip()
             condensed_insights.append(f"- L{lv} [{state_label}]: {insight_text}")
 
+        # เตรียม Context ส่งให้ LLM
         enriched_context = (
-            "💎 EXISTING STRATEGIC ASSETS:\n" +
-            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานชัดเจน") +
-            "\n\n🚨 CRITICAL GAPS & INSIGHTS:\n" +
+            f"💎 EXISTING ASSETS FOR {sub_id}:\n" +
+            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานเก่าที่เป็นลายลักษณ์อักษร") +
+            "\n\n🚨 ANALYSIS OF GAPS:\n" +
             "\n".join(condensed_insights)
         )
 
-        # Token-aware truncation
-        if len(enriched_context) > 6000:
-            self.logger.warning(f"[TOKEN-WARNING] Context too long ({len(enriched_context)} chars) → Truncating")
-            enriched_context = enriched_context[:6000] + "... (ข้อมูลบางส่วนถูกตัดเพื่อความกระชับ)"
-
         if not strategic_focus:
-            strategic_focus = (
-                f"ระดับ Maturity ปัจจุบัน L{highest_continuous} "
-                + ("(เน้นปิด Gap พื้นฐาน)" if has_gap else "(เน้นขยายผลสู่ Excellence & Sustainability)")
-            )
+            strategic_focus = f"ยกระดับจาก Maturity L{highest_continuous} " + \
+                             ("(เน้นปิดช่องว่างระดับพื้นฐาน)" if has_gap else "(เน้นขยายผลสู่ความยั่งยืน)")
 
         # --- [STEP 2: PROMPT ORCHESTRATION] ---
         prompt = SUB_ROADMAP_TEMPLATE.format(
@@ -4946,59 +4942,44 @@ class SEAMPDCAEngine:
                 )
 
                 data = _robust_extract_json(raw) or {}
-                raw_phases = data.get("phases") or data.get("roadmap") or data.get("action_plan") or []
+                raw_phases = data.get("phases") or []
 
-                # --- [STEP 3: POST-CHECK FOR GENERIC VERBS] ---
-                generic_keywords = ["ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา", "ประเมิน", "ทบทวน", "เบื้องต้น", "แก้ไขข้อบกพร่อง"]
-                has_generic = any(kw in str(data).lower() for kw in generic_keywords)
+                # --- [STEP 3: POST-CHECK FOR GENERIC VERBS & COPY-PASTE] ---
+                generic_keywords = ["ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา", "ประเมิน", "ทบทวน", "เบื้องต้น"]
+                # ดักจับประโยคตัวอย่างที่ AI ชอบก๊อปปี้
+                template_echo = "ยกระดับด้วย standardization และ automation" 
+                
+                content_str = str(data).lower()
+                has_generic = any(kw in content_str for kw in generic_keywords)
+                has_echo = template_echo in content_str
 
-                if has_generic and retry_count < max_retries - 1:
+                if (has_generic or has_echo) and retry_count < max_retries - 1:
                     retry_count += 1
-                    self.logger.warning(f"[GENERIC-DETECTED] Retry {retry_count}/{max_retries} for {sub_id}")
-                    # เพิ่ม force instruction รอบถัดไป
-                    force_instruction = """
-                    [FORCE RETRY MODE]:
-                    - ห้ามใช้คำว่า ตรวจสอบ, สอบทาน, วิเคราะห์, พิจารณา, ประเมิน, ทบทวน, เบื้องต้น, แก้ไขข้อบกพร่อง เด็ดขาด
-                    - ต้องใช้ Action Verbs ที่ปฏิบัติได้ทันที เช่น 'ประกาศใช้', 'สถาปนา', 'ขยายผล', 'บูรณาการ', 'กำหนด KPI', 'สร้างระบบ', 'อัปโหลดและกำหนด workflow', 'จัดทำบันทึกอนุมัติ'
-                    - ทุก action ต้องมีชื่อไฟล์ + หน้า/ส่วน
-                    """
-                    prompt += force_instruction
+                    self.logger.warning(f"⚠️ [RETRY] Generic/Echo detected for {sub_id}. Attempt {retry_count}")
+                    prompt += "\n\n[STRICT INSTRUCTION]: Do not use generic verbs or copy the example text. Be specific to the provided assets."
                     continue
 
-                # --- [STEP 4: NORMALIZE PHASES FOR UI SCHEMA] ---
+                # --- [STEP 4: NORMALIZE PHASES & PREVENT FALLBACK ECHO] ---
                 final_phases = []
-                if isinstance(raw_phases, list):
-                    for i, p in enumerate(raw_phases, 1):
-                        if isinstance(p, dict):
-                            phase_name = p.get("phase", f"Phase {i}: การยกระดับ {sub_id}")
-                            # Force Phase 1 name สำหรับ L5 no gap
-                            if highest_continuous == 5 and not has_gap and "Quick Win" in phase_name:
-                                phase_name = "Phase 1: Quick Win (Reinforce & Sustain)"
-
-                            key_actions = p.get("key_actions") or p.get("actions") or []
-                            if not key_actions and p.get("actions"):
-                                self.logger.warning(f"[LEGACY-ACTIONS] LLM ยังใช้ 'actions' แทน 'key_actions' ใน phase {i}")
-
-                            final_phases.append({
-                                "phase": phase_name,
-                                "target_levels": p.get("target_levels") or [highest_continuous + 1],
-                                "main_objective": p.get("main_objective") or "ปิดช่องว่างและพัฒนามาตรฐาน",
-                                "key_actions": key_actions,  # ใช้ key_actions เป็นหลัก
-                                "expected_outcome": p.get("expected_outcome") or "ผลลัพธ์เชิงประจักษ์",
-                                "best_practice_ref": p.get("best_practice_ref") or "ใช้หลักฐานที่ผ่านการประเมินเป็นต้นแบบ"
-                            })
-
-                # Force มี Phase 2 สำหรับ L5
-                if highest_continuous == 5 and len(final_phases) < 2:
+                for i, p in enumerate(raw_phases, 1):
+                    # กรองข้อมูลแต่ละเฟสให้เป็นระเบียบ
                     final_phases.append({
-                        "phase": "Phase 2: Level-Up Excellence",
-                        "goal": "ยกระดับด้วย standardization และ automation",
-                        "key_actions": [{"action": "พัฒนาระบบติดตามผลอัตโนมัติจากหลักฐานที่มี", "priority": "Medium"}]
+                        "phase": p.get("phase", f"Phase {i}: Implementation"),
+                        "target_levels": p.get("target_levels") or [highest_continuous + 1],
+                        "main_objective": p.get("main_objective") or f"ยกระดับการจัดการ {sub_criteria_name}",
+                        "key_actions": p.get("key_actions") or [],
+                        "expected_outcome": p.get("expected_outcome") or "ผลลัพธ์ที่เป็นรูปธรรมตามเกณฑ์",
+                        "best_practice_ref": p.get("best_practice_ref") or "ใช้หลักฐานใน Asset List เป็นเกณฑ์อ้างอิง"
                     })
 
-                if not final_phases:
-                    fallback = self._get_emergency_fallback_plan(sub_id, sub_criteria_name)
-                    final_phases = fallback.get("phases", [])
+                # กรณีพิเศษ: ถ้า L5 แล้ว และ AI เขียนเฟสเดียว ให้เติมเฟสความยั่งยืนแบบ Dynamic
+                if highest_continuous == 5 and len(final_phases) < 2:
+                    final_phases.append({
+                        "phase": "Phase 2: Sustainability & Learning Culture",
+                        "main_objective": f"สร้างวัฒนธรรมการเรียนรู้ในหัวข้อ {sub_criteria_name} อย่างต่อเนื่อง",
+                        "key_actions": [{"action": f"ถอดบทเรียน (Lesson Learned) จากหลักฐานหลักและเผยแพร่ผ่านระบบ KM", "priority": "High"}],
+                        "expected_outcome": "องค์ความรู้ถูกถ่ายทอดและไม่สูญหายเมื่อมีการเปลี่ยนแปลงบุคลากร"
+                    })
 
                 return {
                     "scope": "SUB_CRITERIA",
@@ -5006,23 +4987,20 @@ class SEAMPDCAEngine:
                     "sub_criteria_name": sub_criteria_name,
                     "highest_maturity_level": highest_continuous,
                     "overall_strategy": data.get("overall_strategy", strategic_focus),
-                    "phases": final_phases,
+                    "phases": final_phases or self._get_emergency_fallback_plan(sub_id, sub_criteria_name)["phases"],
                     "is_gap_detected": has_gap,
                     "status": "SUCCESS",
-                    "generated_at": datetime.now().isoformat(),
-                    "strategic_focus_applied": strategic_focus,
                     "retry_count": retry_count
                 }
 
             except Exception as e:
-                self.logger.error(f"🛑 [ROADMAP-CRITICAL] Error for {sub_id}: {e}", exc_info=True)
+                self.logger.error(f"🛑 Critical Error for {sub_id}: {e}")
                 retry_count += 1
                 if retry_count >= max_retries:
                     return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
 
-        # Fallback ถ้า retry หมด
-        return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Max retries exceeded")
-        
+        return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Retry limit exceeded")
+
     def synthesize_enabler_roadmap(
         self,
         sub_criteria_results: List[Dict[str, Any]],
