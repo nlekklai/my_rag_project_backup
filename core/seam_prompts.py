@@ -267,7 +267,7 @@ SUB_ROADMAP_TEMPLATE = """
     {{
       "phase": "Phase 1: Quick Win (Reinforce & Sustain หรือ Remediation)",
       "goal": "เสริมความแข็งแกร่งหรือปิดช่องว่างโดยอ้างอิงหลักฐานจริง",
-      "actions": [
+      "key_actions": [
         {{
           "action": "ระบุ action เฉพาะเจาะจง + อ้างชื่อไฟล์ + หน้า/ส่วน",
           "priority": "High"
@@ -277,7 +277,7 @@ SUB_ROADMAP_TEMPLATE = """
     {{
       "phase": "Phase 2: Level-Up Excellence",
       "goal": "ยกระดับด้วย standardization, automation หรือขยายผลต้นแบบ",
-      "actions": [
+      "key_actions": [
         {{
           "action": "ระบุแผนงานเชิงสถาปัตยกรรม + อ้างไฟล์และส่วนที่เกี่ยวข้อง",
           "priority": "Medium"

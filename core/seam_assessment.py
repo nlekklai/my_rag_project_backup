@@ -23,6 +23,13 @@ import random
 
 from core.json_extractor import _robust_extract_json, _robust_extract_json_list
 
+
+# -------------------- 5. LOGGER SETUP --------------------
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
 # -------------------- 1. PROTECTIVE IMPORTS --------------------
 # จัดการเรื่อง FileLock และ Database ก่อนเพื่อนเพื่อให้ส่วนอื่นเรียกใช้ได้ชัวร์ๆ
 try:
@@ -152,10 +159,59 @@ except ImportError as e:
     SYSTEM_ATOMIC_ACTION_PROMPT = "Assistant"
     SYSTEM_SUB_ROADMAP_PROMPT = "Strategist"
 
-# -------------------- 5. LOGGER SETUP --------------------
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+try:
+    from core.seam_prompts import SUB_ROADMAP_TEMPLATE
+    logger.info("[PROMPT] Loaded SUB_ROADMAP_TEMPLATE from core.seam_prompts (real version)")
+except ImportError as e:
+    logger.warning(f"[PROMPT] Import failed ({str(e)}), using fallback SUB_ROADMAP_TEMPLATE")
+    SUB_ROADMAP_TEMPLATE = """
+### [Strategic Context]
+- หัวข้อ: {sub_criteria_name} ({sub_id}) | Enabler: {enabler}
+- ทิศทางเชิงกลยุทธ์: {strategic_focus}
+
+### [Input Data: Assets & Gaps - ใช้เฉพาะข้อมูลนี้ ห้ามมโนเพิ่ม]
+{aggregated_insights}
+
+---
+สร้าง Master Roadmap ตามกฎเข้มงวดข้างต้นอย่างเคร่งครัดที่สุด:
+- ทุก action ต้องเจาะจง + อ้างชื่อไฟล์จริง + หน้า/ส่วน (ถ้ามี) + verb ปฏิบัติได้ทันที
+- ห้ามใช้ verb ต้องห้ามเด็ดขาด (รวมใน goal และ overall_strategy)
+- หากผ่าน L5 และไม่มี gap ให้ Phase 1 = "Reinforce & Sustain" และ Phase 2 = Standardization / Automation / ขยายผลต้นแบบ
+- ห้ามมี Phase เดียวถ้าเป็น L5
+
+ตัวอย่าง action ที่ถูกต้องเท่านั้น (ใช้เป็นแนวทางเท่านั้น ไม่ใช่ copy ตรง ๆ):
+- "ประกาศใช้ KMS Policy ที่ผู้บริหารลงนามจากหน้า 12 ของไฟล์ KM6.1L301 KM_6_3_PEA_Assessment Report.pdf เป็นมาตรฐานองค์กร พร้อมกำหนดการสื่อสารไตรมาสละ 1 ครั้งผ่าน KM-Si"
+- "สถาปนา dashboard อัตโนมัติสำหรับติดตามผลการประเมิน KM จากโครงสร้างในหน้า 7 ของไฟล์ KM2.1L405 PEA KM Master Plan_...13Dec24_edit.pdf โดยบูรณาการเข้ากับระบบ KM-Survey"
+- "ขยายผลนโยบายเร่งด่วน 12 ด้านจากหน้า 48 ของไฟล์ KM1.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4 ย่อ.pdf มาจัดทำโปรแกรมอบรมผู้บริหารทุกระดับเรื่องการขับเคลื่อน KM"
+
+{{
+  "status": "SUCCESS",
+  "overall_strategy": "ใช้ความสำเร็จจากไฟล์ A หน้า X มาสร้างระบบยั่งยืนและขยายผลข้ามหน่วยงาน (ต้องอ้างไฟล์จริงจาก input)",
+  "phases": [
+    {{
+      "phase": "Phase 1: Quick Win (Reinforce & Sustain หรือ Remediation)",
+      "goal": "เสริมความแข็งแกร่งหรือปิดช่องว่างโดยอ้างอิงหลักฐานจริง",
+      "key_actions": [
+        {{
+          "action": "ระบุ action เฉพาะเจาะจง + อ้างชื่อไฟล์ + หน้า/ส่วน",
+          "priority": "High"
+        }}
+      ]
+    }},
+    {{
+      "phase": "Phase 2: Level-Up Excellence",
+      "goal": "ยกระดับด้วย standardization, automation หรือขยายผลต้นแบบ",
+      "key_actions": [
+        {{
+          "action": "ระบุแผนงานเชิงสถาปัตยกรรม + อ้างไฟล์และส่วนที่เกี่ยวข้อง",
+          "priority": "Medium"
+        }}
+      ]
+    }}
+  ],
+  "strategic_focus_applied": "{strategic_focus}"
+}}
+"""
 
 def get_enabler_full_name(enabler: str, lang: str = "th") -> str:
     """
