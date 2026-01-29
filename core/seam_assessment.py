@@ -4824,7 +4824,6 @@ class SEAMPDCAEngine:
         highest_continuous = 0
         has_gap = False
         
-        # ค้นหา Metadata ของหลักฐานผ่าน evidence_map
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
@@ -4832,18 +4831,25 @@ class SEAMPDCAEngine:
             status_raw = item.get("status", "FAILED")
             passed = (status_raw == "PASSED")
             
-            # ดึงชื่อไฟล์จาก Evidence Map
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
-            filename = ev_node.get("file")
+            filename = ev_node.get("file", "Unknown File") # 🛠 ป้องกัน None
             
+            # 🎯 [MOVE INSIDE LOOP] - ตรวจสอบและสะสม Assets ราย Level
+            if passed:
+                if filename and filename != "Unknown File" and filename != "N/A":
+                    best_practice_assets.append(f"Level {lv} Asset: {filename} (ใช้เป็นต้นแบบกระบวนการ)")
+                else:
+                    snippet = ev_node.get("snippet", "")
+                    if snippet:
+                        best_practice_assets.append(f"Level {lv} Context: พบหลักฐานเนื้อหาเรื่อง '{snippet[:60]}...'")
+
+            # คำนวณ Maturity บันได
             if passed and not has_gap:
                 highest_continuous = lv
-                state_label = "✅ PASSED (ASSET)"
-                if filename and filename != "N/A":
-                    best_practice_assets.append(f"Level {lv}: {filename}")
+                state_label = "✅ PASSED (SOLID)"
             elif passed and has_gap:
-                state_label = "⚠️ PASSED BUT CAPPED (NON-CONTINUOUS)"
+                state_label = "⚠️ PASSED BUT CAPPED"
             else:
                 state_label = "❌ GAP DETECTED"
                 has_gap = True
