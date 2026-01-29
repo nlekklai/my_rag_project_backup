@@ -4468,9 +4468,9 @@ class SEAMPDCAEngine:
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
         [ULTIMATE REVISED MERGE v2026.01.29 - PRODUCTION READY]
-        - 🛡️ Metadata Sync: รองรับ Key หลากหลาย (filename, source_filename, source)
-        - 🧬 Traceability Guard: ป้องกันการนับซ้ำด้วย Unique Identifier (UID)
-        - ⚖️ Decision Logic: กรณีคนตรวจ (Human-Map) จะไม่ถูก AI เขียนทับ
+        - 🛡️ Metadata Sync: เชื่อม Key 'source_filename' จาก inges.py โดยตรง
+        - 🧬 Traceability Guard: ใช้ Unique ID (UID) ป้องกันการนับคะแนนซ้ำในระดับ UI
+        - ⚖️ Decision Logic: Human-in-the-loop (ข้อมูลที่คนแก้ AI จะไม่ยุ่ง)
         """
         if not sub_result:
             return None
@@ -4482,7 +4482,6 @@ class SEAMPDCAEngine:
         # 1. Evidence Merge & Audit Trail Sync
         # --------------------------------------------------
         if temp_map and isinstance(temp_map, dict):
-            # ตรวจสอบว่ามี instance variable หรือยัง
             if not hasattr(self, "evidence_map"):
                 self.evidence_map = {}
 
@@ -4490,11 +4489,9 @@ class SEAMPDCAEngine:
                 if not isinstance(ev_list, list) or not ev_list: continue
                 if "_L" not in level_key: continue
 
-                # ค้นหา Metadata ของ Level ปัจจุบันเพื่อใช้กรณี Backup
                 lv_num = level_key.split("_L")[-1]
                 lv_data = incoming_levels.get(lv_num, {})
                 
-                # ดึง Node เดิมหรือสร้างใหม่
                 node = self.evidence_map.setdefault(level_key, {
                     "status": "pending", 
                     "evidences": [],
@@ -4506,57 +4503,49 @@ class SEAMPDCAEngine:
                 })
                 
                 existing_evs = node["evidences"]
-                # สร้าง Set ของ UID เพื่อเช็คซ้ำ (ป้องกัน Traceability ดีดตัว)
+                # 🛡️ Guard: ใช้ doc_id + page เป็น UID ป้องกัน Traceability ดีดตัว
                 seen_uids = {f"{e.get('doc_id')}_{e.get('page')}": i for i, e in enumerate(existing_evs)}
 
                 for ev in ev_list:
-                    # 🛠 FIX 1: ดึง ID ให้ตรงกับ inges.py (chunk_uuid หรือ doc_id)
-                    doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid") or "unknown_doc"
-                    page = str(ev.get("page") or ev.get("page_label") or "0")
+                    # 🛠 FIX: Map Key ให้ตรงกับ inges.py
+                    doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid") or "unknown_id"
+                    page = str(ev.get("page_label") or ev.get("page") or "0")
                     uid = f"{doc_id}_{page}"
 
-                    # 🛠 FIX 2: ป้องกัน AI เขียนทับข้อมูลที่คนแก้ (Human-in-the-loop)
+                    # 🛠 FIX: ป้องกัน AI ทับข้อมูล Human-Map
                     if uid in seen_uids:
                         idx = seen_uids[uid]
                         if existing_evs[idx].get("source_type") == "human_map":
                             continue
-                        # ถ้าไม่ใช่ Human ให้ Update ข้อมูลล่าสุด
                         existing_evs[idx].update(ev)
                     else:
                         existing_evs.append(ev)
                         seen_uids[uid] = len(existing_evs) - 1
 
-                # --------------------------------------------------
-                # 🎯 Sync ข้อมูลสรุปเข้า Node (เพื่อแก้ปัญหา Unknown File บน UI)
-                # --------------------------------------------------
+                # 🎯 [CRITICAL] Sync 'Unknown File' Fix
                 if existing_evs:
-                    # เรียงตามคะแนนเพื่อหา Best Evidence
+                    # เรียงลำดับหาหลักฐานที่น่าเชื่อถือที่สุด (Top Rerank)
                     existing_evs.sort(key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or 0.0), reverse=True)
                     top_ev = existing_evs[0]
                     
-                    # 🛠 FIX 3: แก้ไข "Unknown File" โดยการเช็คทุกลำดับของ Metadata Keys
-                    # อ้างอิงจาก base_metadata ใน inges.py
-                    possible_file_keys = ["source_filename", "filename", "source", "metadata.source"]
-                    resolved_filename = "Unknown File"
-                    for k in possible_file_keys:
-                        if top_ev.get(k):
-                            resolved_filename = top_ev.get(k)
-                            break
+                    # 🛠 FIX: ดึงชื่อไฟล์ตามลำดับ Key ที่ inges.py มีโอกาสสร้าง
+                    possible_keys = ["source_filename", "source", "filename", "metadata.source"]
+                    res_file = next((top_ev.get(k) for k in possible_keys if top_ev.get(k)), "Unknown File")
 
                     raw_text = top_ev.get("text") or top_ev.get("page_content") or ""
-                    clean_snippet = raw_text[:300].replace("\n", " ").strip() + "..." if raw_text else ""
+                    clean_snippet = raw_text[:350].replace("\n", " ").strip() + "..." if raw_text else ""
                     
                     node.update({
-                        "pdca": top_ev.get("pdca_tag") or lv_data.get("pdca_breakdown", {}).get("top_phase", "P"),
+                        "pdca": top_ev.get("pdca_tag") or lv_data.get("pdca_breakdown", {}).get("top_phase") or "P",
                         "confidence": round(float(top_ev.get("rerank_score") or top_ev.get("relevance_score") or 0.0), 2),
                         "snippet": clean_snippet,
-                        "file": resolved_filename,
+                        "file": res_file,
                         "page": str(top_ev.get("page_label") or top_ev.get("page") or "N/A"),
                         "status": "completed"
                     })
 
         # --------------------------------------------------
-        # 2. Results Integration (Global Bridge)
+        # 2. Results Integration (The Bridge)
         # --------------------------------------------------
         if not hasattr(self, "final_subcriteria_results"):
             self.final_subcriteria_results = []
@@ -4577,13 +4566,12 @@ class SEAMPDCAEngine:
             }
             self.final_subcriteria_results.append(target)
 
-        # Merge level_details
         if isinstance(incoming_levels, dict):
             for lv, lv_data in incoming_levels.items():
                 target["level_details"][str(lv)] = lv_data
 
         # --------------------------------------------------
-        # 3. Maturity Logic & Step-Ladder (ห้ามข้ามขั้น)
+        # 3. Maturity Step-Ladder Logic (คำนวณคะแนนบันได)
         # --------------------------------------------------
         highest = 0
         pdca_sum = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
@@ -4591,9 +4579,8 @@ class SEAMPDCAEngine:
 
         for l in range(1, 6):
             data = target["level_details"].get(str(l))
-            # กฎเหล็ก: ถ้า Level ก่อนหน้าไม่ผ่าน (Failed) Maturity จะหยุดทันที (Capped)
+            # กฎ: ถ้า Level ก่อนหน้าไม่ผ่าน (Failed) Maturity หยุดทันที
             if not data or not data.get("is_passed") or data.get("is_maturity_capped"):
-                # แม้จะ Failed แต่ถ้ามีข้อมูล PDCA ให้เก็บไว้โชว์บน Dashboard (แบบเส้นประ)
                 break
             
             highest = l
