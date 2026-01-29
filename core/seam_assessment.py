@@ -5205,7 +5205,11 @@ class SEAMPDCAEngine:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [FULL REVISED v2026.01.29] - FIX NULL CONFIDENCE & PDCA TAGS
+        [ULTIMATE REVISED v2026.01.30-final] - ROADMAP NON-GENERIC FIX
+        - Insight summary เจาะจงสูงสุด (หน้า, score, strength/gap/snippet/PDCA)
+        - L5 handling พิเศษ + fallback ชัดเจนเมื่อขาด evidence
+        - Logging ละเอียดเพื่อ debug roadmap quality
+        - รองรับ .env server/mac ได้ดี (context, workers, chunks)
         """
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
@@ -5236,11 +5240,9 @@ class SEAMPDCAEngine:
             flattened_item = next((item for item in self.flattened_rubric if item['sub_id'] == sub_id), None)
             correct_statement = ""
             if flattened_item:
-                # หา statement ที่ตรงกับ level ปัจจุบัน
                 lvl_data = next((l for l in flattened_item.get('levels', []) if l['level'] == level), None)
                 correct_statement = lvl_data.get('statement', "") if lvl_data else ""
 
-            # กำหนด Priority: ถ้ามีใน flattened_rubric ให้ใช้ก่อน ถ้าไม่มีค่อยถอยไปหา stmt
             final_statement = correct_statement if correct_statement else stmt.get("statement", "")
 
             # --- [STEP 1: EVIDENCE HYDRATION] ---
@@ -5259,26 +5261,18 @@ class SEAMPDCAEngine:
                 vectorstore_manager=vsm,
             )
 
-            # --- [STEP 3: SEMANTIC ENRICHMENT - 🛡️ FIX NULLS HERE] ---
+            # --- [STEP 3: SEMANTIC ENRICHMENT - FIX NULLS] ---
             pdca_results = res.get("pdca_breakdown", {})
-            # หา dominant_tag โดยห้ามเป็น None (Default 'D')
             dominant_tag = next((k for k, v in pdca_results.items() if float(v or 0) > 0), "D")
-            
+
             top_chunks = res.get("top_chunks_data", []) or []
             enriched_chunks = []
-            
+
             for chunk in top_chunks:
-                # 1. ป้องกัน PDCA Tag หาย (UI วงกลมเทา)
                 chunk["pdca_tag"] = (chunk.get("pdca_tag") or dominant_tag).upper()
-                
-                # 2. ป้องกัน Confidence หาย (UI แถบว่าง)
-                # ดึงจากหลาย source: confidence -> relevance -> rerank -> default 0.5
                 raw_score = chunk.get("confidence") or chunk.get("relevance_score") or chunk.get("rerank_score") or 0.5
                 chunk["confidence"] = float(raw_score)
-                
-                # 3. ป้องกัน Snippet/Content หาย
                 chunk["content"] = chunk.get("content") or chunk.get("text") or "ไม่พบรายละเอียดข้อความ"
-                
                 enriched_chunks.append(chunk)
 
             evidence_delta[level_key] = enriched_chunks
@@ -5304,10 +5298,11 @@ class SEAMPDCAEngine:
                     level_criteria=final_statement,
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
-            except Exception:
+            except Exception as e:
+                self.logger.warning(f"Atomic action plan failed for {sub_id}_L{level}: {e}")
                 atomic_actions = []
 
-            # 🎯 [CORE DATA FOR UI & EXPORT]
+            # --- [CORE DATA FOR UI & EXPORT] ---
             level_details[str(level)] = {
                 "level": level,
                 "is_passed": passed_by_llm,
@@ -5316,30 +5311,71 @@ class SEAMPDCAEngine:
                 "reason": res.get("reason", "ไม่มีเหตุผลระบุ"),
                 "coaching_insight": res.get("coaching_insight", ""),
                 "atomic_action_plan": atomic_actions,
-                "evidence_sources": enriched_chunks, # 🛡️ ข้อมูลที่ Enriched แล้วจะถูกส่งตรงไป UI
+                "evidence_sources": enriched_chunks,
                 "pdca_breakdown": pdca_results,
                 "rubric_statement": final_statement,
                 "required_pdca_phases": required_pdca
             }
 
-            # --- [STEP 5.1: ROADMAP BUNDLE] ---
-            top_file = enriched_chunks[0].get("filename", "N/A") if enriched_chunks else "N/A"
+            # --- [STEP 5.1: ROADMAP BUNDLE - ULTRA-DETAILED VERSION] ---
+            if enriched_chunks:
+                # เลือก top evidence จาก rerank_score สูงสุด
+                top_ev = max(enriched_chunks, key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or x.get("score") or 0.0))
+                top_file = top_ev.get("source_filename") or top_ev.get("filename") or top_ev.get("source", "N/A")
+                top_page = top_ev.get("page_label") or top_ev.get("page", "N/A")
+                top_score = f"{float(top_ev.get('rerank_score') or top_ev.get('relevance_score') or top_ev.get('score') or 0.0):.4f}"
+                top_pdca = top_ev.get("pdca_tag", "N/A")
+                snippet = (top_ev.get("content") or top_ev.get("text") or "")[:300].replace("\n", " ").strip() + "..." if top_ev.get("content") or top_ev.get("text") else "ไม่มีเนื้อหา"
+
+                insight_text = res.get("coaching_insight", "")
+                strength = gap = ""
+                if "[STRENGTH]" in insight_text:
+                    part = insight_text.split("[STRENGTH]")[1]
+                    strength = f"Strength: {part.split('[ช่องว่าง]')[0].strip()[:200]}..." if "[ช่องว่าง]" in part else f"Strength: {part.strip()[:200]}..."
+                if "[ช่องว่าง]" in insight_text:
+                    part = insight_text.split("[ช่องว่าง]")[1]
+                    gap = f"Gap: {part.split('[ข้อเสนอแนะ]')[0].strip()[:200]}..." if "[ข้อเสนอแนะ]" in part else f"Gap: {part.strip()[:200]}..."
+
+                insight_summary = (
+                    f"Level {level} | {'PASSED' if passed_by_llm else 'FAILED'} | "
+                    f"Top Evidence: {top_file} (page {top_page}) | Score: {top_score} | PDCA: {top_pdca} | "
+                    f"{strength} | {gap} | Snippet: {snippet}"
+                )
+            else:
+                insight_summary = (
+                    f"Level {level} | {'PASSED' if passed_by_llm else 'FAILED'} | "
+                    f"No evidence found | Statement: {final_statement[:300]} | "
+                    f"Coaching Insight: {res.get('coaching_insight', 'ไม่มี insight')[:200]}"
+                )
+
             roadmap_input_bundle.append({
                 "level": level,
                 "status": "PASSED" if passed_by_llm else "FAILED",
                 "is_capped": is_capped,
-                "statement": final_statement,
+                "statement": final_statement[:500],  # ตัดไม่ให้ยาวเกิน
                 "required_phases": required_pdca,
-                "insight_summary": f"Ref File: {top_file} | {res.get('coaching_insight', '')}"[:1000],
+                "insight_summary": insight_summary[:1800],
             })
 
-        # --- [STEP 6: STRATEGIC SYNTHESIS] ---
+            # Log เพื่อ debug roadmap quality
+            summary_len = len(insight_summary)
+            self.logger.debug(f"[ROADMAP-BUNDLE] {sub_id}_L{level} | Len: {summary_len} | {insight_summary[:400]}...")
+
+        # --- [STEP 6: STRATEGIC SYNTHESIS - L5 Optimized] ---
         if highest_continuous_level < 3:
-            strategic_focus = "Focus: Stabilization (เน้นการสถาปนามาตรฐาน)"
+            strategic_focus = "Focus: Stabilization (เน้นสถาปนามาตรฐานพื้นฐานและปิดช่องว่างเร่งด่วน)"
         elif 3 <= highest_continuous_level < 5:
-            strategic_focus = "Focus: Scaling & Integration (เน้นการเชื่อมโยงกระบวนการ)"
+            strategic_focus = "Focus: Scaling & Integration (เน้นบูรณาการกระบวนการและขยายผลข้ามหน่วยงาน)"
         else:
-            strategic_focus = "Focus: Strategic Excellence (เน้นนวัตกรรมและต้นแบบ)"
+            # L5 พิเศษ: ถ้า no gap → เน้น sustain & scale
+            has_gap = any("Gap:" in item["insight_summary"] and len(item["insight_summary"].split("Gap:")[1].strip()) > 10 for item in roadmap_input_bundle)
+            strategic_focus = (
+                "Focus: Strategic Excellence & Sustainability (เน้นนวัตกรรม, standardization, automation และขยายผลยั่งยืน)"
+                if not has_gap else
+                "Focus: Strategic Excellence (เน้นปิด gap ที่เหลือและยกระดับสู่ต้นแบบ)"
+            )
+
+        self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
 
         sub_roadmap = self.generate_sub_roadmap(
             sub_id=sub_id,
@@ -5360,7 +5396,7 @@ class SEAMPDCAEngine:
             "sub_roadmap": sub_roadmap,
             "strategic_focus": strategic_focus
         }, evidence_delta
-    
+        
     def _get_level_constraint_prompt(
         self,
         sub_id: str,

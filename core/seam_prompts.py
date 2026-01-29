@@ -211,19 +211,25 @@ QUALITY_REFINEMENT_TEMPLATE: Final[str] = """
 """
 
 # =================================================================
-# 8. SUB STRATEGIC ROADMAP (Tier-2 Consolidation) - REVISED v2026.01.29
+# 8. SUB STRATEGIC ROADMAP (Tier-2 Consolidation) - ULTIMATE v2026.01.30
 # =================================================================
 SYSTEM_SUB_ROADMAP_PROMPT = """
-คุณคือ "หัวหน้าที่ปรึกษาเชิงยุทธศาสตร์" (Strategic Consultant) เชี่ยวชาญด้าน Maturity Model 
-ภารกิจ: สังเคราะห์แผนยุทธศาสตร์ (Master Roadmap) จากข้อมูลหลักฐาน (Assets) และช่องว่าง (Gaps) 
+คุณคือ "หัวหน้าที่ปรึกษาเชิงยุทธศาสตร์ระดับสูง" เชี่ยวชาญด้าน Maturity Model และ ISO 30401
+ภารกิจ: สังเคราะห์แผนยุทธศาสตร์ (Master Roadmap) จากข้อมูลหลักฐานจริงเท่านั้น ไม่มโน ไม่สมมติ
 
-[RULES สำหรับการสังเคราะห์]:
-1. [Hard Evidence Only]: ห้ามมโน Action ลอยๆ ทุกแผนงานต้องระบุชื่อไฟล์จาก [EXISTING STRATEGIC ASSETS] มาเป็นต้นแบบ หรือระบุจุดแก้จาก [CRITICAL GAPS] โดยตรง
-2. [Forbidden Generic Terms]: ห้ามใช้คำว่า "ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา" โดยไม่มีบริบท 
-   - ให้ใช้ "Action Verbs" เช่น "สถาปนาระบบ...", "จัดทำบันทึกอนุมัติ...", "ประกาศใช้มาตรฐาน...", "ขยายผลต้นแบบจากไฟล์ [ชื่อไฟล์]..."
-3. [Gap-Centric Priority]: แม้จะผ่าน Level สูง แต่หากมี Gap ใน Level ต่ำ แผน Phase 1 (Quick Win) ต้องสั่ง "Remediation" อุดช่องว่างนั้นก่อนเสมอ
-5. [Evidence Prioritization]: เมื่อมีหลายไฟล์ ให้ prioritize ไฟล์ที่มี rerank_score/relevance_score สูง หรือมี pdca_tag ชัดเจน (P/D/C/A) เป็นอันดับแรก
-6. [Strict Output]: ตอบกลับเป็น JSON ตามโครงสร้างที่กำหนดเท่านั้น ห้ามเพิ่มหรือลด field
+[RULES เข้มงวด - ต้องปฏิบัติตามทุกข้อ]:
+1. [Hard Evidence Only - Zero Imagination]: ทุก action ต้องอ้างชื่อไฟล์จริงจาก [EXISTING STRATEGIC ASSETS] หรือจุดแก้จาก [CRITICAL GAPS] โดยตรง ห้ามคิด action ขึ้นเองแม้แต่นิดเดียว
+2. [Forbidden Verbs & Phrases - Absolute Ban]: ห้ามใช้คำว่า "ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา", "ประเมิน", "ทบทวน", "ศึกษาดู", "ดู", "ตรวจ" ในทุก action โดยไม่มีข้อยกเว้น แม้จะมีบริบท
+   - ต้องใช้ Action Verbs เฉพาะเจาะจงและปฏิบัติได้ทันที เช่น:
+     "สถาปนาระบบ...", "จัดทำบันทึกอนุมัติ...", "ประกาศใช้มาตรฐาน...", "ขยายผลต้นแบบจากไฟล์...", "บูรณาการข้อมูลจากหน้า X ของไฟล์...", "อัปโหลดและกำหนด workflow จากไฟล์...", "กำหนด KPI และ dashboard จากโครงสร้างในไฟล์..."
+3. [Gap-Centric Priority - No Exception]: แม้ผ่าน Level สูง ถ้า insight มี Gap ให้ Phase 1 เร่ง Remediation อุดช่องว่างนั้นก่อนเสมอ ถ้าไม่มี Gap ให้ Phase 1 เป็น "Reinforce & Sustain" (เสริมความแข็งแกร่งและรักษามาตรฐาน)
+4. [L5 Special Handling - Mandatory]: หาก highest_maturity_level = 5 และไม่มี gap ชัดเจน (is_gap_detected: false หรือ Gap ว่าง/สั้นมาก):
+   - Phase 1 ต้องเป็น "Reinforce & Sustain" เสมอ ห้ามใช้ remediation แบบปกติ
+   - Phase 2 ต้องเน้น Standardization / Automation / ขยายผลเป็นต้นแบบองค์กร / สร้างระบบยั่งยืน
+   - ห้ามใช้ action แบบ "ตรวจสอบ/วิเคราะห์เบื้องต้น" เด็ดขาด
+5. [Evidence Prioritization - Score-Driven]: Prioritize ไฟล์ที่มี rerank_score/relevance_score สูงที่สุด หรือมี pdca_tag ชัดเจน (P/D/C/A) เป็นอันดับแรก ถ้ามีหลายหน้า ให้ระบุช่วงหน้า (เช่น หน้า 11-12)
+6. [No Generic Fallback - Kill Switch]: ห้ามใช้ action ที่เป็น "ตรวจสอบหลักฐาน", "วิเคราะห์ Gap", "พิจารณา", "ประเมิน", "ทบทวนเบื้องต้น" หรือคล้าย ๆ กัน หากไม่มีข้อมูลพอให้ใช้ top evidence ที่ score สูงสุดเป็นฐาน และเขียน action ที่ทำได้จริงจากนั้น
+7. [Strict JSON Output - No Deviation]: ตอบกลับเป็น JSON ตามโครงสร้างที่กำหนดเท่านั้น ห้ามเพิ่ม field, ลด field, เขียนข้อความนอก JSON, หรืออธิบายเพิ่ม ห้ามมี ```json หรือคำอธิบายนำหน้า
 """
 
 SUB_ROADMAP_TEMPLATE = """
@@ -231,39 +237,40 @@ SUB_ROADMAP_TEMPLATE = """
 - หัวข้อ: {sub_criteria_name} ({sub_id}) | Enabler: {enabler}
 - ทิศทางเชิงกลยุทธ์: {strategic_focus}
 
-### [Input Data: Assets & Gaps]
+### [Input Data: Assets & Gaps - ใช้ข้อมูลนี้เท่านั้น ห้ามมโน]
 {aggregated_insights}
 
 ---
-จงสังเคราะห์ Master Roadmap โดยมีเงื่อนไขเข้มงวดดังนี้:
-- ทุก action ต้องเจาะจงถึงขั้นที่ผู้ปฏิบัติงานนำไปทำตามได้ทันที โดย **ต้องอ้างชื่อไฟล์จริง + หน้า/ส่วนถ้ามี** จาก Input Data เท่านั้น
+สร้าง Master Roadmap ตามกฎเข้มงวดข้างต้นอย่างเคร่งครัด:
+- ทุก action ต้องเจาะจง + อ้างชื่อไฟล์จริง + หน้า/ส่วน (ถ้ามีใน input) + verb ปฏิบัติได้ทันที
 - ห้าม copy ตัวอย่างด้านล่างแบบตรง ๆ ถ้าไม่ตรงกับข้อมูลจริง
-- หากผ่าน L5 ให้เน้น Phase 2 เป็น Standardization / Automation / ขยายผลต้นแบบ
+- หากผ่าน L5 และไม่มี gap ให้ Phase 1 = "Reinforce & Sustain" และ Phase 2 = Standardization / Automation / ขยายผลต้นแบบ
 
-ตัวอย่าง action ที่ถูกต้อง:
-- "สถาปนาระบบติดตามความพึงพอใจอัตโนมัติโดยใช้โครงสร้างแบบสอบถามจากหน้า 1-5 ของไฟล์ KM4.1L501 KM-ผลประเมินสารสนเทศKMS.pdf"
-- "ขยายผลงบประมาณ KM Implementation จากไฟล์ KM2.2L302 งบประมาณในแผนแม่บท.pdf หน้า 26 มาจัดทำโปรแกรม Mentor/Mentee ออนไลน์ข้ามสายงาน"
+ตัวอย่าง action ที่ถูกต้องเท่านั้น (ใช้เป็นแนวทาง ไม่ใช่ copy):
+- "ประกาศใช้ KMS Policy ล่าสุดจากหน้า 12 ของไฟล์ KM6.1L301 KM_6_3_PEA_Assessment Report.pdf เป็นมาตรฐานองค์กร พร้อมเพิ่มการสื่อสารไตรมาสละ 1 ครั้ง"
+- "สถาปนา dashboard อัตโนมัติสำหรับติดตาม KPI จากโครงสร้างในหน้า 3 ของไฟล์ KM4.1L104 KM-QP-04 ประชุมทบทวนฝ่ายบริหาร.pdf"
+- "ขยายผลงบประมาณ KM Implementation จากหน้า 26 ของไฟล์ KM2.2L302 งบประมาณในแผนแม่บท.pdf มาจัดทำโปรแกรม Mentor/Mentee ออนไลน์ข้ามสายงาน"
 
 {{
   "status": "SUCCESS",
-  "overall_strategy": "วิเคราะห์ความสอดคล้องระหว่าง Asset และ Gap (เช่น: 'ใช้ผลสำรวจความพึงพอใจสูงจากไฟล์ KM4.1L501 มาปิดจุดอ่อน integration คณะกรรมการจาก KM_6_3_PEA_Assessment Report.pdf')",
+  "overall_strategy": "ใช้ความสำเร็จจากไฟล์ A มาปิดจุดอ่อนในด้าน B และยกระดับสู่ความยั่งยืน (ต้องอ้างไฟล์จริง)",
   "phases": [
     {{
-      "phase": "Phase 1: Quick Win (Remediation)",
-      "goal": "ปิดช่องว่างวิกฤตที่พบใน Insights โดยอ้างอิงหลักฐานที่มีอยู่",
+      "phase": "Phase 1: Quick Win (Reinforce & Sustain หรือ Remediation)",
+      "goal": "เสริมความแข็งแกร่ง / ปิดช่องว่างวิกฤต โดยอ้างอิงหลักฐานที่มี",
       "actions": [
         {{
-          "action": "ระบุการปฏิบัติงานที่ชัดเจน + อ้างอิงชื่อไฟล์และส่วนที่เกี่ยวข้อง",
+          "action": "ระบุ action เฉพาะเจาะจง + อ้างชื่อไฟล์ + หน้า/ส่วน",
           "priority": "High"
         }}
       ]
     }},
     {{
       "phase": "Phase 2: Level-Up Excellence",
-      "goal": "ยกระดับสู่ Maturity Level ถัดไปด้วย standardization หรือ automation",
+      "goal": "ยกระดับด้วย standardization / automation / ขยายผลต้นแบบ",
       "actions": [
         {{
-          "action": "ระบุแผนงานเชิงสถาปัตยกรรมกระบวนการ โดยอ้างอิงไฟล์และส่วนที่เกี่ยวข้อง",
+          "action": "ระบุแผนงานเชิงสถาปัตยกรรม โดยอ้างไฟล์และส่วนที่เกี่ยวข้อง",
           "priority": "Medium"
         }}
       ]
