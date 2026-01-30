@@ -4838,8 +4838,11 @@ class SEAMPDCAEngine:
         self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
     
+    #------------------------------------------------------------------
+    # 🏛️ [TIER-3 METHOD] generate_sub_roadmap - ULTIMATE v2026.01.31
     # ------------------------------------------------------------------
-    # 🏛️ [ULTIMATE v2026.02.02-final-stable] generate_sub_roadmap
+    # ------------------------------------------------------------------
+    # 🏛️ [ULTIMATE REVISED] generate_sub_roadmap - USING UB_ROADMAP_PROMPT
     # ------------------------------------------------------------------
     def generate_sub_roadmap(
         self,
@@ -4850,39 +4853,25 @@ class SEAMPDCAEngine:
         strategic_focus: str = ""
     ) -> Dict[str, Any]:
         """
-        Stable & robust version using SUB_ROADMAP_PROMPT
-        - Sanitize noise filenames
-        - Dynamic injection of real filenames
-        - Force Phase 2 for L5
-        - Robust extraction + retry on generic/echo
+        - เปลี่ยนมาใช้ UB_ROADMAP_PROMPT ที่รวม System Rules และ Template ไว้ด้วยกัน
+        - ใช้ .format() หรือ .invoke() ตามมาตรฐาน PromptTemplate
         """
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        self.logger.info(f"🚀 [ROADMAP] Generating stable plan for {sub_id}: {sub_criteria_name}")
+        self.logger.info(f"🚀 [ROADMAP] Generating Professional Coach Plan via UB_PROMPT for {sub_id}")
 
-        # --- [STEP 0: NO EVIDENCE CHECK] ---
-        is_no_evidence = all(
-            "No evidence found" in item.get("insight_summary", "") 
-            for item in aggregated_insights
-        ) or len(aggregated_insights) == 0
-
-        if is_no_evidence:
-            self.logger.warning(f"[DISCOVERY-MODE] No usable insight → Discovery Roadmap")
-            return self._generate_discovery_roadmap(sub_id, sub_criteria_name, enabler, strategic_focus)
-
-        # --- [STEP 1: ASSET SANITIZATION & PREPARATION] ---
+        # --- [STEP 1: PREPARE DATA - เหมือนเดิมแต่เน้นความสะอาด] ---
         best_practice_assets = []
         top_asset_name = None
         highest_continuous = 0
         has_gap = False
-        
-        noise_filenames = {"Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""}
+        noise_filenames = ["Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""]
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
             lv = int(item.get("level", 0))
-            passed = item.get("status") == "PASSED"
+            passed = (item.get("status") == "PASSED")
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
             
@@ -4890,15 +4879,14 @@ class SEAMPDCAEngine:
             clean_filename = raw_filename if raw_filename not in noise_filenames else None
             
             if passed:
-                if not has_gap:
-                    highest_continuous = lv
-                if not top_asset_name and clean_filename:
-                    top_asset_name = clean_filename
-                best_practice_assets.append(f"- Level {lv}: {clean_filename or 'แนวทางเดิม'}")
+                if not has_gap: highest_continuous = lv
+                if not top_asset_name and clean_filename: top_asset_name = clean_filename
+                best_practice_assets.append(f"- Level {lv}: {clean_filename if clean_filename else 'แนวทางปฏิบัติเดิม'}")
             else:
                 has_gap = True
 
-        # --- [STEP 2: CONTEXT ENRICHMENT] ---
+        # --- [STEP 2: PREPARE ENRICHED CONTEXT] ---
+        # เตรียมข้อมูลสำหรับตัวแปร aggregated_insights ใน Prompt
         enriched_context = (
             f"💎 EXISTING STRATEGIC ASSETS:\n" +
             ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานหลัก") +
@@ -4909,101 +4897,73 @@ class SEAMPDCAEngine:
         if not strategic_focus:
             strategic_focus = f"ยกระดับจาก L{highest_continuous} มุ่งสู่มาตรฐาน Excellence"
 
-        # --- [STEP 3: EXECUTE PROMPT + ROBUST EXTRACTION] ---
-        max_retries = 2
-        retry_count = 0
+        # --- [STEP 3: EXECUTE UB_ROADMAP_PROMPT] ---
+        try:
+            # ใช้ UB_ROADMAP_PROMPT ในการสร้าง Prompt String
+            # หมายเหตุ: ถ้าใช้ LangChain สามารถใช้ .format() ได้เลย
+            final_prompt_string = SUB_ROADMAP_PROMPT.format(
+                sub_id=sub_id,
+                sub_criteria_name=sub_criteria_name,
+                enabler=enabler,
+                aggregated_insights=enriched_context,
+                strategic_focus=strategic_focus
+            )
 
-        while retry_count < max_retries:
-            try:
-                final_prompt_string = SUB_ROADMAP_PROMPT.format(
-                    sub_id=sub_id,
-                    sub_criteria_name=sub_criteria_name,
-                    enabler=enabler,
-                    aggregated_insights=enriched_context,
-                    strategic_focus=strategic_focus
-                )
+            # ส่งเข้า LLM (ส่งเป็น User Prompt เพราะ System Rules ถูกรวมเข้าไปใน String แล้ว)
+            # หรือถ้า _fetch_llm_response รองรับแยก System สามารถตัดแบ่งได้
+            raw = _fetch_llm_response(
+                system_prompt="คุณคือที่ปรึกษาเชิงยุทธศาสตร์ด้าน SE-AM", 
+                user_prompt=final_prompt_string, 
+                llm_executor=self.llm
+            )
 
-                raw_response = _fetch_llm_response(
-                    system_prompt="คุณคือที่ปรึกษาเชิงยุทธศาสตร์ระดับสูงสุดด้าน SE-AM",
-                    user_prompt=final_prompt_string,
-                    llm_executor=self.llm
-                )
+            data = _robust_extract_json(raw) or {}
+            raw_phases = data.get("phases") or []
 
-                # Robust extraction
-                data = _robust_extract_json(raw_response) or {}
-                raw_phases = _robust_extract_json_list(raw_response)
-
-                # Fallback ถ้า phases ว่างแต่ data มี phases
-                if not raw_phases and "phases" in data:
-                    raw_phases = data["phases"]
-
-                # --- [STEP 4: POST-CHECK FOR GENERIC / ECHO] ---
-                content_str = str(data).lower() + str(raw_phases).lower()
-                generic_keywords = ["ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา", "ประเมิน", "ทบทวน", "เบื้องต้น"]
-                template_echo = ["ยกระดับด้วย standardization และ automation", "Tailored Improvement Roadmap"]
-
-                has_generic = any(kw in content_str for kw in generic_keywords)
-                has_echo = any(echo.lower() in content_str for echo in template_echo)
-
-                if (has_generic or has_echo) and retry_count < max_retries - 1:
-                    retry_count += 1
-                    self.logger.warning(f"[RETRY] Generic/Echo detected for {sub_id}. Attempt {retry_count}")
-                    # เพิ่ม force instruction ใน prompt รอบถัดไป
-                    final_prompt_string += "\n\n[FORCE MODE]: ห้ามใช้ generic verbs หรือ copy ข้อความตัวอย่างเด็ดขาด ต้องอ้างชื่อไฟล์จริงและเจาะจงเท่านั้น"
-                    continue
-
-                # --- [STEP 5: NORMALIZE + INJECTION] ---
-                final_phases = []
-                for i, p in enumerate(raw_phases, 1):
-                    if not isinstance(p, dict): continue
-
-                    actions = p.get("key_actions") or []
-                    # Injection: ถ้าไม่มีชื่อไฟล์จริงใน action → แทรก top_asset_name (ไม่ซ้ำ)
-                    if top_asset_name and not any(top_asset_name in str(a) for a in actions):
-                        actions.insert(0, {
-                            "action": f"ต่อยอดมาตรฐานจาก {top_asset_name} เพื่อทำ Standardization",
-                            "priority": "High"
-                        })
-
-                    final_phases.append({
-                        "phase": p.get("phase", f"Phase {i}"),
-                        "target_levels": p.get("target_levels") or [min(highest_continuous + i, 5)],
-                        "main_objective": p.get("main_objective") or "ยกระดับระบบงาน",
-                        "key_actions": actions,
-                        "expected_outcome": p.get("expected_outcome") or "เพิ่ม Traceability Score > 85%"
+            # --- [STEP 4: NORMALIZE & INJECT EVIDENCE] ---
+            final_phases = []
+            for i, p in enumerate(raw_phases, 1):
+                actions = p.get("key_actions") or []
+                
+                # Injection Logic: ถ้าไม่มีชื่อไฟล์ใน Action ให้แทรกชื่อไฟล์จริงเข้าไป
+                if top_asset_name and not any(top_asset_name in str(a) for a in actions):
+                    actions.insert(0, {
+                        "action": f"ต่อยอดมาตรฐานจาก {top_asset_name} เพื่อทำ Standardization",
+                        "priority": "High"
                     })
 
-                # Force L5 Phase 2
-                if highest_continuous == 5 and len(final_phases) < 2:
-                    final_phases.append({
-                        "phase": "Phase 2: Sustainability & Learning Culture",
-                        "main_objective": "รักษามาตรฐาน Excellence และสร้างระบบ Knowledge Governance",
-                        "key_actions": [
-                            {"action": f"ถอดบทเรียนจาก {top_asset_name or 'หลักฐานหลัก'} เป็น Best Practice องค์กร", "priority": "High"}
-                        ],
-                        "expected_outcome": "Traceability 100%"
-                    })
+                final_phases.append({
+                    "phase": p.get("phase", f"Phase {i}"),
+                    "target_levels": p.get("target_levels") or [min(highest_continuous + i, 5)],
+                    "main_objective": p.get("main_objective") or "ยกระดับระบบงาน",
+                    "key_actions": actions,
+                    "expected_outcome": p.get("expected_outcome") or "เพิ่ม Traceability Score > 85%"
+                })
 
-                return {
-                    "scope": "SUB_CRITERIA",
-                    "sub_id": sub_id,
-                    "sub_criteria_name": sub_criteria_name,
-                    "highest_maturity_level": highest_continuous,
-                    "overall_strategy": data.get("overall_strategy") or strategic_focus,
-                    "phases": final_phases,
-                    "is_gap_detected": has_gap,
-                    "status": "SUCCESS",
-                    "generated_at": datetime.now().isoformat(),
-                    "retry_count": retry_count
-                }
+            # บังคับ L5 Sustainability เสมอ
+            if highest_continuous == 5 and len(final_phases) < 2:
+                final_phases.append({
+                    "phase": "Phase 2: Sustainability & Learning Culture",
+                    "main_objective": "รักษามาตรฐาน Excellence และสร้างระบบ Knowledge Governance",
+                    "key_actions": [
+                        {"action": f"ถอดบทเรียนจาก {top_asset_name} เป็น Best Practice องค์กร", "priority": "High"}
+                    ],
+                    "expected_outcome": "Traceability 100%"
+                })
 
-            except Exception as e:
-                self.logger.error(f"🛑 Error in generate_sub_roadmap: {str(e)}")
-                retry_count += 1
-                if retry_count >= max_retries:
-                    return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
+            return {
+                "scope": "SUB_CRITERIA",
+                "sub_id": sub_id,
+                "highest_maturity_level": highest_continuous,
+                "overall_strategy": data.get("overall_strategy", strategic_focus),
+                "phases": final_phases,
+                "is_gap_detected": has_gap,
+                "status": "SUCCESS"
+            }
 
-        return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Max retries exceeded")
+        except Exception as e:
+            self.logger.error(f"🛑 UB_PROMPT Error: {str(e)}")
+            return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
         
     def synthesize_enabler_roadmap(
         self,
