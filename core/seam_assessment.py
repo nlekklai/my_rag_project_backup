@@ -5409,19 +5409,25 @@ class SEAMPDCAEngine:
             self.logger.debug(f"[ROADMAP-BUNDLE] {sub_id}_L{level} | Len: {summary_len} | {insight_summary[:400]}...")
 
         # --- [STEP 6: STRATEGIC SYNTHESIS - L5 Optimized] ---
+        # ✅ FIX: ประกาศตัวแปรไว้ด้านนอกสุดเพื่อให้ logger.info เข้าถึงได้ทุกกรณี
+        has_gap = False 
+        
+        # เช็ค Gap ล่วงหน้าจาก bundle เพื่อความแม่นยำ
+        has_gap = any("Gap:" in item["insight_summary"] and len(item["insight_summary"].split("Gap:")[1].strip()) > 10 for item in roadmap_input_bundle)
+
         if highest_continuous_level < 3:
             strategic_focus = "Focus: Stabilization (เน้นสถาปนามาตรฐานพื้นฐานและปิดช่องว่างเร่งด่วน)"
         elif 3 <= highest_continuous_level < 5:
             strategic_focus = "Focus: Scaling & Integration (เน้นบูรณาการกระบวนการและขยายผลข้ามหน่วยงาน)"
         else:
             # L5 พิเศษ: ถ้า no gap → เน้น sustain & scale
-            has_gap = any("Gap:" in item["insight_summary"] and len(item["insight_summary"].split("Gap:")[1].strip()) > 10 for item in roadmap_input_bundle)
             strategic_focus = (
                 "Focus: Strategic Excellence & Sustainability (เน้นนวัตกรรม, standardization, automation และขยายผลยั่งยืน)"
                 if not has_gap else
                 "Focus: Strategic Excellence (เน้นปิด gap ที่เหลือและยกระดับสู่ต้นแบบ)"
             )
 
+        # 🎯 บรรทัดนี้จะไม่พังแล้ว เพราะ has_gap ถูกประกาศไว้แน่นอน
         self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
 
         sub_roadmap = self.generate_sub_roadmap(
