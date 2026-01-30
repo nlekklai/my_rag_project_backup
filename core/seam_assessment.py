@@ -5464,7 +5464,10 @@ class SEAMPDCAEngine:
                 "Focus: Strategic Excellence (เน้นปิด gap ที่เหลือและยกระดับสู่ต้นแบบ)"
             )
 
-        self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
+        # self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
+        # ✅ ใช้ %s หรือ Comma แทน หายขาด 1,000,000%
+        self.logger.info("[STRATEGIC-FOCUS] %s -> %s (highest: L%s, gap_detected: %s)", 
+                        sub_id, strategic_focus, highest_continuous_level, has_gap)
 
         sub_roadmap = self.generate_sub_roadmap(
             sub_id=sub_id,
