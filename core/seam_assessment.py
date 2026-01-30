@@ -4838,9 +4838,8 @@ class SEAMPDCAEngine:
         self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
     
-
     # ------------------------------------------------------------------
-    # 🏛️ [ULTIMATE v2026.02.03-final-stable-rev2] generate_sub_roadmap
+    # 🏛️ [ULTIMATE v2026.02.02-final-stable] generate_sub_roadmap
     # ------------------------------------------------------------------
     def generate_sub_roadmap(
         self,
@@ -4851,21 +4850,20 @@ class SEAMPDCAEngine:
         strategic_focus: str = ""
     ) -> Dict[str, Any]:
         """
-        Final stable version with:
+        Stable & robust version using SUB_ROADMAP_PROMPT
         - Sanitize noise filenames
-        - Dynamic injection of real filenames (no duplicate)
+        - Dynamic injection of real filenames
         - Force Phase 2 for L5
         - Robust extraction + retry on generic/echo
-        - Fixed syntax issues in f-strings
         """
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        self.logger.info(f"🚀 [ROADMAP] Generating for {sub_id}: {sub_criteria_name}")
+        self.logger.info(f"🚀 [ROADMAP] Generating stable plan for {sub_id}: {sub_criteria_name}")
 
         # --- [STEP 0: NO EVIDENCE CHECK] ---
         is_no_evidence = all(
-            "No evidence found" in item.get("insight_summary", "")
+            "No evidence found" in item.get("insight_summary", "") 
             for item in aggregated_insights
         ) or len(aggregated_insights) == 0
 
@@ -4878,7 +4876,7 @@ class SEAMPDCAEngine:
         top_asset_name = None
         highest_continuous = 0
         has_gap = False
-
+        
         noise_filenames = {"Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""}
         evidence_map = getattr(self, "evidence_map", {})
 
@@ -4887,10 +4885,10 @@ class SEAMPDCAEngine:
             passed = item.get("status") == "PASSED"
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
-
+            
             raw_filename = ev_node.get("file", "Unknown File")
             clean_filename = raw_filename if raw_filename not in noise_filenames else None
-
+            
             if passed:
                 if not has_gap:
                     highest_continuous = lv
@@ -4901,15 +4899,11 @@ class SEAMPDCAEngine:
                 has_gap = True
 
         # --- [STEP 2: CONTEXT ENRICHMENT] ---
-        # แก้ f-string ให้ชัดเจน ไม่ซ้อนวงเล็บซับซ้อน
-        assets_text = "\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานหลัก"
-        gaps_text = "\n".join([f"- L{i.get('level')}: {i.get('insight_summary')}" for i in aggregated_insights])
-
         enriched_context = (
-            f"💎 EXISTING STRATEGIC ASSETS:\n"
-            f"{assets_text}\n\n"
-            f"🚨 GAP ANALYSIS:\n"
-            f"{gaps_text}"
+            f"💎 EXISTING STRATEGIC ASSETS:\n" +
+            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานหลัก") +
+            "\n\n🚨 GAP ANALYSIS:\n" +
+            "\n".join([f"- L{i.get('level')}: {i.get('insight_summary')}" for i in aggregated_insights])
         )
 
         if not strategic_focus:
@@ -4954,17 +4948,17 @@ class SEAMPDCAEngine:
                 if (has_generic or has_echo) and retry_count < max_retries - 1:
                     retry_count += 1
                     self.logger.warning(f"[RETRY] Generic/Echo detected for {sub_id}. Attempt {retry_count}")
+                    # เพิ่ม force instruction ใน prompt รอบถัดไป
                     final_prompt_string += "\n\n[FORCE MODE]: ห้ามใช้ generic verbs หรือ copy ข้อความตัวอย่างเด็ดขาด ต้องอ้างชื่อไฟล์จริงและเจาะจงเท่านั้น"
                     continue
 
                 # --- [STEP 5: NORMALIZE + INJECTION] ---
                 final_phases = []
                 for i, p in enumerate(raw_phases, 1):
-                    if not isinstance(p, dict):
-                        continue
+                    if not isinstance(p, dict): continue
 
                     actions = p.get("key_actions") or []
-                    # Injection: แทรก top_asset_name ถ้ายังไม่มี (ไม่ซ้ำ)
+                    # Injection: ถ้าไม่มีชื่อไฟล์จริงใน action → แทรก top_asset_name (ไม่ซ้ำ)
                     if top_asset_name and not any(top_asset_name in str(a) for a in actions):
                         actions.insert(0, {
                             "action": f"ต่อยอดมาตรฐานจาก {top_asset_name} เพื่อทำ Standardization",
@@ -5010,7 +5004,7 @@ class SEAMPDCAEngine:
                     return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
 
         return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Max retries exceeded")
-
+        
     def synthesize_enabler_roadmap(
         self,
         sub_criteria_results: List[Dict[str, Any]],
@@ -5018,13 +5012,13 @@ class SEAMPDCAEngine:
         llm_executor: Any
     ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC ORCHESTRATOR - FINAL STABLE v2026.02.03-rev2]
-        - Macro-Synthesis จากทุก Sub-id
-        - KeyError Shield ด้วย .get()
-        - Performance: ลด context size ด้วย slicing
-        - Fixed f-string syntax issues
+        [TIER-3 STRATEGIC ORCHESTRATOR - FULL REVISE v2026.01.28]
+        - 🧩 Macro-Synthesis: สังเคราะห์แผนภาพรวมจากทุก Sub-id
+        - 🛡️ KeyError Shield: ใช้ STRATEGIC_OVERALL_PROMPT ที่แยกตัวแปรชัดเจน
+        - 🚀 Performance: ปรับลดความซับซ้อนของ Context เพื่อให้ L40S ตอบสนองไวขึ้น
         """
-        self.logger.info(f"🌐 [TIER-3] Synthesizing Master Plan for {enabler_name}")
+
+        self.logger.info(f"🌐 [TIER-3] Synthesizing Strategic Master Plan for {enabler_name}")
 
         if not sub_criteria_results:
             return {
@@ -5033,12 +5027,14 @@ class SEAMPDCAEngine:
                 "phases": []
             }
 
-        # --- [STEP 1: GLOBAL MATURITY & FOCUS] ---
+        # --- [STEP 1: DETERMINING GLOBAL MATURITY & FOCUS] ---
+        # หาเลเวลต่ำสุดที่ทุกข้อผ่าน (Baseline)
         global_maturity = min(
             [int(r.get("highest_full_level", 0)) for r in sub_criteria_results if r],
             default=0
         )
 
+        # กำหนด Strategic Focus สำหรับภาพรวมองค์กร
         if global_maturity < 3:
             global_focus = f"Focus: Foundational Integrity (การสถาปนารากฐานระบบ {enabler_name} และปิดช่องว่างมาตรฐาน)"
         elif 3 <= global_maturity < 5:
@@ -5046,34 +5042,37 @@ class SEAMPDCAEngine:
         else:
             global_focus = f"Focus: Excellence & Innovation (การสร้างนวัตกรรมและเป็นต้นแบบระดับสากล)"
 
-        # --- [STEP 2: AGGREGATE GAPS & STRENGTHS (LIMITED)] ---
+        # --- [STEP 2: AGGREGATING MULTI-SUB GAPS] ---
         blocking_gaps = []
         key_strengths = []
 
         for res in sub_criteria_results:
             sid = res.get("sub_id", "N/A")
             sname = res.get("sub_criteria_name", "N/A")
-            hlv = res.get("highest_full_level", 0)
+            
+            # เก็บจุดแข็ง (เลเวลสูงสุดที่ผ่าน)
+            if res.get("highest_full_level", 0) > 0:
+                key_strengths.append(f"- [{sid}] ผ่านระดับ L{res.get('highest_full_level')}: {sname}")
 
-            if hlv > 0:
-                key_strengths.append(f"- [{sid}] ผ่านระดับ L{hlv}: {sname}")
-
-            next_lv = str(hlv + 1)
-            details = res.get("level_details", {}).get(next_lv, {})
+            # ดึงเฉพาะ Coaching Insight ของเลเวลที่ติดขัด (Next Target Level)
+            next_lv = str(res.get("highest_full_level", 0) + 1)
+            details = res.get("level_details", {}).get(next_lv)
+            
             if details and not details.get("is_passed"):
                 insight = details.get("coaching_insight", "").strip()
                 if insight:
                     blocking_gaps.append(f"🔴 [{sid} L{next_lv}]: {insight[:200]}")
 
-        # Limit context size
+        # จำกัดปริมาณข้อมูลไม่ให้ LLM สับสน
         aggregated_context = (
-            f"💎 KEY STRENGTHS:\n"
-            f"{'\n'.join(key_strengths[:5]) or '- อยู่ระหว่างเริ่มต้น'}\n\n"
-            f"🚨 CRITICAL GAPS:\n"
-            f"{'\n'.join(blocking_gaps[:8]) or '- ไม่พบช่องว่างวิกฤต'}"
+            "💎 KEY STRENGTHS (จุดแข็งที่เป็นต้นทุน):\n" +
+            ("\n".join(key_strengths[:5]) if key_strengths else "- อยู่ระหว่างการเริ่มต้น") +
+            "\n\n🚨 CRITICAL BLOCKING GAPS (ช่องว่างรวมที่ต้องเร่งปิด):\n" +
+            ("\n".join(blocking_gaps[:10]) if blocking_gaps else "- ไม่พบช่องว่างวิกฤต")
         )
 
-        # --- [STEP 3: PROMPT ORCHESTRATION] ---
+        # --- [STEP 3: PROMPT ORCHESTRATION (THE FIX)] ---
+        # 🛡️ ใช้ Prompt ตัวใหม่ที่รับ 3 ตัวแปร (ตรงกับ seam_prompts.py)
         final_prompt = STRATEGIC_OVERALL_PROMPT.format(
             enabler_name=enabler_name,
             aggregated_context=aggregated_context,
@@ -5081,6 +5080,7 @@ class SEAMPDCAEngine:
         )
 
         try:
+            # ใช้ helper _fetch_llm_response หรือเรียก llm_executor โดยตรง
             raw = _fetch_llm_response(
                 system_prompt=SYSTEM_OVERALL_STRATEGIC_PROMPT,
                 user_prompt=final_prompt,
@@ -5088,21 +5088,19 @@ class SEAMPDCAEngine:
             )
 
             data = _robust_extract_json(raw) or {}
-            raw_phases = data.get("phases") or []
+            raw_phases = data.get("phases") or data.get("roadmap") or []
 
             # --- [STEP 4: NORMALIZE PHASES] ---
             final_phases = []
             for i, p in enumerate(raw_phases, 1):
-                if not isinstance(p, dict):
-                    continue
-
-                final_phases.append({
-                    "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
-                    "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
-                    "main_objective": p.get("main_objective") or "ปิดช่องว่างเชิงยุทธศาสตร์",
-                    "key_actions": p.get("key_actions") or [],
-                    "expected_outcome": p.get("expected_outcome") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
-                })
+                if isinstance(p, dict):
+                    final_phases.append({
+                        "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
+                        "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
+                        "main_objective": p.get("main_objective") or p.get("target_objectives") or "ปิดช่องว่างเชิงยุทธศาสตร์",
+                        "key_actions": p.get("key_actions") or p.get("strategic_actions") or [],
+                        "expected_outcome": p.get("expected_outcome") or p.get("key_performance_indicator") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
+                    })
 
             if not final_phases:
                 final_phases = self._get_emergency_fallback_plan("OVERALL", enabler_name).get("phases", [])
@@ -5120,7 +5118,7 @@ class SEAMPDCAEngine:
             }
 
         except Exception as e:
-            self.logger.error(f"🛑 [TIER-3] Global Roadmap Error: {e}", exc_info=True)
+            self.logger.error(f"🛑 [TIER-3-CRITICAL] Global Roadmap Error: {e}", exc_info=True)
             return {
                 "status": "ERROR",
                 "overall_strategy": "เกิดข้อผิดพลาดในการสังเคราะห์แผนยุทธศาสตร์",
@@ -5464,10 +5462,7 @@ class SEAMPDCAEngine:
                 "Focus: Strategic Excellence (เน้นปิด gap ที่เหลือและยกระดับสู่ต้นแบบ)"
             )
 
-        # self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
-        # ✅ ใช้ %s หรือ Comma แทน หายขาด 1,000,000%
-        self.logger.info("[STRATEGIC-FOCUS] %s -> %s (highest: L%s, gap_detected: %s)", 
-                        sub_id, strategic_focus, highest_continuous_level, has_gap)
+        self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
 
         sub_roadmap = self.generate_sub_roadmap(
             sub_id=sub_id,
