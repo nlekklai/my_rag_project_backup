@@ -411,17 +411,17 @@ async def analysis_llm(
     start_time = time.time()
     conv_id = conversation_id or str(uuid.uuid4())
 
-    # 1. Year Management
+    # 1. Year & Metadata Management
     effective_year = str(DEFAULT_YEAR)
     if year and str(year).strip().lower() not in ("undefined", "none", ""):
         try:
             effective_year = str(int(year.strip()))
         except ValueError:
-            logger.warning(f"Invalid year format: {year} → fallback to {DEFAULT_YEAR}")
+            logger.warning(f"Invalid year format: {year} → fallback")
 
-    logger.info(f"🔍 [Analysis] User: {current_user.id} | Tenant: {current_user.tenant} | Year: {effective_year} | Q: {question[:80]}...")
+    logger.info(f"🔍 [Analysis] User: {current_user.id} | Year: {effective_year}")
 
-    # 2. Normalize Inputs
+    # 2. Input Normalization
     stable_doc_ids = []
     if doc_ids:
         if isinstance(doc_ids, list):
@@ -432,90 +432,52 @@ async def analysis_llm(
     used_doc_types = [EVIDENCE_DOC_TYPES] if not doc_types else (
         [doc_types] if isinstance(doc_types, str) else doc_types
     )
-
     is_evidence = any(dt.lower() == EVIDENCE_DOC_TYPES.lower() for dt in used_doc_types)
     used_enabler = enabler or (DEFAULT_ENABLER if is_evidence else None)
 
-    # 3. Initialize Resources
-    try:
-        vsm = get_vectorstore_manager(tenant=current_user.tenant, year=int(effective_year))
-    except Exception:
-        logger.warning("Vectorstore fallback to DEFAULT_YEAR")
-        vsm = get_vectorstore_manager(tenant=current_user.tenant, year=DEFAULT_YEAR)
-
+    # 3. Resource Initialization
+    vsm = get_vectorstore_manager(tenant=current_user.tenant, year=int(effective_year))
     llm = create_llm_instance(model_name=DEFAULT_LLM_MODEL_NAME, temperature=LLM_TEMPERATURE)
 
-    # 4. Load Rubric (fallback safe)
-    rubric_json_str = "{}"
-    try:
-        rubric_path = get_rubric_file_path(current_user.tenant, used_enabler)
-        if os.path.exists(rubric_path):
-            with open(rubric_path, 'r', encoding='utf-8') as f:
-                rubric_json_str = f.read()  # ใช้ raw string เพื่อความเร็ว
-    except Exception as e:
-        logger.error(f"Rubric load failed: {e}")
-
-    # 5. Mode & Search Query
-    consultant_keywords = ["เหมาะ", "หลักฐาน", "ประเมิน", "สอดคล้อง", "หัวข้อไหน", "เกณฑ์ไหน", "ระดับไหน", "ขาดอะไร"]
-    is_consultant_mode = any(kw in question.lower() for kw in consultant_keywords) or (not subject and len(stable_doc_ids) <= 2)
-
-    search_query = question
-    if subject:
-        search_query = enhance_analysis_query(question, subject, rubric_json_str)
-    elif is_consultant_mode:
-        search_query = f"ผลการดำเนินงาน ตัวชี้วัด {used_enabler} {question}"
-
-    # 6. Retrieval
+    # 4. Retrieval & Evidence Preparation
     all_evidences = []
     all_rubric_chunks = []
+    
+    # Mode Decision
+    consultant_keywords = ["เหมาะ", "หลักฐาน", "ประเมิน", "สอดคล้อง", "ขาดอะไร"]
+    is_consultant_mode = any(kw in question.lower() for kw in consultant_keywords) or (not subject and len(stable_doc_ids) <= 2)
+    
+    search_query = enhance_analysis_query(question, subject, "") if subject else question
+
     for dt in used_doc_types:
         try:
             res = await asyncio.to_thread(
                 retrieve_context_with_rubric,
                 vectorstore_manager=vsm, query=search_query, doc_type=dt,
                 enabler=used_enabler, stable_doc_ids=stable_doc_ids,
-                tenant=current_user.tenant, year=effective_year,
-                subject=subject, top_k=RETRIEVAL_TOP_K, k_to_rerank=QA_FINAL_K
+                tenant=current_user.tenant, year=effective_year, top_k=RETRIEVAL_TOP_K
             )
+            all_evidences.extend(res.get("top_evidences", []))
             all_rubric_chunks.extend(res.get("rubric_context", []))
-            ev_list = res.get("top_evidences", [])
-            if len(ev_list) < 5:
-                logger.info("Low evidence → retry original query")
-                retry_res = await asyncio.to_thread(
-                    retrieve_context_with_rubric,
-                    vectorstore_manager=vsm, query=question, doc_type=dt,
-                    enabler=used_enabler, stable_doc_ids=stable_doc_ids,
-                    tenant=current_user.tenant, year=effective_year,
-                    top_k=RETRIEVAL_TOP_K
-                )
-                ev_list = retry_res.get("top_evidences", [])
-            all_evidences.extend(ev_list)
         except Exception as e:
-            logger.error(f"Retrieval failed ({dt}): {e}")
+            logger.error(f"Retrieval Error: {e}")
 
-    # Deduplicate & Sort
     unique_evidences = {ev.get("text", ""): ev for ev in all_evidences if ev.get("text")}.values()
     final_evidences = sorted(unique_evidences, key=lambda x: x.get("rerank_score", 0), reverse=True)[:ANALYSIS_FINAL_K]
 
     if not final_evidences:
-        return QueryResponse(answer="ไม่พบหลักฐานที่เกี่ยวข้อง", sources=[], conversation_id=conv_id)
+        return QueryResponse(answer="ไม่พบหลักฐานที่เกี่ยวข้องในระบบ", sources=[], conversation_id=conv_id)
 
-    # 7. PDCA Engine
+    # 5. PDCA Engine - [FIXED: No more unpacking error]
     engine = SEAMPDCAEngine(
-        config=AssessmentConfig(
-            tenant=current_user.tenant, 
-            year=int(effective_year), 
-            enabler=used_enabler
-        ),
-        llm_instance=llm,
-        vectorstore_manager=vsm, # ระบุชื่อชัดเจน จะไม่อ่านผิดเป็น logger อีกต่อไป
-        doc_type=used_doc_types[0]
+        config=AssessmentConfig(tenant=current_user.tenant, year=int(effective_year), enabler=used_enabler),
+        llm_instance=llm, vectorstore_manager=vsm, doc_type=used_doc_types[0]
     )
 
-
-    pdca_res = engine._get_pdca_blocks_from_evidences(
-        final_evidences, {}, 5, subject or "all", engine.contextual_rules_map
-    )
+    # เรียกใช้และรับเป็น Dict เดียวกันเหนียว
+    pdca_res = engine._get_pdca_blocks_from_evidences(final_evidences, {}, 5, subject or "all", engine.contextual_rules_map)
+    
+    # Robust Extraction
     valid_blocks = []
     counts = pdca_res.get("actual_counts", {})
     for tag in ["P", "D", "C", "A"]:
@@ -523,127 +485,49 @@ async def analysis_llm(
         if content and "[ไม่พบหลักฐาน" not in content:
             valid_blocks.append(f"### หมวด {tag}:\n{content}")
 
-    pdca_context = f"### สรุปหลักฐานจริง: P={counts.get('P',0)}, D={counts.get('D',0)}, C={counts.get('C',0)}, A={counts.get('A',0)}\n\n"
-    pdca_context += "\n\n".join(valid_blocks) if valid_blocks else "ไม่พบหลักฐาน PDCA"
+    pdca_context = f"### สรุปจำนวนหลักฐานจริง: P={counts.get('P',0)}, D={counts.get('D',0)}, C={counts.get('C',0)}, A={counts.get('A',0)}\n\n"
+    pdca_context += "\n\n".join(valid_blocks) if valid_blocks else "ไม่พบข้อมูล PDCA ที่ชัดเจน"
 
-    rubric_manual = "\n".join([r['text'] for r in all_rubric_chunks])
-
-    # -------------------------------------------------------
-    # 8. Final Inference (v2026 Stable Replacement)
-    # -------------------------------------------------------
-    # -------------------------------------------------------
-    # 8. Final Inference (v2026.01.30 - Anti-Crash & Auto-Extraction)
-    # -------------------------------------------------------
+    # 6. Final Inference with Replace Logic (Anti-Format Error)
     sys_msg = SYSTEM_CONSULTANT_INSTRUCTION if is_consultant_mode else SYSTEM_ANALYSIS_INSTRUCTION
     raw_template = REVERSE_MAPPING_PROMPT_TEMPLATE if is_consultant_mode else ANALYSIS_PROMPT_TEMPLATE
-
-    try:
-        # [FIX] ดึง string จาก LangChain PromptTemplate หรือใช้ string ตรงๆ
-        template_str = raw_template.template if hasattr(raw_template, 'template') else str(raw_template)
-
-        # [SAFE REPLACE] ใช้ .replace แทน .format เพื่อป้องกัน JSON Braces Error
-        prompt_text = (
-            template_str.replace("{rubric_json}", rubric_json_str)
-                        .replace("{rubric_manual}", rubric_manual or "ไม่มีข้อมูลคู่มือเพิ่มเติม")
-                        .replace("{documents_content}", pdca_context)
-                        .replace("{question}", question)
-        )
-        
-        # ล้างปีกกาคู่ {{ }} ให้เหลือ { } (กรณี template เดิมทำไว้เพื่อหนี .format)
-        prompt_text = prompt_text.replace("{{", "{").replace("}}", "}")
-        
-        logger.info(f"✅ Prompt prepared successfully (Length: {len(prompt_text)})")
-        
-    except Exception as fmt_err:
-        logger.error(f"❌ Critical Prompt Error: {fmt_err}")
-        prompt_text = f"คำถาม: {question}\nบริบท: {pdca_context[:2000]}"
-
-    messages = [
-        SystemMessage(content=f"ALWAYS ANSWER IN THAI.\n{sys_msg}"),
-        HumanMessage(content=prompt_text)
-    ]
-
-    raw_response = None
-    try:
-        raw_response = await asyncio.to_thread(llm.invoke, messages)
-    except Exception as e:
-        logger.error(f"❌ LLM invocation failed: {e}")
-        # สร้าง Mock object เพื่อให้ code รันต่อได้ไม่ crash
-        raw_response = type('obj', (object,), {'content': json.dumps({"text": "เกิดข้อผิดพลาดในการเชื่อมต่อ LLM", "score": 0.0})})
-
-    # 9. Robust Extraction & Cleaning
-    from core.json_extractor import _robust_extract_json
-
-    raw_content = ""
-    if raw_response:
-        raw_content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
-        logger.debug(f"[RAW-RESPONSE] Length: {len(raw_content)} | Preview: {raw_content[:400]}...")
-
-    structured_data = {}
-    if raw_content:
-        try:
-            structured_data = _robust_extract_json(raw_content) or {}
-            logger.debug(f"[PARSED] Keys: {list(structured_data.keys())} | Score: {structured_data.get('score')}")
-        except Exception as e:
-            logger.error(f"JSON extract failed: {e}")
-            structured_data = {"text": raw_content[:1000], "reason": "JSON Parse Error"}
-
-    display_answer = (
-        structured_data.get("text") or
-        structured_data.get("คำตอบ") or
-        structured_data.get("reason") or
-        raw_content or
-        "ไม่สามารถวิเคราะห์ได้"
+    
+    # ดึง Template String
+    template_str = raw_template.template if hasattr(raw_template, 'template') else str(raw_template)
+    
+    prompt_text = (
+        template_str.replace("{rubric_manual}", "\n".join([r['text'] for r in all_rubric_chunks]) or "N/A")
+                    .replace("{documents_content}", pdca_context)
+                    .replace("{question}", question)
     )
 
-    # 10. Final Clean
-    final_answer = display_answer.replace("```json", "").replace("```markdown", "").replace("```", "").strip()
-    final_answer = final_answer.replace("\\n", "\n").replace('\\"', '"').replace("\\\"", "\"")
-    if final_answer.startswith('"') and final_answer.endswith('"'):
-        final_answer = final_answer[1:-1].strip()
-
+    # 7. LLM Call & Extraction
+    messages = [SystemMessage(content=f"ANSWER IN THAI.\n{sys_msg}"), HumanMessage(content=prompt_text)]
+    raw_response = await asyncio.to_thread(llm.invoke, messages)
+    
+    from core.json_extractor import _robust_extract_json
+    structured_data = _robust_extract_json(raw_response.content)
+    
+    final_answer = structured_data.get("text") or raw_response.content
     final_answer = enforce_thai_primary_language(final_answer)
 
-    # 11. Sources Mapping
-    sources = []
-    for ev in final_evidences[:10]:
-        d_uuid = str(ev.get("doc_id") or ev.get("stable_doc_uuid", "N/A"))
-        p_val = ev.get("page_label") or ev.get("page") or "1"
-        p_num = int(p_val) if str(p_val).isdigit() else 1
+    # 8. Source Mapping
+    sources = [
+        QuerySource(
+            source_id=str(ev.get("doc_id")),
+            file_name=ev.get("source_filename", "Document"),
+            chunk_text=ev.get("text", "")[:300],
+            page_display=f"p. {ev.get('page_label', '1')}",
+            url=generate_source_url(request=request, doc_id=str(ev.get("doc_id")), page=int(ev.get("page", 1)), tenant=current_user.tenant)
+        ) for ev in final_evidences[:8]
+    ]
 
-        sources.append(QuerySource(
-            source_id=d_uuid,
-            file_name=ev.get("source_filename") or "Document",
-            chunk_text=ev.get("text", "")[:500],
-            score=float(ev.get("rerank_score") or 0.0),
-            document_uuid=d_uuid,
-            page_number=p_num,
-            page_display=f"p. {p_val}",
-            url=generate_source_url(
-                request=request,
-                doc_id=d_uuid,
-                page=p_num,
-                doc_type=used_doc_types[0],
-                tenant=current_user.tenant,
-                year=effective_year,
-                enabler=used_enabler
-            )
-        ))
-
-    # 12. Save & Return
     await async_save_message(current_user.id, conv_id, "user", question)
     await async_save_message(current_user.id, conv_id, "ai", final_answer)
 
-    return QueryResponse(
-        answer=final_answer,
-        sources=sources,
-        conversation_id=conv_id,
-        result={
-            "process_time": round(time.time() - start_time, 2),
-            "structured": structured_data
-        }
-    )
-    
+    return QueryResponse(answer=final_answer, sources=sources, conversation_id=conv_id)
+
+
 # =====================================================================
 # Revised Helper: generate_source_url (หัวใจของการเชื่อมโยงไฟล์)
 # =====================================================================
