@@ -513,14 +513,21 @@ async def analysis_llm(
     final_answer = structured_data.get("text") or raw_response.content
     final_answer = enforce_thai_primary_language(final_answer)
 
-    # 8. Source Mapping
+    # 8. Source Mapping - [FIXED: Added doc_type and year]
     sources = [
         QuerySource(
             source_id=str(ev.get("doc_id")),
             file_name=ev.get("source_filename", "Document"),
             chunk_text=ev.get("text", "")[:300],
             page_display=f"p. {ev.get('page_label', '1')}",
-            url=generate_source_url(request=request, doc_id=str(ev.get("doc_id")), page=int(ev.get("page", 1)), tenant=current_user.tenant)
+            url=generate_source_url(
+                request=request, 
+                doc_id=str(ev.get("doc_id")), 
+                page=int(ev.get("page", 1)), 
+                tenant=current_user.tenant,
+                doc_type=used_doc_types[0], # เพิ่ม parameter นี้
+                year=effective_year          # เพิ่ม parameter นี้
+            )
         ) for ev in final_evidences[:8]
     ]
 
