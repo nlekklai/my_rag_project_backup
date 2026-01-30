@@ -506,7 +506,9 @@ async def analysis_llm(
     raw_response = await asyncio.to_thread(llm.invoke, messages)
     
     from core.json_extractor import _robust_extract_json
-    structured_data = _robust_extract_json(raw_response.content)
+    # structured_data = _robust_extract_json(raw_response.content)
+    raw_content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
+    structured_data = _robust_extract_json(raw_content)
     
     final_answer = structured_data.get("text") or raw_response.content
     final_answer = enforce_thai_primary_language(final_answer)
