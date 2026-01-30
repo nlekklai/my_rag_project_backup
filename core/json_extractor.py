@@ -215,74 +215,120 @@ def _extract_normalized_dict(raw_response: Any) -> Optional[Dict[str, Any]]:
 # ===================================================================
 # 5. MAIN FUNCTION หลัก – ใช้ฟังก์ชันนี้ในทุกที่
 # ===================================================================
-def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
+def _robust_extract_json(llm_response: str | Any) -> Dict[str, Any]:
     """
-    [ULTIMATE ROBUST REVISE - v2026.1.23]
-    - รองรับ Nested Braces (วงเล็บปีกกาซ้อน) ด้วย Recursive Regex
-    - แก้ปัญหา JSON Syntax Error จากเครื่องหมายคำพูด (Quotes)
-    - ระบบ Multi-Key Aliasing สำหรับดึง Reason/Score
+    [ULTIMATE ROBUST v2026.02.03 - Markdown/Thai/Chaos Safe]
+    - รองรับ LLM ตอบแบบมี Markdown นำหน้า
+    - ล้าง smart quotes, escape chars, trailing comma, control chars
+    - Multi-stage extraction: code fence → greedy {..} → object แรก
+    - json_repair เป็น rescue layer (ถ้ามี library)
+    - Fallback ยังสมบูรณ์ + log raw sample
     """
     logger = logging.getLogger(__name__)
-    
-    # 1. 🛡️ Default Safe Structure
+
+    # 1. Default Safe Structure
     safe_result = {
         "score": 0.0,
         "reason": "ไม่สามารถแยกวิเคราะห์ JSON ได้ (System Fallback)",
         "is_passed": False,
         "summary_thai": "ไม่พบข้อมูลสรุป",
         "coaching_insight": "ไม่พบข้อมูล",
-        "P_Plan_Score": 0.0, "D_Do_Score": 0.0, "C_Check_Score": 0.0, "A_Act_Score": 0.0,
+        "P_Plan_Score": 0.0,
+        "D_Do_Score": 0.0,
+        "C_Check_Score": 0.0,
+        "A_Act_Score": 0.0,
         "atomic_action_plan": []
     }
 
-    if not llm_response:
+    # 2. Normalize input เป็น string
+    if hasattr(llm_response, "content"):
+        raw_text = llm_response.content
+    else:
+        raw_text = str(llm_response)
+
+    if not raw_text.strip():
+        logger.debug("[ROBUST-JSON] Empty response")
         return safe_result
 
-    raw_text = getattr(llm_response, 'content', str(llm_response)).strip()
-    
-    # Pre-Sanitize: ล้าง Smart Quotes และอักขระพิเศษ
+    # 3. Pre-clean: ล้างสิ่งที่ LLM ชอบปนมา
     processed_text = raw_text.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
-    processed_text = processed_text.replace('```json', '').replace('```', '').strip()
+    processed_text = processed_text.replace('```json', '').replace('```markdown', '').replace('```', '').strip()
+    processed_text = re.sub(r'[\x00-\x1F\x7F]', '', processed_text)  # ลบ control chars
+    processed_text = re.sub(r',\s*([}\]])', r'\1', processed_text)  # ลบ trailing comma
 
-    # 2. 🧩 Extraction Strategy: หา { ... } ก้อนที่สมบูรณ์ที่สุด
-    data = {}
-    try:
-        # ใช้ Greedy Match หาตั้งแต่ { จนถึง } ตัวสุดท้าย
-        match = re.search(r'(\{.*\})', processed_text, re.DOTALL)
+    # 4. Multi-stage extraction
+    json_str = None
+
+    # Stage 4.1: หา block ใน ```json ... ```
+    match = re.search(r'```json\s*([\s\S]*?)\s*```', processed_text, re.DOTALL | re.IGNORECASE)
+    if match:
+        json_str = match.group(1).strip()
+
+    # Stage 4.2: หา { ... } ก้อนใหญ่สุด (greedy)
+    if not json_str:
+        match = re.search(r'(\{[\s\S]*\})', processed_text, re.DOTALL)
         if match:
-            json_str = match.group(1)
-            # พยายาม Parse (ใช้ json5 ถ้ามีจะดีมาก แต่ถ้าไม่มีใช้ json ปกติ)
+            json_str = match.group(1).strip()
+
+    # Stage 4.3: หา object แรก (กรณี LLM ตัดท้าย)
+    if not json_str:
+        match = re.search(r'\{[^}]*\}', processed_text)
+        if match:
+            json_str = match.group(0)
+
+    # 5. พยายาม parse
+    if json_str:
+        try:
+            data = json.loads(json_str)
+            logger.debug(f"[ROBUST-JSON] Success - Keys: {list(data.keys())}")
+            return data
+        except json.JSONDecodeError as e:
+            logger.warning(f"[ROBUST-JSON] Parse failed: {str(e)} → Trying repair/cleanup")
+
+            # Cleanup เพิ่มเติม
+            json_str_clean = re.sub(r',\s*([}\]])', r'\1', json_str)
             try:
-                data = json.loads(json_str)
-            except json.JSONDecodeError:
-                # ถ้าพัง พยายามซ่อมแซม Common Issues เช่น ลืมใส่คอมม่า หรือ Quote ซ้อน
-                # (ขั้นตอนนี้ใช้ความสามารถของ Regex ช่วยเบื้องต้น)
-                clean_json_str = re.sub(r',\s*\}', '}', json_str) # ลบคอมม่าเกินหน้า }
-                data = json.loads(clean_json_str)
-    except Exception:
-        # 3. 📉 Regex Fallback Layer: ถ้า JSON พัง 100% ให้ควานหาทีละ Key
-        logger.warning("⚠️ JSON Parse failed. Engaging Regex Key-Value scavenging.")
-        # หา Score
-        score_m = re.search(r'"score"\s*:\s*([\d\.]+)', processed_text)
-        if score_m: data["score"] = float(score_m.group(1))
-        
-        # หา is_passed
-        pass_m = re.search(r'"is_passed"\s*:\s*(true|false)', processed_text, re.I)
-        if pass_m: data["is_passed"] = pass_m.group(1).lower() == "true"
-        
-        # หา Reason
-        reason_m = re.search(r'"reason"\s*:\s*"([^"]+)"', processed_text)
-        if reason_m: data["reason"] = reason_m.group(1)
+                data = json.loads(json_str_clean)
+                logger.debug("[ROBUST-JSON] Cleanup success")
+                return data
+            except:
+                pass
 
-    # 4. 🏗️ Normalization & Mapping (แมตช์ข้อมูลเข้า UI Engine)
+            # Stage 5: json_repair (ถ้ามี library)
+            try:
+                from json_repair import repair_json
+                repaired = repair_json(json_str)
+                data = json.loads(repaired)
+                logger.debug("[ROBUST-JSON] json_repair success")
+                return data
+            except (ImportError, Exception):
+                pass
+
+    # 6. Regex fallback (scavenge key-value)
+    logger.warning("⚠️ JSON Parse failed → Regex scavenging")
+    data = {}
+
+    # หา score
+    score_m = re.search(r'"score"\s*:\s*([\d\.]+)', processed_text)
+    if score_m:
+        data["score"] = float(score_m.group(1))
+
+    # หา is_passed
+    pass_m = re.search(r'"is_passed"\s*:\s*(true|false)', processed_text, re.I)
+    if pass_m:
+        data["is_passed"] = pass_m.group(1).lower() == "true"
+
+    # หา reason / coaching_insight
+    reason_m = re.search(r'"(reason|coaching_insight|summary_thai)"\s*:\s*"([^"]+)"', processed_text)
+    if reason_m:
+        data[reason_m.group(1)] = reason_m.group(2)
+
+    # 7. Normalization & Merge with safe defaults
     result = {}
-    
-    # 💡 Key-Aliasing Logic: ดักคำที่ AI ชอบเขียนเพี้ยน
-    result["reason"] = (data.get("reason") or data.get("summary_thai") or data.get("explanation") or safe_result["reason"])
-    result["coaching_insight"] = (data.get("coaching_insight") or data.get("insight") or result["reason"])
-    result["summary_thai"] = (data.get("summary_thai") or result["reason"][:100])
+    result["reason"] = data.get("reason") or data.get("summary_thai") or data.get("explanation") or safe_result["reason"]
+    result["coaching_insight"] = data.get("coaching_insight") or data.get("insight") or result["reason"]
+    result["summary_thai"] = data.get("summary_thai") or result["reason"][:100]
 
-    # จัดการคะแนน PDCA (แปลงเป็น Float เพื่อความละเอียด)
     for k in ["P_Plan_Score", "D_Do_Score", "C_Check_Score", "A_Act_Score"]:
         val = data.get(k, 0.0)
         try:
@@ -290,101 +336,95 @@ def _robust_extract_json(llm_response: str) -> Dict[str, Any]:
         except:
             result[k] = 0.0
 
-    # จัดการ Score รวม
     try:
         if "score" in data:
             result["score"] = float(data["score"])
         else:
-            # ถ้าไม่มี Score รวม ให้คำนวณจาก PDCA เฉลี่ย (Max 2.0 per phase = 8.0)
-            result["score"] = sum([result[k] for k in ["P_Plan_Score", "D_Do_Score", "C_Check_Score", "A_Act_Score"]])
+            result["score"] = sum(result.get(k, 0.0) for k in ["P_Plan_Score", "D_Do_Score", "C_Check_Score", "A_Act_Score"])
     except:
         result["score"] = 0.0
 
-    # จัดการ is_passed (ถ้าไม่ส่งมา ให้ใช้เกณฑ์คะแนน >= 1.0 สำหรับ L1-L2)
     isp = data.get("is_passed")
     if isp is not None:
         result["is_passed"] = bool(isp) if not isinstance(isp, str) else isp.lower() == "true"
     else:
         result["is_passed"] = result["score"] >= 1.0
 
-    # จัดการ Atomic Action Plan
     raw_actions = data.get("atomic_action_plan") or data.get("action_plan") or []
     result["atomic_action_plan"] = raw_actions if isinstance(raw_actions, list) else []
 
-    # 5. 📎 ประกันความสมบูรณ์ (Merge with Safe Defaults)
     final_output = {**safe_result, **result}
-    
+
+    # Log raw sample ถ้า fallback
+    if final_output["reason"] == safe_result["reason"]:
+        logger.debug(f"[RAW-RESPONSE-SAMPLE] {processed_text[:300]}...")
+
     return final_output
 
 def _robust_extract_json_list(raw_text: str) -> List[Dict[str, Any]]:
     """
-    [HELPER - FULL REVISED v2026.1.25]
-    สกัด List ของ JSON ออกจากข้อความอย่างปลอดภัยที่สุด
-    - ลอง parse ตรง ๆ ก่อน
-    - ใช้ json_repair กู้ถ้าพัง
-    - Regex หา block JSON + manual clean-up
-    - Log error ชัดเจนเพื่อ debug
-    - คืน [] ถ้าทำอะไรไม่ได้เลย
+    [HELPER - FINAL v2026.02.03]
+    - ลบ fences, trailing comma, control chars
+    - json_repair เป็น rescue
+    - Regex หา [ ... ] หรือ { ... } ที่ใหญ่ที่สุด
+    - Log ชัดเจน + sample text
     """
     if not raw_text or len(raw_text.strip()) < 2:
         return []
 
-    original_text = raw_text  # เก็บไว้ log
+    original_sample = raw_text[:500] + "..." if len(raw_text) > 500 else raw_text
 
-    # Stage 1: ลบ markdown/code fences ก่อน
+    # Pre-clean
     raw_text = re.sub(r'```(?:json)?\s*|\s*```', '', raw_text).strip()
-
-    # Stage 2: ลบ whitespace เกิน + trailing comma
     raw_text = re.sub(r',\s*([}\]])', r'\1', raw_text)
-    raw_text = re.sub(r'\s+', ' ', raw_text).strip()
+    raw_text = re.sub(r'[\x00-\x1F\x7F]', '', raw_text)
 
-    # Stage 3: ลอง parse ตรง ๆ
+    # Stage 1: Direct parse
     try:
         data = json.loads(raw_text)
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            return [data]  # หุ้มเป็น list ถ้าได้ object เดียว
-    except json.JSONDecodeError as e:
-        pass  # ไป stage ถัดไป
+            return [data]
+    except json.JSONDecodeError:
+        pass
 
-    # Stage 4: ใช้ json_repair ถ้ามี (ดีมากสำหรับ LLM output พัง)
-    if repair_json:
-        try:
-            repaired = repair_json(raw_text)
-            data = json.loads(repaired)
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                return [data]
-        except Exception as repair_err:
-            pass  # ถ้า repair พัง ไป manual
-
-    # Stage 5: Manual regex + clean-up
+    # Stage 2: json_repair (ถ้ามี)
     try:
-        # หา [ ... ] ก้อนใหญ่สุด
-        list_match = re.search(r'(\[[\s\S]*?\])', raw_text, re.DOTALL)
-        if list_match:
-            block = list_match.group(1)
-            # ลบ control chars + unbalanced
-            block = re.sub(r'[\x00-\x1F\x7F]', '', block)
+        from json_repair import repair_json
+        repaired = repair_json(raw_text)
+        data = json.loads(repaired)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+    except (ImportError, Exception):
+        pass
+
+    # Stage 3: Regex หา array block ใหญ่สุด
+    try:
+        match = re.search(r'(\[[\s\S]*?\])', raw_text, re.DOTALL)
+        if match:
+            block = match.group(1)
             data = json.loads(block)
             if isinstance(data, list):
                 return data
+    except:
+        pass
 
-        # หา { ... } แล้วหุ้มเป็น list
-        dict_match = re.search(r'(\{[\s\S]*?\})', raw_text, re.DOTALL)
-        if dict_match:
-            block = dict_match.group(1)
-            block = re.sub(r'[\x00-\x1F\x7F]', '', block)
+    # Stage 4: หา object แล้วหุ้มเป็น list
+    try:
+        match = re.search(r'(\{[\s\S]*?\})', raw_text, re.DOTALL)
+        if match:
+            block = match.group(1)
             data = json.loads(block)
             if isinstance(data, dict):
                 return [data]
+    except:
+        pass
 
-    except json.JSONDecodeError as je:
-        # Log error ชัดเจน
-        logger.warning(f"[ROBUST-EXTRACT-FAIL] Failed to parse JSON block: {str(je)}")
-        logger.debug(f"[RAW-TEXT-SAMPLE] {original_text[:300]}...")
+    # Fallback
+    logger.warning(f"[ROBUST-LIST-FAIL] Cannot extract JSON list")
+    logger.debug(f"[RAW-SAMPLE] {original_sample}")
 
-    # Ultimate fallback
     return []

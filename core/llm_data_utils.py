@@ -523,9 +523,23 @@ def is_rubric_ready(tenant: str) -> bool:
     # ส่งคืนค่า True/False เงียบๆ เพื่อให้ระบบตัดสินใจว่าจะดึง Rubric หรือไม่
     return os.path.exists(chroma_path)
 
+def _format_evidence_item(doc: LcDocument, score: float) -> Dict[str, Any]:
+    """ Helper สำหรับจัดรูปแบบข้อมูล Output ให้เป็นมาตรฐานเดียวกัน """
+    m = doc.metadata or {}
+    return {
+        "text": doc.page_content,
+        "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
+        "page_label": str(m.get("page_label") or m.get("page_number") or m.get("page") or "N/A"),
+        "doc_id": str(m.get("stable_doc_uuid") or m.get("doc_id") or ""),
+        "chunk_uuid": str(m.get("chunk_uuid") or str(uuid.uuid4())),
+        "pdca_tag": m.get("pdca_tag") or "Content",
+        "rerank_score": score,
+        "is_evidence": True,
+        "metadata": m
+    }
 
 # =====================================================================
-# 🚀 Ultimate Version: retrieve_context_with_rubric (FIXED & REVISED)
+# 🚀 Ultimate Version: retrieve_context_with_rubric (FULL REVISED)
 # =====================================================================
 def retrieve_context_with_rubric(
     vectorstore_manager,
@@ -537,19 +551,20 @@ def retrieve_context_with_rubric(
     year: Optional[Union[int, str]] = None,
     subject: Optional[str] = None,
     rubric_vectorstore_name: str = "seam", 
-    top_k: int = 150,         # 🚀 เพิ่มจำนวนดึงเบื้องต้นเพื่อให้ Reranker มีตัวเลือกมากขึ้น
+    top_k: int = 150,         
     rubric_top_k: int = 15,  
-    strict_filter: bool = True,
     k_to_rerank: int = 30    
 ) -> Dict[str, Any]:
     """
-    [REVISED VERSION] รองรับ Rubric + Evidence Retrieval พร้อมระบบ Batch Reranking 
-    และ Content-Based Deduplication เพื่อป้องกันคะแนน Level 5 หาย
+    [PRODUCTION REVISED] ระบบดึงบริบท (Context) แบบ Hybrid: Rubric + Evidence
+    - ป้องกันความซ้ำซ้อนด้วย Content-Based MD5 Deduplication
+    - ใช้ Batch Reranking เพื่อความเสถียรบน Mac/Server
+    - รักษาความคงที่ของ ID สำหรับการประเมิน SE-AM
     """
     start_time = time.time()
     vsm = vectorstore_manager
 
-    # --- 1. ตรวจสอบและสลับ Collection ---
+    # --- 1. การบริหารจัดการ Collection (Auto-Switch) ---
     if hasattr(vsm, 'doc_type') and vsm.doc_type != doc_type:
         logger.info(f"🔄 Switching VSM doc_type to: {doc_type}")
         vsm.close()
@@ -558,23 +573,26 @@ def retrieve_context_with_rubric(
     evidence_collection = get_doc_type_collection_key(doc_type, enabler or "KM")
     
     rubric_results = []
-    # ใช้ Dict เพื่อทำ Deduplication ด้วย Content Hash ป้องกันหน้าซ้ำแต่ ID ต่างกัน
     unique_evidence_map: Dict[str, LcDocument] = {}
 
-    # --- 2. การดึง Rubrics (เกณฑ์มาตรฐาน) ---
-    try:
-        rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
-        if rubric_chroma:
-            rubric_query = f"เกณฑ์ SE-AM {enabler} {subject or ''}: {query}"
-            r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
-            for rd in r_docs:
-                rubric_results.append({
-                    "text": rd.page_content, 
-                    "metadata": rd.metadata, 
-                    "is_rubric": True
-                })
-    except Exception as e:
-        logger.warning(f"⚠️ Rubric Retrieval Error: {e}")
+    # --- 2. การดึง Rubrics (เกณฑ์มาตรฐาน SE-AM) ---
+    # ใช้ Helper check_rubric_ready เพื่อความเงียบ (Silent Mode)
+    if is_rubric_ready(tenant): 
+        try:
+            rubric_chroma = vsm._load_chroma_instance(rubric_vectorstore_name)
+            if rubric_chroma:
+                rubric_query = f"เกณฑ์ SE-AM {enabler} {subject or ''}: {query}"
+                r_docs = rubric_chroma.similarity_search(rubric_query, k=rubric_top_k)
+                for rd in r_docs:
+                    rubric_results.append({
+                        "text": rd.page_content, 
+                        "metadata": rd.metadata, 
+                        "is_rubric": True
+                    })
+        except Exception as e:
+            logger.warning(f"⚠️ Rubric Retrieval Error: {e}")
+    else:
+        logger.info(f"ℹ️ Rubric skip: Collection 'seam' not found for tenant: {tenant}")
 
     # --- 3. การดึง Evidence (หลักฐานการดำเนินงาน) ---
     try:
@@ -582,50 +600,54 @@ def retrieve_context_with_rubric(
         if not evidence_chroma:
             return {"top_evidences": [], "rubric_context": rubric_results, "retrieval_time": 0}
 
+        # สร้าง Filter ให้สอดคล้องกับ DataType (Int/Str)
         where_filter = None
         if stable_doc_ids:
             ids_list = [str(i).strip().lower() for i in stable_doc_ids if i]
-            where_filter = {"stable_doc_uuid": ids_list[0]} if len(ids_list) == 1 else {"stable_doc_uuid": {"$in": ids_list}}
+            if len(ids_list) == 1:
+                where_filter = {"stable_doc_uuid": ids_list[0]}
+            else:
+                where_filter = {"stable_doc_uuid": {"$in": ids_list}}
             
-            # ⚓ 3.1 Fetch Anchor Chunks (ส่วนสำคัญของไฟล์ เช่น หน้า 1-5)
+            # ⚓ 3.1 Anchor Chunks (ส่วนโครงสร้างหลัก เช่น หน้า 1-5)
+            # ดันคะแนนให้สูง (0.95) เพื่อให้เป็นบริบทพื้นฐานที่ AI ต้องเห็น
             anchors = evidence_chroma.get(where=where_filter, limit=10)
             if anchors and anchors.get('documents'):
                 for i in range(len(anchors['documents'])):
                     content = anchors['documents'][i]
-                    md = dict(anchors['metadatas'][i] or {}) # ป้องกัน metadata เป็น None
+                    md = dict(anchors['metadatas'][i] or {}) 
                     
-                    # 🎯 แก้จุดที่ 1: ใช้ MD5 แทน hash() เพื่อให้ ID คงที่ (Deterministic)
+                    # ใช้ MD5 เพื่อให้ ID นิ่งตลอดการรัน (Deterministic)
                     content_hash = hashlib.md5(content.encode()).hexdigest()
                     uid = str(md.get("chunk_uuid") or f"anchor-{content_hash}")
                     
                     if uid not in unique_evidence_map:
-                        # 🎯 แก้จุดที่ 2: ฉีดคะแนนลงใน metadata โดยตรง (Safe Injection)
-                        # กำหนดให้ Anchor มีคะแนนสูง (0.95) เพื่อให้เป็นบริบทหลัก
-                        md["score"] = 0.95
-                        md["relevance_score"] = 0.95
-                        md["is_anchor"] = True
-                        
-                        unique_evidence_map[uid] = LcDocument(
-                            page_content=content,
-                            metadata=md
-                        )
+                        md.update({
+                            "score": 0.95,
+                            "relevance_score": 0.95,
+                            "is_anchor": True
+                        })
+                        unique_evidence_map[uid] = LcDocument(page_content=content, metadata=md)
 
-        # 🔍 3.2 Semantic Search (ค้นหาตามความหมาย)
+        # 🔍 3.2 Semantic Search (ค้นหาตามความหมายของ Query)
         search_results = evidence_chroma.similarity_search(query, k=top_k, filter=where_filter)
         for d in search_results:
-            content_hash = str(hash(d.page_content))
-            uid = d.metadata.get("chunk_uuid") or content_hash
+            # เปลี่ยนจาก hash() เป็น MD5 เพื่อความแม่นยำข้าม Environment (Mac/Server)
+            c_hash = hashlib.md5(d.page_content.encode()).hexdigest()
+            uid = d.metadata.get("chunk_uuid") or c_hash
             if uid not in unique_evidence_map:
                 unique_evidence_map[uid] = d
 
         candidates = list(unique_evidence_map.values())
 
-        # --- 4. BATCH RERANKING (ป้องกัน OOM และเพิ่มความแม่นยำ) ---
+        # --- 4. BATCH RERANKING (ระบบคัดเลือกความหมายขั้นสูง) ---
         evidence_results = []
         reranker = get_global_reranker()
         
         if reranker and candidates and query:
             try:
+                # ดึง Batch Size จาก ENV (Mac: 16 / Server: 128)
+                from config.global_vars import DEFAULT_EMBED_BATCH_SIZE
                 batch_size = DEFAULT_EMBED_BATCH_SIZE
                 scored_candidates = []
                 
@@ -635,7 +657,7 @@ def retrieve_context_with_rubric(
                     reranked_batch = reranker.compress_documents(documents=batch, query=query)
                     scored_candidates.extend(reranked_batch)
                 
-                # เรียงลำดับคะแนนรวมจากทุก Batch
+                # เรียงลำดับคะแนน (Desc)
                 scored_candidates = sorted(
                     scored_candidates, 
                     key=lambda x: getattr(x, "relevance_score", 0), 
@@ -647,7 +669,7 @@ def retrieve_context_with_rubric(
                     m = doc.metadata or {}
                     score = getattr(r, "relevance_score", 0.0)
                     
-                    # 🎯 Sync Score กลับเข้า Metadata เพื่อให้โมเดลประเมินใช้งานได้
+                    # Sync คะแนนกลับเข้า Metadata เพื่อให้ระบบประเมินนำไปใช้ต่อ
                     m["rerank_score"] = score
                     m["score"] = score
                     
@@ -655,8 +677,8 @@ def retrieve_context_with_rubric(
                         "text": doc.page_content,
                         "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
                         "page_label": str(m.get("page_label") or m.get("page_number") or m.get("page") or "N/A"),
-                        "doc_id": m.get("stable_doc_uuid") or m.get("doc_id"),
-                        "chunk_uuid": m.get("chunk_uuid") or str(uuid.uuid4()),
+                        "doc_id": str(m.get("stable_doc_uuid") or m.get("doc_id") or ""),
+                        "chunk_uuid": str(m.get("chunk_uuid") or str(uuid.uuid4())),
                         "pdca_tag": m.get("pdca_tag") or "Content",
                         "rerank_score": score,
                         "is_evidence": True,
@@ -664,23 +686,14 @@ def retrieve_context_with_rubric(
                     })
             except Exception as e:
                 logger.error(f"⚠️ Rerank failed: {e}")
-                candidates = candidates[:k_to_rerank] # Fallback
+                # Fallback: ใช้ผลการดึงแบบปกติหาก Reranker มีปัญหา
+                for d in candidates[:k_to_rerank]:
+                    evidence_results.append(_format_evidence_item(d, 0.0))
         
-        # กรณีไม่มี Reranker หรือ Error ให้ใช้ลำดับปกติ
-        if not evidence_results:
+        # กรณีไม่มี Reranker หรือดึงข้อมูลดิบ
+        elif candidates:
             for d in candidates[:k_to_rerank]:
-                m = d.metadata or {}
-                evidence_results.append({
-                    "text": d.page_content,
-                    "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
-                    "page_label": str(m.get("page_label") or m.get("page_number") or m.get("page") or "N/A"),
-                    "doc_id": m.get("stable_doc_uuid") or m.get("doc_id"),
-                    "chunk_uuid": m.get("chunk_uuid") or str(uuid.uuid4()),
-                    "pdca_tag": m.get("pdca_tag") or "Content",
-                    "rerank_score": 0.0,
-                    "is_evidence": True,
-                    "metadata": m
-                })
+                evidence_results.append(_format_evidence_item(d, 0.0))
 
     except Exception as e:
         logger.error(f"❌ Evidence Retrieval Error: {e}", exc_info=True)
@@ -695,43 +708,51 @@ def retrieve_context_with_rubric(
         "used_chunk_uuids": [e["chunk_uuid"] for e in evidence_results if e.get("chunk_uuid")]
     }
 
-# ========================
-#  retrieve_context_by_doc_ids (สำหรับ hydration ใน router)
-# ========================
+
+# =====================================================================
+# 🚀 Ultimate Version: retrieve_context_by_doc_ids (FULL REVISED)
+# =====================================================================
 def retrieve_context_by_doc_ids(
     doc_uuids: List[str],
     doc_type: str,
     enabler: Optional[str] = None,
     vectorstore_manager = None,
-    limit: int = 100, # 🚀 เพิ่ม limit เพื่อให้ดึงข้อมูลได้ครอบคลุมมากขึ้น
+    limit: int = 200,          # 🚀 เพิ่ม limit เพื่อให้ครอบคลุมการประเมินไฟล์ใหญ่
     tenant: Optional[str] = None,
     year: Optional[Union[int, str]] = None,
 ) -> Dict[str, Any]:
     """
-    [REVISED] ดึง chunks จาก stable_doc_uuid หลายตัว (ใช้ตอน hydration sources)
-    รองรับการระบุปีเพื่อหา Collection ที่ถูกต้อง และรักษา Metadata ให้ครบถ้วน
+    [PRODUCTION REVISED] ดึง Chunks ทั้งหมดจากเอกสารที่ระบุ (Hydration)
+    - ใช้ MD5 Hashing เพื่อทำ Deduplication ป้องกันหน้าซ้ำ
+    - รักษาโครงสร้าง Metadata ให้เหมือนกับฟังก์ชัน Search หลัก
+    - รองรับ Multi-tenant และการแยก Collection ตาม Enabler/Year
     """
     start_time = time.time()
-    vsm = vectorstore_manager or VectorStoreManager(tenant=tenant, year=year)
     
-    # Resolve collection name ให้ถูกต้องตามโครงสร้างปีและ enabler
-    collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler)
+    # 1. จัดการ VectorStore Manager
+    vsm = vectorstore_manager
+    if not vsm:
+        from core.vectorstore import VectorStoreManager # ป้องกัน Circular Import
+        vsm = VectorStoreManager(tenant=tenant, year=year)
+
+    # 2. ค้นหาชื่อ Collection ที่ถูกต้อง
+    collection_name = get_doc_type_collection_key(doc_type=doc_type, enabler=enabler or "KM")
 
     chroma = vsm._load_chroma_instance(collection_name)
     if not chroma:
-        logger.error(f"❌ Collection {collection_name} not found for hydration")
-        return {"top_evidences": []}
+        logger.error(f"❌ Collection '{collection_name}' not found for hydration")
+        return {"top_evidences": [], "retrieval_time": 0}
 
     if not doc_uuids:
-        return {"top_evidences": []}
+        return {"top_evidences": [], "retrieval_time": 0}
 
-    logger.info(f"💧 Hydration → {len(doc_uuids)} doc IDs from {collection_name}")
+    # ล้างค่า ID ให้สะอาด (Trim & Lower)
+    ids_to_query = [str(u).strip().lower() for u in doc_uuids if u]
+    logger.info(f"💧 Hydrating Context: {len(ids_to_query)} docs from '{collection_name}'")
 
     try:
-        # ใช้ Metadata filter ดึง chunks ทั้งหมดที่อยู่ในลิสต์ ID ที่เลือก
-        # ปรับเป็น list comprehension เพื่อความชัวร์ของ Type
-        ids_to_query = [str(u) for u in doc_uuids if u]
-        
+        # 3. ดึงข้อมูลจาก ChromaDB โดยตรง (Direct Get)
+        # ใช้ Metadata Filter เพื่อเจาะจงเฉพาะไฟล์ที่เลือก
         results = chroma._collection.get(
             where={"stable_doc_uuid": {"$in": ids_to_query}},
             limit=limit,
@@ -739,41 +760,54 @@ def retrieve_context_by_doc_ids(
         )
     except Exception as e:
         logger.error(f"⚠️ Hydration query failed: {e}")
-        return {"top_evidences": []}
+        return {"top_evidences": [], "retrieval_time": 0}
 
     evidences = []
-    # 🎯 ใช้ Content-based Deduplication เบื้องต้นกันหน้าซ้ำ
     seen_contents = set()
 
-    for doc_content, meta in zip(results.get("documents", []), results.get("metadatas", [])):
+    # 4. จัดรูปแบบข้อมูล (Formatting & Deduplication)
+    documents = results.get("documents") or []
+    metadatas = results.get("metadatas") or []
+
+    for doc_content, meta in zip(documents, metadatas):
         if not doc_content or not doc_content.strip():
             continue
             
-        content_hash = str(hash(doc_content))
+        # 🎯 ใช้ MD5 แทน hash() เพื่อความคงที่ (Deterministic)
+        content_hash = hashlib.md5(doc_content.encode()).hexdigest()
         if content_hash in seen_contents:
             continue
         seen_contents.add(content_hash)
 
-        p_val = meta.get("page_label") or meta.get("page_number") or meta.get("page") or "N/A"
+        # ดึง Metadata ที่สำคัญ (Fallback แบบเดียวกับ Search)
+        m = meta or {}
+        p_val = str(m.get("page_label") or m.get("page_number") or m.get("page") or "N/A")
         
-        # 🎯 Sync Score หลอก (เพราะ Hydration ไม่ได้ผ่าน Rerank แต่ต้องมีเพื่อให้ Logic อื่นไม่พัง)
-        score = meta.get("score") or meta.get("rerank_score") or 0.85
-
+        # 🎯 ปรับ Key ให้ตรงกับ _format_evidence_item เพื่อให้ Router ใช้งานได้ทันที
         evidences.append({
-            "doc_id": meta.get("stable_doc_uuid") or meta.get("doc_id"),
-            "chunk_uuid": meta.get("chunk_uuid"),
-            "source": meta.get("source") or meta.get("source_filename") or "Unknown",
-            "page": str(p_val),
             "text": doc_content.strip(),
-            "pdca_tag": meta.get("pdca_tag", "Other"),
-            "score": score,
-            "metadata": meta # แนบตัวเต็มไว้เสมอ
+            "source_filename": m.get("source_filename") or m.get("source") or "Evidence",
+            "page_label": p_val,
+            "doc_id": str(m.get("stable_doc_uuid") or m.get("doc_id") or ""),
+            "chunk_uuid": str(m.get("chunk_uuid") or content_hash),
+            "pdca_tag": m.get("pdca_tag") or "Content",
+            "rerank_score": float(m.get("score") or m.get("rerank_score") or 0.85), # Hydration Score
+            "is_evidence": True,
+            "metadata": m
         })
 
-    logger.info(f"✅ Hydration success: {len(evidences)} chunks from {len(doc_uuids)} docs")
+    # เรียงตามหน้าเพื่อให้ AI อ่านง่ายขึ้น (ถ้ามีเลขหน้า)
+    try:
+        evidences.sort(key=lambda x: int(x['page_label']) if x['page_label'].isdigit() else 999)
+    except:
+        pass
+
+    retrieval_time = round(time.time() - start_time, 3)
+    logger.info(f"✅ Hydration success: {len(evidences)} chunks in {retrieval_time}s")
+
     return {
         "top_evidences": evidences,
-        "retrieval_time": round(time.time() - start_time, 3)
+        "retrieval_time": retrieval_time
     }
 
 
@@ -920,41 +954,68 @@ def _check_and_handle_empty_context(context: str, sub_id: str, level: int) -> Op
 def _get_context_for_level(
     context: str,
     level: int,
-    chunks: list = None,  # ส่ง chunks มาจาก _run_single_assessment
-    max_chars_l1_l2: int = 15000,  # เพิ่มจาก 6000
-    max_chars_l3_up: int = 10000,
-    max_chunks_l1_l2: int = 40,
-    max_chunks_l3_up: int = 25
+    chunks: list = None,
+    **kwargs
 ) -> str:
+    """
+    [DYNAMIC REVISED 2026] 
+    ปรับแต่งการดึง Context ตาม RAG_RUN_MODE ใน .env อัตโนมัติ
+    - Mac (LOCAL_OLLAMA): ประหยัด Context เพื่อความเร็ว (8B Model)
+    - Server (PRODUCTION): ขยาย Context เต็มศักยภาพ (70B Model)
+    """
     if not context:
         return "ไม่พบข้อมูลหลักฐาน"
 
-    # ถ้ามี chunks → เรียงตาม score แล้วเลือก top
+    import os
+    # 1. ตรวจสอบโหมดการรันจาก .env ที่มีอยู่แล้ว
+    run_mode = os.getenv("RAG_RUN_MODE", "LOCAL_OLLAMA")
+    is_server = run_mode == "PRODUCTION"
+
+    # 2. กำหนดขีดจำกัด (Limits) ตามความแรงของเครื่อง (Detect จาก env โดยตรง)
+    if is_server:
+        # ฝั่ง Server: ใช้ ANALYSIS_FINAL_K จาก .env หรือ Default 35
+        max_chunks = int(os.getenv("ANALYSIS_FINAL_K", 35))
+        max_chars = 20000 if level > 2 else 25000  # 70B รับบริบทได้กว้างกว่า
+    else:
+        # ฝั่ง Mac: บีบให้เล็กลงเพื่อความลื่นไหลของ 8B
+        max_chunks = int(os.getenv("ANALYSIS_FINAL_K", 15))
+        max_chars = 8000 if level > 2 else 10000
+
+    # 3. กรณีมี Chunks ( List of Dicts )
     if chunks:
+        # เรียงลำดับตาม Score (ดีที่สุดไว้บนสุด)
         sorted_chunks = sorted(
             chunks,
-            key=lambda c: float(c.get('rerank_score', 0) or c.get('score', 0)),
+            key=lambda c: float(c.get('rerank_score') or c.get('score') or 0.0),
             reverse=True
         )
-        max_chunks = max_chunks_l1_l2 if level <= 2 else max_chunks_l3_up
+        
         selected = sorted_chunks[:max_chunks]
-
         parts = []
+        
         for i, c in enumerate(selected, 1):
-            score = c.get('rerank_score', 'N/A')
-            source = c.get('source', 'ไม่ระบุ')
+            score = c.get('rerank_score') or c.get('score', 'N/A')
+            source = c.get('source') or c.get('source_filename', 'Unknown')
+            page = c.get('page') or c.get('page_label', 'N/A')
             text = c.get('text', '').strip()
+            pdca = c.get('pdca_tag', 'N/A')
+            
             if text:
-                parts.append(f"[Chunk {i} | Score: {score} | {source}]\n{text}\n{'-'*80}\n")
+                # จัด Format ให้ AI อ่านง่าย เพื่อให้นำไปเขียน Markdown Table ต่อได้
+                parts.append(
+                    f"### หลักฐานชิ้นที่ {i} | Tag: {pdca} | Score: {score} | แหล่งที่มา: {source} หน้า {page}\n"
+                    f"{text}\n"
+                    f"{'-'*40}"
+                )
 
-        final = "".join(parts)
-        max_chars = max_chars_l1_l2 if level <= 2 else max_chars_l3_up
-        if len(final) > max_chars:
-            final = final[:max_chars] + "\n... (ตัดเพื่อความเหมาะสม)"
-        return final
+        final_text = "\n\n".join(parts)
+        
+        # Hard Cap ตัวอักษรป้องกัน Context Overload
+        if len(final_text) > max_chars:
+            final_text = final_text[:max_chars] + "\n... [ข้อมูลถูกตัดเพื่อความเหมาะสม]"
+        return final_text
 
-    # fallback เดิม
-    max_chars = max_chars_l1_l2 if level <= 2 else max_chars_l3_up
+    # 4. Fallback กรณีส่งมาเป็น String ยาวๆ
     return context[:max_chars] + ("... [truncated]" if len(context) > max_chars else "")
 
 # =================================================================

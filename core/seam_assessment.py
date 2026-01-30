@@ -159,59 +159,59 @@ except ImportError as e:
     SYSTEM_ATOMIC_ACTION_PROMPT = "Assistant"
     SYSTEM_SUB_ROADMAP_PROMPT = "Strategist"
 
-try:
-    from core.seam_prompts import SUB_ROADMAP_TEMPLATE
-    logger.info("[PROMPT] Loaded SUB_ROADMAP_TEMPLATE from core.seam_prompts (real version)")
-except ImportError as e:
-    logger.warning(f"[PROMPT] Import failed ({str(e)}), using fallback SUB_ROADMAP_TEMPLATE")
-    SUB_ROADMAP_TEMPLATE = """
-### [Strategic Context]
-- หัวข้อ: {sub_criteria_name} ({sub_id}) | Enabler: {enabler}
-- ทิศทางเชิงกลยุทธ์: {strategic_focus}
+# try:
+#     from core.seam_prompts import SUB_ROADMAP_TEMPLATE
+#     logger.info("[PROMPT] Loaded SUB_ROADMAP_TEMPLATE from core.seam_prompts (real version)")
+# except ImportError as e:
+#     logger.warning(f"[PROMPT] Import failed ({str(e)}), using fallback SUB_ROADMAP_TEMPLATE")
+#     SUB_ROADMAP_TEMPLATE = """
+# ### [Strategic Context]
+# - หัวข้อ: {sub_criteria_name} ({sub_id}) | Enabler: {enabler}
+# - ทิศทางเชิงกลยุทธ์: {strategic_focus}
 
-### [Input Data: Assets & Gaps - ใช้เฉพาะข้อมูลนี้ ห้ามมโนเพิ่ม]
-{aggregated_insights}
+# ### [Input Data: Assets & Gaps - ใช้เฉพาะข้อมูลนี้ ห้ามมโนเพิ่ม]
+# {aggregated_insights}
 
----
-สร้าง Master Roadmap ตามกฎเข้มงวดข้างต้นอย่างเคร่งครัดที่สุด:
-- ทุก action ต้องเจาะจง + อ้างชื่อไฟล์จริง + หน้า/ส่วน (ถ้ามี) + verb ปฏิบัติได้ทันที
-- ห้ามใช้ verb ต้องห้ามเด็ดขาด (รวมใน goal และ overall_strategy)
-- หากผ่าน L5 และไม่มี gap ให้ Phase 1 = "Reinforce & Sustain" และ Phase 2 = Standardization / Automation / ขยายผลต้นแบบ
-- ห้ามมี Phase เดียวถ้าเป็น L5
+# ---
+# สร้าง Master Roadmap ตามกฎเข้มงวดข้างต้นอย่างเคร่งครัดที่สุด:
+# - ทุก action ต้องเจาะจง + อ้างชื่อไฟล์จริง + หน้า/ส่วน (ถ้ามี) + verb ปฏิบัติได้ทันที
+# - ห้ามใช้ verb ต้องห้ามเด็ดขาด (รวมใน goal และ overall_strategy)
+# - หากผ่าน L5 และไม่มี gap ให้ Phase 1 = "Reinforce & Sustain" และ Phase 2 = Standardization / Automation / ขยายผลต้นแบบ
+# - ห้ามมี Phase เดียวถ้าเป็น L5
 
-ตัวอย่าง action ที่ถูกต้องเท่านั้น (ใช้เป็นแนวทางเท่านั้น ไม่ใช่ copy ตรง ๆ):
-- "ประกาศใช้ KMS Policy ที่ผู้บริหารลงนามจากหน้า 12 ของไฟล์ KM6.1L301 KM_6_3_PEA_Assessment Report.pdf เป็นมาตรฐานองค์กร พร้อมกำหนดการสื่อสารไตรมาสละ 1 ครั้งผ่าน KM-Si"
-- "สถาปนา dashboard อัตโนมัติสำหรับติดตามผลการประเมิน KM จากโครงสร้างในหน้า 7 ของไฟล์ KM2.1L405 PEA KM Master Plan_...13Dec24_edit.pdf โดยบูรณาการเข้ากับระบบ KM-Survey"
-- "ขยายผลนโยบายเร่งด่วน 12 ด้านจากหน้า 48 ของไฟล์ KM1.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4 ย่อ.pdf มาจัดทำโปรแกรมอบรมผู้บริหารทุกระดับเรื่องการขับเคลื่อน KM"
+# ตัวอย่าง action ที่ถูกต้องเท่านั้น (ใช้เป็นแนวทางเท่านั้น ไม่ใช่ copy ตรง ๆ):
+# - "ประกาศใช้ KMS Policy ที่ผู้บริหารลงนามจากหน้า 12 ของไฟล์ KM6.1L301 KM_6_3_PEA_Assessment Report.pdf เป็นมาตรฐานองค์กร พร้อมกำหนดการสื่อสารไตรมาสละ 1 ครั้งผ่าน KM-Si"
+# - "สถาปนา dashboard อัตโนมัติสำหรับติดตามผลการประเมิน KM จากโครงสร้างในหน้า 7 ของไฟล์ KM2.1L405 PEA KM Master Plan_...13Dec24_edit.pdf โดยบูรณาการเข้ากับระบบ KM-Survey"
+# - "ขยายผลนโยบายเร่งด่วน 12 ด้านจากหน้า 48 ของไฟล์ KM1.2L301 แผนแม่บท ปรับปรุงครั้งที่ 4 ย่อ.pdf มาจัดทำโปรแกรมอบรมผู้บริหารทุกระดับเรื่องการขับเคลื่อน KM"
 
-{{
-  "status": "SUCCESS",
-  "overall_strategy": "ใช้ความสำเร็จจากไฟล์ A หน้า X มาสร้างระบบยั่งยืนและขยายผลข้ามหน่วยงาน (ต้องอ้างไฟล์จริงจาก input)",
-  "phases": [
-    {{
-      "phase": "Phase 1: Quick Win (Reinforce & Sustain หรือ Remediation)",
-      "goal": "เสริมความแข็งแกร่งหรือปิดช่องว่างโดยอ้างอิงหลักฐานจริง",
-      "key_actions": [
-        {{
-          "action": "ระบุ action เฉพาะเจาะจง + อ้างชื่อไฟล์ + หน้า/ส่วน",
-          "priority": "High"
-        }}
-      ]
-    }},
-    {{
-      "phase": "Phase 2: Level-Up Excellence",
-      "goal": "ยกระดับด้วย standardization, automation หรือขยายผลต้นแบบ",
-      "key_actions": [
-        {{
-          "action": "ระบุแผนงานเชิงสถาปัตยกรรม + อ้างไฟล์และส่วนที่เกี่ยวข้อง",
-          "priority": "Medium"
-        }}
-      ]
-    }}
-  ],
-  "strategic_focus_applied": "{strategic_focus}"
-}}
-"""
+# {{
+#   "status": "SUCCESS",
+#   "overall_strategy": "ใช้ความสำเร็จจากไฟล์ A หน้า X มาสร้างระบบยั่งยืนและขยายผลข้ามหน่วยงาน (ต้องอ้างไฟล์จริงจาก input)",
+#   "phases": [
+#     {{
+#       "phase": "Phase 1: Quick Win (Reinforce & Sustain หรือ Remediation)",
+#       "goal": "เสริมความแข็งแกร่งหรือปิดช่องว่างโดยอ้างอิงหลักฐานจริง",
+#       "key_actions": [
+#         {{
+#           "action": "ระบุ action เฉพาะเจาะจง + อ้างชื่อไฟล์ + หน้า/ส่วน",
+#           "priority": "High"
+#         }}
+#       ]
+#     }},
+#     {{
+#       "phase": "Phase 2: Level-Up Excellence",
+#       "goal": "ยกระดับด้วย standardization, automation หรือขยายผลต้นแบบ",
+#       "key_actions": [
+#         {{
+#           "action": "ระบุแผนงานเชิงสถาปัตยกรรม + อ้างไฟล์และส่วนที่เกี่ยวข้อง",
+#           "priority": "Medium"
+#         }}
+#       ]
+#     }}
+#   ],
+#   "strategic_focus_applied": "{strategic_focus}"
+# }}
+# """
 
 def get_enabler_full_name(enabler: str, lang: str = "th") -> str:
     """
@@ -4838,8 +4838,9 @@ class SEAMPDCAEngine:
         self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
     
-    #------------------------------------------------------------------
-    # 🏛️ [TIER-3 METHOD] generate_sub_roadmap - ULTIMATE v2026.01.31
+
+    # ------------------------------------------------------------------
+    # 🏛️ [ULTIMATE v2026.02.03-final-stable-rev2] generate_sub_roadmap
     # ------------------------------------------------------------------
     def generate_sub_roadmap(
         self,
@@ -4850,135 +4851,143 @@ class SEAMPDCAEngine:
         strategic_focus: str = ""
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE REVISED v2026.02.01] - NO-NOISE & NO-GENERIC VERSION
-        - Sanitization: กรองชื่อไฟล์ "เอกสารอ้างอิง" ออกก่อนส่ง LLM
-        - Precision: บังคับอ้างอิงชื่อไฟล์จริง (Real Evidence Only)
-        - Dynamic Phase: ป้องกันการลอกข้อความตัวอย่างใน Template
+        Final stable version with:
+        - Sanitize noise filenames
+        - Dynamic injection of real filenames (no duplicate)
+        - Force Phase 2 for L5
+        - Robust extraction + retry on generic/echo
+        - Fixed syntax issues in f-strings
         """
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
         self.logger.info(f"🚀 [ROADMAP] Generating for {sub_id}: {sub_criteria_name}")
 
-        # --- [STEP 0: CHECK FOR EMPTY EVIDENCE MODE] ---
+        # --- [STEP 0: NO EVIDENCE CHECK] ---
         is_no_evidence = all(
-            "No evidence found" in item.get("insight_summary", "") 
+            "No evidence found" in item.get("insight_summary", "")
             for item in aggregated_insights
         ) or len(aggregated_insights) == 0
 
         if is_no_evidence:
+            self.logger.warning(f"[DISCOVERY-MODE] No usable insight → Discovery Roadmap")
             return self._generate_discovery_roadmap(sub_id, sub_criteria_name, enabler, strategic_focus)
 
-        # --- [STEP 1: STRATEGIC CONTEXT ENRICHMENT & SANITIZATION] ---
-        condensed_insights = []
+        # --- [STEP 1: ASSET SANITIZATION & PREPARATION] ---
         best_practice_assets = []
+        top_asset_name = None
         highest_continuous = 0
         has_gap = False
-        
-        # รายชื่อไฟล์ที่เป็น Noise ซึ่งต้องล้างออก
-        noise_filenames = ["Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""]
+
+        noise_filenames = {"Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""}
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
             lv = int(item.get("level", 0))
-            status_raw = item.get("status", "FAILED")
-            passed = (status_raw == "PASSED")
-
+            passed = item.get("status") == "PASSED"
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
-            
-            # 🟢 [FIX] ดึงชื่อไฟล์และทำการ Clean ทันที
+
             raw_filename = ev_node.get("file", "Unknown File")
             clean_filename = raw_filename if raw_filename not in noise_filenames else None
 
             if passed:
-                if clean_filename:
-                    best_practice_assets.append(f"Level {lv} Asset: {clean_filename} (ใช้เป็นต้นแบบ/Reference หลัก)")
-                else:
-                    # ถ้าไม่มีชื่อไฟล์จริง ให้ใช้ชื่อเกณฑ์เป็นตัวตั้ง เพื่อกัน AI มโนชื่อไฟล์เอง
-                    best_practice_assets.append(f"Level {lv} Context: ใช้แนวทางปฏิบัติเดิมของหัวข้อ {sub_criteria_name}")
-
-            # Tracking Gap
-            if passed and not has_gap:
-                highest_continuous = lv
-                state_label = "✅ PASSED"
+                if not has_gap:
+                    highest_continuous = lv
+                if not top_asset_name and clean_filename:
+                    top_asset_name = clean_filename
+                best_practice_assets.append(f"- Level {lv}: {clean_filename or 'แนวทางเดิม'}")
             else:
-                state_label = "❌ GAP"
                 has_gap = True
 
-            insight_text = item.get('insight_summary', '').strip()
-            condensed_insights.append(f"- L{lv} [{state_label}]: {insight_text}")
+        # --- [STEP 2: CONTEXT ENRICHMENT] ---
+        # แก้ f-string ให้ชัดเจน ไม่ซ้อนวงเล็บซับซ้อน
+        assets_text = "\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานหลัก"
+        gaps_text = "\n".join([f"- L{i.get('level')}: {i.get('insight_summary')}" for i in aggregated_insights])
 
-        # เตรียม Context ส่งให้ LLM
         enriched_context = (
-            f"💎 EXISTING ASSETS FOR {sub_id}:\n" +
-            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานเก่าที่เป็นลายลักษณ์อักษร") +
-            "\n\n🚨 ANALYSIS OF GAPS:\n" +
-            "\n".join(condensed_insights)
+            f"💎 EXISTING STRATEGIC ASSETS:\n"
+            f"{assets_text}\n\n"
+            f"🚨 GAP ANALYSIS:\n"
+            f"{gaps_text}"
         )
 
         if not strategic_focus:
-            strategic_focus = f"ยกระดับจาก Maturity L{highest_continuous} " + \
-                             ("(เน้นปิดช่องว่างระดับพื้นฐาน)" if has_gap else "(เน้นขยายผลสู่ความยั่งยืน)")
+            strategic_focus = f"ยกระดับจาก L{highest_continuous} มุ่งสู่มาตรฐาน Excellence"
 
-        # --- [STEP 2: PROMPT ORCHESTRATION] ---
-        prompt = SUB_ROADMAP_TEMPLATE.format(
-            sub_id=sub_id,
-            sub_criteria_name=sub_criteria_name,
-            enabler=enabler,
-            aggregated_insights=enriched_context,
-            strategic_focus=strategic_focus
-        )
-
-        max_retries = 3
+        # --- [STEP 3: EXECUTE PROMPT + ROBUST EXTRACTION] ---
+        max_retries = 2
         retry_count = 0
 
         while retry_count < max_retries:
             try:
-                raw = _fetch_llm_response(
-                    system_prompt=SYSTEM_SUB_ROADMAP_PROMPT,
-                    user_prompt=prompt,
+                final_prompt_string = SUB_ROADMAP_PROMPT.format(
+                    sub_id=sub_id,
+                    sub_criteria_name=sub_criteria_name,
+                    enabler=enabler,
+                    aggregated_insights=enriched_context,
+                    strategic_focus=strategic_focus
+                )
+
+                raw_response = _fetch_llm_response(
+                    system_prompt="คุณคือที่ปรึกษาเชิงยุทธศาสตร์ระดับสูงสุดด้าน SE-AM",
+                    user_prompt=final_prompt_string,
                     llm_executor=self.llm
                 )
 
-                data = _robust_extract_json(raw) or {}
-                raw_phases = data.get("phases") or []
+                # Robust extraction
+                data = _robust_extract_json(raw_response) or {}
+                raw_phases = _robust_extract_json_list(raw_response)
 
-                # --- [STEP 3: POST-CHECK FOR GENERIC VERBS & COPY-PASTE] ---
+                # Fallback ถ้า phases ว่างแต่ data มี phases
+                if not raw_phases and "phases" in data:
+                    raw_phases = data["phases"]
+
+                # --- [STEP 4: POST-CHECK FOR GENERIC / ECHO] ---
+                content_str = str(data).lower() + str(raw_phases).lower()
                 generic_keywords = ["ตรวจสอบ", "สอบทาน", "วิเคราะห์", "พิจารณา", "ประเมิน", "ทบทวน", "เบื้องต้น"]
-                # ดักจับประโยคตัวอย่างที่ AI ชอบก๊อปปี้
-                template_echo = "ยกระดับด้วย standardization และ automation" 
-                
-                content_str = str(data).lower()
+                template_echo = ["ยกระดับด้วย standardization และ automation", "Tailored Improvement Roadmap"]
+
                 has_generic = any(kw in content_str for kw in generic_keywords)
-                has_echo = template_echo in content_str
+                has_echo = any(echo.lower() in content_str for echo in template_echo)
 
                 if (has_generic or has_echo) and retry_count < max_retries - 1:
                     retry_count += 1
-                    self.logger.warning(f"⚠️ [RETRY] Generic/Echo detected for {sub_id}. Attempt {retry_count}")
-                    prompt += "\n\n[STRICT INSTRUCTION]: Do not use generic verbs or copy the example text. Be specific to the provided assets."
+                    self.logger.warning(f"[RETRY] Generic/Echo detected for {sub_id}. Attempt {retry_count}")
+                    final_prompt_string += "\n\n[FORCE MODE]: ห้ามใช้ generic verbs หรือ copy ข้อความตัวอย่างเด็ดขาด ต้องอ้างชื่อไฟล์จริงและเจาะจงเท่านั้น"
                     continue
 
-                # --- [STEP 4: NORMALIZE PHASES & PREVENT FALLBACK ECHO] ---
+                # --- [STEP 5: NORMALIZE + INJECTION] ---
                 final_phases = []
                 for i, p in enumerate(raw_phases, 1):
-                    # กรองข้อมูลแต่ละเฟสให้เป็นระเบียบ
+                    if not isinstance(p, dict):
+                        continue
+
+                    actions = p.get("key_actions") or []
+                    # Injection: แทรก top_asset_name ถ้ายังไม่มี (ไม่ซ้ำ)
+                    if top_asset_name and not any(top_asset_name in str(a) for a in actions):
+                        actions.insert(0, {
+                            "action": f"ต่อยอดมาตรฐานจาก {top_asset_name} เพื่อทำ Standardization",
+                            "priority": "High"
+                        })
+
                     final_phases.append({
-                        "phase": p.get("phase", f"Phase {i}: Implementation"),
-                        "target_levels": p.get("target_levels") or [highest_continuous + 1],
-                        "main_objective": p.get("main_objective") or f"ยกระดับการจัดการ {sub_criteria_name}",
-                        "key_actions": p.get("key_actions") or [],
-                        "expected_outcome": p.get("expected_outcome") or "ผลลัพธ์ที่เป็นรูปธรรมตามเกณฑ์",
-                        "best_practice_ref": p.get("best_practice_ref") or "ใช้หลักฐานใน Asset List เป็นเกณฑ์อ้างอิง"
+                        "phase": p.get("phase", f"Phase {i}"),
+                        "target_levels": p.get("target_levels") or [min(highest_continuous + i, 5)],
+                        "main_objective": p.get("main_objective") or "ยกระดับระบบงาน",
+                        "key_actions": actions,
+                        "expected_outcome": p.get("expected_outcome") or "เพิ่ม Traceability Score > 85%"
                     })
 
-                # กรณีพิเศษ: ถ้า L5 แล้ว และ AI เขียนเฟสเดียว ให้เติมเฟสความยั่งยืนแบบ Dynamic
+                # Force L5 Phase 2
                 if highest_continuous == 5 and len(final_phases) < 2:
                     final_phases.append({
                         "phase": "Phase 2: Sustainability & Learning Culture",
-                        "main_objective": f"สร้างวัฒนธรรมการเรียนรู้ในหัวข้อ {sub_criteria_name} อย่างต่อเนื่อง",
-                        "key_actions": [{"action": f"ถอดบทเรียน (Lesson Learned) จากหลักฐานหลักและเผยแพร่ผ่านระบบ KM", "priority": "High"}],
-                        "expected_outcome": "องค์ความรู้ถูกถ่ายทอดและไม่สูญหายเมื่อมีการเปลี่ยนแปลงบุคลากร"
+                        "main_objective": "รักษามาตรฐาน Excellence และสร้างระบบ Knowledge Governance",
+                        "key_actions": [
+                            {"action": f"ถอดบทเรียนจาก {top_asset_name or 'หลักฐานหลัก'} เป็น Best Practice องค์กร", "priority": "High"}
+                        ],
+                        "expected_outcome": "Traceability 100%"
                     })
 
                 return {
@@ -4986,20 +4995,21 @@ class SEAMPDCAEngine:
                     "sub_id": sub_id,
                     "sub_criteria_name": sub_criteria_name,
                     "highest_maturity_level": highest_continuous,
-                    "overall_strategy": data.get("overall_strategy", strategic_focus),
-                    "phases": final_phases or self._get_emergency_fallback_plan(sub_id, sub_criteria_name)["phases"],
+                    "overall_strategy": data.get("overall_strategy") or strategic_focus,
+                    "phases": final_phases,
                     "is_gap_detected": has_gap,
                     "status": "SUCCESS",
+                    "generated_at": datetime.now().isoformat(),
                     "retry_count": retry_count
                 }
 
             except Exception as e:
-                self.logger.error(f"🛑 Critical Error for {sub_id}: {e}")
+                self.logger.error(f"🛑 Error in generate_sub_roadmap: {str(e)}")
                 retry_count += 1
                 if retry_count >= max_retries:
                     return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
 
-        return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Retry limit exceeded")
+        return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "Max retries exceeded")
 
     def synthesize_enabler_roadmap(
         self,
@@ -5008,13 +5018,13 @@ class SEAMPDCAEngine:
         llm_executor: Any
     ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC ORCHESTRATOR - FULL REVISE v2026.01.28]
-        - 🧩 Macro-Synthesis: สังเคราะห์แผนภาพรวมจากทุก Sub-id
-        - 🛡️ KeyError Shield: ใช้ STRATEGIC_OVERALL_PROMPT ที่แยกตัวแปรชัดเจน
-        - 🚀 Performance: ปรับลดความซับซ้อนของ Context เพื่อให้ L40S ตอบสนองไวขึ้น
+        [TIER-3 STRATEGIC ORCHESTRATOR - FINAL STABLE v2026.02.03-rev2]
+        - Macro-Synthesis จากทุก Sub-id
+        - KeyError Shield ด้วย .get()
+        - Performance: ลด context size ด้วย slicing
+        - Fixed f-string syntax issues
         """
-
-        self.logger.info(f"🌐 [TIER-3] Synthesizing Strategic Master Plan for {enabler_name}")
+        self.logger.info(f"🌐 [TIER-3] Synthesizing Master Plan for {enabler_name}")
 
         if not sub_criteria_results:
             return {
@@ -5023,14 +5033,12 @@ class SEAMPDCAEngine:
                 "phases": []
             }
 
-        # --- [STEP 1: DETERMINING GLOBAL MATURITY & FOCUS] ---
-        # หาเลเวลต่ำสุดที่ทุกข้อผ่าน (Baseline)
+        # --- [STEP 1: GLOBAL MATURITY & FOCUS] ---
         global_maturity = min(
             [int(r.get("highest_full_level", 0)) for r in sub_criteria_results if r],
             default=0
         )
 
-        # กำหนด Strategic Focus สำหรับภาพรวมองค์กร
         if global_maturity < 3:
             global_focus = f"Focus: Foundational Integrity (การสถาปนารากฐานระบบ {enabler_name} และปิดช่องว่างมาตรฐาน)"
         elif 3 <= global_maturity < 5:
@@ -5038,37 +5046,34 @@ class SEAMPDCAEngine:
         else:
             global_focus = f"Focus: Excellence & Innovation (การสร้างนวัตกรรมและเป็นต้นแบบระดับสากล)"
 
-        # --- [STEP 2: AGGREGATING MULTI-SUB GAPS] ---
+        # --- [STEP 2: AGGREGATE GAPS & STRENGTHS (LIMITED)] ---
         blocking_gaps = []
         key_strengths = []
 
         for res in sub_criteria_results:
             sid = res.get("sub_id", "N/A")
             sname = res.get("sub_criteria_name", "N/A")
-            
-            # เก็บจุดแข็ง (เลเวลสูงสุดที่ผ่าน)
-            if res.get("highest_full_level", 0) > 0:
-                key_strengths.append(f"- [{sid}] ผ่านระดับ L{res.get('highest_full_level')}: {sname}")
+            hlv = res.get("highest_full_level", 0)
 
-            # ดึงเฉพาะ Coaching Insight ของเลเวลที่ติดขัด (Next Target Level)
-            next_lv = str(res.get("highest_full_level", 0) + 1)
-            details = res.get("level_details", {}).get(next_lv)
-            
+            if hlv > 0:
+                key_strengths.append(f"- [{sid}] ผ่านระดับ L{hlv}: {sname}")
+
+            next_lv = str(hlv + 1)
+            details = res.get("level_details", {}).get(next_lv, {})
             if details and not details.get("is_passed"):
                 insight = details.get("coaching_insight", "").strip()
                 if insight:
                     blocking_gaps.append(f"🔴 [{sid} L{next_lv}]: {insight[:200]}")
 
-        # จำกัดปริมาณข้อมูลไม่ให้ LLM สับสน
+        # Limit context size
         aggregated_context = (
-            "💎 KEY STRENGTHS (จุดแข็งที่เป็นต้นทุน):\n" +
-            ("\n".join(key_strengths[:5]) if key_strengths else "- อยู่ระหว่างการเริ่มต้น") +
-            "\n\n🚨 CRITICAL BLOCKING GAPS (ช่องว่างรวมที่ต้องเร่งปิด):\n" +
-            ("\n".join(blocking_gaps[:10]) if blocking_gaps else "- ไม่พบช่องว่างวิกฤต")
+            f"💎 KEY STRENGTHS:\n"
+            f"{'\n'.join(key_strengths[:5]) or '- อยู่ระหว่างเริ่มต้น'}\n\n"
+            f"🚨 CRITICAL GAPS:\n"
+            f"{'\n'.join(blocking_gaps[:8]) or '- ไม่พบช่องว่างวิกฤต'}"
         )
 
-        # --- [STEP 3: PROMPT ORCHESTRATION (THE FIX)] ---
-        # 🛡️ ใช้ Prompt ตัวใหม่ที่รับ 3 ตัวแปร (ตรงกับ seam_prompts.py)
+        # --- [STEP 3: PROMPT ORCHESTRATION] ---
         final_prompt = STRATEGIC_OVERALL_PROMPT.format(
             enabler_name=enabler_name,
             aggregated_context=aggregated_context,
@@ -5076,7 +5081,6 @@ class SEAMPDCAEngine:
         )
 
         try:
-            # ใช้ helper _fetch_llm_response หรือเรียก llm_executor โดยตรง
             raw = _fetch_llm_response(
                 system_prompt=SYSTEM_OVERALL_STRATEGIC_PROMPT,
                 user_prompt=final_prompt,
@@ -5084,19 +5088,21 @@ class SEAMPDCAEngine:
             )
 
             data = _robust_extract_json(raw) or {}
-            raw_phases = data.get("phases") or data.get("roadmap") or []
+            raw_phases = data.get("phases") or []
 
             # --- [STEP 4: NORMALIZE PHASES] ---
             final_phases = []
             for i, p in enumerate(raw_phases, 1):
-                if isinstance(p, dict):
-                    final_phases.append({
-                        "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
-                        "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
-                        "main_objective": p.get("main_objective") or p.get("target_objectives") or "ปิดช่องว่างเชิงยุทธศาสตร์",
-                        "key_actions": p.get("key_actions") or p.get("strategic_actions") or [],
-                        "expected_outcome": p.get("expected_outcome") or p.get("key_performance_indicator") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
-                    })
+                if not isinstance(p, dict):
+                    continue
+
+                final_phases.append({
+                    "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
+                    "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
+                    "main_objective": p.get("main_objective") or "ปิดช่องว่างเชิงยุทธศาสตร์",
+                    "key_actions": p.get("key_actions") or [],
+                    "expected_outcome": p.get("expected_outcome") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
+                })
 
             if not final_phases:
                 final_phases = self._get_emergency_fallback_plan("OVERALL", enabler_name).get("phases", [])
@@ -5114,7 +5120,7 @@ class SEAMPDCAEngine:
             }
 
         except Exception as e:
-            self.logger.error(f"🛑 [TIER-3-CRITICAL] Global Roadmap Error: {e}", exc_info=True)
+            self.logger.error(f"🛑 [TIER-3] Global Roadmap Error: {e}", exc_info=True)
             return {
                 "status": "ERROR",
                 "overall_strategy": "เกิดข้อผิดพลาดในการสังเคราะห์แผนยุทธศาสตร์",
