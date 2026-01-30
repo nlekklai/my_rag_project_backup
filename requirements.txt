@@ -11,6 +11,8 @@ transformers>=4.46.3
 safetensors>=0.6.2
 ollama>=0.3.3
 python-dotenv>=1.2.1
+regex>=2024.11.6
+# เพิ่ม regex เพื่อรองรับการทำงานของ _detect_sub_topic_and_page ที่ซับซ้อน
 
 # === Fix Dependency Conflict & API Clients ===
 httpx-sse>=0.4.0
@@ -30,7 +32,10 @@ python-docx>=1.2.0
 python-pptx>=1.0.2
 openpyxl>=3.1.5
 pandas>=2.2.2
-unstructured>=0.18.21
+unstructured[pdf,image]>=0.18.21
+# ปรับเป็น [pdf,image] เพื่อให้รองรับ OCR ภายในตัว unstructured
+pi-heif>=0.21.0
+# สำหรับประมวลผลไฟล์ภาพความละเอียดสูง และแก้ปัญหา warning ใน docker server
 pythainlp==5.1.2
 pytesseract>=0.3.10
 Pillow>=10.3.0

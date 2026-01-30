@@ -231,10 +231,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         sub_id = str(sub.get("sub_id", "N/A"))
         lv_details = sub.get("level_details", {}) or {}
         
+        sub_roadmap_data = sub.get("sub_roadmap") or {}
         ui_sub_roadmap = {
-            "strategy": (sub.get("sub_roadmap") or {}).get("overall_strategy") or sub.get("strategic_focus", ""),
-            "phases": (sub.get("sub_roadmap") or {}).get("phases") or [],
-            "is_gap_detected": (sub.get("sub_roadmap") or {}).get("is_gap_detected", False)
+            "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus", ""),
+            "phases": sub_roadmap_data.get("phases") or [],
+            "is_gap_detected": sub_roadmap_data.get("is_gap_detected", False)
         }
 
         ui_levels = {}
