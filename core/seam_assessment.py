@@ -956,181 +956,138 @@ class SEAMPDCAEngine:
         top_evidences: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        [FINAL FIXED v2026.02] – PDCA-TRUTHFUL VERSION
-        - Respect contextual required_phases (NO silent override)
-        - Separate PDCA detected vs PDCA scored
-        - Dashboard-friendly but logic-honest
+        [ULTIMATE REVISED v2026.02 - AUDITOR TRUTH]
+        - บังคับใช้ required_phases ตาม contextual rules อย่างเคร่งครัด
+        - Level 4-5 Gatekeeper: หากขาด Check (C) หรือ Act (A) ตามเกณฑ์ จะ "ตก" ทันที
+        - ยกเลิกระบบ Pass Boost (1.2) และ Floor สำหรับระดับ Maturity สูง
+        - แสดงคะแนนจริง (Gap Analysis) เพื่อความน่าเชื่อถือในสายตา Auditor
         """
 
         log_prefix = f"Sub:{sub_id or '??'} L{level}"
         contextual_config = contextual_config or {}
         top_evidences = top_evidences or []
 
-        # --------------------------------------------------
-        # 1. Robust JSON Repair
-        # --------------------------------------------------
+        # 1. Robust JSON Repair (ป้องกัน AI พ่น Format เพี้ยน)
         if isinstance(llm_output, str):
             cleaned = re.sub(r'```json\s*|\s*```|\n+', ' ', llm_output.strip())
             cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
             try:
                 llm_output = json.loads(cleaned)
-                self.logger.debug(f"[JSON-REPAIR-SUCCESS] {log_prefix}")
-            except json.JSONDecodeError as e:
-                self.logger.error(f"[JSON-REPAIR-FAIL] {log_prefix}: {e}")
+            except json.JSONDecodeError:
+                self.logger.error(f"[JSON-REPAIR-FAIL] {log_prefix}")
                 return self._get_fallback_result(log_prefix)
 
         if not isinstance(llm_output, dict) or not llm_output:
             return self._get_fallback_result(log_prefix)
 
-        # --------------------------------------------------
-        # 2. REQUIRED PHASES (STRICT: NO OVERRIDE)
-        # --------------------------------------------------
-        if contextual_config.get("required_phases"):
-            required_phases = list(dict.fromkeys(contextual_config["required_phases"]))
-            source = "contextual"
-        else:
-            # fallback ONLY if contextual missing
-            if level <= 3:
-                required_phases = ["P", "D"]
-            elif level == 4:
-                required_phases = ["P", "D", "C"]
-            else:
-                required_phases = ["P", "D", "C", "A"]
-            source = "fallback"
+        # 2. Extract Required Phases (ดึงจาก Contextual Rules ที่สะสมมา)
+        # ถ้าใน Config ไม่ระบุ จะใช้เกณฑ์มาตรฐานตามระดับ Maturity
+        required_phases = contextual_config.get("required_phases")
+        if not required_phases:
+            if level <= 3: required_phases = ["P", "D"]
+            elif level == 4: required_phases = ["P", "D", "C"]
+            else: required_phases = ["P", "D", "C", "A"]
 
-        self.logger.info(
-            f"[REQUIRED-PHASES] {log_prefix}: {required_phases} (source={source})"
-        )
-
-        # --------------------------------------------------
-        # 3. PDCA EXTRACTION (RAW / DETECTED)
-        # --------------------------------------------------
+        # 3. PDCA RAW SCORING (ดึงคะแนน LLM + ตรวจสอบ Keyword)
         pdca_raw = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
-
         reason_text = str(llm_output.get("reason", "")).lower()
-        ext_texts = {
-            p: str(llm_output.get(f"Extraction_{p}", "")).lower()
-            for p in "PDCA"
-        }
-
+        
         for phase in "PDCA":
             score = 0.0
+            # ดึงคะแนนจาก LLM Output (รองรับหลายชื่อ Key)
             for k in (f"{phase}_Score", f"score_{phase.lower()}", f"Extraction_{phase}_Score"):
                 if k in llm_output:
                     try:
                         score = float(llm_output[k])
                         break
-                    except Exception:
-                        pass
-
-            # Keyword-based detection (NOT scoring)
+                    except: pass
+            
+            # Cross-check กับ Keywords ใน Phase นั้นๆ (จาก _enabler_defaults)
             phase_kws = contextual_config.get(f"{phase.lower()}_keywords", [])
-            combined_text = reason_text + " " + ext_texts.get(phase, "")
-
-            if score <= 0.0 and any(kw.lower() in combined_text for kw in phase_kws):
-                score = 1.0
-                self.logger.info(f"[PHASE-DETECTED] {log_prefix} {phase} detected by keyword")
-
+            if score < 0.5 and any(kw.lower() in reason_text for kw in phase_kws):
+                # หาก AI ให้คะแนนต่ำแต่ตรวจเจอ Keyword สำคัญ ให้ปรับเป็น Baseline (0.5)
+                score = 0.5 
+            
             pdca_raw[phase] = min(max(score, 0.0), 2.0)
 
-        detected_phases = [p for p in required_phases if pdca_raw[p] > 0.0]
-
-        # --------------------------------------------------
-        # 4. PDCA SCORING (FLOOR APPLIED HERE ONLY)
-        # --------------------------------------------------
-        pdca_scored = pdca_raw.copy()
-
-        if level == 1:
-            floor = 1.0
-        elif level <= 3:
-            floor = 0.8
-        else:
-            floor = 0.5
-
-        for p in required_phases:
-            if pdca_scored[p] < floor:
-                pdca_scored[p] = floor
-                self.logger.debug(
-                    f"[PHASE-FLOOR] {log_prefix} {p} floored to {floor}"
-                )
-
-        # --------------------------------------------------
-        # 5. NORMALIZED SCORE
-        # --------------------------------------------------
-        sum_req = sum(pdca_scored[p] for p in required_phases)
+        # 4. NORMALIZED CALCULATION (คำนวณเฉลี่ยเฉพาะ Phase ที่เกณฑ์กำหนด)
+        sum_req = sum(pdca_raw[p] for p in required_phases)
         max_req = len(required_phases) * 2.0
         normalized_score = round((sum_req / max_req) * 2.0, 2) if max_req else 0.0
 
-        # --------------------------------------------------
-        # 6. SAFETY NET (RERANK)
-        # --------------------------------------------------
-        max_rr = max(
-            [ev.get("rerank_score", ev.get("score", 0.0)) for ev in top_evidences] or [0.0]
-        )
+        # 5. EVIDENCE QUALITY CHECK (Rerank Score)
+        # ใช้ Rerank Score สูงสุดของหลักฐานเป็นตัวชี้วัดความมั่นใจ
+        max_rr = max([ev.get("rerank_score", ev.get("score", 0.0)) for ev in top_evidences] or [0.0])
 
+        # 6. PASS/FAIL DECISION (STRICT AUDIT MODE)
         explicit_pass = llm_output.get("is_passed") is True
-        is_force_pass = normalized_score < 1.2 and max_rr >= 0.75
-        is_passed = explicit_pass or is_force_pass or normalized_score >= 1.0
+        # ผ่านเบื้องต้นเมื่อ LLM บอกว่าผ่าน และ คะแนนเฉลี่ย PDCA >= 1.0 (50%)
+        is_passed = explicit_pass and (normalized_score >= 1.0)
 
-        if is_passed and normalized_score < 1.2:
-            normalized_score = 1.2
-            self.logger.info(f"[PASS-BOOST] {log_prefix} boosted to 1.2")
+        # --- [GATEKEEPER LOGIC: กฎเหล็กสำหรับระดับ Maturity สูง] ---
+        if level >= 4:
+            # กฎ 1: บังคับตรวจเฟส Check (C) และ Act (A) ตามกฎรายหัวข้อ
+            mandatory_phases = [p for p in ["C", "A"] if p in required_phases]
+            for mp in mandatory_phases:
+                if pdca_raw[mp] < 0.4: # คะแนนดิบต้องไม่ต่ำกว่า 20% ของเฟสนั้น
+                    is_passed = False
+                    self.logger.warning(f"❌ [STRICT-AUDIT] {log_prefix}: FAILED - ขาดหลักฐานเฟสสำคัญ '{mp}'")
 
-        # --------------------------------------------------
-        # 7. ANTI-IT GHOST
-        # --------------------------------------------------
+            # กฎ 2: ระดับสูงสุด (L5) ต้องมีความแม่นยำของไฟล์หลักฐาน (Rerank) เกินเกณฑ์
+            if level == 5 and max_rr < 0.70:
+                is_passed = False
+                self.logger.warning(f"❌ [STRICT-AUDIT] {log_prefix}: FAILED - ความน่าเชื่อถือหลักฐานต่ำเกินไป ({max_rr:.2f})")
+
+        # 7. SCORE ADJUSTMENT (ยกเลิกคะแนนทิพย์)
+        if is_passed:
+            if level <= 3:
+                # ระดับเริ่มต้น: หากผ่านแต่อ่อน ให้คะแนนฐานที่ 1.2
+                normalized_score = max(normalized_score, 1.2)
+            else:
+                # ระดับสูง (L4-L5): แสดงคะแนนจริงที่คำนวณได้ (เช่น 1.0, 1.4, 1.8) 
+                # เพื่อให้ Auditor เห็นช่องว่างในการพัฒนา (Gap)
+                normalized_score = max(normalized_score, 1.0)
+        else:
+            # กรณีไม่ผ่าน: ปรับคะแนนลงเพื่อแสดงสถานะ Gap ชัดเจนใน Dashboard
+            normalized_score = min(normalized_score, 0.8)
+
+        # 8. ANTI-IT GHOST (ขัดเกลาคำศัพท์จาก AI ให้เป็นภาษานักบริหาร KM)
         coaching = str(llm_output.get("coaching_insight", "")).strip()
-        it_patterns = r"(ระบบสารสนเทศอัตโนมัติ|พัฒนาระบบ|KMS|Software|IT System|Automation|แพลตฟอร์มดิจิทัล)"
         cleaned_coaching = re.sub(
-            it_patterns,
-            "กระบวนการและกิจกรรมขององค์กร",
+            r"(ระบบสารสนเทศอัตโนมัติ|KMS|Software|แอปพลิเคชัน|IT System|พัฒนาระบบ)",
+            "กลไกการจัดการความรู้และดิจิทัลแพลตฟอร์ม",
             coaching,
             flags=re.IGNORECASE
         )
 
-        # --------------------------------------------------
-        # 8. DASHBOARD DISPLAY (NON-DESTRUCTIVE)
-        # --------------------------------------------------
-        pdca_display = pdca_scored.copy()
-        if is_passed:
-            for p in required_phases:
-                pdca_display[p] = max(pdca_display[p], 1.0)
-
-        # --------------------------------------------------
-        # 9. SUMMARY LOG
-        # --------------------------------------------------
+        # 9. FINAL SUMMARY LOG (สำหรับการ Audit ภายหลัง)
         self.logger.info(
-            f"[POST-PROCESS-SUMMARY] {log_prefix} | "
-            f"Score={normalized_score:.2f} | Passed={is_passed} | "
-            f"Detected={detected_phases} | Required={required_phases} | "
-            f"PDCA_RAW={pdca_raw}"
+            f"✅ [POST-PROCESS] {log_prefix} | Score: {normalized_score} | Passed: {is_passed} | "
+            f"MaxRR: {max_rr:.2f} | Req: {required_phases} | Raw_PDCA: {pdca_raw}"
         )
 
         return {
             "score": normalized_score,
             "is_passed": is_passed,
-            "pdca_breakdown": pdca_display,          # สำหรับ UI
-            "pdca_detected": pdca_raw,               # สำหรับ audit / confidence
-            "detected_phases": detected_phases,
+            "pdca_breakdown": pdca_raw,      # สำหรับแสดงผล Matrix ใน UI
+            "detected_phases": [p for p, v in pdca_raw.items() if v > 0.4],
             "required_phases": required_phases,
             "reason": llm_output.get("reason", "N/A"),
             "coaching_insight": cleaned_coaching,
-            "is_force_pass": is_force_pass,
-            "max_rerank": max_rr
+            "max_rerank": max_rr,
+            "is_force_pass": False           # ปิดระบบ Force Pass เพื่อความโปร่งใส 100%
         }
 
     def _get_fallback_result(self, prefix: str) -> Dict[str, Any]:
-        """Fallback เมื่อ LLM output พังหรือว่าง"""
-        self.logger.error(f"[FALLBACK] {prefix} using zero-score fallback")
+        """Fallback เมื่อโครงสร้าง JSON เสียหาย"""
         return {
             "score": 0.0,
             "is_passed": False,
             "pdca_breakdown": {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0},
-            "reason": "AI Output Error - Fallback triggered",
-            "coaching_insight": "ไม่สามารถประมวลผลข้อมูลได้ กรุณาตรวจสอบ log และหลักฐาน",
+            "reason": "AI Output Parse Error - ระบบป้องกันข้อมูลผิดพลาดทำงาน",
+            "coaching_insight": "ไม่สามารถประมวลผลข้อสรุปได้ กรุณาตรวจสอบหลักฐานไฟล์แนบอีกครั้ง",
             "required_phases": []
         }
-        
 
     def _expand_context_with_neighbor_pages(self, top_evidences: List[Any], collection_name: str) -> List[Dict[str, Any]]:
         """
