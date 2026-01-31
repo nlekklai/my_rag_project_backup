@@ -289,27 +289,58 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             actual_found_tags = set()
             current_sources = sources if isinstance(sources, list) else []
 
+            # --- [🎯 REVISED FULL BLOCK: EVIDENCE & CONFIDENCE RESOLUTION] ---
+        for lv in range(1, 6):
+            k = str(lv)
+            info = lv_details.get(k, {}) or {}
+            is_passed = bool(info.get("is_passed", False))
+            level_key = f"{sub_id}_L{lv}"
+            
+            # 1. 🔍 SMART EVIDENCE RESOLUTION (ขุดข้อมูลจากทุกจุดที่เป็นไปได้)
+            # ดึงจากใน Level ตรงๆ หรือดึงจาก Global Evidence Map (Reranked Data)
+            sources = info.get("evidence_sources") or info.get("evidences") or []
+            
+            # Fallback 1: ถ้าใน level ไม่มี ให้เช็คที่ Global Map (สำคัญมากสำหรับหัวข้อที่ AI สรุปแยกไว้)
+            if not sources and level_key in global_evidence_map:
+                ext_ev = global_evidence_map[level_key]
+                sources = [ext_ev] if isinstance(ext_ev, dict) else ext_ev
+            
+            # Fallback 2: ถ้ายังไม่มีอีก ให้ลองเช็คจาก evidence_map ที่อาจจะอยู่ในระดับ sub-criteria
+            if not sources and sub.get("evidence_map", {}).get(level_key):
+                ext_ev = sub["evidence_map"][level_key]
+                sources = [ext_ev] if isinstance(ext_ev, dict) else ext_ev
+
+            actual_found_tags = set()
+            current_sources = sources if isinstance(sources, list) else []
+
             for src in current_sources:
                 if not isinstance(src, dict): continue
 
+                # ดึงชื่อไฟล์ (รองรับหลาย format ที่ AI อาจพ่นมา)
                 raw_fname = str(src.get("filename") or src.get("file") or src.get("source") or "เอกสารอ้างอิง")
+                if raw_fname.lower() == "unknown file" or not raw_fname: continue
                 
-                # Confidence Score Extraction
-                conf_val = 50.0 # Default
+                # 2. 🛡️ CONFIDENCE SCORE EXTRACTOR (Robust Version)
+                conf_val = 50.0  # Default 50%
                 raw_score = src.get("rerank_score") or src.get("relevance_score") or src.get("confidence")
+                
+                # กรณี AI แปะคะแนนมาในชื่อไฟล์ (เช่น "file.pdf | SCORE: 0.85")
                 if "|SCORE:" in raw_fname:
                     try: raw_score = float(raw_fname.split("SCORE:")[-1])
                     except: pass
                 
                 try:
                     conf_val = float(raw_score) if raw_score is not None else 0.5
+                    # ปรับ Scale ให้เป็น 0-100 เสมอ
                     if 0 < conf_val <= 1.0: conf_val *= 100
                 except: conf_val = 50.0
                 
                 clean_fname = raw_fname.split("|")[0].strip()
+                
+                # สะสมชื่อไฟล์ที่ไม่ซ้ำกันเพื่อใช้คำนวณ Independence และ Traceability
                 sub_conf_pool[clean_fname] = max(conf_val / 100, sub_conf_pool.get(clean_fname, 0))
 
-                # PDCA Tagging
+                # 3. 🏷️ PDCA TAGGING
                 tag = str(src.get("pdca_tag") or src.get("pdca") or "D").upper()
                 if tag not in ["P", "D", "C", "A"]: tag = "D"
                 actual_found_tags.add(tag)
@@ -320,7 +351,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     "page": str(src.get("page", "1")),
                     "pdca_tag": tag,
                     "confidence": round(conf_val, 1),
-                    "text": src.get("content") or src.get("snippet") or "ไม่พบรายละเอียดข้อความ"
+                    "text": src.get("content") or src.get("snippet") or "พบหลักฐานอ้างอิงในเอกสาร"
                 })
 
             # 🎯 2. PDCA Coverage & Matrix
