@@ -11,7 +11,7 @@ services:
     ports:
       - "11434:11434"
     environment:
-      - OLLAMA_NUM_PARALLEL=4       # สอดคล้องกับ MAX_CONCURRENT_TASKS ของ Backend
+      - OLLAMA_NUM_PARALLEL=2       # สอดคล้องกับ MAX_CONCURRENT_TASKS ของ Backend
       - OLLAMA_MAX_LOADED_MODELS=1  # บังคับโหลด 1 โมเดลขนาดใหญ่ (70B) เพื่อคุม VRAM
       - OLLAMA_SCHED_SPREAD=true     # กระจายโหลด Model ลงบน L40S ทั้ง 8 ใบ
       - OLLAMA_KEEP_ALIVE=-1        # ให้โมเดลอยู่ใน Memory ตลอดเวลา ลดความหน่วง (Latency)
@@ -35,7 +35,7 @@ services:
     build: .
     container_name: rag_backend
     user: "${UID}:${GID}"
-    shm_size: '2gb'
+    shm_size: '16gb'
     volumes:
       - .:/app
       - ./data_store:/app/data_store
@@ -48,6 +48,7 @@ services:
       - RAG_RUN_MODE=PRODUCTION
       - LLM_BACKEND=OLLAMA
       - DEFAULT_LLM_MODEL_NAME=llama3.1:70b
+      - HTTPX_TIMEOUT=300.0
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - TZ=Asia/Bangkok
       # --- Permission & Cache Shielding ---
