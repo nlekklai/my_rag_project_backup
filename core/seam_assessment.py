@@ -3139,10 +3139,6 @@ class SEAMPDCAEngine:
         - Full-text hash dedup
         """
 
-        import os
-        import hashlib
-        from collections import defaultdict
-
         active_sub_id = current_sub_id or getattr(self, "sub_id", "unknown")
         level = level or 1
 
@@ -4452,10 +4448,13 @@ class SEAMPDCAEngine:
     
     def _merge_worker_results(self, sub_result: Dict[str, Any], temp_map: Dict[str, Any]):
         """
-        [ULTIMATE REVISED MERGE v2026.01.29 - PRODUCTION READY]
-        - 🛡️ Metadata Sync: เชื่อม Key 'source_filename' จาก inges.py โดยตรง
-        - 🧬 Traceability Guard: ใช้ Unique ID (UID) ป้องกันการนับคะแนนซ้ำในระดับ UI
-        - ⚖️ Decision Logic: Human-in-the-loop (ข้อมูลที่คนแก้ AI จะไม่ยุ่ง)
+        [ULTIMATE REVISED MERGE v2026.01.31-final-stable]
+        - 🛡️ Metadata Sync: เชื่อม Key ให้ตรงกับระบบ Ingestion ล่าสุด (source_filename, filename, source, metadata.source)
+        - 🧬 Traceability Guard: ใช้ UID (doc_id + page) ป้องกันนับหลักฐานซ้ำ
+        - ⚖️ Maturity Lock: หยุดนับระดับทันทีถ้า level ก่อนหน้าไม่ผ่านหรือ capped
+        - ⚖️ Weighted Score: highest_level * weight / 5 (ตาม SE-AM logic)
+        - Human-in-the-loop Guard: ไม่ทับข้อมูล source_type = "human_map"
+        - Logging ละเอียดเพื่อ debug metadata sync และ maturity lock
         """
         if not sub_result:
             return None
@@ -4471,53 +4470,55 @@ class SEAMPDCAEngine:
                 self.evidence_map = {}
 
             for level_key, ev_list in temp_map.items():
-                if not isinstance(ev_list, list) or not ev_list: continue
-                if "_L" not in level_key: continue
+                if not isinstance(ev_list, list) or not ev_list:
+                    continue
+                if "_L" not in level_key:
+                    continue
 
                 lv_num = level_key.split("_L")[-1]
                 lv_data = incoming_levels.get(lv_num, {})
                 
                 node = self.evidence_map.setdefault(level_key, {
-                    "status": "pending", 
+                    "status": "pending",
                     "evidences": [],
-                    "pdca": None, 
-                    "confidence": None, 
+                    "pdca": None,
+                    "confidence": None,
                     "snippet": "",
                     "file": "Unknown File",
                     "page": "N/A"
                 })
                 
                 existing_evs = node["evidences"]
-                # 🛡️ Guard: ใช้ doc_id + page เป็น UID ป้องกัน Traceability ดีดตัว
+                # ใช้ UID ป้องกัน duplicate (doc_id + page)
                 seen_uids = {f"{e.get('doc_id')}_{e.get('page')}": i for i, e in enumerate(existing_evs)}
 
                 for ev in ev_list:
-                    # 🛠 FIX: Map Key ให้ตรงกับ inges.py
                     doc_id = ev.get("doc_id") or ev.get("stable_doc_uuid") or "unknown_id"
                     page = str(ev.get("page_label") or ev.get("page") or "0")
                     uid = f"{doc_id}_{page}"
 
-                    # 🛠 FIX: ป้องกัน AI ทับข้อมูล Human-Map
+                    # Guard: ไม่ทับข้อมูลที่มนุษย์แก้ (human_map)
                     if uid in seen_uids:
                         idx = seen_uids[uid]
                         if existing_evs[idx].get("source_type") == "human_map":
+                            self.logger.debug(f"[MERGE-GUARD] Skip overwrite for human_map UID: {uid}")
                             continue
                         existing_evs[idx].update(ev)
                     else:
                         existing_evs.append(ev)
                         seen_uids[uid] = len(existing_evs) - 1
 
-                # 🎯 [CRITICAL] Sync 'Unknown File' Fix
+                # Sync Metadata สำหรับ UI/Export (เลือก top evidence)
                 if existing_evs:
-                    # เรียงลำดับหาหลักฐานที่น่าเชื่อถือที่สุด (Top Rerank)
+                    # เรียงลำดับหาหลักฐานที่น่าเชื่อถือที่สุด (rerank_score สูงสุด)
                     existing_evs.sort(key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or 0.0), reverse=True)
                     top_ev = existing_evs[0]
                     
-                    # 🛠 FIX: ดึงชื่อไฟล์ตามลำดับ Key ที่ inges.py มีโอกาสสร้าง
-                    possible_keys = ["source_filename", "source", "filename", "metadata.source"]
-                    res_file = next((top_ev.get(k) for k in possible_keys if top_ev.get(k)), "Unknown File")
-
-                    raw_text = top_ev.get("text") or top_ev.get("page_content") or ""
+                    # ดึงชื่อไฟล์จาก key ที่ ingestion สร้าง (priority order)
+                    file_keys = ["source_filename", "filename", "source", "metadata.source"]
+                    res_file = next((top_ev.get(k) for k in file_keys if top_ev.get(k)), "Unknown File")
+                    
+                    raw_text = top_ev.get("text") or top_ev.get("content") or ""
                     clean_snippet = raw_text[:350].replace("\n", " ").strip() + "..." if raw_text else ""
                     
                     node.update({
@@ -4528,6 +4529,8 @@ class SEAMPDCAEngine:
                         "page": str(top_ev.get("page_label") or top_ev.get("page") or "N/A"),
                         "status": "completed"
                     })
+
+                    self.logger.debug(f"[MERGE-SYNC] {sub_id}_L{lv_num} | Top File: {res_file} | Confidence: {node['confidence']}")
 
         # --------------------------------------------------
         # 2. Results Integration (The Bridge)
@@ -4556,16 +4559,17 @@ class SEAMPDCAEngine:
                 target["level_details"][str(lv)] = lv_data
 
         # --------------------------------------------------
-        # 3. Maturity Step-Ladder Logic (คำนวณคะแนนบันได)
+        # 3. Maturity Step-Ladder & Score Calculation
         # --------------------------------------------------
         highest = 0
         pdca_sum = {"P": 0.0, "D": 0.0, "C": 0.0, "A": 0.0}
         passed_count = 0
 
+        # ตรวจสอบทีละระดับ 1-5 (หยุดทันทีถ้าเจอไม่ผ่านหรือ capped)
         for l in range(1, 6):
             data = target["level_details"].get(str(l))
-            # กฎ: ถ้า Level ก่อนหน้าไม่ผ่าน (Failed) Maturity หยุดทันที
             if not data or not data.get("is_passed") or data.get("is_maturity_capped"):
+                self.logger.debug(f"[MATURITY-STOP] {sub_id} หยุดที่ L{l} (ไม่ผ่านหรือ capped)")
                 break
             
             highest = l
@@ -4575,10 +4579,14 @@ class SEAMPDCAEngine:
             passed_count += 1
 
         target["highest_full_level"] = highest
-        target["weighted_score"] = round(highest * float(target["weight"]), 2)
+        
+        # Weighted Score ตาม SE-AM (ระดับสูงสุดที่ผ่านต่อเนื่อง * น้ำหนัก / 5)
+        target["weighted_score"] = round(highest * (float(target["weight"]) / 5), 2)
         
         if passed_count > 0:
             target["pdca_overall"] = {k: round(v / passed_count, 2) for k, v in pdca_sum.items()}
+
+        self.logger.info(f"[MERGE-FINAL] {sub_id} | Highest: L{highest} | Weighted Score: {target['weighted_score']}")
 
         return target
     
@@ -5179,11 +5187,13 @@ class SEAMPDCAEngine:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [ULTIMATE REVISED v2026.01.30-final] - ROADMAP NON-GENERIC FIX
-        - Insight summary เจาะจงสูงสุด (หน้า, score, strength/gap/snippet/PDCA)
-        - L5 handling พิเศษ + fallback ชัดเจนเมื่อขาด evidence
-        - Logging ละเอียดเพื่อ debug roadmap quality
-        - รองรับ .env server/mac ได้ดี (context, workers, chunks)
+        [ULTIMATE REVISED v2026.01.31-final-stable] - MATURITY LADDER LOCK + GAP TRACEABILITY
+        - Hard-Constraint: ถ้า level ก่อนหน้าไม่ผ่าน → level ถัดไปถูก capped (แม้ LLM บอกผ่าน)
+        - actual_passed vs llm_passed แยกชัดเจนเพื่อป้องกัน conflict ในรายงาน
+        - Insight summary เจาะจงสูงสุด (top evidence + file + page + score + PDCA + snippet สั้น)
+        - Logging ละเอียดเพื่อ debug maturity lock และ roadmap quality
+        - Weighted score ปรับตาม SE-AM logic (highest_level * weight / 5)
+        - Gap detection แม่นยำจากทุก level (has_gap = any not passed)
         """
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
@@ -5195,7 +5205,7 @@ class SEAMPDCAEngine:
         roadmap_input_bundle = []
 
         highest_continuous_level = 0
-        is_still_continuous = True
+        is_still_continuous = True  # ตัวแปรคุมบันได Maturity (ถ้าติด gap → False ตลอด)
         cumulative_baseline = list(initial_baseline or [])
         evidence_delta: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -5207,17 +5217,7 @@ class SEAMPDCAEngine:
                 continue
 
             level_key = f"{sub_id}_L{level}"
-
-            # --- [STEP 0: CONTEXTUAL DATA EXTRACTION] ---
             required_pdca = self.get_rule_content(sub_id, level, "require_phase") or ["P"]
-
-            flattened_item = next((item for item in self.flattened_rubric if item['sub_id'] == sub_id), None)
-            correct_statement = ""
-            if flattened_item:
-                lvl_data = next((l for l in flattened_item.get('levels', []) if l['level'] == level), None)
-                correct_statement = lvl_data.get('statement', "") if lvl_data else ""
-
-            final_statement = correct_statement if correct_statement else stmt.get("statement", "")
 
             # --- [STEP 1: EVIDENCE HYDRATION] ---
             saved = self.evidence_map.get(level_key, {})
@@ -5229,57 +5229,53 @@ class SEAMPDCAEngine:
             res = self._run_single_assessment(
                 sub_id=sub_id,
                 level=level,
-                criteria={"name": sub_name, "statement": final_statement},
+                criteria={"name": sub_name, "statement": stmt.get("statement", "")},
                 keyword_guide=stmt.get("keywords", []),
                 baseline_evidences=current_baseline,
                 vectorstore_manager=vsm,
             )
 
-            # --- [STEP 3: SEMANTIC ENRICHMENT - FIX NULLS] ---
-            pdca_results = res.get("pdca_breakdown", {})
-            dominant_tag = next((k for k, v in pdca_results.items() if float(v or 0) > 0), "D")
+            # --- [STEP 3: MATURITY STEP-LADDER LOGIC (CRITICAL FIX)] ---
+            llm_passed = bool(res.get("is_passed", False))
+            
+            # หัวใจสำคัญ: actual_passed = True ได้ก็ต่อเมื่อ LLM ให้ผ่าน "และ" ทุกระดับก่อนหน้าต้องผ่านด้วย
+            actual_passed = llm_passed and is_still_continuous
+            is_capped = llm_passed and not is_still_continuous
+            
+            if is_capped:
+                self.logger.warning(f"[MATURITY-LOCK] {sub_id}_L{level} CAPPED: Previous level has unresolved GAP")
 
-            top_chunks = res.get("top_chunks_data", []) or []
-            enriched_chunks = []
-
-            for chunk in top_chunks:
-                chunk["pdca_tag"] = (chunk.get("pdca_tag") or dominant_tag).upper()
-                raw_score = chunk.get("confidence") or chunk.get("relevance_score") or chunk.get("rerank_score") or 0.5
-                chunk["confidence"] = float(raw_score)
-                chunk["content"] = chunk.get("content") or chunk.get("text") or "ไม่พบรายละเอียดข้อความ"
-                enriched_chunks.append(chunk)
-
-            evidence_delta[level_key] = enriched_chunks
-            passed_by_llm = bool(res.get("is_passed", False))
-
-            # --- [STEP 4: MATURITY LOGIC] ---
-            if passed_by_llm:
-                cumulative_baseline.extend(enriched_chunks)
+            if actual_passed:
+                highest_continuous_level = level
+                # เก็บหลักฐานสำหรับ baseline level ถัดไป
+                top_chunks = res.get("top_chunks_data", []) or []
+                cumulative_baseline.extend(top_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
-                if is_still_continuous:
-                    highest_continuous_level = level
             else:
-                is_still_continuous = False
+                is_still_continuous = False  # เมื่อใดที่เจอ GAP ตัวแปรนี้จะเป็น False ตลอดกาลในลูปนี้
 
-            is_capped = passed_by_llm and not is_still_continuous
-            effective_score = float(res.get("score", 0.0)) if passed_by_llm and not is_capped else 0.0
+            # --- [STEP 4: SCORE & DATA ENRICHMENT] ---
+            # ถ้าไม่ผ่านตามบันได Maturity ให้คะแนนระดับนี้เป็น 0
+            effective_score = float(res.get("score", 0.0)) if actual_passed else 0.0
 
-            # --- [STEP 5: ATOMIC ACTION PLAN] ---
+            enriched_chunks = res.get("top_chunks_data", []) or []
+            pdca_results = res.get("pdca_breakdown", {})
+
             try:
                 atomic_actions = self.create_atomic_action_plan(
                     insight=res.get("coaching_insight", ""),
                     level=level,
-                    level_criteria=final_statement,
+                    level_criteria=stmt.get("statement", ""),
                     focus_points=sub_criteria.get("focus_points", "-")
                 )
             except Exception as e:
-                self.logger.warning(f"Atomic action plan failed for {sub_id}_L{level}: {e}")
+                self.logger.warning(f"Atomic action failed for {sub_id}_L{level}: {e}")
                 atomic_actions = []
 
-            # --- [CORE DATA FOR UI & EXPORT] ---
+            # --- [STEP 5: RESULT COMPILATION] ---
             level_details[str(level)] = {
                 "level": level,
-                "is_passed": passed_by_llm,
+                "is_passed": actual_passed,
                 "is_maturity_capped": is_capped,
                 "score": round(effective_score, 2),
                 "reason": res.get("reason", "ไม่มีเหตุผลระบุ"),
@@ -5287,75 +5283,56 @@ class SEAMPDCAEngine:
                 "atomic_action_plan": atomic_actions,
                 "evidence_sources": enriched_chunks,
                 "pdca_breakdown": pdca_results,
-                "rubric_statement": final_statement,
                 "required_pdca_phases": required_pdca
             }
 
-            # --- [STEP 5.1: ROADMAP BUNDLE - ULTRA-DETAILED VERSION] ---
+            # --- [STEP 5.1: ROADMAP BUNDLE - SIMPLE & TRACEABLE] ---
             if enriched_chunks:
-                # เลือก top evidence จาก rerank_score สูงสุด
-                top_ev = max(enriched_chunks, key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or x.get("score") or 0.0))
-                top_file = top_ev.get("source_filename") or top_ev.get("filename") or top_ev.get("source", "N/A")
+                # เลือก top evidence เพื่อสรุปสั้น ๆ
+                top_ev = max(enriched_chunks, key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or 0.0))
+                top_file = top_ev.get("source_filename") or top_ev.get("filename") or "N/A"
                 top_page = top_ev.get("page_label") or top_ev.get("page", "N/A")
-                top_score = f"{float(top_ev.get('rerank_score') or top_ev.get('relevance_score') or top_ev.get('score') or 0.0):.4f}"
+                top_score = f"{float(top_ev.get('rerank_score') or top_ev.get('relevance_score') or 0.0):.4f}"
                 top_pdca = top_ev.get("pdca_tag", "N/A")
-                snippet = (top_ev.get("content") or top_ev.get("text") or "")[:300].replace("\n", " ").strip() + "..." if top_ev.get("content") or top_ev.get("text") else "ไม่มีเนื้อหา"
-
-                insight_text = res.get("coaching_insight", "")
-                strength = gap = ""
-                if "[STRENGTH]" in insight_text:
-                    part = insight_text.split("[STRENGTH]")[1]
-                    strength = f"Strength: {part.split('[ช่องว่าง]')[0].strip()[:200]}..." if "[ช่องว่าง]" in part else f"Strength: {part.strip()[:200]}..."
-                if "[ช่องว่าง]" in insight_text:
-                    part = insight_text.split("[ช่องว่าง]")[1]
-                    gap = f"Gap: {part.split('[ข้อเสนอแนะ]')[0].strip()[:200]}..." if "[ข้อเสนอแนะ]" in part else f"Gap: {part.strip()[:200]}..."
+                snippet = (top_ev.get("content") or top_ev.get("text") or "")[:150].replace("\n", " ").strip() + "..."
 
                 insight_summary = (
-                    f"Level {level} | {'PASSED' if passed_by_llm else 'FAILED'} | "
-                    f"Top Evidence: {top_file} (page {top_page}) | Score: {top_score} | PDCA: {top_pdca} | "
-                    f"{strength} | {gap} | Snippet: {snippet}"
+                    f"L{level}: {'PASSED' if actual_passed else 'FAILED'} | "
+                    f"Top: {top_file} (p.{top_page}) | Score: {top_score} | PDCA: {top_pdca} | "
+                    f"Insight: {res.get('coaching_insight', 'N/A')[:200]}... | Snippet: {snippet}"
                 )
             else:
                 insight_summary = (
-                    f"Level {level} | {'PASSED' if passed_by_llm else 'FAILED'} | "
-                    f"No evidence found | Statement: {final_statement[:300]} | "
-                    f"Coaching Insight: {res.get('coaching_insight', 'ไม่มี insight')[:200]}"
+                    f"L{level}: {'PASSED' if actual_passed else 'FAILED'} | "
+                    f"No evidence | Statement: {stmt.get('statement', '')[:200]} | "
+                    f"Insight: {res.get('coaching_insight', 'N/A')[:150]}..."
                 )
 
             roadmap_input_bundle.append({
                 "level": level,
-                "status": "PASSED" if passed_by_llm else "FAILED",
-                "is_capped": is_capped,
-                "statement": final_statement[:500],  # ตัดไม่ให้ยาวเกิน
-                "required_phases": required_pdca,
-                "insight_summary": insight_summary[:1800],
+                "status": "PASSED" if actual_passed else ("CAPPED" if is_capped else "FAILED"),
+                "statement": stmt.get("statement", "")[:400],
+                "insight_summary": insight_summary
             })
 
             # Log เพื่อ debug roadmap quality
-            summary_len = len(insight_summary)
-            self.logger.debug(f"[ROADMAP-BUNDLE] {sub_id}_L{level} | Len: {summary_len} | {insight_summary[:400]}...")
+            self.logger.debug(f"[ROADMAP-BUNDLE] {sub_id}_L{level} | {insight_summary[:400]}...")
 
-        # --- [STEP 6: STRATEGIC SYNTHESIS - L5 Optimized] ---
-        # ✅ FIX: ประกาศตัวแปรไว้ด้านนอกสุดเพื่อให้ logger.info เข้าถึงได้ทุกกรณี
-        has_gap = False 
+        # --- [STEP 6: STRATEGIC FOCUS SELECTION] ---
+        has_gap = any(not ld["is_passed"] for ld in level_details.values())
         
-        # เช็ค Gap ล่วงหน้าจาก bundle เพื่อความแม่นยำ
-        has_gap = any("Gap:" in item["insight_summary"] and len(item["insight_summary"].split("Gap:")[1].strip()) > 10 for item in roadmap_input_bundle)
-
         if highest_continuous_level < 3:
-            strategic_focus = "Focus: Stabilization (เน้นสถาปนามาตรฐานพื้นฐานและปิดช่องว่างเร่งด่วน)"
-        elif 3 <= highest_continuous_level < 5:
-            strategic_focus = "Focus: Scaling & Integration (เน้นบูรณาการกระบวนการและขยายผลข้ามหน่วยงาน)"
+            strategic_focus = "Focus: Stabilization (เน้นสถาปนามาตรฐานและปิด Gap ระดับฐาน)"
+        elif highest_continuous_level < 5:
+            strategic_focus = "Focus: Scaling & Integration (เน้นการเชื่อมโยงและขยายผล)"
         else:
-            # L5 พิเศษ: ถ้า no gap → เน้น sustain & scale
             strategic_focus = (
-                "Focus: Strategic Excellence & Sustainability (เน้นนวัตกรรม, standardization, automation และขยายผลยั่งยืน)"
+                "Focus: Strategic Excellence & Sustainability (เน้นนวัตกรรมและความยั่งยืน)"
                 if not has_gap else
                 "Focus: Strategic Excellence (เน้นปิด gap ที่เหลือและยกระดับสู่ต้นแบบ)"
             )
 
-        # 🎯 บรรทัดนี้จะไม่พังแล้ว เพราะ has_gap ถูกประกาศไว้แน่นอน
-        self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} → {strategic_focus} (highest: L{highest_continuous_level}, gap_detected: {has_gap})")
+        self.logger.info(f"[STRATEGIC-FOCUS] {sub_id} | Highest: L{highest_continuous_level} | Gap: {has_gap} | {strategic_focus}")
 
         sub_roadmap = self.generate_sub_roadmap(
             sub_id=sub_id,
@@ -5370,7 +5347,7 @@ class SEAMPDCAEngine:
             "sub_criteria_name": sub_name,
             "weight": sub_weight,
             "highest_full_level": highest_continuous_level,
-            "weighted_score": round(highest_continuous_level * sub_weight, 2),
+            "weighted_score": round(highest_continuous_level * (sub_weight / 5), 2),  # SE-AM Weighting
             "is_passed": highest_continuous_level >= 1,
             "level_details": level_details,
             "sub_roadmap": sub_roadmap,
