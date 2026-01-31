@@ -214,12 +214,41 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     summary = res.get("summary") or res.get("result_summary", {})
     global_evidence_map = raw_data.get("evidence_map") or res.get("evidence_map") or {}
 
-    # --- [1] ENABLER ROADMAP ---
+    # --- [HELPER] ROADMAP FORMATTER ---
+    # ฟังก์ชันช่วยจัดรูปแบบ Phase ให้ UI แสดงผลได้ครบถ้วน (Actions, Objectives, Targets)
+    def format_roadmap_phases(phases):
+        if not phases or not isinstance(phases, list):
+            return []
+        formatted = []
+        for p in phases:
+            if not isinstance(p, dict): continue
+            
+            # ดึง Key Actions ออกมาเป็น List ของ String ที่อ่านง่าย
+            raw_actions = p.get("key_actions", [])
+            action_list = []
+            for a in raw_actions:
+                if isinstance(a, dict):
+                    act_text = a.get("action") or a.get("task") or ""
+                    prio = f" [{a.get('priority')}]" if a.get("priority") else ""
+                    if act_text: action_list.append(f"{act_text}{prio}")
+                else:
+                    action_list.append(str(a))
+
+            formatted.append({
+                "phase_name": p.get("phase") or "Unknown Phase",
+                "objective": p.get("main_objective") or p.get("objective") or "ยกระดับมาตรฐาน",
+                "target": str(p.get("target_levels") or ""),
+                "actions": action_list,
+                "outcome": p.get("expected_outcome") or ""
+            })
+        return formatted
+
+    # --- [1] ENABLER ROADMAP (GLOBAL) ---
     raw_global_roadmap = res.get("enabler_roadmap") or res.get("strategic_roadmap") or {}
     ui_global_roadmap = {
         "status": raw_global_roadmap.get("status", "SUCCESS"),
         "overall_strategy": raw_global_roadmap.get("overall_strategy") or "มุ่งเน้นการยกระดับตามมาตรฐาน SE-AM",
-        "phases": raw_global_roadmap.get("phases") or []
+        "phases": format_roadmap_phases(raw_global_roadmap.get("phases", [])) # ✅ FIXED: ดึงข้อมูลครบ
     }
 
     # --- [2] SUB-CRITERIA PROCESSING ---
@@ -231,20 +260,19 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         sub_id = str(sub.get("sub_id", "N/A"))
         lv_details = sub.get("level_details", {}) or {}
         
+        # 🎯 Resolve Sub-Roadmap
         sub_roadmap_data = sub.get("sub_roadmap") or {}
         ui_sub_roadmap = {
-            "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus", ""),
-            "phases": sub_roadmap_data.get("phases") or [],
-            "is_gap_detected": sub_roadmap_data.get("is_gap_detected", False)
+            "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus") or "",
+            "phases": format_roadmap_phases(sub_roadmap_data.get("phases", [])), # ✅ FIXED: ดึงข้อมูลครบ
+            "is_gap_detected": bool(sub_roadmap_data.get("is_gap_detected", False))
         }
 
         ui_levels = {}
         pdca_matrix = []
         pdca_coverage = {}
         grouped_sources = {str(i): [] for i in range(1, 6)}
-        
-        # 🚩 FIX ISSUE 2: ย้าย pool มาไว้ที่นี่ เพื่อ Reset ค่าทุกครั้งที่ขึ้น Sub-criteria ใหม่ (กันเลขบวม)
-        sub_conf_pool = {} 
+        sub_conf_pool = {} # 🚩 RESET ราย Sub-criteria (ถูกต้องแล้ว)
 
         for lv in range(1, 6):
             k = str(lv)
@@ -258,37 +286,30 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 ext_ev = global_evidence_map[level_key]
                 sources = [ext_ev] if isinstance(ext_ev, dict) else ext_ev
 
-            # 🎯 2. PDCA Sync
-            req_phases = info.get("required_pdca_phases", []) or ["P"]
             actual_found_tags = set()
-
-            # ตรวจสอบว่า sources เป็น list ก่อน loop
             current_sources = sources if isinstance(sources, list) else []
 
             for src in current_sources:
                 if not isinstance(src, dict): continue
 
-                fname = str(src.get("filename") or src.get("file") or src.get("source") or "เอกสารอ้างอิง")
+                raw_fname = str(src.get("filename") or src.get("file") or src.get("source") or "เอกสารอ้างอิง")
                 
-                # 🚩 FIX: Confidence Extraction
-                raw_val = None
-                if "|SCORE:" in fname:
-                    try: raw_val = float(fname.split("SCORE:")[-1])
+                # Confidence Score Extraction
+                conf_val = 50.0 # Default
+                raw_score = src.get("rerank_score") or src.get("relevance_score") or src.get("confidence")
+                if "|SCORE:" in raw_fname:
+                    try: raw_score = float(raw_fname.split("SCORE:")[-1])
                     except: pass
                 
-                if raw_val is None:
-                    raw_val = src.get("rerank_score") or src.get("relevance_score") or src.get("confidence")
-
                 try:
-                    conf_val = float(raw_val) if raw_val is not None else 0.5
+                    conf_val = float(raw_score) if raw_score is not None else 0.5
                     if 0 < conf_val <= 1.0: conf_val *= 100
                 except: conf_val = 50.0
                 
-                clean_fname = fname.split("|")[0]
-                # เก็บค่าความเชื่อมั่นสูงสุดรายไฟล์
+                clean_fname = raw_fname.split("|")[0].strip()
                 sub_conf_pool[clean_fname] = max(conf_val / 100, sub_conf_pool.get(clean_fname, 0))
 
-                # 🚩 FIX: PDCA Tag ต้องดึงมาใส่ใน Object ที่จะส่งให้ UI
+                # PDCA Tagging
                 tag = str(src.get("pdca_tag") or src.get("pdca") or "D").upper()
                 if tag not in ["P", "D", "C", "A"]: tag = "D"
                 actual_found_tags.add(tag)
@@ -297,12 +318,13 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     "filename": clean_fname,
                     "document_uuid": src.get("stable_doc_uuid") or src.get("doc_id"),
                     "page": str(src.get("page", "1")),
-                    "pdca_tag": tag, # 🚩 จุดที่ UI นำไปแสดงผล
+                    "pdca_tag": tag,
                     "confidence": round(conf_val, 1),
                     "text": src.get("content") or src.get("snippet") or "ไม่พบรายละเอียดข้อความ"
                 })
 
-            # คำนวณ Coverage
+            # 🎯 2. PDCA Coverage & Matrix
+            req_phases = info.get("required_pdca_phases", []) or ["P"]
             actual_passed_phases = [p for p in req_phases if p in actual_found_tags]
             calc_percentage = (len(actual_passed_phases) / len(req_phases)) * 100 if req_phases else 0
 
@@ -329,13 +351,10 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "pdca": {p: (1 if p in actual_found_tags else 0) for p in ["P", "D", "C", "A"]}
             })
 
-        # --- [4] FINAL ASSEMBLY ---
-        # 🚩 FIX: คำนวณ Traceability จาก Pool ของหัวข้อนี้ (เฉลี่ยไฟล์ที่ไม่ซ้ำ)
+        # 🎯 3. Audit Confidence (Traceability)
+        final_traceability = 0
         if sub_conf_pool:
-            avg_conf_total = sum(sub_conf_pool.values()) / len(sub_conf_pool)
-            final_traceability = min(avg_conf_total * 100, 100)
-        else:
-            final_traceability = 0
+            final_traceability = (sum(sub_conf_pool.values()) / len(sub_conf_pool)) * 100
 
         processed.append({
             "code": sub_id,
@@ -350,11 +369,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "grouped_sources": grouped_sources,
             "audit_confidence": {
                 "source_count": len(sub_conf_pool),
-                "traceability_score": round(final_traceability, 1)
+                "traceability_score": round(min(final_traceability, 100), 1)
             }
         })
         radar_data.append({"axis": sub_id, "value": sub.get("highest_full_level", 0)})
 
+    # Sort by sub_id (e.g., 1.1, 2.1, 10.1)
     try:
         processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
     except: pass
@@ -399,10 +419,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #         sub_id = str(sub.get("sub_id", "N/A"))
 #         lv_details = sub.get("level_details", {}) or {}
         
+#         sub_roadmap_data = sub.get("sub_roadmap") or {}
 #         ui_sub_roadmap = {
-#             "strategy": (sub.get("sub_roadmap") or {}).get("overall_strategy") or sub.get("strategic_focus", ""),
-#             "phases": (sub.get("sub_roadmap") or {}).get("phases") or [],
-#             "is_gap_detected": (sub.get("sub_roadmap") or {}).get("is_gap_detected", False)
+#             "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus", ""),
+#             "phases": sub_roadmap_data.get("phases") or [],
+#             "is_gap_detected": sub_roadmap_data.get("is_gap_detected", False)
 #         }
 
 #         ui_levels = {}
@@ -410,7 +431,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #         pdca_coverage = {}
 #         grouped_sources = {str(i): [] for i in range(1, 6)}
         
-#         # 🚩 สำหรับเก็บค่าสูงสุดของไฟล์เพื่อคำนวณ Traceability ท้ายสุด
+#         # 🚩 FIX ISSUE 2: ย้าย pool มาไว้ที่นี่ เพื่อ Reset ค่าทุกครั้งที่ขึ้น Sub-criteria ใหม่ (กันเลขบวม)
 #         sub_conf_pool = {} 
 
 #         for lv in range(1, 6):
@@ -425,37 +446,37 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #                 ext_ev = global_evidence_map[level_key]
 #                 sources = [ext_ev] if isinstance(ext_ev, dict) else ext_ev
 
-#             # 🎯 2. PDCA Sync - สร้าง Set เก็บข้อมูลจริงที่เจอใน Level นี้
+#             # 🎯 2. PDCA Sync
 #             req_phases = info.get("required_pdca_phases", []) or ["P"]
 #             actual_found_tags = set()
 
-#             for src in sources:
-#                 # Resolve Filename & Score
+#             # ตรวจสอบว่า sources เป็น list ก่อน loop
+#             current_sources = sources if isinstance(sources, list) else []
+
+#             for src in current_sources:
+#                 if not isinstance(src, dict): continue
+
 #                 fname = str(src.get("filename") or src.get("file") or src.get("source") or "เอกสารอ้างอิง")
                 
-#                 # 🚩 FIX ISSUE 3: Confidence Extraction (ดึงจาก SCORE:0.xxxx)
+#                 # 🚩 FIX: Confidence Extraction
 #                 raw_val = None
 #                 if "|SCORE:" in fname:
-#                     try:
-#                         raw_val = float(fname.split("SCORE:")[-1])
+#                     try: raw_val = float(fname.split("SCORE:")[-1])
 #                     except: pass
                 
-#                 # ถ้าในชื่อไฟล์ไม่มี ให้ไปดูที่ Key มาตรฐาน
 #                 if raw_val is None:
 #                     raw_val = src.get("rerank_score") or src.get("relevance_score") or src.get("confidence")
 
 #                 try:
 #                     conf_val = float(raw_val) if raw_val is not None else 0.5
-#                     # ถ้ามาเป็น 0.75 ให้คูณ 100 เป็น 75.0
 #                     if 0 < conf_val <= 1.0: conf_val *= 100
-#                 except:
-#                     conf_val = 50.0
+#                 except: conf_val = 50.0
                 
 #                 clean_fname = fname.split("|")[0]
-#                 # เก็บค่าความเชื่อมั่นสูงสุดรายไฟล์ (Scale 0-1)
+#                 # เก็บค่าความเชื่อมั่นสูงสุดรายไฟล์
 #                 sub_conf_pool[clean_fname] = max(conf_val / 100, sub_conf_pool.get(clean_fname, 0))
 
-#                 # สกัด PDCA Tag
+#                 # 🚩 FIX: PDCA Tag ต้องดึงมาใส่ใน Object ที่จะส่งให้ UI
 #                 tag = str(src.get("pdca_tag") or src.get("pdca") or "D").upper()
 #                 if tag not in ["P", "D", "C", "A"]: tag = "D"
 #                 actual_found_tags.add(tag)
@@ -464,7 +485,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #                     "filename": clean_fname,
 #                     "document_uuid": src.get("stable_doc_uuid") or src.get("doc_id"),
 #                     "page": str(src.get("page", "1")),
-#                     "pdca_tag": tag,
+#                     "pdca_tag": tag, # 🚩 จุดที่ UI นำไปแสดงผล
 #                     "confidence": round(conf_val, 1),
 #                     "text": src.get("content") or src.get("snippet") or "ไม่พบรายละเอียดข้อความ"
 #                 })
@@ -490,7 +511,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #                 "action_plan": info.get("action_plan") or info.get("atomic_action_plan", [])
 #             }
     
-#             # 🚩 FIX ISSUE 1: PDCA Matrix แสดงผลที่แท้จริง (ไม่ใช่ Required)
 #             pdca_matrix.append({
 #                 "level": lv, 
 #                 "is_passed": is_passed,
@@ -498,8 +518,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
 #             })
 
 #         # --- [4] FINAL ASSEMBLY ---
-#         # 🚩 FIX ISSUE 2: Traceability Score (เฉลี่ยความเชื่อมั่นไฟล์ที่ไม่ซ้ำกัน)
-
+#         # 🚩 FIX: คำนวณ Traceability จาก Pool ของหัวข้อนี้ (เฉลี่ยไฟล์ที่ไม่ซ้ำ)
 #         if sub_conf_pool:
 #             avg_conf_total = sum(sub_conf_pool.values()) / len(sub_conf_pool)
 #             final_traceability = min(avg_conf_total * 100, 100)

@@ -4838,9 +4838,7 @@ class SEAMPDCAEngine:
         self.db_update_task_status(progress=100, message="✅ ประเมินเสร็จสมบูรณ์", status="COMPLETED")
         return final_response
     
-    #------------------------------------------------------------------
-    # 🏛️ [TIER-3 METHOD] generate_sub_roadmap - ULTIMATE v2026.01.31
-    # ------------------------------------------------------------------
+
     # ------------------------------------------------------------------
     # 🏛️ [ULTIMATE REVISED] generate_sub_roadmap - USING UB_ROADMAP_PROMPT
     # ------------------------------------------------------------------
