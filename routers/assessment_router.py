@@ -320,6 +320,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "required_phases": req_phases,
                 "actual_phases": list(actual_found_tags),
                 "missing_phases": missing,
+                "scores": pdca_scores,  # <--- เพิ่มบรรทัดนี้เพื่อส่ง 0.8, 0.7, 0.9, 0.4 ไปให้ UI
                 "is_full_coverage": len(missing) == 0,
                 "status_label": "PASS" if len(missing) == 0 else "GAP"
             }
