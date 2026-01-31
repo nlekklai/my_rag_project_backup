@@ -205,10 +205,10 @@ async def view_document(
 
 def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None) -> Dict[str, Any]:
     """
-    [ULTIMATE REVISED v2026.02.01-final] - FULL UI SYNC
-    - รวม Evidence Resolution & PDCA Status ไว้ใน Loop เดียวเพื่อ Performance
-    - รองรับ Fallback ของข้อมูลจาก Global Evidence Map
-    - คำนวณ PDCA Coverage % และ Status สำหรับ Matrix UI โดยเฉพาะ
+    [ULTIMATE REVISED v2026.02.01-final-HOTFIX] - FULL UI SYNC & AUDIT READY
+    - FIXED: แก้ปัญหา P เป็นกรอบประ โดยใช้ Logic Score-to-Tag Sync
+    - IMPROVED: เพิ่มการตรวจสอบ Required Phases เพื่อความแม่นยำของ Matrix
+    - SYNC: รองรับข้อมูลจากทั้ง Raw Result และ Aggregated Evidence
     """
     if not raw_data or not isinstance(raw_data, dict):
         return {"status": "FAILED", "message": "Invalid data format"}
@@ -219,29 +219,19 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     summary = res.get("summary") or res.get("result_summary", {})
     global_evidence_map = raw_data.get("evidence_map") or res.get("evidence_map") or {}
 
-    # --- [HELPER] ROADMAP FORMATTER ---
     def format_roadmap_phases(phases):
-        if not phases or not isinstance(phases, list):
-            return []
+        if not phases or not isinstance(phases, list): return []
         formatted = []
         for p in phases:
             if not isinstance(p, dict): continue
-            
             raw_actions = p.get("key_actions", [])
-            action_list = []
-            for a in raw_actions:
-                if isinstance(a, dict):
-                    act_text = a.get("action") or a.get("task") or ""
-                    prio = f" [{a.get('priority')}]" if a.get("priority") else ""
-                    if act_text: action_list.append(f"{act_text}{prio}")
-                else:
-                    action_list.append(str(a))
-
+            action_list = [f"{a.get('action') or a.get('task') or ''}{' [' + a.get('priority') + ']' if a.get('priority') else ''}" 
+                           if isinstance(a, dict) else str(a) for a in raw_actions]
             formatted.append({
                 "phase_name": p.get("phase") or "Unknown Phase",
                 "objective": p.get("main_objective") or p.get("objective") or "ยกระดับมาตรฐาน",
                 "target": str(p.get("target_levels") or ""),
-                "actions": action_list,
+                "actions": [a for a in action_list if a],
                 "outcome": p.get("expected_outcome") or ""
             })
         return formatted
@@ -262,22 +252,14 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
     for sub in sub_list:
         sub_id = str(sub.get("sub_id", "N/A"))
         lv_details = sub.get("level_details", {}) or {}
-        
-        # Resolve Sub-Roadmap
         sub_roadmap_data = sub.get("sub_roadmap") or {}
-        ui_sub_roadmap = {
-            "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus") or "",
-            "phases": format_roadmap_phases(sub_roadmap_data.get("phases", [])),
-            "is_gap_detected": bool(sub_roadmap_data.get("is_gap_detected", False))
-        }
-
+        
         ui_levels = {}
         pdca_matrix = []
         pdca_coverage = {}
         grouped_sources = {str(i): [] for i in range(1, 6)}
         sub_conf_pool = {} 
 
-        # --- [🎯 SINGLE LOOP FOR ALL LEVELS] ---
         for lv in range(1, 6):
             k = str(lv)
             info = lv_details.get(k, {}) or {}
@@ -285,7 +267,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             is_capped = bool(info.get("is_maturity_capped", False))
             level_key = f"{sub_id}_L{lv}"
             
-            # 1. SMART EVIDENCE RESOLUTION
+            # --- [🎯 STEP A: EVIDENCE RESOLUTION] ---
             sources = info.get("evidence_sources") or info.get("evidences") or []
             if not sources:
                 sources = global_evidence_map.get(level_key) or sub.get("evidence_map", {}).get(level_key) or []
@@ -298,20 +280,15 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 raw_fname = str(src.get("filename") or src.get("file") or src.get("source") or "เอกสารอ้างอิง")
                 if not raw_fname or raw_fname.lower() == "unknown file": continue
                 
-                # Confidence Score
-                raw_score = src.get("rerank_score") or src.get("relevance_score") or src.get("confidence")
-                try:
-                    conf_val = float(raw_score)
-                    if 0 < conf_val <= 1.0: conf_val *= 100
-                except: conf_val = 50.0
-                
                 clean_fname = raw_fname.split("|")[0].strip()
-                sub_conf_pool[clean_fname] = max(conf_val / 100, sub_conf_pool.get(clean_fname, 0))
-
-                # PDCA Tagging
                 tag = str(src.get("pdca_tag") or src.get("pdca") or "D").upper()
                 if tag not in ["P", "D", "C", "A"]: tag = "D"
                 actual_found_tags.add(tag)
+
+                # Confidence Score Calculation
+                raw_score = src.get("rerank_score") or src.get("relevance_score") or 50.0
+                conf_val = float(raw_score) * 100 if 0 < float(raw_score) <= 1.0 else float(raw_score)
+                sub_conf_pool[clean_fname] = max(conf_val / 100, sub_conf_pool.get(clean_fname, 0))
 
                 grouped_sources[k].append({
                     "filename": clean_fname,
@@ -322,25 +299,31 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                     "text": src.get("content") or src.get("snippet") or "พบหลักฐานอ้างอิง"
                 })
 
-            # 2. PDCA STATUS & COVERAGE (FOR UI MATRIX)
-            req_phases = info.get("required_pdca_phases", []) or ["P"]
-            actual_list = list(actual_found_tags)
+            # --- [🎯 STEP B: SCORE-TO-TAG SYNC (FIX HOTFIX)] ---
+            # ดึงคะแนนราย Phase จาก Backend มาตรวจสอบ
+            pdca_scores = info.get("pdca_breakdown") or info.get("pdca_raw") or {}
+            # บังคับเพิ่ม Tag ถ้าคะแนน Backend ยืนยันว่าผ่าน (ป้องกันกรอบประ)
+            for p_tag in ["P", "D", "C", "A"]:
+                phase_score = float(pdca_scores.get(p_tag, 0.0))
+                # ถ้าได้คะแนนเกิน 0.5 (มีร่องรอย) ให้ถือว่ามี Evidence ทันที
+                if phase_score >= 0.5:
+                    actual_found_tags.add(p_tag)
+
+            # --- [🎯 STEP C: PDCA STATUS & COVERAGE] ---
+            req_phases = info.get("required_pdca_phases") or info.get("required_phases") or ["P"]
             missing = [p for p in req_phases if p not in actual_found_tags]
-            
-            # คำนวณความครอบคลุมเพื่อใช้ใน UI ProgressBar / Pulse
             calc_percentage = (len([p for p in req_phases if p in actual_found_tags]) / len(req_phases)) * 100 if req_phases else 0
 
             pdca_coverage[k] = {
                 "percentage": round(calc_percentage, 1),
                 "statement": info.get("rubric_statement") or info.get("statement") or "",
                 "required_phases": req_phases,
-                "actual_phases": actual_list,
+                "actual_phases": list(actual_found_tags),
                 "missing_phases": missing,
                 "is_full_coverage": len(missing) == 0,
                 "status_label": "PASS" if len(missing) == 0 else "GAP"
             }
 
-            # 3. LEVEL DETAILS & MATRIX
             ui_levels[k] = {
                 "level": lv, 
                 "is_passed": is_passed,
@@ -349,7 +332,7 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "reason": info.get("reason", "ไม่พบข้อมูลการประเมิน"),
                 "coaching_insight": info.get("coaching_insight", ""),
                 "action_plan": info.get("atomic_action_plan") or info.get("action_plan", []),
-                "pdca_status": pdca_coverage[k] # ฝังกลับเข้าไปให้ UI ดึงง่ายๆ
+                "pdca_status": pdca_coverage[k]
             }
     
             pdca_matrix.append({
@@ -359,7 +342,6 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
                 "pdca": {p: (1 if p in actual_found_tags else 0) for p in ["P", "D", "C", "A"]}
             })
 
-        # 4. TRACEABILITY SCORE
         final_traceability = (sum(sub_conf_pool.values()) / len(sub_conf_pool)) * 100 if sub_conf_pool else 0
 
         processed.append({
@@ -368,7 +350,11 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
             "level": f"L{sub.get('highest_full_level', 0)}",
             "score": round(float(sub.get("weighted_score", 0.0)), 2),
             "strategic_focus": sub.get("strategic_focus", ""),
-            "sub_roadmap": ui_sub_roadmap,
+            "sub_roadmap": {
+                "strategy": sub_roadmap_data.get("overall_strategy") or sub.get("strategic_focus") or "",
+                "phases": format_roadmap_phases(sub_roadmap_data.get("phases", [])),
+                "is_gap_detected": bool(sub_roadmap_data.get("is_gap_detected", False))
+            },
             "pdca_matrix": pdca_matrix,
             "pdca_coverage": pdca_coverage,
             "level_details": ui_levels,
@@ -380,16 +366,12 @@ def _transform_result_for_ui(raw_data: Dict[str, Any], current_user: Any = None)
         })
         radar_data.append({"axis": sub_id, "value": sub.get("highest_full_level", 0)})
 
-    # Sort & Return
-    try: processed.sort(key=lambda x: [int(p) for p in x["code"].split(".") if p.isdigit()])
-    except: pass
-    
     return {
         "status": summary.get("status", "COMPLETED"),
-        "record_id": metadata.get("record_id") or raw_data.get("record_id"),
-        "tenant": metadata.get("tenant", "pea").upper(),
+        "record_id": metadata.get("record_id"),
+        "tenant": str(metadata.get("tenant", "pea")).upper(),
         "year": str(metadata.get("year", "2567")),
-        "enabler": metadata.get("enabler", "KM"),
+        "enabler": str(metadata.get("enabler", "KM")).upper(),
         "level": str(summary.get("overall_max_level") or summary.get("maturity_level") or "0").replace("L", ""),
         "score": round(float(summary.get("total_weighted_score") or 0.0), 2),
         "enabler_roadmap": ui_global_roadmap,
