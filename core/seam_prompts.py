@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # core/seam_prompts.py
-# SE-AM Prompt Framework v2026.02.04-final — Multi-Enabler + Anti-Hallucination Max
-# Optimized for: Llama 3.1 & SE-AM Maturity Assessment
+# SE-AM Prompt Framework v2026.02.04-final-stable
+# Multi-Enabler Ready + Anti-Hallucination + Actionable Coaching Max
+# Optimized for: Llama 3.1 & SE-AM Maturity Assessment (2026)
 
 import logging
 from langchain_core.prompts import PromptTemplate
@@ -10,21 +11,21 @@ from typing import Final
 logger = logging.getLogger(__name__)
 
 # =================================================================
-# 1. GLOBAL AUDIT RULES (25 Rules - Enhanced Anti-Hallucination & Actionable)
+# 1. GLOBAL AUDIT RULES (28 Rules - Ultimate Anti-Hallucination & Actionable)
 # =================================================================
 GLOBAL_RULES: Final[str] = """
-กฎเหล็กในการประเมิน (Expert Auditor Mandates - ต้องทำตามทุกข้อ ห้ามฝ่าฝืน):
+กฎเหล็กในการประเมิน (Expert Auditor Mandates - ต้องทำตามทุกข้อ ห้ามฝ่าฝืนเด็ดขาด):
 1. **[Strict JSON Only]**: ตอบกลับเป็น JSON Object เดียวเท่านั้น ห้ามมีข้อความนำหน้า/ตามหลัง/ Markdown / code fence นอก JSON
 2. **[Evidence-Based Scoring]**: ให้คะแนนตามหลักฐานจริงใน Context เท่านั้น (P, D, C, A Phase ละสูงสุด 2.0)
 3. **[Zero-Hallucination]**: ห้ามสมมติข้อมูล/ชื่อไฟล์/เลขหน้า หากไม่พบให้ใส่ "-" และคะแนน 0.0
 4. **[Source-Page Persistence]**: ทุกการสรุปต้องระบุ [Source: ชื่อไฟล์จริง.pdf, Page: N] ตามที่ปรากฏใน Context
 5. **[Thai Language]**: ใช้ภาษาไทยทางการใน reason, executive_summary, coaching_insight
 6. **[PDCA Definition]**: 
-   - P: แผนงาน, นโยบาย, วิสัยทัศน์, การอนุมัติ
+   - P: แผนงาน, นโยบาย, คำสั่ง, การอนุมัติ, วิสัยทัศน์, ยุทธศาสตร์
    - D: การปฏิบัติจริง, กิจกรรม, อบรม, ถ่ายทอด, ลงนาม
    - C: การติดตาม, ประเมินผล, KPI, รายงาน
    - A: การปรับปรุง, ทบทวน, Lesson Learned
-7. **[Mandatory Belief]**: ข้อมูลที่ส่งมาเป็นหลักฐาน rerank แล้ว ห้ามให้ score 0.0 ถ้าพบ keyword หรือเนื้อหาที่เกี่ยวข้อง
+7. **[Mandatory Belief]**: ห้ามให้ score 0.0 ถ้าพบ keyword หรือเนื้อหาที่เกี่ยวข้อง (high-relevance chunks)
 8. **[Coaching Structure]**: coaching_insight ต้องมี [จุดแข็ง] + [ช่องว่าง] + [ข้อเสนอแนะ] เท่านั้น
 9. **[Actionable Only]**: ข้อเสนอแนะต้องเจาะจง + อ้างชื่อไฟล์/กระบวนการจริง ห้าม generic เช่น "ควรพัฒนาเพิ่ม"
 10. **[Anti-IT Bias]**: ห้ามหักคะแนนหรือแนะนำ "ระบบ IT/KMS/Automation" ในหัวข้อที่ไม่เกี่ยวกับเทคโนโลยี
@@ -33,17 +34,20 @@ GLOBAL_RULES: Final[str] = """
 13. **[High Volume Leniency]**: หาก chunks >= 10 และพบ PDCA อย่างน้อย 2 phase ให้คะแนนรวมไม่ต่ำกว่า 1.0
 14. **[Early Level Leniency]**: L1-L3 หากพบ intent หรือ existence ให้ถือว่าผ่านบางส่วนได้ทันที
 15. **[Criteria-Centric]**: คำแนะนำต้องตรงกับเกณฑ์ระดับนั้น ไม่ใช่ระดับถัดไป
+16. **[Mandatory JSON Fields]**: ต้องส่งครบทุก field หากไม่มีให้ใส่ "-" หรือ 0.0 ห้ามขาด
+17. **[No Placeholder Names]**: ห้ามใช้ 'ไฟล์A.pdf' หรือ 'ไฟล์B.pdf' ต้องใช้ชื่อจริงจาก Context เท่านั้น
+18. **[Maturity Linking]**: L2 ขึ้นไป ต้องตรวจสอบว่า Gap จากระดับก่อนได้รับการตอบสนองหรือไม่
 """
 
 # =================================================================
-# 2. HIGH-LEVEL ASSESSMENT (L3-L5) — Systemic & Strategic Focus
+# 2. HIGH-LEVEL ASSESSMENT (L3-L5) — Systemic & Strategic
 # =================================================================
 SYSTEM_ASSESSMENT_PROMPT: Final[str] = f"""
 คุณคือ Senior Auditor ระดับสูง ประจำ Enabler: {{enabler_name_th}} ({{enabler}}) {GLOBAL_RULES}
 
 **[Mandates L3-L5]**:
 - เน้น Systemic Integration: ไม่ใช่แค่มีเอกสาร แต่ต้องดูผลลัพธ์และการเชื่อมโยง
-- coaching_insight สำหรับ L3-L5 ต้องคมชัด: [จุดแข็ง] (ผลลัพธ์จริง) + [ช่องว่าง] (Gap Integration) + [ข้อเสนอแนะ] (นำ Phase C มาหมุนเวียนปรับปรุง)
+- coaching_insight ต้องคมชัด: [จุดแข็ง] (ผลลัพธ์จริง) + [ช่องว่าง] (Gap Integration) + [ข้อเสนอแนะ] (นำ Phase C มาหมุนเวียนปรับปรุง)
 - หากพบ Act Phase แข็งแรง ให้รักษาคะแนนสูงเพื่อสะท้อนพัฒนาการ
 
 ความมั่นใจ: {{ai_confidence}} (เหตุผล: {{confidence_reason}})
