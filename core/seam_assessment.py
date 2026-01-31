@@ -3497,151 +3497,114 @@ class SEAMPDCAEngine:
         
         return [self._normalize_thai_text(q) for q in generated_queries]
 
+    
     def relevance_score_fn(self, evidence: Dict[str, Any], sub_id: str, level: int) -> float:
         """
-        [FINAL STABLE VERSION v2026.01.27 – CLEAN PDCA]
-        - 45% Rerank
-        - 35% Keyword (Level-aware)
-        - Contextual Bonuses: Source / Neighbor / Specific Rule
-        - ❌ No PDCA logic here (PDCA handled ONLY in semantic phase)
-        - Robust กับ metadata หลากหลายรูปแบบ
+        [ULTIMATE PRECISION v2026.02.01]
+        - 40% Rerank (Base Confidence)
+        - 30% Level-Aware Keywords (Semantic & Partial Match)
+        - 20% Temporal & Source Alignment (Fiscal Year & Doc Type)
+        - 10% Structural Quality (Density & Penalty)
+        - Contextual Bonuses: Neighbor / Specific Rule
         """
-
         if not evidence or not isinstance(evidence, dict):
             return 0.0
 
-        # -------------------------------------------------
-        # 1. Rerank Score (45%)
-        # -------------------------------------------------
-        raw_val = (
-            evidence.get("rerank_score")
-            or evidence.get("score")
-            or 0.0
-        )
-        try:
-            normalized_rerank = min(max(float(raw_val), 0.0), 1.0)
-        except Exception:
-            normalized_rerank = 0.0
-
-        # -------------------------------------------------
-        # 2. Text + Metadata (Robust)
-        # -------------------------------------------------
-        text = str(
-            evidence.get("text")
-            or evidence.get("page_content")
-            or ""
-        ).lower().strip()
-
+        # --- 1. PREPARE DATA & METADATA ---
+        text = str(evidence.get("text") or evidence.get("page_content") or "").lower().strip()
         meta = evidence.get("metadata") or {}
-        if not isinstance(meta, dict):
-            meta = {}
+        
+        # ดึงปีงบประมาณปัจจุบันจาก Config (สมมติเป็น 2569 ตามที่ระบุใน Header)
+        target_year = str(getattr(self.config, 'year', '2569'))
+        
+        # --- 2. BASE RERANK SCORE (40%) ---
+        raw_val = evidence.get("rerank_score") or evidence.get("score") or 0.0
+        normalized_rerank = min(max(float(raw_val), 0.0), 1.0)
 
-        filename = str(
-            meta.get("source")
-            or meta.get("source_filename")
-            or evidence.get("source")
-            or ""
-        ).lower()
-
+        # --- 3. KEYWORD MATCHING (30%) - PARTIAL MATCH LOGIC ---
         cum_rules = self.get_cumulative_rules_cached(sub_id, level)
-
-        # -------------------------------------------------
-        # 3. Source Grading Bonus
-        # -------------------------------------------------
-        source_bonus = 0.0
-        primary_docs = [
-            "มติ", "บันทึก", "คำสั่ง", "ประกาศ",
-            "นโยบาย", "แผนแม่บท", "มติบอร์ด"
-        ]
-        secondary_docs = [
-            "assessment report", "รายงานการประเมิน",
-            "สรุปผล", "รายงานผล", "kpi"
-        ]
-
-        if any(p in filename for p in primary_docs):
-            source_bonus = 0.20
-        elif any(s in filename for s in secondary_docs):
-            source_bonus = 0.10
-
-        # -------------------------------------------------
-        # 4. Keyword Score (35%) – Level Aware
-        # -------------------------------------------------
         target_kws = set()
-
         if level <= 2:
-            target_kws.update(cum_rules.get("plan_keywords", []))
-            target_kws.update(cum_rules.get("do_keywords", []))
+            target_kws.update(cum_rules.get("plan_keywords", []) + cum_rules.get("do_keywords", []))
         else:
-            target_kws.update(cum_rules.get("check_keywords", []))
-            target_kws.update(cum_rules.get("act_keywords", []))
+            target_kws.update(cum_rules.get("check_keywords", []) + cum_rules.get("act_keywords", []))
 
         keyword_score = 0.0
         if target_kws and text:
-            match_count = sum(
-                1 for kw in target_kws
-                if str(kw).lower() in text
-            )
+            # ใช้ Partial Match (ไทย): ถ้า Keyword มีความยาว > 4 ให้เช็คว่าอยู่ใน Text ไหม
+            matches = [kw for kw in target_kws if str(kw).lower() in text]
+            if matches:
+                # คำนวณความหลากหลาย (Diversity) ของ Keyword ที่พบ
+                match_ratio = len(matches) / max(1, int(len(target_kws) * 0.4))
+                keyword_score = min(match_ratio ** 0.7, 1.0)
+                keyword_score = max(keyword_score, 0.20) # Floor 0.20 ถ้าเจออย่างน้อย 1 คำ
 
-            if match_count > 0:
-                expected = max(1, int(len(target_kws) * 0.3))
-                keyword_score = min((match_count / expected) ** 0.6, 1.0)
-                keyword_score = max(keyword_score, 0.20)  # floor เมื่อเจออย่างน้อย 1 คำ
+        # --- 4. TEMPORAL & SOURCE ALIGNMENT (20%) ---
+        alignment_bonus = 0.0
+        
+        # 📅 Year Check: ให้คะแนนเพิ่มถ้าเจอปีงบประมาณปัจจุบัน / หักคะแนนถ้าเก่าเกินไป
+        if target_year in text:
+            alignment_bonus += 0.10
+        elif any(old_yr in text for old_yr in ["2566", "2567"]):
+            alignment_bonus -= 0.10 # Penalty เอกสารล้าสมัย
 
-        # -------------------------------------------------
-        # 5. Contextual Bonuses (NO PDCA)
-        # -------------------------------------------------
-        neighbor_bonus = 0.15 if (
-            evidence.get("is_neighbor") or meta.get("is_neighbor")
-        ) else 0.0
+        # 📄 Source Check: ตรวจสอบความน่าเชื่อถือของประเภทเอกสาร
+        filename = str(meta.get("source") or evidence.get("source") or "").lower()
+        primary_docs = ["มติ", "บันทึก", "คำสั่ง", "ประกาศ", "นโยบาย", "แผนแม่บท", "ยุทธศาสตร์"]
+        if any(p in filename for p in primary_docs):
+            alignment_bonus += 0.10
 
+        # --- 5. STRUCTURAL QUALITY & PENALTY (10%) ---
+        quality_score = 0.0
+        # ❌ Penalty สำหรับ Chunks ที่สั้นเกินไปหรือเป็นแค่สารบัญ
+        if len(text) < 100:
+            quality_score -= 0.15
+        if "สารบัญ" in text or "ภาคผนวก" in text:
+            quality_score -= 0.20
+        
+        # ✅ Bonus สำหรับ Chunk ที่มีความหนาแน่นของข้อมูลสูง (เนื้อหายาวพอเหมาะ)
+        if 500 < len(text) < 2000:
+            quality_score += 0.05
+
+        # --- 6. CONTEXTUAL BONUSES ---
+        neighbor_bonus = 0.15 if (evidence.get("is_neighbor") or meta.get("is_neighbor")) else 0.0
+        
         rule_bonus = 0.0
-        specific_rule = str(
-            cum_rules.get("specific_contextual_rule", "")
-        ).lower()
+        specific_rule = str(cum_rules.get("specific_contextual_rule", "")).lower()
+        if specific_rule and any(w in text for w in specific_rule.split()[:5]):
+            rule_bonus = 0.15
 
-        if specific_rule and text:
-            rule_words = specific_rule.split()[:10]
-            if any(w in text for w in rule_words):
-                rule_bonus = 0.15
-
-        # -------------------------------------------------
-        # 6. Final Score Aggregation
-        # -------------------------------------------------
+        # --- 7. FINAL AGGREGATION ---
+        # (0.40 * Rerank) + (0.30 * Keyword) + Alignment + Quality + Bonuses
         final_score = (
-            (0.45 * normalized_rerank) +
-            (0.35 * keyword_score) +
-            source_bonus +
-            neighbor_bonus +
+            (0.40 * normalized_rerank) + 
+            (0.30 * keyword_score) + 
+            alignment_bonus + 
+            quality_score + 
+            neighbor_bonus + 
             rule_bonus
         )
 
-        # -------------------------------------------------
-        # 7. High-confidence Floor
-        # -------------------------------------------------
-        if normalized_rerank >= 0.80:
-            final_score = max(final_score, 0.45)
+        # 8. HIGH-CONFIDENCE OVERRIDE
+        # ถ้า Rerank มาสูงมาก (0.85+) บังคับให้ผ่าน Threshold พื้นฐานเสมอ
+        if normalized_rerank >= 0.85:
+            final_score = max(final_score, 0.50)
 
         final_score = min(max(final_score, 0.0), 1.0)
 
-        # -------------------------------------------------
-        # 8. Debug Log (Explainable, PDCA-free)
-        # -------------------------------------------------
+        # 9. LOGGING (PDCA-FREE DEBUG)
         try:
-            self.logger.info(
-                f"🔎 [REL] {sub_id} L{level} | "
-                f"Final:{final_score:.3f} | "
-                f"R:{normalized_rerank:.2f} "
-                f"KW:{keyword_score:.2f} "
-                f"PDCA:N/A "
-                f"Src:{os.path.basename(filename)[:30]}"
-            )
-        except Exception:
-            pass
+            if final_score > 0.30: # Log เฉพาะตัวที่น่าสนใจ
+                self.logger.info(
+                    f"🔎 [REL] {sub_id} L{level} | Score:{final_score:.3f} | "
+                    f"R:{normalized_rerank:.2f} KW:{keyword_score:.2f} "
+                    f"Align:{alignment_bonus:+.2f} Q:{quality_score:+.2f} "
+                    f"Src:{os.path.basename(filename)[:20]}"
+                )
+        except: pass
 
         return float(final_score)
-
-
-
+    
     def _perform_adaptive_retrieval(
         self,
         sub_id: str,
@@ -3650,10 +3613,10 @@ class SEAMPDCAEngine:
         vectorstore_manager: Any,
     ) -> Tuple[List[Dict], float]:
         """
-        [ULTIMATE REVISED v2026.01.25]
-        - Clean Code: เรียกใช้ Global Variables (RETRIEVAL_*) โดยตรง ไม่ Assign ซ้ำ
-        - High Performance: ใช้ Early Exit และ High-Rerank Threshold เพื่อลด Latency
-        - Robustness: มี Safe Scoring และ Recovery Sweep กรณีหลักฐานไม่เพียงพอ
+        [ULTIMATE REVISED v2026.02.01]
+        - Adaptive Exit: ใช้เกณฑ์คะแนนที่ยืดหยุ่นตามระดับความยาก (L4-L5 ยอมรับ 0.35)
+        - Forced Injection: บังคับคำนวณ Relevance Score สำหรับ Top 5 เสมอ
+        - Clean Recovery: ลดการเกิด Recovery Sweep ซ้ำซ้อนเพื่อประหยัดเวลา
         """
         start_time = time.time()
         if not stmt or not isinstance(stmt, str):
@@ -3665,15 +3628,18 @@ class SEAMPDCAEngine:
         level_key = f"L{level}"
         tenant = getattr(self.config, "tenant", "PEA").upper()
 
+        # 🎯 STRATEGY 1: Dynamic Threshold (แก้ปัญหา L4 ที่มักจะได้คะแนน Rerank ต่ำ)
+        # ถ้าเป็นระดับ 4-5 ที่เน้นการเชื่อมโยงยุทธศาสตร์ คะแนน 0.35 ถือว่ามีนัยสำคัญแล้ว
+        effective_threshold = RETRIEVAL_RELEVANCE_THRESHOLD if level < 4 else 0.35
+
         def safe_relevance_score(evidence: Dict) -> float:
-            """ Safe wrapper สำหรับการคำนวณคะแนนเสริมโดยใช้ฟังก์ชันภายใน """
             try:
                 return self.relevance_score_fn(evidence, sub_id, level)
             except Exception as e:
                 self.logger.warning(f"⚠️ [SAFE-SCORE] {sub_id} L{level}: {e}")
                 return float(evidence.get('rerank_score') or evidence.get('score') or 0.0)
 
-        # --- STEP 1: PRIORITY MAPPING (บังคับดึงข้อมูลที่ Mapping ไว้ล่วงหน้า) ---
+        # --- STEP 1: PRIORITY MAPPING (บังคับดึงข้อมูลที่ Mapping ไว้) ---
         try:
             _, priority_docs = self._get_mapped_uuids_and_priority_chunks(
                 sub_id=sub_id, level=level, statement_text=stmt, vectorstore_manager=vectorstore_manager
@@ -3682,11 +3648,8 @@ class SEAMPDCAEngine:
             for p in priority_docs:
                 uid = p.get("chunk_uuid")
                 if not uid or uid in used_uuids: continue
-                
                 p["source"] = os.path.basename(p.get("source") or "Unknown")
-                # ฉีดคะแนนพิเศษให้ Priority Docs (ขั้นต่ำ 0.90)
-                p["score"] = max(safe_relevance_score(p), 0.90) 
-                
+                p["score"] = max(safe_relevance_score(p), 0.90) # บังคับ High Score สำหรับ Priority
                 used_uuids.add(uid)
                 candidates.append(p)
                 final_max_score = max(final_max_score, p["score"])
@@ -3698,12 +3661,11 @@ class SEAMPDCAEngine:
         legacy_queries = self.enhance_query_for_statement(stmt, sub_id, f"{sub_id}.L{level}", level)
         active_queries = list(dict.fromkeys(json_queries + legacy_queries))[:10]
 
-        # --- STEP 3: ITERATIVE RETRIEVAL LOOP (พร้อม EARLY EXIT) ---
-        
+        # --- STEP 3: ITERATIVE RETRIEVAL (พร้อม Early Exit ใหม่) ---
         for i, q in enumerate(active_queries):
-            # 🎯 [EARLY EXIT] ใช้ตัวแปร Global โดยตรง (ไม่ต้อง Assign ซ้ำ)
-            if len(candidates) >= RETRIEVAL_EARLY_EXIT_COUNT and final_max_score >= RETRIEVAL_EARLY_EXIT_SCORE_THRESHOLD:
-                self.logger.info(f"🎯 [EARLY-EXIT] {sub_id} L{level} | Found {len(candidates)} docs | Max: {final_max_score:.4f}")
+            # 🎯 [EARLY EXIT] ใช้เกณฑ์ที่ปรับตาม Level แล้ว
+            if len(candidates) >= RETRIEVAL_EARLY_EXIT_COUNT and final_max_score >= effective_threshold:
+                self.logger.info(f"🎯 [EARLY-EXIT] {sub_id} L{level} | Found {len(candidates)} | Score {final_max_score:.4f} >= {effective_threshold}")
                 break
             
             try:
@@ -3716,12 +3678,12 @@ class SEAMPDCAEngine:
                     uid = d.get("chunk_uuid")
                     score = float(d.get("score", 0.0))
                     
-                    # กรองด้วย RETRIEVAL_RERANK_FLOOR จาก Global
                     if uid and uid not in used_uuids and score >= RETRIEVAL_RERANK_FLOOR:
                         d["source"] = os.path.basename(d.get("source") or "Unknown")
                         
-                        # ฉีดคะแนนวิเคราะห์ความเกี่ยวข้องเฉพาะชิ้นที่มีคุณภาพ (High Rerank)
-                        if score > RETRIEVAL_HIGH_RERANK_THRESHOLD:
+                        # 🎯 [THE CORE FIX]: บังคับฉีดคะแนนคุณภาพสำหรับ 5 ชิ้นแรกเสมอ 
+                        # เพื่อไม่ให้คะแนน Rerank ที่ต่ำ (0.36) มาหยุดการทำงานของ AI
+                        if len(candidates) < 5 or score > RETRIEVAL_HIGH_RERANK_THRESHOLD:
                             d["score"] = max(score, safe_relevance_score(d))
                         else:
                             d["score"] = score  
@@ -3732,65 +3694,82 @@ class SEAMPDCAEngine:
             except Exception as e:
                 self.logger.error(f"❌ Query Loop {i+1} failed: {e}")
 
-        # --- STEP 4: RECOVERY SWEEP (ถ้าหลักฐานไม่พอหรือคะแนนต่ำเกินไป) ---
-        if final_max_score < RETRIEVAL_RELEVANCE_THRESHOLD or len(candidates) < 5:
-            self.logger.info(f"🚨 [RECOVERY] Insufficient evidence (Max:{final_max_score:.4f}). Triggering sweep...")
+        # --- STEP 4: RECOVERY SWEEP (รันต่อเมื่อหลักฐานน้อยหรือคะแนนยังไม่พ้นเกณฑ์) ---
+        if final_max_score < effective_threshold or len(candidates) < 3:
+            self.logger.info(f"🚨 [RECOVERY] L{level} Max:{final_max_score:.4f} < {effective_threshold}. Sweep triggered.")
             self._execute_recovery_sweep(sub_id, level, stmt, tenant, used_uuids, candidates, vectorstore_manager)
             
-            # Re-calculating Final Max Score หลัง Recovery
             if candidates:
                 for c in candidates:
                     if c.get("is_recovery"):
-                        c["score"] = max(
-                            c.get("score", 0.0),
-                            0.6 * safe_relevance_score(c) + 0.4 * float(c.get("rerank_score", 0.0))
-                        )
+                        # ใช้คะแนนถ่วงน้ำหนักสำหรับข้อมูลที่กวาดมาใหม่
+                        c["score"] = max(c.get("score", 0.0), 
+                                         0.7 * safe_relevance_score(c) + 0.3 * float(c.get("rerank_score", 0.0)))
                 final_max_score = max([float(c.get("score", 0.0)) for c in candidates])
 
         # --- STEP 5: FINAL SORT & TRIM ---
         candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-        # ใช้ ANALYSIS_FINAL_K จาก Global โดยตรง
         final_docs = candidates[:ANALYSIS_FINAL_K]
         
         elapsed = time.time() - start_time
-        self.logger.info(f"🏁 [COMPLETE] {sub_id} L{level} | Final Docs: {len(final_docs)} | Max: {final_max_score:.4f} | {elapsed:.2f}s")
+        self.logger.info(f"🏁 [COMPLETE] {sub_id} L{level} | Docs: {len(final_docs)} | Max Score: {final_max_score:.4f} | Time: {elapsed:.2f}s")
         
         return final_docs, float(final_max_score)
 
     def _execute_recovery_sweep(self, sub_id, level, stmt, tenant, used_uuids, candidates, vectorstore_manager):
-        """ [ULTIMATE REVISED] ระบบค้นหาแบบกว้าง (Broad Search) โดยใช้ตัวแปรจาก Global Header """
+        """ 
+        [REVISED v2026.02.01] 
+        - เพิ่ม Multi-Query Fallback 
+        - ปรับ Floor ตามระดับความยาก
+        """
         try:
-            # ดึงคำสำคัญจาก Contextual Rules (ถ้ามี)
-            rule = getattr(self, 'contextual_rules_map', {}).get(sub_id, {}).get(f"L{level}", {})
-            keywords = rule.get("must_include_keywords", [])[:4]
+            # 🎯 1. เตรียม Query แบบกว้าง (ตัด Noise)
+            base_stmt = stmt.split('(')[0].split('เช่น')[0].strip()
             
-            # สร้าง Query กว้างๆ: ใช้ tenant, keywords และหัวข้อบางส่วน
-            recovery_query = self._normalize_thai_text(
-                f"{sub_id} {tenant} {' '.join(keywords)} {stmt[:30]}"
-            )
+            # 🎯 2. สร้าง Backup Query จาก Keywords (ถ้ามี)
+            cum_rules = self.get_cumulative_rules_cached(sub_id, level)
+            important_kws = " ".join((cum_rules.get("check_keywords") or [])[:3])
             
-            # เรียกใช้ rag_retriever (ใช้ self.doc_type และ vectorstore_manager)
+            # ผสม Query: Tenant + ID + Statement + Keywords สำคัญ
+            recovery_query = f"{tenant} {sub_id} {base_stmt} {important_kws}".strip()
+            
+            self.logger.info(f"🔍 [RECOVERY-START] Query: {recovery_query[:60]}...")
+
             res_fb = self.rag_retriever(
-                recovery_query, 
+                self._normalize_thai_text(recovery_query), 
                 self.doc_type, 
                 sub_id=sub_id, 
-                level=level,  # ส่ง level ไปด้วยเพื่อให้ retriever ทำงานได้แม่นยำขึ้น
-                vectorstore_manager=vectorstore_manager
+                level=level,
+                vectorstore_manager=vectorstore_manager,
+                enable_neighbor=False # เน้นความเร็ว
             ) or {}
+            
+            new_found = 0
+            # 🎯 3. ปรับ Recovery Floor ตาม Level (L4-L5 ยอมให้ต่ำลงอีก)
+            recovery_floor = RETRIEVAL_RERANK_FLOOR * (0.7 if level >= 4 else 0.8)
             
             for d in (res_fb.get("top_evidences") or []):
                 uid = d.get("chunk_uuid")
                 score = float(d.get("score", 0.0))
                 
-                # ใช้ RETRIEVAL_RERANK_FLOOR จาก Global แทนการ Hard-coded
-                if uid and uid not in used_uuids and score >= RETRIEVAL_RERANK_FLOOR:
+                if uid and uid not in used_uuids and score >= recovery_floor:
                     d["source"] = os.path.basename(d.get("source") or "Unknown")
                     d["is_recovery"] = True
+                    
+                    # 🎯 4. Re-calculate score ทันทีเพื่อให้คะแนนสะท้อนคุณภาพจริง
+                    # ไม่รอให้ loop นอกทำ เพื่อให้มั่นใจว่าของดีจะไม่ถูกทิ้ง
+                    d["score"] = self.relevance_score_fn(d, sub_id, level)
+                    
                     used_uuids.add(uid)
                     candidates.append(d)
+                    new_found += 1
+            
+            if new_found > 0:
+                self.logger.info(f"✅ [RECOVERY-SUCCESS] Found {new_found} chunks with floor {recovery_floor:.3f}")
+                
         except Exception as e:
             self.logger.error(f"❌ Recovery sweep failed: {e}")
-
+            
     def _log_pdca_status(self, sub_id, name, level, blocks, req_phases, sources_count, score, conf_level, **kwargs):
         """ [FULL REVISED] พ่น Dashboard สรุปสถานะ PDCA แบบ Real-time """
         try:
