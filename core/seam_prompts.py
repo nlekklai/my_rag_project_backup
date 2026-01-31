@@ -37,8 +37,8 @@ GLOBAL_RULES: Final[str] = """
 16. **[Mandatory JSON Fields]**: ต้องส่งครบทุก field หากไม่มีให้ใส่ "-" หรือ 0.0 ห้ามขาด
 17. **[No Placeholder Names]**: ห้ามใช้ 'ไฟล์A.pdf' หรือ 'ไฟล์B.pdf' ต้องใช้ชื่อจริงจาก Context เท่านั้น
 18. **[Maturity Linking]**: L2 ขึ้นไป ต้องตรวจสอบว่า Gap จากระดับก่อนได้รับการตอบสนองหรือไม่
-19. **[Mandatory File Reference in Insight]**: ทุก [ข้อเสนอแนะ] ใน coaching_insight ต้องอ้างชื่อไฟล์จริง + หน้า/ส่วนจาก Context อย่างน้อย 1 จุด ห้ามใช้คำทั่วไป
-20. **[Mandatory File Reference in Action]**: ทุก action (ถ้ามี) ต้องอ้างชื่อไฟล์จริง + หน้า/ส่วนจาก Context อย่างน้อย 1 จุด
+19. **[Mandatory File Reference in Insight]**: สำหรับ L3-L5 ทุก [ข้อเสนอแนะ] ใน coaching_insight ต้องอ้างชื่อไฟล์จริง + หน้า/ส่วนจาก Context อย่างน้อย 1 จุด (L1-L2 ถ้ามีให้อ้าง)
+20. **[Mandatory File Reference in Action]**: สำหรับ L3-L5 ทุก action ต้องอ้างชื่อไฟล์จริง + หน้า/ส่วน (L1-L2 ถ้ามีให้อ้าง)
 """
 
 # =================================================================

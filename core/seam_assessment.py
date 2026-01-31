@@ -5203,13 +5203,12 @@ class SEAMPDCAEngine:
         initial_baseline: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        [ULTIMATE REVISED v2026.01.31-final-stable] - MATURITY LADDER LOCK + GAP TRACEABILITY
-        - Hard-Constraint: ถ้า level ก่อนหน้าไม่ผ่าน → level ถัดไปถูก capped (แม้ LLM บอกผ่าน)
-        - actual_passed vs llm_passed แยกชัดเจนเพื่อป้องกัน conflict ในรายงาน
-        - Insight summary เจาะจงสูงสุด (top evidence + file + page + score + PDCA + snippet สั้น)
-        - Logging ละเอียดเพื่อ debug maturity lock และ roadmap quality
-        - Weighted score ปรับตาม SE-AM logic (highest_level * weight / 5)
-        - Gap detection แม่นยำจากทุก level (has_gap = any not passed)
+        [ULTIMATE REVISED v2026.02.01 - FULL UI SYNC & PDCA STATUS]
+        - เพิ่ม rubric_statement เข้า level_details เพื่อ tooltip แสดงเกณฑ์จริง
+        - เพิ่ม pdca_status (actual/missing phases, coverage %, is_full_coverage, status_label)
+        - Logic PDCA แม่นยำขึ้น (ใช้ set + upper case + กรอง tag ถูกต้อง)
+        - Logging เพิ่มเพื่อ debug statement + pdca_status
+        - รักษา Maturity Ladder Lock + Gap Traceability เดิม
         """
         sub_id = str(sub_criteria.get("sub_id", "Unknown"))
         sub_name = sub_criteria.get("sub_criteria_name", "No Name")
@@ -5251,27 +5250,23 @@ class SEAMPDCAEngine:
                 vectorstore_manager=vsm,
             )
 
-            # --- [STEP 3: MATURITY STEP-LADDER LOGIC (CRITICAL FIX)] ---
+            # --- [STEP 3: MATURITY STEP-LADDER LOGIC] ---
             llm_passed = bool(res.get("is_passed", False))
-            
-            # หัวใจสำคัญ: actual_passed = True ได้ก็ต่อเมื่อ LLM ให้ผ่าน "และ" ทุกระดับก่อนหน้าต้องผ่านด้วย
             actual_passed = llm_passed and is_still_continuous
             is_capped = llm_passed and not is_still_continuous
-            
+
             if is_capped:
                 self.logger.warning(f"[MATURITY-LOCK] {sub_id}_L{level} CAPPED: Previous level has unresolved GAP")
 
             if actual_passed:
                 highest_continuous_level = level
-                # เก็บหลักฐานสำหรับ baseline level ถัดไป
                 top_chunks = res.get("top_chunks_data", []) or []
                 cumulative_baseline.extend(top_chunks)
                 cumulative_baseline = self._apply_evidence_cap(cumulative_baseline)
             else:
-                is_still_continuous = False  # เมื่อใดที่เจอ GAP ตัวแปรนี้จะเป็น False ตลอดกาลในลูปนี้
+                is_still_continuous = False
 
             # --- [STEP 4: SCORE & DATA ENRICHMENT] ---
-            # ถ้าไม่ผ่านตามบันได Maturity ให้คะแนนระดับนี้เป็น 0
             effective_score = float(res.get("score", 0.0)) if actual_passed else 0.0
 
             enriched_chunks = res.get("top_chunks_data", []) or []
@@ -5288,7 +5283,21 @@ class SEAMPDCAEngine:
                 self.logger.warning(f"Atomic action failed for {sub_id}_L{level}: {e}")
                 atomic_actions = []
 
-            # --- [STEP 5: RESULT COMPILATION] ---
+            # --- [STEP 5: RESULT COMPILATION - REVISED FOR UI SYNC] ---
+            # 1. รวบรวม PDCA Phases ที่พบจริงจาก evidence (แม่นยำที่สุด)
+            actual_found_phases = set(
+                chunk.get("pdca_tag", "").upper()
+                for chunk in enriched_chunks
+                if chunk.get("pdca_tag", "").upper() in ["P", "D", "C", "A"]
+            )
+
+            # 2. คำนวณ missing + coverage + status
+            missing_phases = [p for p in required_pdca if p not in actual_found_phases]
+            coverage_percentage = round(
+                (len(actual_found_phases) / len(required_pdca)) * 100 if required_pdca else 0, 1
+            )
+            is_full_coverage = len(missing_phases) == 0
+
             level_details[str(level)] = {
                 "level": level,
                 "is_passed": actual_passed,
@@ -5299,12 +5308,31 @@ class SEAMPDCAEngine:
                 "atomic_action_plan": atomic_actions,
                 "evidence_sources": enriched_chunks,
                 "pdca_breakdown": pdca_results,
-                "required_pdca_phases": required_pdca
+                "required_pdca_phases": required_pdca,
+                "rubric_statement": stmt.get("statement", "").strip() or "ไม่พบเกณฑ์ระดับนี้",
+
+                # ข้อมูล PDCA Status สำหรับ UI (PDCA Matrix + Tooltip)
+                "pdca_status": {
+                    "actual_phases": list(actual_found_phases),
+                    "missing_phases": missing_phases,
+                    "coverage_percentage": coverage_percentage,
+                    "is_full_coverage": is_full_coverage,
+                    "status_label": "PASS" if is_full_coverage else "GAP"
+                }
             }
+
+            # Log เพื่อ debug PDCA + statement (ช่วยหาปัญหาได้เร็ว)
+            self.logger.debug(
+                f"[PDCA-STATUS] {sub_id}_L{level} | "
+                f"Required: {required_pdca} | "
+                f"Found: {actual_found_phases} | "
+                f"Missing: {missing_phases} | "
+                f"Coverage: {coverage_percentage}% | "
+                f"Statement: {level_details[str(level)]['rubric_statement'][:80]}..."
+            )
 
             # --- [STEP 5.1: ROADMAP BUNDLE - SIMPLE & TRACEABLE] ---
             if enriched_chunks:
-                # เลือก top evidence เพื่อสรุปสั้น ๆ
                 top_ev = max(enriched_chunks, key=lambda x: float(x.get("rerank_score") or x.get("relevance_score") or 0.0))
                 top_file = top_ev.get("source_filename") or top_ev.get("filename") or "N/A"
                 top_page = top_ev.get("page_label") or top_ev.get("page", "N/A")
@@ -5331,12 +5359,11 @@ class SEAMPDCAEngine:
                 "insight_summary": insight_summary
             })
 
-            # Log เพื่อ debug roadmap quality
             self.logger.debug(f"[ROADMAP-BUNDLE] {sub_id}_L{level} | {insight_summary[:400]}...")
 
         # --- [STEP 6: STRATEGIC FOCUS SELECTION] ---
         has_gap = any(not ld["is_passed"] for ld in level_details.values())
-        
+
         if highest_continuous_level < 3:
             strategic_focus = "Focus: Stabilization (เน้นสถาปนามาตรฐานและปิด Gap ระดับฐาน)"
         elif highest_continuous_level < 5:
@@ -5363,13 +5390,13 @@ class SEAMPDCAEngine:
             "sub_criteria_name": sub_name,
             "weight": sub_weight,
             "highest_full_level": highest_continuous_level,
-            "weighted_score": round(highest_continuous_level * (sub_weight / 5), 2),  # SE-AM Weighting
+            "weighted_score": round(highest_continuous_level * (sub_weight / 5), 2),
             "is_passed": highest_continuous_level >= 1,
             "level_details": level_details,
             "sub_roadmap": sub_roadmap,
             "strategic_focus": strategic_focus
         }, evidence_delta
-        
+            
     def _get_level_constraint_prompt(
         self,
         sub_id: str,
