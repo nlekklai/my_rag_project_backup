@@ -4799,20 +4799,24 @@ class SEAMPDCAEngine:
         strategic_focus: str = ""
     ) -> Dict[str, Any]:
         """
-        - เปลี่ยนมาใช้ UB_ROADMAP_PROMPT ที่รวม System Rules และ Template ไว้ด้วยกัน
-        - ใช้ .format() หรือ .invoke() ตามมาตรฐาน PromptTemplate
+        [ULTIMATE REVISED v2026.02.01] 
+        - แก้ไขปัญหา String 'None' หลุดไปยัง UI ด้วย Fallback Logic
+        - ปรับปรุงการฉีดหลักฐาน (Evidence Injection) ให้มีความเป็นมนุษย์มากขึ้น
+        - รองรับ Sustainability Phase สำหรับ Level 5 โดยเฉพาะ
         """
         if not aggregated_insights:
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, "No insights provided")
 
-        self.logger.info(f"🚀 [ROADMAP] Generating Professional Coach Plan via UB_PROMPT for {sub_id}")
+        self.logger.info(f"🚀 [ROADMAP] Generating Professional Coach Plan via SUB_PROMPT for {sub_id}")
 
-        # --- [STEP 1: PREPARE DATA - เหมือนเดิมแต่เน้นความสะอาด] ---
+        # --- [STEP 1: PREPARE & SANITIZE DATA] ---
         best_practice_assets = []
         top_asset_name = None
         highest_continuous = 0
         has_gap = False
-        noise_filenames = ["Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", ""]
+        
+        # กรอง Noise และคำว่า None ที่อาจหลุดมาจาก LLM
+        noise_words = ["Unknown File", "เอกสารอ้างอิง", "N/A", "Reference Document", "SCORE:", "None", "none", ""]
         evidence_map = getattr(self, "evidence_map", {})
 
         for item in aggregated_insights:
@@ -4821,32 +4825,32 @@ class SEAMPDCAEngine:
             ev_key = f"{sub_id}_L{lv}"
             ev_node = evidence_map.get(ev_key, {})
             
-            raw_filename = ev_node.get("file", "Unknown File")
-            clean_filename = raw_filename if raw_filename not in noise_filenames else None
+            raw_file = ev_node.get("file") or "Unknown File"
+            clean_file = raw_file if str(raw_file).strip() not in noise_words else None
             
             if passed:
                 if not has_gap: highest_continuous = lv
-                if not top_asset_name and clean_filename: top_asset_name = clean_filename
-                best_practice_assets.append(f"- Level {lv}: {clean_filename if clean_filename else 'แนวทางปฏิบัติเดิม'}")
+                if not top_asset_name and clean_file: top_asset_name = clean_file
+                best_practice_assets.append(f"- Level {lv}: {clean_file if clean_file else 'มาตรฐานกระบวนการเดิม'}")
             else:
                 has_gap = True
 
-        # --- [STEP 2: PREPARE ENRICHED CONTEXT] ---
-        # เตรียมข้อมูลสำหรับตัวแปร aggregated_insights ใน Prompt
+        # [FIX] กำหนดชื่อเรียกหลักฐานที่ "ปลอดภัย" สำหรับโชว์บน UI
+        display_asset = top_asset_name if top_asset_name else "แผนแม่บทและระเบียบปฏิบัติมาตรฐาน"
+
+        # --- [STEP 2: ENRICHED CONTEXT PREPARATION] ---
         enriched_context = (
             f"💎 EXISTING STRATEGIC ASSETS:\n" +
-            ("\n".join(best_practice_assets) if best_practice_assets else "- ไม่พบหลักฐานหลัก") +
+            ("\n".join(best_practice_assets) if best_practice_assets else "- ดำเนินการตามมาตรฐานกลางขององค์กร") +
             "\n\n🚨 GAP ANALYSIS:\n" +
-            "\n".join([f"- L{i.get('level')}: {i.get('insight_summary')}" for i in aggregated_insights])
+            "\n".join([f"- L{i.get('level')}: {str(i.get('insight_summary')).replace('None', 'ไม่มีข้อมูลระบุ')}" for i in aggregated_insights])
         )
 
         if not strategic_focus:
-            strategic_focus = f"ยกระดับจาก L{highest_continuous} มุ่งสู่มาตรฐาน Excellence"
+            strategic_focus = f"ยกระดับจาก L{highest_continuous} มุ่งสู่มาตรฐานระดับ Excellence"
 
-        # --- [STEP 3: EXECUTE UB_ROADMAP_PROMPT] ---
+        # --- [STEP 3: EXECUTE SUB_ROADMAP_PROMPT] ---
         try:
-            # ใช้ UB_ROADMAP_PROMPT ในการสร้าง Prompt String
-            # หมายเหตุ: ถ้าใช้ LangChain สามารถใช้ .format() ได้เลย
             final_prompt_string = SUB_ROADMAP_PROMPT.format(
                 sub_id=sub_id,
                 sub_criteria_name=sub_criteria_name,
@@ -4855,10 +4859,8 @@ class SEAMPDCAEngine:
                 strategic_focus=strategic_focus
             )
 
-            # ส่งเข้า LLM (ส่งเป็น User Prompt เพราะ System Rules ถูกรวมเข้าไปใน String แล้ว)
-            # หรือถ้า _fetch_llm_response รองรับแยก System สามารถตัดแบ่งได้
             raw = _fetch_llm_response(
-                system_prompt="คุณคือที่ปรึกษาเชิงยุทธศาสตร์ด้าน SE-AM", 
+                system_prompt="คุณคือที่ปรึกษาเชิงยุทธศาสตร์มืออาชีพ (Senior SE-AM Consultant)", 
                 user_prompt=final_prompt_string, 
                 llm_executor=self.llm
             )
@@ -4866,36 +4868,45 @@ class SEAMPDCAEngine:
             data = _robust_extract_json(raw) or {}
             raw_phases = data.get("phases") or []
 
-            # --- [STEP 4: NORMALIZE & INJECT EVIDENCE] ---
+            # --- [STEP 4: NORMALIZE & EVIDENCE INJECTION] ---
             final_phases = []
             for i, p in enumerate(raw_phases, 1):
-                actions = p.get("key_actions") or []
-                
-                # Injection Logic: ถ้าไม่มีชื่อไฟล์ใน Action ให้แทรกชื่อไฟล์จริงเข้าไป
-                if top_asset_name and not any(top_asset_name in str(a) for a in actions):
-                    actions.insert(0, {
-                        "action": f"ต่อยอดมาตรฐานจาก {top_asset_name} เพื่อทำ Standardization",
+                # กรอง 'None' ออกจาก actions ที่ LLM อาจจะสร้างมา
+                raw_actions = p.get("key_actions") or []
+                clean_actions = []
+                for a in raw_actions:
+                    act_text = a.get("action", "") if isinstance(a, dict) else str(a)
+                    if "None" not in act_text:
+                        clean_actions.append(a if isinstance(a, dict) else {"action": act_text, "priority": "Medium"})
+
+                # Injection: แทรกหลักฐานจริงเข้าไปเพื่อความสมจริงของแผน
+                if i == 1 and top_asset_name:
+                    clean_actions.insert(0, {
+                        "action": f"บูรณาการต่อยอดจาก {display_asset} ให้เป็นมาตรฐานเดียวกันทั้งองค์กร",
                         "priority": "High"
                     })
 
                 final_phases.append({
                     "phase": p.get("phase", f"Phase {i}"),
                     "target_levels": p.get("target_levels") or [min(highest_continuous + i, 5)],
-                    "main_objective": p.get("main_objective") or "ยกระดับระบบงาน",
-                    "key_actions": actions,
+                    "main_objective": p.get("main_objective") or "ยกระดับระบบงานสู่มาตรฐานที่สูงขึ้น",
+                    "key_actions": clean_actions,
                     "expected_outcome": p.get("expected_outcome") or "เพิ่ม Traceability Score > 85%"
                 })
 
-            # บังคับ L5 Sustainability เสมอ
-            if highest_continuous == 5 and len(final_phases) < 2:
-                final_phases.append({
-                    "phase": "Phase 2: Sustainability & Learning Culture",
-                    "main_objective": "รักษามาตรฐาน Excellence และสร้างระบบ Knowledge Governance",
-                    "key_actions": [
-                        {"action": f"ถอดบทเรียนจาก {top_asset_name} เป็น Best Practice องค์กร", "priority": "High"}
-                    ],
-                    "expected_outcome": "Traceability 100%"
-                })
+            # [FIX] บังคับ Phase ความยั่งยืนสำหรับผู้ที่ผ่าน Level 5 แล้ว
+            if highest_continuous >= 5:
+                # ตรวจสอบว่ามี Phase Sustainability หรือยัง
+                if not any("Sustain" in ph["phase"] for ph in final_phases):
+                    final_phases.append({
+                        "phase": "Phase 2: Sustainability & Knowledge Governance",
+                        "main_objective": "รักษามาตรฐาน Excellence และสร้างระบบ Knowledge Governance",
+                        "key_actions": [
+                            {"action": f"ถอดบทเรียน (Best Practice) จาก {display_asset} เพื่อสร้างฐานความรู้ยั่งยืน", "priority": "High"},
+                            {"action": "พัฒนาระบบอัตโนมัติในการติดตามผลลัพธ์ KM ผ่าน Dashboard", "priority": "Medium"}
+                        ],
+                        "expected_outcome": "Traceability 100% และเกิดนวัตกรรมกระบวนการ"
+                    })
 
             return {
                 "scope": "SUB_CRITERIA",
@@ -4908,7 +4919,7 @@ class SEAMPDCAEngine:
             }
 
         except Exception as e:
-            self.logger.error(f"🛑 UB_PROMPT Error: {str(e)}")
+            self.logger.error(f"🛑 generate_sub_roadmap Error: {str(e)}")
             return self._get_emergency_fallback_plan(sub_id, sub_criteria_name, str(e))
         
     def synthesize_enabler_roadmap(
@@ -4918,67 +4929,60 @@ class SEAMPDCAEngine:
         llm_executor: Any
     ) -> Dict[str, Any]:
         """
-        [TIER-3 STRATEGIC ORCHESTRATOR - FULL REVISE v2026.01.28]
-        - 🧩 Macro-Synthesis: สังเคราะห์แผนภาพรวมจากทุก Sub-id
-        - 🛡️ KeyError Shield: ใช้ STRATEGIC_OVERALL_PROMPT ที่แยกตัวแปรชัดเจน
-        - 🚀 Performance: ปรับลดความซับซ้อนของ Context เพื่อให้ L40S ตอบสนองไวขึ้น
+        [ULTIMATE REVISED v2026.02.01] 
+        - สังเคราะห์แผนยุทธศาสตร์ภาพรวมโดยดึง Action ที่ดีที่สุดจากแต่ละข้อมาใช้
+        - กำจัดความซ้ำซ้อนและข้อมูลขยะ (None/N/A) ออกจาก Context
+        - กำหนดทิศทางภาพรวม (Global Focus) ตามเกณฑ์ SE-AM Maturity
         """
-
         self.logger.info(f"🌐 [TIER-3] Synthesizing Strategic Master Plan for {enabler_name}")
 
         if not sub_criteria_results:
-            return {
-                "status": "INCOMPLETE",
-                "overall_strategy": "ไม่พบข้อมูลเพียงพอในการสังเคราะห์แผนภาพรวม",
-                "phases": []
-            }
+            return {"status": "INCOMPLETE", "overall_strategy": "ไม่พบข้อมูลเพียงพอ", "phases": []}
 
-        # --- [STEP 1: DETERMINING GLOBAL MATURITY & FOCUS] ---
-        # หาเลเวลต่ำสุดที่ทุกข้อผ่าน (Baseline)
-        global_maturity = min(
-            [int(r.get("highest_full_level", 0)) for r in sub_criteria_results if r],
-            default=0
-        )
+        # --- [STEP 1: GLOBAL MATURITY DETERMINATION] ---
+        valid_results = [r for r in sub_criteria_results if r]
+        global_maturity = min([int(r.get("highest_full_level", 0)) for r in valid_results], default=0)
 
-        # กำหนด Strategic Focus สำหรับภาพรวมองค์กร
+        # กำหนด Global Focus
         if global_maturity < 3:
-            global_focus = f"Focus: Foundational Integrity (การสถาปนารากฐานระบบ {enabler_name} และปิดช่องว่างมาตรฐาน)"
+            global_focus = f"Focus: Foundational Integrity (การสถาปนารากฐานระบบ {enabler_name})"
         elif 3 <= global_maturity < 5:
-            global_focus = f"Focus: Strategic Integration (การเชื่อมโยงระบบ {enabler_name} เข้ากับเป้าหมายยุทธศาสตร์องค์กร)"
+            global_focus = f"Focus: Strategic Integration (การเชื่อมโยงระบบเข้ากับเป้าหมายยุทธศาสตร์)"
         else:
-            global_focus = f"Focus: Excellence & Innovation (การสร้างนวัตกรรมและเป็นต้นแบบระดับสากล)"
+            global_focus = f"Focus: Excellence & Innovation (การเป็นต้นแบบนวัตกรรมและความยั่งยืน)"
 
-        # --- [STEP 2: AGGREGATING MULTI-SUB GAPS] ---
-        blocking_gaps = []
+        # --- [STEP 2: SMART CONTEXT AGGREGATION] ---
         key_strengths = []
+        blocking_gaps = []
+        proposed_actions = []
 
-        for res in sub_criteria_results:
+        for res in valid_results:
             sid = res.get("sub_id", "N/A")
-            sname = res.get("sub_criteria_name", "N/A")
-            
-            # เก็บจุดแข็ง (เลเวลสูงสุดที่ผ่าน)
+            # 1. จุดแข็ง
             if res.get("highest_full_level", 0) > 0:
-                key_strengths.append(f"- [{sid}] ผ่านระดับ L{res.get('highest_full_level')}: {sname}")
-
-            # ดึงเฉพาะ Coaching Insight ของเลเวลที่ติดขัด (Next Target Level)
+                key_strengths.append(f"- [{sid}] ผ่าน L{res.get('highest_full_level')}: {res.get('sub_criteria_name')}")
+            
+            # 2. ช่องว่าง (ดึงจาก Level ถัดไป)
             next_lv = str(res.get("highest_full_level", 0) + 1)
             details = res.get("level_details", {}).get(next_lv)
-            
             if details and not details.get("is_passed"):
-                insight = details.get("coaching_insight", "").strip()
-                if insight:
-                    blocking_gaps.append(f"🔴 [{sid} L{next_lv}]: {insight[:200]}")
+                insight = str(details.get("coaching_insight", "")).replace("None", "").strip()
+                if insight: blocking_gaps.append(f"🔴 [{sid} L{next_lv}]: {insight[:150]}")
 
-        # จำกัดปริมาณข้อมูลไม่ให้ LLM สับสน
+            # 3. แผนงานระดับย่อย (เพื่อเอามาสังเคราะห์ต่อ)
+            for phase in res.get("sub_roadmap", {}).get("phases", []):
+                for act in phase.get("key_actions", []):
+                    txt = act.get("action") if isinstance(act, dict) else str(act)
+                    if "None" not in txt and txt not in proposed_actions:
+                        proposed_actions.append(txt)
+
         aggregated_context = (
-            "💎 KEY STRENGTHS (จุดแข็งที่เป็นต้นทุน):\n" +
-            ("\n".join(key_strengths[:5]) if key_strengths else "- อยู่ระหว่างการเริ่มต้น") +
-            "\n\n🚨 CRITICAL BLOCKING GAPS (ช่องว่างรวมที่ต้องเร่งปิด):\n" +
-            ("\n".join(blocking_gaps[:10]) if blocking_gaps else "- ไม่พบช่องว่างวิกฤต")
+            "💎 KEY STRENGTHS:\n" + ("\n".join(key_strengths[:5]) if key_strengths else "- เริ่มต้นระบบ") +
+            "\n\n🚀 PROPOSED ACTIONS (From Sub-items):\n" + ("\n".join(proposed_actions[:10]) if proposed_actions else "- ดำเนินการตามมาตรฐาน") +
+            "\n\n🚨 CRITICAL GAPS:\n" + ("\n".join(blocking_gaps[:5]) if blocking_gaps else "- ไม่พบช่องว่างวิกฤต")
         )
 
-        # --- [STEP 3: PROMPT ORCHESTRATION (THE FIX)] ---
-        # 🛡️ ใช้ Prompt ตัวใหม่ที่รับ 3 ตัวแปร (ตรงกับ seam_prompts.py)
+        # --- [STEP 3: EXECUTE STRATEGIC SYNTHESIS] ---
         final_prompt = STRATEGIC_OVERALL_PROMPT.format(
             enabler_name=enabler_name,
             aggregated_context=aggregated_context,
@@ -4986,7 +4990,6 @@ class SEAMPDCAEngine:
         )
 
         try:
-            # ใช้ helper _fetch_llm_response หรือเรียก llm_executor โดยตรง
             raw = _fetch_llm_response(
                 system_prompt=SYSTEM_OVERALL_STRATEGIC_PROMPT,
                 user_prompt=final_prompt,
@@ -4996,20 +4999,20 @@ class SEAMPDCAEngine:
             data = _robust_extract_json(raw) or {}
             raw_phases = data.get("phases") or data.get("roadmap") or []
 
-            # --- [STEP 4: NORMALIZE PHASES] ---
+            # --- [STEP 4: NORMALIZE & RETURN] ---
             final_phases = []
             for i, p in enumerate(raw_phases, 1):
-                if isinstance(p, dict):
-                    final_phases.append({
-                        "phase": p.get("phase") or f"Phase {i}: การยกระดับภาพรวม",
-                        "target_levels": p.get("target_levels") or f"L{global_maturity + 1}",
-                        "main_objective": p.get("main_objective") or p.get("target_objectives") or "ปิดช่องว่างเชิงยุทธศาสตร์",
-                        "key_actions": p.get("key_actions") or p.get("strategic_actions") or [],
-                        "expected_outcome": p.get("expected_outcome") or p.get("key_performance_indicator") or "ผ่านเกณฑ์มาตรฐานเพิ่มขึ้น"
-                    })
+                # ตรวจสอบ Target Level ไม่ให้ทะลุ L5 (SE-AM Limitation)
+                target_lv = p.get("target_levels") or f"L{min(global_maturity + i, 5)}"
+                if global_maturity >= 5: target_lv = "L5 (Sustain)"
 
-            if not final_phases:
-                final_phases = self._get_emergency_fallback_plan("OVERALL", enabler_name).get("phases", [])
+                final_phases.append({
+                    "phase": p.get("phase") or f"Phase {i}",
+                    "target_levels": target_lv,
+                    "main_objective": p.get("main_objective") or p.get("target_objectives") or "ยกระดับกลยุทธ์ภาพรวม",
+                    "key_actions": p.get("key_actions") or p.get("strategic_actions") or [],
+                    "expected_outcome": p.get("expected_outcome") or p.get("key_performance_indicator") or "บรรลุเป้าหมายยุทธศาสตร์"
+                })
 
             return {
                 "status": "SUCCESS",
@@ -5018,19 +5021,13 @@ class SEAMPDCAEngine:
                 "metadata": {
                     "global_maturity_baseline": global_maturity,
                     "applied_strategic_focus": global_focus,
-                    "total_sub_evaluated": len(sub_criteria_results),
                     "generated_at": datetime.now().isoformat()
                 }
             }
 
         except Exception as e:
-            self.logger.error(f"🛑 [TIER-3-CRITICAL] Global Roadmap Error: {e}", exc_info=True)
-            return {
-                "status": "ERROR",
-                "overall_strategy": "เกิดข้อผิดพลาดในการสังเคราะห์แผนยุทธศาสตร์",
-                "reason": str(e),
-                "phases": []
-            }
+            self.logger.error(f"🛑 Global Roadmap Error: {e}")
+            return {"status": "ERROR", "overall_strategy": global_focus, "phases": []}
 
     def create_atomic_action_plan(
         self, 
