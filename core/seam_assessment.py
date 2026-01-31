@@ -3854,73 +3854,89 @@ class SEAMPDCAEngine:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        [JUDICIAL REVIEW - FULL REVISE v2026.01.28]
-        - ✅ SAFE UNPACKING: ล้างตัวแปรที่ evaluate_pdca ไม่รู้จักป้องกัน Fatal Error
-        - ✅ DYNAMIC HINT: ฉีดคำสั่งอุทธรณ์เข้าสู่ pdca_blocks โดยตรง
-        - ✅ CONTEXT ALIGNMENT: บังคับใช้ค่าที่แม่นยำที่สุดสำหรับการตัดสินใจรอบสอง
+        [JUDICIAL REVIEW - ENHANCED v2026.02.05]
+        - เพิ่ม log ละเอียด + appeal hint ที่คมชัดขึ้น
+        - ใช้ highest_rerank_score เป็น weight ในการ override
+        - เพิ่ม fallback JSON structure ถ้า LLM ตอบไม่ครบ
+        - ไม่เปลี่ยน signature หรือ input เดิมเลย
         """
         log_prefix = f"⚖️ [EXPERT-APPEAL] {sub_id} L{level}"
-        self.logger.info(f"{log_prefix} | Starting rescue (Max Rerank: {highest_rerank_score:.4f})")
+        self.logger.info(f"{log_prefix} | Starting rescue (Max Rerank: {highest_rerank_score:.4f} | Missing: {missing_tags})")
 
-        # 1. [PREPARE APPEAL HINT] สร้างคำสั่งอุทธรณ์ที่ดุดันเพื่อให้ LLM เปลี่ยนใจ
-        missing_str = ", ".join(sorted(missing_tags)) if missing_tags else "PDCA Core Criteria"
+        # 1. [PREPARE APPEAL HINT] – ดุดัน + เน้น substance over form
+        missing_str = ", ".join(sorted(set(missing_tags))) if missing_tags else "PDCA Core Criteria (P/D/C/A)"
         
         appeal_instruction = f"""
-### 🚨 EXPERT JUDICIAL REVIEW - SECOND CHANCE 🚨
-[CONTEXT]: หลักฐานมีความเกี่ยวข้องสูงมาก ({highest_rerank_score:.4f}) แต่ผลตรวจรอบแรกระบุว่า: "{first_attempt_reason[:120]}..."
-[FOCUS]: โปรดพิจารณาความสอดคล้องเชิงเนื้อหา (Substance over Form) ในประเด็น: {missing_str}
-[MANDATORY]: หากพบร่องรอยการปฏิบัติในหลักฐาน แม้ไม่ชัดเจน 100% ให้ใช้ "ดุลยพินิจเชิงบวก" (Expert Override)
-"""
+    ### 🚨 EXPERT JUDICIAL REVIEW - SECOND CHANCE (OVERRIDE MODE) 🚨
+    [CONTEXT]: หลักฐานมีความเกี่ยวข้องสูงมาก (Rerank {highest_rerank_score:.4f}) แต่รอบแรกตัดสินว่าไม่ผ่านเพราะ "{first_attempt_reason[:150]}..."
+    [CRITICAL FOCUS]: พิจารณาเนื้อหาเชิงสาระ (Substance over Form) ในประเด็นที่ขาด: {missing_str}
+    [MANDATORY RULE]: 
+    - หากพบร่องรอยแม้เพียงบางส่วน ให้ใช้ "ดุลยพินิจเชิงบวก" (Expert Positive Override)
+    - อย่าติดกับรูปแบบ แต่ดูความหมายจริงของหลักฐาน
+    - ถ้าผ่าน ให้เพิ่ม reason ว่า "ผ่านจากการอุทธรณ์เชิงผู้เชี่ยวชาญ"
+    """
 
-        # 2. [PDCA BLOCKS INJECTION] ฉีด Hint เข้าไปในข้อมูลที่ LLM จะอ่าน
+        # 2. [PDCA BLOCKS INJECTION] – ฉีด hint เข้าไปด้านบนสุด
         original_blocks = base_kwargs.get("pdca_blocks", [])
+        expert_pdca_blocks = []
         if isinstance(original_blocks, list):
-            expert_pdca_blocks = list(original_blocks)
-            expert_pdca_blocks.append({"tag": "SYSTEM", "content": appeal_instruction})
+            expert_pdca_blocks = [{"tag": "SYSTEM-APPEAL", "content": appeal_instruction}] + list(original_blocks)
         else:
-            expert_pdca_blocks = f"{str(original_blocks)}\n\n{appeal_instruction}"
+            expert_pdca_blocks = f"{appeal_instruction}\n\n{str(original_blocks)}"
 
-        # 3. [SAFE ARGUMENTS CONSTRUCTION] 🛡️ จุดสำคัญ: กรองเฉพาะสิ่งที่ evaluate_pdca รับได้
-        # ล้างค่าจาก base_kwargs ที่จะทำให้เกิด TypeError: unexpected keyword argument
-        expert_kwargs = {
+        # 3. [SAFE KWARGS CONSTRUCTION] – กรองเฉพาะที่ llm_evaluator_to_use รับได้
+        safe_kwargs = {
             "pdca_blocks": expert_pdca_blocks,
             "sub_id": sub_id,
             "level": level,
-            "audit_confidence": highest_rerank_score, # ใช้ Rerank Score แทนค่าเดิม
-            "audit_instruction": audit_instruction or base_kwargs.get("audit_instruction", "")
+            "audit_confidence": highest_rerank_score,  # ใช้ rerank เป็น confidence หลัก
         }
+        
+        # เพิ่ม audit_instruction ถ้ามี (fallback ถ้า base_kwargs ไม่มี)
+        if audit_instruction:
+            safe_kwargs["audit_instruction"] = audit_instruction
+        elif "audit_instruction" in base_kwargs:
+            safe_kwargs["audit_instruction"] = base_kwargs["audit_instruction"]
 
         # 4. [EXECUTE RE-EVALUATION]
         try:
-            # รัน evaluate_pdca (หรือ evaluator ที่ส่งมา) ด้วยชุดข้อมูลที่คลีนแล้ว
-            re_eval_result = llm_evaluator_to_use(**expert_kwargs)
+            self.logger.debug(f"{log_prefix} | Calling evaluator with safe_kwargs: {safe_kwargs.keys()}")
+            re_eval_result = llm_evaluator_to_use(**safe_kwargs)
             
             if not isinstance(re_eval_result, dict):
-                return {"is_passed": False, "appeal_status": "ERROR"}
+                self.logger.warning(f"{log_prefix} | Evaluator returned non-dict → fallback")
+                re_eval_result = {"is_passed": False, "score": 0.0, "reason": "Evaluator returned invalid format"}
 
-            # 5. [EVALUATE RESULT]
+            # 5. [EVALUATE & OVERRIDE]
             is_passed_now = bool(re_eval_result.get("is_passed", False))
             
             if is_passed_now:
-                self.logger.info(f"🛡️ [OVERRIDE-SUCCESS] {log_prefix} | อุทธรณ์สำเร็จ!")
+                self.logger.info(f"🛡️ [OVERRIDE-SUCCESS] {log_prefix} | อุทธรณ์สำเร็จ! (New Score: {re_eval_result.get('score', 'N/A')})")
                 re_eval_result.update({
                     "is_safety_pass": True,
                     "appeal_status": "GRANTED",
-                    "reason": f"🌟 [EXPERT OVERRIDE]: {re_eval_result.get('reason', '')}"
+                    "reason": f"🌟 [EXPERT OVERRIDE]: {re_eval_result.get('reason', 'ผ่านจากการอุทธรณ์')}"
                 })
             else:
                 self.logger.info(f"❌ [APPEAL-DENIED] {log_prefix} | ผลอุทธรณ์: ไม่ผ่าน")
                 re_eval_result["appeal_status"] = "DENIED"
+
+            # Fallback ถ้า JSON ไม่ครบ field
+            required_keys = ["is_passed", "score", "reason"]
+            for key in required_keys:
+                if key not in re_eval_result:
+                    re_eval_result[key] = False if key == "is_passed" else 0.0 if key == "score" else "Missing key after appeal"
 
             return re_eval_result
 
         except Exception as e:
             self.logger.error(f"🛑 [APPEAL-CRASH] {log_prefix} failed: {str(e)}", exc_info=True)
             return {
-                "is_passed": False, 
-                "score": 0.0, 
+                "is_passed": False,
+                "score": 0.0,
                 "appeal_status": "FATAL_ERROR",
-                "reason": f"Appeal system error: {str(e)}"
+                "reason": f"Appeal system error: {str(e)[:200]}",
+                "is_safety_pass": False
             }
 
     def _build_multichannel_context_for_level( # เปลี่ยนเป็น Private Method
@@ -5421,10 +5437,6 @@ class SEAMPDCAEngine:
 
         return "\n".join(filter(None, lines))
 
-
-    # ------------------------------------------------------------------------------------------
-    # 🧠 [TIER-1 CORE] _run_single_assessment (GOVERNANCE-LOCKED & FULL AUDIT TRACE)
-    # ------------------------------------------------------------------------------------------
     def _run_single_assessment(
         self,
         sub_id: str,
@@ -5435,11 +5447,12 @@ class SEAMPDCAEngine:
         vectorstore_manager: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        [ULTIMATE REVISED v2026.1.25]
-        - 🛡️ Governance: ฉีด audit_instruction เพื่อคุมขอบเขตการตรวจ (Scope Guard)
-        - 🧬 Retrieval Expansion: ผสาน Adaptive Retrieval กับ Neighbor Expansion
-        - ⚖️ Resilience: ระบบ Judicial Review (อุทธรณ์) เมื่อ Rerank Score สูงแต่ LLM มองไม่เห็น
-        - 📊 Integrity: รักษาการ Log PDCA Status และ Multichannel Context ตามมาตรฐานเดิม
+        [ULTIMATE REVISED v2026.02.05-enhanced]
+        - Governance: ฉีด audit_instruction คุมขอบเขต
+        - Retrieval: Adaptive + Neighbor Expansion + Diversity Filter
+        - Resilience: Judicial Review (อุทธรณ์) เมื่อ Rerank สูงแต่ LLM มองไม่เห็น
+        - Logging: เพิ่ม debug appeal trigger/success + fallback JSON
+        - ไม่เปลี่ยน signature หรือ flow เดิม
         """
         log_prefix = f"Sub:{sub_id} L{level}"
         sub_name = criteria.get('name', 'Unknown Sub-item')
@@ -5449,12 +5462,10 @@ class SEAMPDCAEngine:
         self.logger.info(f"📋 [CRITERIA] Level {level}: \"{statement_text}\"")
 
         # --- [STEP 1: GOVERNANCE & RULES] ---
-        # สร้าง "ใบสั่งงาน" (Scope Guard) จากเกณฑ์ Maturity
         audit_instruction = self._get_level_constraint_prompt(sub_id, level)
         current_rules = getattr(self, 'contextual_rules_map', {}).get(sub_id, {}).get(f"L{level}", {})
 
         # --- [STEP 2: ADAPTIVE RETRIEVAL & EXPANSION] ---
-        # 1. ค้นหาแบบ Adaptive (Vector + Rerank)
         retrieved_chunks, max_rerank = self._perform_adaptive_retrieval(
             sub_id=sub_id,
             level=level,
@@ -5462,7 +5473,6 @@ class SEAMPDCAEngine:
             vectorstore_manager=vectorstore_manager,
         )
 
-        # 2. ✨ Neighbor Expansion: กู้คืนบริบทหน้าใกล้เคียง (หน้าลงนาม/หน้าผนวก)
         if retrieved_chunks:
             enabler_key = str(getattr(self, 'enabler', 'km')).lower()
             collection_name = f"evidence_{enabler_key}"
@@ -5471,14 +5481,10 @@ class SEAMPDCAEngine:
                 collection_name=collection_name
             )
 
-        # 3. Diversity Filter: กรองความซ้ำซ้อนของข้อมูล
         retrieved_chunks = self._apply_diversity_filter(retrieved_chunks, level)
 
         # --- [STEP 3: EVIDENCE FUSION & METADATA] ---
-        # ผสมหลักฐานใหม่เข้ากับ Baseline สะสม
         evidences = (baseline_evidences or []) + (retrieved_chunks or [])
-
-        # แยกกลุ่มหลักฐานตาม PDCA Tags
         pdca_blocks = self._get_pdca_blocks_from_evidences(
             evidences=evidences,
             baseline_evidences=baseline_evidences,
@@ -5487,31 +5493,29 @@ class SEAMPDCAEngine:
             contextual_rules_map=getattr(self, 'contextual_rules_map', {})
         )
 
-        # คำนวณ Audit Confidence (ใช้แสดงผลใน Report)
         audit_confidence = self.calculate_audit_confidence(
             matched_chunks=retrieved_chunks,
             sub_id=sub_id,
             level=level,
         )
-        self.current_audit_meta = audit_confidence # 🛡️ เก็บ Metadata เดิมไว้
+        self.current_audit_meta = audit_confidence
 
         # --- [STEP 4: MULTICHANNEL LLM EXECUTION] ---
-        # สร้าง Multichannel Context (Current + Historical)
         llm_context = self._build_multichannel_context_for_level(
             level=level,
             top_evidences=retrieved_chunks,
             previous_levels_evidence=baseline_evidences
         )
 
-        # ส่งให้ LLM วิเคราะห์ด้วยใบสั่งงานคุมกฎ
         llm_raw = self.evaluate_pdca(
             pdca_blocks=pdca_blocks,
             sub_id=sub_id,
             level=level,
             audit_confidence=audit_confidence,
-            audit_instruction=audit_instruction # 👈 ฉีดใบสั่งงานคุมกฎ
+            audit_instruction=audit_instruction
         )
-        if not isinstance(llm_raw, dict): llm_raw = {}
+        if not isinstance(llm_raw, dict): 
+            llm_raw = {}
 
         # --- [STEP 5: SMART NORMALIZATION] ---
         result = self.post_process_llm_result(
@@ -5524,9 +5528,8 @@ class SEAMPDCAEngine:
 
         # --- [STEP 6: JUDICIAL REVIEW (RESCUE LOGIC)] ---
         is_safety_pass = False
-        # ถ้าคะแนน Rerank สูงมากแต่ AI ให้ตก ระบบจะทำการอุทธรณ์ทันที
         if not result.get("is_passed") and max_rerank >= 0.70:
-            self.logger.info(f"⚖️ [TRIGGER-APPEAL] {log_prefix} | Rerank {max_rerank:.4f} is high. Re-evaluating...")
+            self.logger.info(f"⚖️ [TRIGGER-APPEAL] {log_prefix} | Rerank {max_rerank:.4f} HIGH → Re-evaluating... (Missing: {result.get('missing_phases', [])})")
 
             appeal_result = self._run_expert_re_evaluation(
                 sub_id=sub_id,
@@ -5539,20 +5542,15 @@ class SEAMPDCAEngine:
                 sub_criteria_name=sub_name,
                 llm_evaluator_to_use=self.evaluate_pdca,
                 audit_instruction=audit_instruction,
-                # base_kwargs={
-                #     "pdca_blocks": pdca_blocks,
-                #     "contextual_config": current_rules,
-                #     "top_evidences": retrieved_chunks
-                # }
                 base_kwargs={
                     "pdca_blocks": pdca_blocks,
-                    "audit_instruction": audit_instruction, # ใช้ตัวที่ evaluate_pdca รับได้
-                    "audit_confidence": audit_confidence     # ส่งตัวนี้ไปแทนตามที่ evaluate_pdca ต้องการ
+                    "audit_instruction": audit_instruction,
+                    "audit_confidence": audit_confidence
                 }
             )
 
             if appeal_result and appeal_result.get("appeal_status") == "GRANTED":
-                self.logger.info(f"✅ [APPEAL-GRANTED] {log_prefix} | Expert Rescue Successful.")
+                self.logger.info(f"✅ [APPEAL-GRANTED] {log_prefix} | Expert Rescue OK! (New Score: {appeal_result.get('score', 'N/A')})")
                 final_appeal = self.post_process_llm_result(
                     llm_output=appeal_result,
                     level=level,
@@ -5564,12 +5562,13 @@ class SEAMPDCAEngine:
                 result["is_passed"] = True
                 result["score"] = max(result.get("score", 0.0), 1.0)
                 is_safety_pass = True
+            else:
+                self.logger.info(f"❌ [APPEAL-DENIED/ERROR] {log_prefix} | ไม่ผ่านอุทธรณ์")
 
         # --- [STEP 7: FINAL INSIGHTS & LOGGING] ---
         final_insight = (result.get("coaching_insight") or result.get("reason") or "").strip()
         final_insight = f"[{'STRENGTH' if result.get('is_passed') else 'GAP'}] {final_insight}"
 
-        # เรียกใช้ Logger เดิมเพื่อเก็บสถานะ PDCA ทั้งหมด
         if hasattr(self, "_log_pdca_status"):
             self._log_pdca_status(
                 sub_id=sub_id,
